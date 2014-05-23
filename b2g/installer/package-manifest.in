@@ -156,9 +156,9 @@
 @BINPATH@/components/dom_system.xpt
 #ifdef MOZ_WIDGET_GONK
 @BINPATH@/components/dom_wifi.xpt
-@BINPATH@/components/dom_system_gonk.xpt
 #endif
 #ifdef MOZ_B2G_RIL
+@BINPATH@/components/dom_system_gonk.xpt
 @BINPATH@/components/dom_icc.xpt
 @BINPATH@/components/dom_wappush.xpt
 @BINPATH@/components/dom_mobileconnection.xpt
@@ -402,12 +402,18 @@
 @BINPATH@/components/htmlMenuBuilder.js
 @BINPATH@/components/htmlMenuBuilder.manifest
 
-; WiFi, NetworkManager, NetworkStats
+; WiFi
 #ifdef MOZ_WIDGET_GONK
 @BINPATH@/components/DOMWifiManager.js
 @BINPATH@/components/DOMWifiManager.manifest
 @BINPATH@/components/DOMWifiP2pManager.js
 @BINPATH@/components/DOMWifiP2pManager.manifest
+@BINPATH@/components/WifiWorker.js
+@BINPATH@/components/WifiWorker.manifest
+#endif // MOZ_WIDGET_GONK
+
+; Network services: NetworkManager, NetworkStats
+#if defined(MOZ_B2G_RIL)
 @BINPATH@/components/NetworkInterfaceListService.js
 @BINPATH@/components/NetworkInterfaceListService.manifest
 @BINPATH@/components/NetworkManager.js
@@ -418,9 +424,7 @@
 @BINPATH@/components/NetworkStatsManager.manifest
 @BINPATH@/components/NetworkStatsServiceProxy.js
 @BINPATH@/components/NetworkStatsServiceProxy.manifest
-@BINPATH@/components/WifiWorker.js
-@BINPATH@/components/WifiWorker.manifest
-#endif // MOZ_WIDGET_GONK
+#endif // MOZ_B2G_RIL
 
 ; Tethering
 #ifdef MOZ_WIDGET_GONK
@@ -437,7 +441,7 @@
 #endif // MOZ_WIDGET_GONK
 
 ; RIL
-#if defined(MOZ_WIDGET_GONK) && defined(MOZ_B2G_RIL)
+#if defined(MOZ_B2G_RIL)
 @BINPATH@/components/CellBroadcastService.js
 @BINPATH@/components/CellBroadcastService.manifest
 @BINPATH@/components/MmsService.js
@@ -459,7 +463,7 @@
 @BINPATH@/components/TelephonyService.manifest
 @BINPATH@/components/VoicemailService.js
 @BINPATH@/components/VoicemailService.manifest
-#endif // MOZ_WIDGET_GONK && MOZ_B2G_RIL
+#endif // MOZ_B2G_RIL
 
 #ifndef MOZ_WIDGET_GONK
 @BINPATH@/components/extensions.manifest

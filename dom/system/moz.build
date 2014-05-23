@@ -16,6 +16,7 @@ elif toolkit == 'android':
     DIRS += ['android']
 elif toolkit == 'gonk':
     DIRS += ['gonk']
+DIRS += ['gonk']
 
 XPIDL_SOURCES += [
     'nsIOSFileConstantsService.idl',

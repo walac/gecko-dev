@@ -99,7 +99,7 @@
 #include "mozilla/dom/nsSynthVoiceRegistry.h"
 #endif
 
-#ifdef MOZ_WIDGET_GONK
+#ifdef MOZ_B2G_RIL
 #include "SystemWorkerManager.h"
 using mozilla::dom::gonk::SystemWorkerManager;
 #define SYSTEMWORKERMANAGER_CID \
@@ -1278,7 +1278,7 @@ static const mozilla::Module::CategoryEntry kLayoutCategories[] = {
   { "app-startup", "Volume Service", "service," NS_VOLUMESERVICE_CONTRACTID },
 #endif
   CONTENTDLF_CATEGORIES
-#ifdef MOZ_WIDGET_GONK
+#ifdef MOZ_B2G_RIL
   { "profile-after-change", "Gonk System Worker Manager", SYSTEMWORKERMANAGER_CONTRACTID },
 #endif
 #ifdef MOZ_B2G_BT
