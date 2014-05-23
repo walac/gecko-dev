@@ -20,6 +20,10 @@ Cu.import('resource://gre/modules/NetworkStatsService.jsm');
 Cu.import('resource://gre/modules/ResourceStatsService.jsm');
 #endif
 
+#ifndef MOZ_WIDGET_GONK
+Cu.import('resource://gre/modules/FakeRilProxy.jsm');
+#endif
+
 // Identity
 Cu.import('resource://gre/modules/SignInToWebsite.jsm');
 SignInToWebsiteController.init();

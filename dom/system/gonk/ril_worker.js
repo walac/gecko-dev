@@ -7060,8 +7060,9 @@ GsmPDUHelperObject.prototype = {
     } else if (nibble >= 97 && nibble <= 102) {
       nibble -= 87; // ASCII 'a'..'f'
     } else {
+      var e = new Error();
       throw "Found invalid nibble during PDU parsing: " +
-            String.fromCharCode(nibble);
+            nibble + " from: " + e.stack;
     }
     return nibble;
   },
@@ -12812,6 +12813,7 @@ ICCRecordHelperObject.prototype = {
       let RIL = this.context.RIL;
       let GsmPDUHelper = this.context.GsmPDUHelper;
 
+      /*
       let strLen = Buf.readInt32();
       let octetLen = strLen / 2;
       RIL.iccInfo.iccid =
@@ -12823,6 +12825,10 @@ ICCRecordHelperObject.prototype = {
         this.context.Buf.seekIncoming(unReadBuffer);
       }
       Buf.readStringDelimiter(strLen);
+      */
+
+      RIL.iccInfo.iccid = Buf.readString();
+      debug("ICCID: " + JSON.stringify(RIL.iccInfo.iccid));
 
       if (DEBUG) this.context.debug("ICCID: " + RIL.iccInfo.iccid);
       if (RIL.iccInfo.iccid) {
