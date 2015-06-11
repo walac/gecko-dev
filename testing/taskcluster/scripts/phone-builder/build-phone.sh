@@ -12,13 +12,17 @@ if ! test $MOZHARNESS_CONFIG; then
   MOZHARNESS_CONFIG=b2g/taskcluster-phone.py
 fi
 
+if ! test $GAIA_LANGUAGES_FILE; then
+  GAIA_LANGUAGES_FILE=locales/languages_all.json
+fi
+
 ./mozharness/scripts/b2g_build.py \
   --config $MOZHARNESS_CONFIG \
   "$debug_flag" \
   --disable-mock \
   --variant=$VARIANT \
   --work-dir=$WORKSPACE/B2G \
-  --gaia-languages-file locales/languages_all.json \
+  --gaia-languages-file $GAIA_LANGUAGES_FILE \
   --log-level=debug \
   --target=$TARGET \
   --b2g-config-dir=$TARGET \
