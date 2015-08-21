@@ -272,8 +272,9 @@ def parse_commit(message, jobs):
             result.append({
                 'task': build_task,
                 'post-build': post_build_jobs,
+                'post-tasks': platform_build.get('post-tasks', {}),
                 'dependents': extract_tests_from_platform(
-                    jobs['tests'], platform_builds, build_task, tests
+                    jobs.get('tests', {}), platform_builds, build_task, tests
                 ),
                 'additional-parameters': additional_parameters,
                 'build_name': platform,

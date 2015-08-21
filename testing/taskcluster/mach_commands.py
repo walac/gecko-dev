@@ -10,6 +10,7 @@ import os
 import json
 import copy
 import sys
+import pystache
 
 from mach.decorators import (
     CommandArgument,
@@ -174,6 +175,123 @@ def configure_dependent_task(task_path, parameters, taskid, templates, build_tre
         task['task']['scopes'] = []
 
     return task
+
+
+class TaskDependencyManager(object):
+    r"""Manage tasks dependencies."""
+
+    def __init__(self, root_task, build_parameters, global_parameters, templates, build_treeherder_config):
+        r"""Initialize the object.
+
+        :param root_task: the root task in the graph
+        :param parameters: parameters to load the template
+        :param templates: reference to the template builder
+        :param build_treeherder_config: parent treeherder config
+        """
+        from taskcluster_graph.slugid import slugid
+        self.root = root_task
+        self.base_post_parameters = self._dict2parameters(root_task, "root")
+        self.base_post_parameters.update(copy.copy(build_parameters))
+        self.global_parameters = global_parameters
+        self.templates = templates
+        self.build_treeherder_config = build_treeherder_config
+        self.slugid = slugid
+
+    def configure(self, post_tasks):
+        r"""Configure tasks dependency.
+
+        :param post_tasks: the set of dependent tasks
+        :return: the list of dependent tasks
+        """
+        if not post_tasks:
+            return []
+        return self._configure_helper(self.root, post_tasks)
+
+    def _configure_helper(self, parent_task, post_tasks):
+        r"""Helper function to configure.
+
+        :param parent_task: the parent of post_tasks
+        :param post_tasks: the list of the dependent tasks
+        """
+        if not post_tasks:
+            return []
+
+        tasks = []
+        parameters = copy.copy(self.base_post_parameters)
+        parameters.update(self._dict2parameters(parent_task, "parent"))
+
+        for post_task_file, params in post_tasks.items():
+            if params is None:
+                params = {}
+
+            post_parameters = copy.copy(parameters)
+            post_parameters.update(self._render_parameters(
+                params.get("parameters", {}), post_parameters))
+
+            for p in params.get('inherit-parameters', []):
+                post_parameters.update(self._render_parameters(
+                    self.global_parameters[p], post_parameters))
+
+            post_parameters['build_slugid'] = parent_task['taskId']
+
+            task = configure_dependent_task(
+                    post_task_file,
+                    post_parameters,
+                    self.slugid(),
+                    self.templates,
+                    self.build_treeherder_config)
+
+            tasks.append(task)
+            tasks.extend(self._configure_helper(task, params.get('post-tasks', {})))
+
+        return tasks
+
+    @staticmethod
+    def _render_parameters(parameters, meta):
+        r"""Render text with alternate delimiters.
+
+        :param parameters: the parameters whose value are are rendering
+        :param meta: the meta parameters we are going to use in rendering
+        """
+        def render(text):
+            return str(pystache.render(pystache.parse(
+                    unicode(text), delimiters=("<%", "%>")), meta))
+        return {key:render(value) for key, value in parameters.items()}
+
+    @staticmethod
+    def _dict2parameters(d, index=""):
+        r"""Return a parameters form of a dictionary.
+
+        :param d: the target dictionary.
+        :param index: the root index namespace.
+
+        >>> dict2parameters({})
+        {}
+        >>> dict2parameters({'a':'b'})
+        {'a': 'b'}
+        >>> dict2parameters({'a': {'b':'c'}})
+        {'a.b': 'c'}
+        >>> dict2parameters({'a': {'b':'c'}, 'd':'e'})
+        {'d': 'e', 'a.b': 'c'}
+        >>> dict2parameters({'a': {'b': {'c': 'd'}}})
+        {'a.b.c': 'd'}
+        >>> dict2parameters({'a': ['b', 'c']})
+        {'a': ['b', 'c']}
+        >>> dict2parameters({'a': ['b', 'c'], 'd': 'e'})
+        {'a': ['b', 'c'], 'd': 'e'}
+        """
+        def closure(d_, index_):
+            params = {}
+
+            for key, value in d_.items():
+                newkey = (index_ + "." if index_ else "") + str(key)
+                if type(value) is dict:
+                    params.update(closure(value, newkey))
+                else:
+                    params[newkey] = value
+
+            return params
+        return closure(d, index)
 
 @CommandProvider
 class DecisionTask(object):
@@ -401,6 +519,15 @@ class Graph(object):
             if len(build_treeherder_config['collection'].keys()) != 1:
                 message = '({}), extra.treeherder.collection must contain one type'
                 raise ValueError(message.fomrat(build['task']))
+
+            task_dep_manager = TaskDependencyManager(
+                                build_task,
+                                build_parameters,
+                                jobs.get('parameters', {}),
+                                templates,
+                                build_treeherder_config)
+
+            graph['tasks'].extend(task_dep_manager.configure(build.get("post-tasks")))
 
             for post_build in build['post-build']:
                 # copy over the old parameters to update the template
