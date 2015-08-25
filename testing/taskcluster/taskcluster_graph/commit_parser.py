@@ -5,7 +5,6 @@
 
 import argparse
 import copy
-import functools
 import re
 import shlex
 from try_test_parser import parse_test_opts
@@ -136,6 +135,34 @@ def parse_test_chunks(aliases, tests):
             results.append(test)
 
     return results;
+
+def filter_post_tasks(all_tests, build_platform, tests, platforms):
+    r"""Filter post-task tests.
+
+    :param set all_tests: Entire list of tests (from job_flags.yml).
+    :param dict build_platform: current build platform.
+    :param list all_tests: all test flags.
+    :param list tests: Test flags.
+    :return: List of tasks (ex: [{ task: 'test_task.yml' }]
+    """
+    if tests is None:
+        tests = {}
+
+    post_tasks = build_platform.get("posts-tasks", {})
+
+    tests_set = {test["test"] for test in tests}
+    platforms_set = set(platforms)
+
+    for post_task in post_tasks.keys():
+        if post_task in all_tests and post_task not in tests_set:
+                post_tasks.drop(post_task)
+
+    for test_entry in tests:
+        if test_entry["test"] in post_tasks:
+            if "platforms" in test_entry and not platforms_set.intersection(test_entry["platforms"]):
+                post_tasks.drop(test_entry["test"])
+            elif "only_chunks" in test_entry:
+                post_tasks[test_entry["test"]] = copy.copy(test_entry["only_chunks"])
 
 def extract_tests_from_platform(test_jobs, build_platform, build_task, tests):
     '''
@@ -268,11 +295,17 @@ def parse_commit(message, jobs):
                     continue
                 post_build_jobs.append(copy.deepcopy(job))
 
+            filter_post_tasks(
+                jobs['flags']['tests'],
+                platform_build,
+                tests,
+                platform_builds.get("platforms", []))
+
             # Node for this particular build type
             result.append({
                 'task': build_task,
                 'post-build': post_build_jobs,
-                'post-tasks': platform_build.get('post-tasks', {}),
+                'post-tasks': platform_build.get("post-tasks", {}),
                 'dependents': extract_tests_from_platform(
                     jobs.get('tests', {}), platform_builds, build_task, tests
                 ),

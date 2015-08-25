@@ -177,50 +177,109 @@ def configure_dependent_task(task_path, parameters, taskid, templates, build_tre
     return task
 
 
-class TaskDependencyManager(object):
-    r"""Manage tasks dependencies."""
+class TaskGraphManager(object):
+    r"""Manage tasks."""
 
-    def __init__(self, root_task, build_parameters, global_parameters, templates, build_treeherder_config):
+    def __init__(
+        self,
+        graph,
+        templates,
+        build_parameters,
+        global_parameters,
+        cmdline_params):
         r"""Initialize the object.
 
-        :param root_task: the root task in the graph
-        :param parameters: parameters to load the template
+        :param build: the build configuration
+        :param graph: the task graph
         :param templates: reference to the template builder
-        :param build_treeherder_config: parent treeherder config
+        :param build_parameters: parameters to load the template
+        :param global_parameters: the global parameters dict specified in the branch config
+        :param cmdline_params: command line parameters
         """
         from taskcluster_graph.slugid import slugid
-        self.root = root_task
-        self.base_post_parameters = self._dict2parameters(root_task, "root")
-        self.base_post_parameters.update(copy.copy(build_parameters))
-        self.global_parameters = global_parameters
-        self.templates = templates
-        self.build_treeherder_config = build_treeherder_config
         self.slugid = slugid
 
-    def configure(self, post_tasks):
+        self.graph = graph
+        self.build_parameters = build_parameters
+        self.global_parameters = global_parameters
+        self.templates = templates
+        self.cmdline_params = cmdline_params
+
+        routes_file = os.path.join(ROOT, 'routes.json')
+        with open(routes_file) as f:
+            contents = json.load(f)
+            self.json_routes = contents['routes']
+            # TODO: Nightly and/or l10n routes
+
+        self.treeherder_route = '{}.{}'.format(
+            cmdline_params['project'],
+            cmdline_params.get('revision_hash', ''))
+
+    def configure(self, build):
         r"""Configure tasks dependency.
 
-        :param post_tasks: the set of dependent tasks
-        :return: the list of dependent tasks
+        :param build: the configuration for build task
         """
-        if not post_tasks:
-            return []
-        return self._configure_helper(self.root, post_tasks)
+        import taskcluster_graph
+        build_parameters = copy.copy(self.build_parameters)
+        build_parameters["build_slugid"] = self.slugid()
+        build_task = self.templates.load(build['task'], build_parameters)
 
-    def _configure_helper(self, parent_task, post_tasks):
+        if self.cmdline_params['revision_hash']:
+            decorate_task_treeherder_routes(build_task['task'],
+                                            self.treeherder_route)
+            decorate_task_json_routes(build,
+                                      build_task['task'],
+                                      self.json_routes,
+                                      build_parameters)
+
+        # Ensure each build graph is valid after construction.
+        taskcluster_graph.build_task.validate(build_task)
+        self.graph['tasks'].append(build_task)
+
+        define_task = DEFINE_TASK.format(build_task['task']['workerType'])
+
+        self.graph['scopes'].append(define_task)
+        self.graph['scopes'].extend(build_task['task'].get('scopes', []))
+        route_scopes = map(lambda route: 'queue:route:' + route, build_task['task'].get('routes', []))
+        self.graph['scopes'].extend(route_scopes)
+
+        # Treeherder symbol configuration for the graph required for each
+        # build so tests know which platform they belong to.
+        build_treeherder_config = build_task['task']['extra']['treeherder']
+
+        if 'machine' not in build_treeherder_config:
+            message = '({}), extra.treeherder.machine required for all builds'
+            raise ValueError(message.format(build['task']))
+
+        if 'build' not in build_treeherder_config:
+            build_treeherder_config['build'] = \
+                build_treeherder_config['machine']
+
+        if 'collection' not in build_treeherder_config:
+            build_treeherder_config['collection'] = { 'opt': True }
+
+        if len(build_treeherder_config['collection'].keys()) != 1:
+            message = '({}), extra.treeherder.collection must contain one type'
+            raise ValueError(message.fomrat(build['task']))
+
+        self.base_post_parameters = build_parameters
+        self.base_post_parameters.update(self._dict2parameters(build_task, "root"))
+        self.build_treeherder_config = build_treeherder_config
+
+        post_tasks = build.get("post-tasks", {})
+        self._post_tasks_walker(build_task, post_tasks)
+
+    def _post_tasks_walker(self, parent_task, post_tasks):
         r"""Helper function to configure.
 
         :param parent_task: the parent of post_tasks
         :param post_tasks: the list of the dependent tasks
         """
-        if not post_tasks:
-            return []
-
-        tasks = []
         parameters = copy.copy(self.base_post_parameters)
         parameters.update(self._dict2parameters(parent_task, "parent"))
 
-        for post_task_file, params in post_tasks.items():
+        for task_name, params in post_tasks.items():
             if params is None:
                 params = {}
 
@@ -228,23 +287,49 @@ class TaskDependencyManager(object):
             post_parameters.update(self._render_parameters(
                 params.get("parameters", {}), post_parameters))
 
-            for p in params.get('inherit-parameters', []):
+            for p in params.get("inherit-parameters", []):
                 post_parameters.update(self._render_parameters(
                     self.global_parameters[p], post_parameters))
 
-            post_parameters['build_slugid'] = parent_task['taskId']
+            pre_task = self.templates.load(params["task"], {})
+            extra = pre_task["task"]["extra"]
 
-            task = configure_dependent_task(
-                    post_task_file,
-                    post_parameters,
-                    self.slugid(),
-                    self.templates,
-                    self.build_treeherder_config)
+            if "chunks" in extra:
+                total_chunks = extra["chunks"]["total"]
+                if "total_chunks" not in post_parameters:
+                    post_parameters["total_chunks"] = total_chunks
 
-            tasks.append(task)
-            tasks.extend(self._configure_helper(task, params.get('post-tasks', {})))
+                for chunk in range(1, post_parameters["total_chunks"] + 1):
+                    post_parameters["chunk"] = chunk
+                    task = configure_dependent_task(
+                            params["task"],
+                            post_parameters,
+                            self.slugid(),
+                            self.templates,
+                            self.build_treeherder_config)
 
-        return tasks
+                    if self.cmdline_params['revision_hash']:
+                        decorate_task_treeherder_routes(
+                                task, self.treeherder_route)
+
+                    self.graph["tasks"].append(task)
+
+                    define_task = DEFINE_TASK.format(task['task']['workerType'])
+
+                    self.graph['scopes'].append(define_task)
+                    self.graph['scopes'].extend(task.get('scopes', []))
+            else:
+                task = configure_dependent_task(
+                        params["task"],
+                        post_parameters,
+                        self.slugid(),
+                        self.templates,
+                        self.build_treeherder_config)
+
+                self.graph["tasks"].append(task)
+                self.graph['scopes'].extend(task.get('scopes', []))
+
+            self._post_tasks_walker(task, params.get("post-tasks", {}))
 
     @staticmethod
     def _render_parameters(parameters, meta):
@@ -520,14 +605,13 @@ class Graph(object):
                 message = '({}), extra.treeherder.collection must contain one type'
                 raise ValueError(message.fomrat(build['task']))
 
-            task_dep_manager = TaskDependencyManager(
-                                build_task,
-                                build_parameters,
-                                jobs.get('parameters', {}),
-                                templates,
-                                build_treeherder_config)
+            task_manager = TaskGraphManager(graph,
+                                            templates,
+                                            build_parameters,
+                                            jobs.get('parameters', {}),
+                                            params)
 
-            graph['tasks'].extend(task_dep_manager.configure(build.get("post-tasks")))
+            task_manager.configure(build)
 
             for post_build in build['post-build']:
                 # copy over the old parameters to update the template
