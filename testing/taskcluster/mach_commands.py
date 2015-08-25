@@ -537,134 +537,14 @@ class Graph(object):
             'name': 'task graph local'
         }
 
+        task_manager = TaskGraphManager(graph,
+                                        templates,
+                                        parameters,
+                                        jobs.get('parameters', {}),
+                                        params)
+
         for build in job_graph:
-            build_parameters = dict(parameters)
-            build_parameters['build_slugid'] = slugid()
-            build_task = templates.load(build['task'], build_parameters)
-
-            if params['revision_hash']:
-                decorate_task_treeherder_routes(build_task['task'],
-                                                treeherder_route)
-                decorate_task_json_routes(build,
-                                          build_task['task'],
-                                          json_routes,
-                                          build_parameters)
-
-            # Ensure each build graph is valid after construction.
-            taskcluster_graph.build_task.validate(build_task)
-            graph['tasks'].append(build_task)
-
-            test_packages_url, tests_url = None, None
-
-            if 'test_packages' in build_task['task']['extra']['locations']:
-                test_packages_url = ARTIFACT_URL.format(
-                    build_parameters['build_slugid'],
-                    build_task['task']['extra']['locations']['test_packages']
-                )
-
-            if 'tests' in build_task['task']['extra']['locations']:
-                tests_url = ARTIFACT_URL.format(
-                    build_parameters['build_slugid'],
-                    build_task['task']['extra']['locations']['tests']
-                )
-
-            build_url = ARTIFACT_URL.format(
-                build_parameters['build_slugid'],
-                build_task['task']['extra']['locations']['build']
-            )
-
-            # img_url is only necessary for device builds
-            img_url = ARTIFACT_URL.format(
-                build_parameters['build_slugid'],
-                build_task['task']['extra']['locations'].get('img', '')
-            )
-
-            define_task = DEFINE_TASK.format(build_task['task']['workerType'])
-
-            graph['scopes'].append(define_task)
-            graph['scopes'].extend(build_task['task'].get('scopes', []))
-            route_scopes = map(lambda route: 'queue:route:' + route, build_task['task'].get('routes', []))
-            graph['scopes'].extend(route_scopes)
-
-            # Treeherder symbol configuration for the graph required for each
-            # build so tests know which platform they belong to.
-            build_treeherder_config = build_task['task']['extra']['treeherder']
-
-            if 'machine' not in build_treeherder_config:
-                message = '({}), extra.treeherder.machine required for all builds'
-                raise ValueError(message.format(build['task']))
-
-            if 'build' not in build_treeherder_config:
-                build_treeherder_config['build'] = \
-                    build_treeherder_config['machine']
-
-            if 'collection' not in build_treeherder_config:
-                build_treeherder_config['collection'] = { 'opt': True }
-
-            if len(build_treeherder_config['collection'].keys()) != 1:
-                message = '({}), extra.treeherder.collection must contain one type'
-                raise ValueError(message.fomrat(build['task']))
-
-            task_manager = TaskGraphManager(graph,
-                                            templates,
-                                            build_parameters,
-                                            jobs.get('parameters', {}),
-                                            params)
-
             task_manager.configure(build)
-
-            for post_build in build['post-build']:
-                # copy over the old parameters to update the template
-                post_parameters = copy.copy(build_parameters)
-                post_task = configure_dependent_task(post_build['task'],
-                                                     post_parameters,
-                                                     slugid(),
-                                                     templates,
-                                                     build_treeherder_config)
-                graph['tasks'].append(post_task)
-
-            for test in build['dependents']:
-                test = test['allowed_build_tasks'][build['task']]
-                test_parameters = copy.copy(build_parameters)
-                test_parameters['build_url'] = build_url
-                test_parameters['img_url'] = img_url
-                if tests_url:
-                    test_parameters['tests_url'] = tests_url
-                if test_packages_url:
-                    test_parameters['test_packages_url'] = test_packages_url
-                test_definition = templates.load(test['task'], {})['task']
-                chunk_config = test_definition['extra']['chunks']
-
-                # Allow branch configs to override task level chunking...
-                if 'chunks' in test:
-                    chunk_config['total'] = test['chunks']
-
-                test_parameters['total_chunks'] = chunk_config['total']
-
-                for chunk in range(1, chunk_config['total'] + 1):
-                    if 'only_chunks' in test and \
-                        chunk not in test['only_chunks']:
-                        continue
-
-                    test_parameters['chunk'] = chunk
-                    test_task = configure_dependent_task(test['task'],
-                                                         test_parameters,
-                                                         slugid(),
-                                                         templates,
-                                                         build_treeherder_config)
-
-                    if params['revision_hash']:
-                        decorate_task_treeherder_routes(
-                                test_task['task'], treeherder_route)
-
-                    graph['tasks'].append(test_task)
-
-                    define_task = DEFINE_TASK.format(
-                        test_task['task']['workerType']
-                    )
-
-                    graph['scopes'].append(define_task)
-                    graph['scopes'].extend(test_task['task'].get('scopes', []))
 
         graph['scopes'] = list(set(graph['scopes']))
 
