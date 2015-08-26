@@ -20,51 +20,60 @@ builds:
       opt:
         task: tasks/builds/b2g_desktop_opt.yml
         post-tasks:
-          tasks/tests/b2g_build_test.yml:
+          gaia-build:
+            task: tasks/tests/b2g_build_test.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_build_unit.yml:
+          gaia-build-unit:
+            task: tasks/tests/b2g_build_unit.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_gaia_js_integration_tests.yml:
+          gaia-js-integration:
+            task: tasks/tests/b2g_gaia_js_integration_tests.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_linter.yml:
+          gaia-linter:
+            tasks/tests/b2g_linter.yml:
             inherit-parameters:
               - tests
-          tasks/tests/b2g_gaia_ui_test_accessibility.yml:
+          gaia-ui-test-accessibility:
+            task: tasks/tests/b2g_gaia_ui_test_accessibility.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_gaia_ui_test_functional.yml:
+          gaia-ui-test-functional:
+            task: tasks/tests/b2g_gaia_ui_test_functional.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_gaia_ui_test_unit.yml:
+          gaia-ui-test-unit:
+            task: tasks/tests/b2g_gaia_ui_test_unit.yml
+            inherit-parameters: - tests gaia-unit:
+          gaia-unit:
+            task: tasks/tests/b2g_gaia_unit.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_gaia_unit.yml:
+          mochitest-oop:
+            task: tasks/tests/b2g_mochitest_oop.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_gaia_unit.yml:
-            inherit-parameters:
-              - tests
-          tasks/tests/b2g_mochitest_oop.yml:
-            inherit-parameters:
-              - tests
-          tasks/tests/b2g_reftests_sanity_oop.yml:
+          reftest-sanity-oop:
+            task: tasks/tests/b2g_reftests_sanity_oop.yml
             inherit-parameters:
               - tests
       debug:
         task: tasks/builds/b2g_desktop_debug.yml
-          tasks/tests/b2g_gaia_ui_test_accessibility.yml:
-            inherit-parameters:
-              - tests
-          tasks/tests/b2g_gaia_ui_test_functional.yml:
-            inherit-parameters:
-              - tests
-          tasks/tests/b2g_gaia_ui_test_unit.yml:
-            inherit-parameters:
-              - tests
         post-tasks:
+          gaia-ui-test-accessibility:
+            task: tasks/tests/b2g_gaia_ui_test_accessibility.yml
+            inherit-parameters:
+              - tests
+          gaia-ui-test-functional:
+            task: tasks/tests/b2g_gaia_ui_test_functional.yml
+            inherit-parameters:
+              - tests
+          gaia-ui-test-unit:
+            task: tasks/tests/b2g_gaia_ui_test_unit.yml
+            inherit-parameters:
+              - tests
   linux64-mulet:
     platforms:
       - Mulet Linux
@@ -72,22 +81,28 @@ builds:
       opt:
         task: tasks/builds/mulet_linux.yml
         post-tasks:
-          tasks/tests/mulet_build_test.yml:
+          gaia-build:
+            task: tasks/tests/mulet_build_test.yml
             inherit-parameters:
               - tests
-          tasks/tests/mulet_build_unit.yml:
+          gaia-build-unit:
+            task: tasks/tests/mulet_build_unit.yml
             inherit-parameters:
               - tests
-          tasks/tests/mulet_gaia_js_integration_tests.yml:
+          gaia-js-integration:
+            task: tasks/tests/mulet_gaia_js_integration_tests.yml
             inherit-parameters:
               - tests
-          tasks/tests/mulet_linter.yml:
+          gaia-linter:
+            task: tasks/tests/mulet_linter.yml
             inherit-parameters:
               - tests
-          tasks/tests/mulet_mochitests.yml:
+          mochitest:
+            task: tasks/tests/mulet_mochitests.yml
             inherit-parameters:
               - tests
-          tasks/tests/mulet_reftests.yml:
+          reftest:
+            task: tasks/tests/mulet_reftests.yml
             inherit-parameters:
               - tests
   emulator-kk:
@@ -121,37 +136,47 @@ builds:
       opt:
         task: tasks/builds/b2g_emulator_ics_opt.yml
         post-tasks:
-          tasks/tests/b2g_emulator_cpp_unit.yml:
+          cppunit:
+            task: tasks/tests/b2g_emulator_cpp_unit.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_emulator_crashtest.yml:
+          crashtest:
+            task: tasks/tests/b2g_emulator_crashtest.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_emulator_marionette.yml:
+          marionette:
+            task: tasks/tests/b2g_emulator_marionette.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_emulator_marionette_webapi.yml:
+          marionette-webapi:
+            task: tasks/tests/b2g_emulator_marionette_webapi.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_emulator_mochitest.yml:
+          mochitest:
+            task: tasks/tests/b2g_emulator_mochitest.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_emulator_reftest.yml:
+          reftest:
+            task: tasks/tests/b2g_emulator_reftest.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_emulator_xpcshell_chunked.yml:
+          xpcshell:
+            task: tasks/tests/b2g_emulator_xpcshell_chunked.yml
             inherit-parameters:
               - tests
       debug:
         task: tasks/builds/b2g_emulator_ics_debug.yml
         post-tasks:
-          tasks/tests/b2g_emulator_cpp_unit.yml:
+          cppunit:
+            task: tasks/tests/b2g_emulator_cpp_unit.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_emulator_mochitest.yml:
+          mochitest:
+            task: tasks/tests/b2g_emulator_mochitest.yml
             inherit-parameters:
               - tests
-          tasks/tests/b2g_emulator_xpcshell_chunked.yml:
+          xpcshell:
+            task: tasks/tests/b2g_emulator_xpcshell_chunked.yml
             inherit-parameters:
               - tests
   aries:
@@ -183,16 +208,20 @@ builds:
       opt:
         task: tasks/builds/b2g_flame_kk_eng.yml
         post-tasks:
-          tasks/tests/flame_kk_gaia_ui_test_functional.yml:
+          gaia-ui-test-functional:
+            task: tasks/tests/flame_kk_gaia_ui_test_functional.yml
             inherit-parameters:
               - tests
-          tasks/tests/flame_kk_gaia_ui_test_functional_dsds.yml:
+          gaia-ui-test-functional-dsds:
+            task: tasks/tests/flame_kk_gaia_ui_test_functional_dsds.yml
             inherit-parameters:
               - tests
-          tasks/tests/flame_kk_gaia_ui_test_sanity.yml:
+          gaia-ui-test-sanity:
+            task: tasks/tests/flame_kk_gaia_ui_test_sanity.yml
             inherit-parameters:
               - tests
-          tasks/tests/flame_kk_gaia_ui_test_unit.yml:
+          gaia-ui-test-unity:
+            task: tasks/tests/flame_kk_gaia_ui_test_unit.yml
             inherit-parameters:
               - tests
   flame-kk-spark-eng:

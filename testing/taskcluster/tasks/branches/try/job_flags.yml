@@ -127,14 +127,23 @@ builds:
     types:
       opt:
         task: tasks/builds/android_api_11.yml
+        post-tasks:
+          upload-symbols:
+            task: tasks/post-builds/upload_symbols.yml
   linux64:
     platforms:
       - Linux64
     types:
       opt:
         task: tasks/builds/opt_linux64.yml
+        post-tasks:
+          upload-symbols:
+            task: tasks/post-builds/upload_symbols.yml
       debug:
         task: tasks/builds/dbg_linux64.yml
+        post-tasks:
+          upload-symbols:
+            task: tasks/post-builds/upload_symbols.yml
   sm-plain:
     platforms:
       - Linux64
@@ -181,14 +190,6 @@ builds:
         task: tasks/builds/sm_warnaserr.yml
       debug:
         task: tasks/builds/sm_warnaserrdebug.yml
-
-post-build:
-  upload-symbols:
-    allowed_build_tasks:
-      - tasks/builds/opt_linux64.yml
-      - tasks/builds/dbg_linux64.yml
-      - tasks/builds/android_api_11.yml
-    task: tasks/post-builds/upload_symbols.yml
 
 tests:
   cppunit:
