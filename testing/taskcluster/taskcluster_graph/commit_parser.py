@@ -148,14 +148,14 @@ def filter_post_tasks(all_tests, build_platform, tests, platforms):
     if tests is None:
         tests = {}
 
-    post_tasks = build_platform.get("posts-tasks", {})
+    post_tasks = build_platform.get("post-tasks", {})
 
     tests_set = {test["test"] for test in tests}
     platforms_set = set(platforms)
 
     for post_task in post_tasks.keys():
         if post_task in all_tests and post_task not in tests_set:
-                post_tasks.drop(post_task)
+            post_tasks.pop(post_task)
 
     for test_entry in tests:
         if test_entry["test"] in post_tasks:
@@ -163,62 +163,6 @@ def filter_post_tasks(all_tests, build_platform, tests, platforms):
                 post_tasks.drop(test_entry["test"])
             elif "only_chunks" in test_entry:
                 post_tasks[test_entry["test"]] = copy.copy(test_entry["only_chunks"])
-
-def extract_tests_from_platform(test_jobs, build_platform, build_task, tests):
-    '''
-    Build the list of tests from the current build.
-
-    :param dict test_jobs: Entire list of tests (from job_flags.yml).
-    :param dict build_platform: Current build platform.
-    :param str build_task: Build task path.
-    :param list tests: Test flags.
-    :return: List of tasks (ex: [{ task: 'test_task.yml' }]
-    '''
-    if tests is None:
-        return []
-
-    results = []
-
-    for test_entry in tests:
-        if test_entry['test'] not in test_jobs:
-            continue
-
-        test_job = test_jobs[test_entry['test']]
-
-        # Verify that this job can actually be run on this build task...
-        if 'allowed_build_tasks' in test_job and build_task not in test_job['allowed_build_tasks']:
-            continue
-
-        if 'platforms' in test_entry:
-            # The default here is _exclusive_ rather then inclusive so if the
-            # build platform does not specify what platform(s) it belongs to
-            # then we must skip it.
-            if 'platforms' not in build_platform:
-                continue
-
-            # Sorta hack to see if the two lists intersect at all if they do not
-            # then we must skip this set.
-            common_platforms = set(test_entry['platforms']) & set(build_platform['platforms'])
-            if not common_platforms:
-                # Tests should not run on this platform...
-                continue
-
-        # Add the job to the list and ensure to copy it so we don't accidentally
-        # mutate the state of the test job in the future...
-        specific_test_job = copy.deepcopy(test_job)
-
-        # Update the task configuration for all tests in the matrix...
-        for build_name in specific_test_job:
-            for test_task_name in specific_test_job[build_name]:
-                test_task = specific_test_job[build_name][test_task_name]
-                # Copy over the chunk restrictions if given...
-                if 'only_chunks' in test_entry:
-                    test_task['only_chunks'] = \
-                            copy.copy(test_entry['only_chunks'])
-
-        results.append(specific_test_job)
-
-    return results
 
 '''
 This module exists to deal with parsing the options flags that try uses. We do
@@ -286,15 +230,6 @@ def parse_commit(message, jobs):
             else:
                 additional_parameters = {}
 
-            # Generate list of post build tasks that run on this build
-            post_build_jobs = []
-            for job_flag in jobs['flags'].get('post-build', []):
-                job = jobs['post-build'][job_flag]
-                if ('allowed_build_tasks' in job and
-                        build_task not in job['allowed_build_tasks']):
-                    continue
-                post_build_jobs.append(copy.deepcopy(job))
-
             filter_post_tasks(
                 jobs['flags']['tests'],
                 platform_build,
@@ -304,7 +239,6 @@ def parse_commit(message, jobs):
             # Node for this particular build type
             result.append({
                 'task': build_task,
-                'post-build': post_build_jobs,
                 'post-tasks': platform_build.get("post-tasks", {}),
                 'additional-parameters': additional_parameters,
                 'build_name': platform,
