@@ -264,7 +264,7 @@ class TaskGraphManager(object):
             raise ValueError(message.fomrat(build['task']))
 
         self.base_post_parameters = build_parameters
-        self.base_post_parameters.update(self._dict2parameters(build_task, "root"))
+        self.base_post_parameters["root"] = build_task
         self.build_treeherder_config = build_treeherder_config
 
         post_tasks = build.get("post-tasks", {})
@@ -277,7 +277,7 @@ class TaskGraphManager(object):
         :param post_tasks: the list of the dependent tasks
         """
         parameters = copy.copy(self.base_post_parameters)
-        parameters.update(self._dict2parameters(parent_task, "parent"))
+        parameters["parent"] = parent_task
 
         for task_name, params in post_tasks.items():
             if params is None:
@@ -339,44 +339,9 @@ class TaskGraphManager(object):
         :param meta: the meta parameters we are going to use in rendering
         """
         def render(text):
-            return str(pystache.render(pystache.parse(
-                    unicode(text), delimiters=("<%", "%>")), meta))
+            parsed = pystache.parse(unicode(text), delimiters=("<%", "%>"))
+            return str(pystache.render(parsed, meta))
         return {key:render(value) for key, value in parameters.items()}
-
-    @staticmethod
-    def _dict2parameters(d, index=""):
-        r"""Return a parameters form of a dictionary.
-
-        :param d: the target dictionary.
-        :param index: the root index namespace.
-
-        >>> dict2parameters({})
-        {}
-        >>> dict2parameters({'a':'b'})
-        {'a': 'b'}
-        >>> dict2parameters({'a': {'b':'c'}})
-        {'a.b': 'c'}
-        >>> dict2parameters({'a': {'b':'c'}, 'd':'e'})
-        {'d': 'e', 'a.b': 'c'}
-        >>> dict2parameters({'a': {'b': {'c': 'd'}}})
-        {'a.b.c': 'd'}
-        >>> dict2parameters({'a': ['b', 'c']})
-        {'a': ['b', 'c']}
-        >>> dict2parameters({'a': ['b', 'c'], 'd': 'e'})
-        {'a': ['b', 'c'], 'd': 'e'}
-        """
-        def closure(d_, index_):
-            params = {}
-
-            for key, value in d_.items():
-                newkey = (index_ + "." if index_ else "") + str(key)
-                if type(value) is dict:
-                    params.update(closure(value, newkey))
-                else:
-                    params[newkey] = value
-
-            return params
-        return closure(d, index)
 
 @CommandProvider
 class DecisionTask(object):
