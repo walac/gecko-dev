@@ -5,6 +5,13 @@
 $inherits:
   from: tasks/branches/base_job_flags.yml
 
+parameters:
+  tests:
+    build_url: 'https://queue.taskcluster.net/v1/task/<%build_slugid%>/artifacts/<%root.task.extra.locations.build%>'
+    img_url: 'https://queue.taskcluster.net/v1/task/<%build_slugid%>/artifacts/<%root.task.extra.locations.img%>'
+    test_packages_url: 'https://queue.taskcluster.net/v1/task/<%build_slugid%>/artifacts/<%root.task.extra.locations.test_packages%>'
+    test_url: 'https://queue.taskcluster.net/v1/task/<%build_slugid%>/artifacts/<%root.task.extra.locations.tests%>'
+
 builds:
   linux64_gecko:
     platforms:
@@ -12,14 +19,99 @@ builds:
     types:
       opt:
         task: tasks/builds/b2g_desktop_opt.yml
+        post-tasks:
+          gaia-build:
+            task: tasks/tests/b2g_build_test.yml
+            inherit-parameters:
+              - tests
+          gaia-build-unit:
+            task: tasks/tests/b2g_build_unit.yml
+            inherit-parameters:
+              - tests
+          gaia-js-integration:
+            task: tasks/tests/b2g_gaia_js_integration_tests.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 4
+          gaia-linter:
+            task: tasks/tests/b2g_linter.yml
+            inherit-parameters:
+              - tests
+          gaia-unit:
+            task: tasks/tests/b2g_gaia_unit.yml
+            inherit-parameters:
+              - tests
+          gaia-ui-test-accessibility:
+            task: tasks/tests/b2g_gaia_ui_test_accessibility.yml
+            inherit-parameters:
+              - tests
+          gaia-ui-test-functional:
+            task: tasks/tests/b2g_gaia_ui_test_functional.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 3
+          gaia-ui-test-unit:
+            task: tasks/tests/b2g_gaia_ui_test_unit.yml
+            inherit-parameters:
+              - tests
+          gaia-ui-test-oop:
+            task: tasks/tests/b2g_gip_oop.yml
+            inherit-parameters:
+              - tests
+          mochitest-oop:
+            task: tasks/tests/b2g_mochitest_oop.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 1
+          reftest:
+            task: tasks/tests/b2g_reftests.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 10
+          reftest-sanity-oop:
+            task: tasks/tests/b2g_reftests_sanity_oop.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 1
+          xpcshell:
+            task: tasks/tests/b2g_emulator_xpcshell_chunked.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 2
       debug:
         task: tasks/builds/b2g_desktop_debug.yml
+        post-tasks:
+          gaia-js-integration:
+            task: tasks/tests/b2g_gaia_js_integration_tests.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 4
   linux64-mulet:
     platforms:
       - Mulet Linux
     types:
       opt:
         task: tasks/builds/mulet_linux.yml
+        post-tasks:
+          mochitest:
+            task: tasks/tests/mulet_mochitests.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 5
+          reftest:
+            task: tasks/tests/mulet_reftests.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 6
   emulator-kk:
     platforms:
       - b2g
@@ -34,6 +126,13 @@ builds:
     types:
       opt:
         task: tasks/builds/b2g_emulator_jb_opt.yml
+        post-tasks:
+          mochitest:
+            task: tasks/tests/b2g_emulator_mochitest.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 1
       debug:
         task: tasks/builds/b2g_emulator_jb_debug.yml
   emulator:
@@ -42,128 +141,82 @@ builds:
     types:
       opt:
         task: tasks/builds/b2g_emulator_ics_opt.yml
+        post-tasks:
+          cppunit:
+            task: tasks/tests/b2g_emulator_cpp_unit.yml
+            inherit-parameters:
+              - tests
+          crashtest:
+            task: tasks/tests/b2g_emulator_crashtest.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 3
+          jsreftest:
+            task: tasks/tests/b2g_emulator_js_reftest.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 3
+          marionette:
+            task: tasks/tests/b2g_emulator_marionette.yml
+            inherit-parameters:
+              - tests
+          marionette-webapi:
+            task: tasks/tests/b2g_emulator_marionette_webapi.yml
+            inherit-parameters:
+              - tests
+          mochitest:
+            task: tasks/tests/b2g_emulator_mochitest.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 9
+          mochitest-media:
+            task: tasks/tests/b2g_emulator_mochitest_media.yml
+            inherit-parameters:
+              - tests
+          reftest:
+            task: tasks/tests/b2g_emulator_reftest.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 20
+          xpcshell:
+            task: tasks/tests/b2g_emulator_xpcshell.yml
+            inherit-parameters:
+              - tests
       debug:
         task: tasks/builds/b2g_emulator_ics_debug.yml
+        post-tasks:
+          cppunit:
+            task: tasks/tests/b2g_emulator_cpp_unit.yml
+            inherit-parameters:
+              - tests
+          crashtest:
+            task: tasks/tests/b2g_emulator_crashtest.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 3
+          marionette:
+            task: tasks/tests/b2g_emulator_marionette.yml
+            inherit-parameters:
+              - tests
+          marionette-webapi:
+            task: tasks/tests/b2g_emulator_marionette_webapi.yml
+            inherit-parameters:
+              - tests
+          mochitest:
+            task: tasks/tests/b2g_emulator_mochitest.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 20
+          reftest:
+            task: tasks/tests/b2g_emulator_reftest.yml
+            inherit-parameters:
+              - tests
+            parameters:
+              total_chunks: 10
 
-tests:
-  cppunit:
-    allowed_build_tasks:
-      tasks/builds/b2g_emulator_ics_opt.yml:
-        task: tasks/tests/b2g_emulator_cpp_unit.yml
-      tasks/builds/b2g_emulator_ics_debug.yml:
-        task: tasks/tests/b2g_emulator_cpp_unit.yml
-  crashtest:
-    allowed_build_tasks:
-      tasks/builds/b2g_emulator_ics_opt.yml:
-        task: tasks/tests/b2g_emulator_crashtest.yml
-        chunks: 3
-      tasks/builds/b2g_emulator_ics_debug.yml:
-        task: tasks/tests/b2g_emulator_crashtest.yml
-        chunks: 3
-  gaia-build:
-    allowed_build_tasks:
-      tasks/builds/b2g_desktop_opt.yml:
-        task: tasks/tests/b2g_build_test.yml
-  gaia-build-unit:
-    allowed_build_tasks:
-      tasks/builds/b2g_desktop_opt.yml:
-        task: tasks/tests/b2g_build_unit.yml
-  gaia-js-integration:
-    allowed_build_tasks:
-      tasks/builds/b2g_desktop_opt.yml:
-        task: tasks/tests/b2g_gaia_js_integration_tests.yml
-        chunks: 4
-      tasks/builds/b2g_desktop_debug.yml:
-        task: tasks/tests/b2g_gaia_js_integration_tests.yml
-        chunks: 4
-  gaia-linter:
-    allowed_build_tasks:
-      tasks/builds/b2g_desktop_opt.yml:
-        task: tasks/tests/b2g_linter.yml
-  gaia-unit:
-    allowed_build_tasks:
-      tasks/builds/b2g_desktop_opt.yml:
-        task: tasks/tests/b2g_gaia_unit.yml
-  gaia-ui-test-accessibility:
-    allowed_build_tasks:
-      tasks/builds/b2g_desktop_opt.yml:
-        task: tasks/tests/b2g_gaia_ui_test_accessibility.yml
-  gaia-ui-test-functional:
-    allowed_build_tasks:
-      tasks/builds/b2g_desktop_opt.yml:
-        task: tasks/tests/b2g_gaia_ui_test_functional.yml
-        chunks: 3
-  gaia-ui-test-unit:
-    allowed_build_tasks:
-      tasks/builds/b2g_desktop_opt.yml:
-        task: tasks/tests/b2g_gaia_ui_test_unit.yml
-  gaia-ui-test-oop:
-    allowed_build_tasks:
-      tasks/builds/b2g_desktop_opt.yml:
-        task: tasks/tests/b2g_gip_oop.yml
-  jsreftest:
-    allowed_build_tasks:
-      tasks/builds/b2g_emulator_ics_opt.yml:
-        task: tasks/tests/b2g_emulator_js_reftest.yml
-        chunks: 3
-  marionette:
-    allowed_build_tasks:
-      tasks/builds/b2g_emulator_ics_opt.yml:
-        task: tasks/tests/b2g_emulator_marionette.yml
-      tasks/builds/b2g_emulator_ics_debug.yml:
-        task: tasks/tests/b2g_emulator_marionette.yml
-  marionette-webapi:
-    allowed_build_tasks:
-      tasks/builds/b2g_emulator_ics_opt.yml:
-        task: tasks/tests/b2g_emulator_marionette_webapi.yml
-      tasks/builds/b2g_emulator_ics_debug.yml:
-        task: tasks/tests/b2g_emulator_marionette_webapi.yml
-  mochitest:
-    allowed_build_tasks:
-      tasks/builds/mulet_linux.yml:
-        task: tasks/tests/mulet_mochitests.yml
-        chunks: 5
-      tasks/builds/b2g_emulator_ics_opt.yml:
-        task: tasks/tests/b2g_emulator_mochitest.yml
-        chunks: 9
-      tasks/builds/b2g_emulator_ics_debug.yml:
-        task: tasks/tests/b2g_emulator_mochitest.yml
-        chunks: 20
-      tasks/builds/b2g_emulator_jb_opt.yml:
-        task: tasks/tests/b2g_emulator_mochitest.yml
-        chunks: 1
-  mochitest-media:
-    allowed_build_tasks:
-      tasks/builds/b2g_emulator_ics_opt.yml:
-        task: tasks/tests/b2g_emulator_mochitest_media.yml
-  mochitest-oop:
-    allowed_build_tasks:
-      tasks/builds/b2g_desktop_opt.yml:
-        task: tasks/tests/b2g_mochitest_oop.yml
-        chunks: 1
-  reftest:
-    allowed_build_tasks:
-      tasks/builds/b2g_desktop_opt.yml:
-        task: tasks/tests/b2g_reftests.yml
-        chunks: 10
-      tasks/builds/mulet_linux.yml:
-        task: tasks/tests/mulet_reftests.yml
-        chunks: 6
-      tasks/builds/b2g_emulator_ics_opt.yml:
-        task: tasks/tests/b2g_emulator_reftest.yml
-        chunks: 20
-      tasks/builds/b2g_emulator_ics_debug.yml:
-        task: tasks/tests/b2g_emulator_reftest.yml
-        chunks: 10
-  reftest-sanity-oop:
-    allowed_build_tasks:
-      tasks/builds/b2g_desktop_opt.yml:
-        task: tasks/tests/b2g_reftests_sanity_oop.yml
-        chunks: 1
-  xpcshell:
-    allowed_build_tasks:
-      tasks/builds/b2g_emulator_ics_opt.yml:
-        task: tasks/tests/b2g_emulator_xpcshell.yml
-      tasks/builds/b2g_emulator_ics_debug.yml:
-        task: tasks/tests/b2g_emulator_xpcshell_chunked.yml
-        chunks: 2
