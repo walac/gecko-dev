@@ -11,6 +11,7 @@ import json
 import copy
 import sys
 import pystache
+from collections import defaultdict
 
 from mach.decorators import (
     CommandArgument,
@@ -268,6 +269,7 @@ class TaskGraphManager(object):
         self.build_treeherder_config = build_treeherder_config
 
         post_tasks = build.get("post-tasks", {})
+        self.post_tasks_map = defaultdict(list)
         self._post_tasks_walker(build_task, post_tasks)
 
     def _post_tasks_walker(self, parent_task, post_tasks):
@@ -279,19 +281,19 @@ class TaskGraphManager(object):
         parameters = copy.copy(self.base_post_parameters)
         parameters["parent"] = parent_task
 
-        for task_name, params in post_tasks.items():
-            if params is None:
-                params = {}
+        for task_name, task_parameters in post_tasks.items():
+            if task_parameters is None:
+                task_parameters = {}
 
             post_parameters = copy.copy(parameters)
             post_parameters.update(self._render_parameters(
-                params.get("parameters", {}), post_parameters))
+                task_parameters.get("parameters", {}), post_parameters))
 
-            for p in params.get("inherit-parameters", []):
+            for p in task_parameters.get("inherit-parameters", []):
                 post_parameters.update(self._render_parameters(
                     self.global_parameters[p], post_parameters))
 
-            pre_task = self.templates.load(params["task"], {})
+            pre_task = self.templates.load(task_parameters["task"], {})
             extra = pre_task["task"]["extra"]
 
             if "chunks" in extra:
@@ -301,35 +303,42 @@ class TaskGraphManager(object):
 
                 for chunk in range(1, post_parameters["total_chunks"] + 1):
                     post_parameters["chunk"] = chunk
-                    task = configure_dependent_task(
-                            params["task"],
-                            post_parameters,
-                            self.slugid(),
-                            self.templates,
-                            self.build_treeherder_config)
-
-                    if self.cmdline_params['revision_hash']:
-                        decorate_task_treeherder_routes(
-                                task, self.treeherder_route)
-
-                    self.graph["tasks"].append(task)
-
-                    define_task = DEFINE_TASK.format(task['task']['workerType'])
-
-                    self.graph['scopes'].append(define_task)
-                    self.graph['scopes'].extend(task.get('scopes', []))
+                    task = self.create_dependent_task(task_name, task_parameters, post_parameters)
             else:
-                task = configure_dependent_task(
-                        params["task"],
-                        post_parameters,
-                        self.slugid(),
-                        self.templates,
-                        self.build_treeherder_config)
+                task = self.create_dependent_task(task_name, task_parameters, post_parameters)
 
-                self.graph["tasks"].append(task)
-                self.graph['scopes'].extend(task.get('scopes', []))
+            self._post_tasks_walker(task, task_parameters.get("post-tasks", {}))
 
-            self._post_tasks_walker(task, params.get("post-tasks", {}))
+    def create_dependent_task(self, task_name, task_cfg, parameters):
+        r"""Create a new dependent task.
+
+        :param task_name: the name of the task.
+        :param task_cfg: the post-task configuration parameters.
+        :param parameters: task paramaters.
+        :return: the task definition.
+        """
+        slugid = self.slugid()
+        task = configure_dependent_task(
+                task_cfg["task"],
+                parameters,
+                slugid,
+                self.templates,
+                self.build_treeherder_config)
+
+        for dep in task_cfg.get("additional-dependencies", []):
+            task["requires"].extend(self.post_tasks_map.get(dep, []))
+
+        if self.cmdline_params['revision_hash']:
+            decorate_task_treeherder_routes(
+                    task, self.treeherder_route)
+
+        self.graph["tasks"].append(task)
+        self.post_tasks_map[task_name].append(slugid)
+
+        define_task = DEFINE_TASK.format(task['task']['workerType'])
+        self.graph['scopes'].append(define_task)
+        self.graph['scopes'].extend(task.get('scopes', []))
+        return task
 
     @staticmethod
     def _render_parameters(parameters, meta):
