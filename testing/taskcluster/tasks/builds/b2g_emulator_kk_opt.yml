@@ -28,3 +28,4 @@ task:
       workspace-emulator-kk-opt: /home/worker/workspace
     env:
       TARGET: 'emulator-kk'
+      TOOLTOOL_MANIFEST: 'b2g/config/emulator-kk/releng-emulator-kk.tt'

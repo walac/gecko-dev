@@ -25,3 +25,4 @@ task:
       workspace-emulator-l-opt: /home/worker/workspace
     env:
       TARGET: 'emulator-l'
+      TOOLTOOL_MANIFEST: 'b2g/config/emulator-l/releng-emulator-l.tt'

@@ -27,4 +27,5 @@ task:
       workspace-emulator-kk-debug: /home/worker/workspace
     env:
       TARGET: 'emulator-kk'
+      TOOLTOOL_MANIFEST: 'b2g/config/emulator-kk/releng-emulator-kk.tt'
       B2G_DEBUG: 1

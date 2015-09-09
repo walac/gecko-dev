@@ -25,3 +25,4 @@ task:
       workspace-emulator-jb-opt: /home/worker/workspace
     env:
       TARGET: 'emulator-jb'
+      TOOLTOOL_MANIFEST: 'b2g/config/emulator-jb/releng-emulator-jb.tt'
