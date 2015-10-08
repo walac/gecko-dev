@@ -6,7 +6,10 @@ PATH=$DIRNAME:$PATH
 
 WORKSPACE=$1
 
-gecko_objdir=/home/worker/objdir-gecko/objdir
+gecko_objdir=/home/worker/objdir/gecko
+out_objdir=/home/worker/objdir/out
+
+mkdir -p $out_objdir
 
 ### Check that require variables are defined
 test -d $WORKSPACE
@@ -21,6 +24,14 @@ test $VARIANT
 # Figure out where the remote manifest is so we can use caches for it.
 MANIFEST=$(repository-url.py $GECKO_HEAD_REPOSITORY $GECKO_HEAD_REV b2g/config/$TARGET/sources.xml)
 tc-vcs repo-checkout $WORKSPACE/B2G https://git.mozilla.org/b2g/B2G.git $MANIFEST
+
+# Remove out/ dir from old builds
+if [ -d $WORKSPACE/B2G/out -a ! -h $WORKSPACE/B2G/out ]; then
+  rm -rf $WORKSPACE/B2G/out
+fi
+
+# Create a symbolic link to the volume mounted out/ object dir
+ln -s $out_objdir $WORKSPACE/B2G/out
 
 # Ensure symlink has been created to gecko...
 rm -f $WORKSPACE/B2G/gecko

@@ -35,7 +35,18 @@ fi
 
 rm -rf $WORKSPACE/B2G/out/target/product/generic_x86/tests/
 
-gecko_objdir=/home/worker/objdir-gecko/objdir
+gecko_objdir=/home/worker/objdir/gecko
+out_objdir=/home/worker/objdir/out
+
+mkdir -p $out_objdir
+
+# Remove out/ dir from old builds
+if [ -d $WORKSPACE/B2G/out -a ! -h $WORKSPACE/B2G/out ]; then
+  rm -rf $WORKSPACE/B2G/out
+fi
+
+# Create a symbolic link to the volume mounted out/ object dir
+ln -s $out_objdir $WORKSPACE/B2G/out
 
 $WORKSPACE/gecko/testing/mozharness/scripts/b2g_build.py \
   --config b2g/taskcluster-emulator.py \

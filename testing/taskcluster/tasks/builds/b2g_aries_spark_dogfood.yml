@@ -8,11 +8,11 @@ task:
     name: '[TC] B2G Aries Dogfood'
   scopes:
     - 'docker-worker:cache:build-aries-spark-dogfood'
-    - 'docker-worker:cache:build-aries-spark-dogfood-objdir-gecko-{{project}}'
+    - 'docker-worker:cache:build-aries-spark-dogfood-objdir-{{project}}'
   payload:
     cache:
       build-aries-spark-dogfood: /home/worker/workspace
-      build-aries-spark-dogfood-objdir-gecko-{{project}}: /home/worker/objdir-gecko
+      build-aries-spark-dogfood-objdir-{{project}}: /home/worker/objdir
     env:
       VARIANT: userdebug
       DOGFOOD: 1
