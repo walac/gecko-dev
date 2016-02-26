@@ -1,0 +1,36 @@
+$inherits:
+  from: 'tasks/build.yml'
+  variables:
+    build_product: 'demo'
+    build_name: 'foo'
+    build_type: 'opt'
+task:
+  workerType: flame-kk
+  metadata:
+      name: '[TC] Foo Build'
+      description: 'Foo Build'
+
+  extra:
+    treeherder:
+      groupSymbol: Foo
+      groupName: Submitted by taskcluster
+      symbol: B
+      machine:
+        platform: b2g-device-image
+    treeherderEnv:
+      - staging
+    locations:
+      build: 'public/build/foo.txt'
+      tests: 'public/build/foo.txt'
+  payload:
+    image:
+      type: 'task-image'
+      path: 'public/image.tar'
+      taskId: '{{#task_id_for_image}}builder{{/task_id_for_image}}'
+
+    command:
+      - /bin/bash
+      - -c
+      - >
+        mkdir artifacts && echo test > artifacts/foo.txt
+

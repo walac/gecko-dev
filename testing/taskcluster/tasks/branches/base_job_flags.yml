@@ -109,6 +109,7 @@ flags:
     - linux64-st-an
     - macosx64
     - macosx64-st-an
+    - foo # -p foo
 
   tests:
     - cppunit
@@ -159,4 +160,5 @@ flags:
     - web-platform-tests-reftests
     - web-platform-tests-reftests-e10s
     - xpcshell
+    - foo # -u foo
 

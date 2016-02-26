@@ -1,0 +1,30 @@
+$inherits:
+  from: 'tasks/test.yml'
+task:
+  metadata:
+    name: '[TC] FOO TEST'
+    description: Foo Test
+
+  workerType: flame-kk
+
+  payload:
+    artifacts:
+      'public/build':
+        type: directory
+        path: '/home/worker/artifacts/'
+        expires: '{{#from_now}}1 year{{/from_now}}'
+
+    command:
+      - /bin/bash
+      - -c
+      - >
+        wget {{build_url}} && grep test foo.txt
+
+  extra:
+    treeherderEnv:
+      - staging
+    treeherder:
+      groupName: Foo Test
+      symbol: 'Foo'
+      productName: demo
+
