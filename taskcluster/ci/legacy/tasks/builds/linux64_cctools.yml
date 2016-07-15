@@ -1,0 +1,53 @@
+$inherits:
+  from: 'tasks/builds/firefox_docker_base.yml'
+  variables:
+    build_name: 'linux64-cctools'
+    build_type: 'opt'
+task:
+  metadata:
+    name: '[TC] cctools'
+    description: 'cctools'
+
+  workerType: opt-linux64
+
+  routes:
+    - 'index.buildbot.branches.{{project}}.cctools'
+    - 'index.buildbot.revisions.{{head_rev}}.{{project}}.cctools'
+
+  scopes:
+    - 'docker-worker:cache:tooltool-cache'
+
+  payload:
+    cache:
+      tooltool-cache: '/home/worker/tooltool-cache'
+
+    env:
+      MOZHARNESS_DISABLE: 'true'
+      TOOLS_DISABLE: 'true'
+      TOOLTOOL_CACHE: '/home/worker/tooltool-cache'
+      CROSSTOOL_NG_REV: 'crosstool-ng-1.19.0'
+
+    maxRunTime: 36000
+
+    command: ["/bin/bash", "-c", "cd /home/worker/ && ./bin/checkout-sources.sh && ./workspace/build/src/taskcluster/scripts/misc/build-cctools.sh" ]
+
+    artifacts:
+      'public/cctools.tar.gz':
+        type: file
+        path: '/home/worker/workspace/artifacts/cctools.tar.gz'
+        expires:
+          relative-datestamp: "1 year"
+
+  extra:
+    treeherderEnv:
+      - staging
+      - production
+    treeherder:
+      groupSymbol: Cc
+      groupName: Compilers, submitted by taskcluster
+      symbol: cctools
+      machine:
+        platform: linux64
+    locations:
+        build: null
+        tests: null

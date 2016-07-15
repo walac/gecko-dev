@@ -28,5 +28,8 @@ ADD           buildprops.json /home/worker/
 RUN wget -O /builds/tooltool.py https://raw.githubusercontent.com/mozilla/build-tooltool/master/tooltool.py
 RUN chmod +x /builds/tooltool.py
 
+# This is to build cctools
+RUN yum install -y texinfo
+
 # Set a default command useful for debugging
 CMD ["/bin/bash", "--login"]
