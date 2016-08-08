@@ -31,3 +31,10 @@ linux64-ccov/opt:
 linux64-jsdcov/opt:
     build-platform: linux64-jsdcov/opt
     test-set: jsdcov-code-coverage-tests
+
+osx-10-10/debug:
+    build-platform: macosx64/debug
+    test-set: macosx64-tests
+# osx-10-10/opt:
+#    build-platform: macosx64/opt
+#    test-set: macosx64-tests

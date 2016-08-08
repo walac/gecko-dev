@@ -21,7 +21,12 @@ transforms = TransformSequence()
 @transforms.add
 def set_defaults(config, tests):
     for test in tests:
-        test['mozharness']['build-artifact-name'] = 'public/build/target.tar.bz2'
+        build_platform = test['build-platform']
+        if build_platform.startswith('macos'):
+            target = 'target.dmg'
+        else:
+            target = 'target.tar.bz2'
+        test['mozharness']['build-artifact-name'] = 'public/build/' + target
         # all desktop tests want to run the bits that require node
         test['mozharness']['set-moz-node-path'] = True
         yield test

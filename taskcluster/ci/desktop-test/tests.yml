@@ -15,11 +15,9 @@ cppunit:
         no-read-buildbot-config: true
         config:
             by-test-platform:
-                # Coming soon:
-                # win.*:
-                #    - unittests/win_unittest.py
-                #    - remove_executables.py
-                # ...
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -36,6 +34,9 @@ crashtest:
         no-read-buildbot-config: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -53,8 +54,8 @@ external-media-tests:
         script: firefox_media_tests_buildbot.py
         no-read-buildbot-config: true
         config:
-            - mediatests/buildbot_posix_config.py
             - remove_executables.py
+            - mediatests/buildbot_posix_config.py
 
 firefox-ui-functional-local:
     description: "Firefox-ui-tests functional run"
@@ -66,10 +67,11 @@ firefox-ui-functional-local:
     mozharness:
         script: firefox_ui_tests/functional.py
         config:
-            - firefox_ui_tests/taskcluster.py
             - remove_executables.py
+            - firefox_ui_tests/taskcluster.py
         extra-options:
-            - "--tag local"
+            - "--tag"
+            - "local"
 
 firefox-ui-functional-remote:
     description: "Firefox-ui-tests functional run"
@@ -81,10 +83,11 @@ firefox-ui-functional-remote:
     mozharness:
         script: firefox_ui_tests/functional.py
         config:
-            - firefox_ui_tests/taskcluster.py
             - remove_executables.py
+            - firefox_ui_tests/taskcluster.py
         extra-options:
-            - "--tag remote"
+            - "--tag"
+            - "remote"
 
 gtest:
     description: "GTests run"
@@ -97,6 +100,9 @@ gtest:
         no-read-buildbot-config: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -114,6 +120,9 @@ jittests:
         no-read-buildbot-config: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -130,6 +139,9 @@ jsreftest:
         no-read-buildbot-config: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -145,15 +157,18 @@ marionette:
         script: marionette.py
         no-read-buildbot-config: true
         config:
-            - marionette/prod_config.py
             - remove_executables.py
+            - marionette/prod_config.py
 
 mochitest:
     description: "Mochitest plain run"
     suite: mochitest/plain-chunked
     treeherder-symbol: tc-M()
     loopback-video: true
-    chunks: 10
+    chunks:
+      by-test-platform:
+        osx-.*: 5
+        default: 10
     max-run-time: 5400
     mozharness:
         script: desktop_unittest.py
@@ -161,6 +176,9 @@ mochitest:
         chunked: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -182,6 +200,9 @@ mochitest-a11y:
         chunked: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -221,6 +242,9 @@ mochitest-browser-chrome:
         no-read-buildbot-config: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -246,13 +270,19 @@ mochitest-chrome:
     suite: mochitest/chrome
     treeherder-symbol: tc-M(c)
     loopback-video: true
-    chunks: 3
+    chunks:
+      by-test-platform:
+        osx-.*: 1
+        default: 3
     e10s: false
     mozharness:
         script: desktop_unittest.py
         no-read-buildbot-config: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -271,6 +301,9 @@ mochitest-clipboard:
         chunked: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -294,6 +327,9 @@ mochitest-devtools-chrome:
         no-read-buildbot-config: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -318,6 +354,9 @@ mochitest-gpu:
         chunked: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -337,6 +376,9 @@ mochitest-jetpack:
         chunked: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -357,11 +399,36 @@ mochitest-media:
         chunked: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
         extra-options:
             - --mochitest-suite=mochitest-media
+
+mochitest-other:
+    description: "Mochitest other"
+    suite: mochitest/other
+    treeherder-symbol: tc-M(oth)
+    e10s: false
+    max-run-time: 5400
+    mozharness:
+        script: mozharness/scripts/desktop_unittest.py
+        no-read-buildbot-config: true
+        include-blob-upload-branch: true
+        chunked: true
+        config:
+          by-test-platform:
+            osx-.*:
+              - remove_executables.py
+              - unittests/mac_unittest.py
+            default:
+              - unittests/linux_unittest.py
+              - remove_executables.py
+        extra-options:
+            - --mochitest-suite=chrome,a11y
 
 mochitest-webgl:
     description: "Mochitest webgl run"
@@ -375,6 +442,9 @@ mochitest-webgl:
         chunked: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -387,12 +457,18 @@ reftest:
     description: "Reftest run"
     suite: reftest/reftest
     treeherder-symbol: tc-R(R)
-    chunks: 8
+    chunks:
+      by-test-platform:
+        osx-.*: 1
+        default: 8
     mozharness:
         script: desktop_unittest.py
         no-read-buildbot-config: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -403,12 +479,18 @@ reftest-no-accel:
     description: "Reftest not accelerated run"
     suite: reftest/reftest-no-accel
     treeherder-symbol: tc-R(Ru)
-    chunks: 8
+    chunks:
+      by-test-platform:
+        osx-.*: 1
+        default: 8
     mozharness:
         script: desktop_unittest.py
         no-read-buildbot-config: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
@@ -419,7 +501,10 @@ web-platform-tests:
     description: "Web platform test run"
     suite: web-platform-tests
     treeherder-symbol: tc-W()
-    chunks: 12
+    chunks:
+      by-test-platform:
+        osx-.*: 5
+        default: 12
     max-run-time: 7200
     instance-size: xlarge
     docker-image: {"in-tree": "desktop1604-test"}
@@ -428,8 +513,8 @@ web-platform-tests:
         script: web_platform_tests.py
         no-read-buildbot-config: true
         config:
-            - web_platform_tests/prod_config.py
             - remove_executables.py
+            - web_platform_tests/prod_config.py
         extra-options:
             - --test-type=testharness
 
@@ -445,8 +530,8 @@ web-platform-tests-reftests:
         script: web_platform_tests.py
         no-read-buildbot-config: true
         config:
-            - web_platform_tests/prod_config.py
             - remove_executables.py
+            - web_platform_tests/prod_config.py
         extra-options:
             - --test-type=reftest
 
@@ -473,6 +558,7 @@ xpcshell:
     treeherder-symbol: tc-X()
     chunks:
         by-test-platform:
+            osx-.*: 1
             linux64/debug: 10
             default: 8
     max-run-time: 5400
@@ -482,6 +568,9 @@ xpcshell:
         no-read-buildbot-config: true
         config:
             by-test-platform:
+                osx-.*:
+                    - remove_executables.py
+                    - unittests/mac_unittest.py
                 default:
                     - unittests/linux_unittest.py
                     - remove_executables.py
