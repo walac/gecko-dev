@@ -149,8 +149,7 @@ def docker_worker_setup(config, test, taskdesc):
 
     worker['artifacts'] = [{
         'name': prefix,
-        'path': path,
-        'type': 'directory',
+        'path': path, 'type': 'directory',
     } for (prefix, path) in ARTIFACTS]
 
     worker['caches'] = [{
@@ -200,6 +199,76 @@ def docker_worker_setup(config, test, taskdesc):
         {"task-reference": "--installer-url=" + installer_url},
         {"task-reference": "--test-packages-url=" + test_packages_url},
     ])
+    command.extend(mozharness.get('extra-options', []))
+
+    # TODO: remove the need for run['chunked']
+    if mozharness.get('chunked') or test['chunks'] > 1:
+        # Implement mozharness['chunking-args'], modifying command in place
+        if mozharness['chunking-args'] == 'this-chunk':
+            command.append('--total-chunk={}'.format(test['chunks']))
+            command.append('--this-chunk={}'.format(test['this-chunk']))
+        elif mozharness['chunking-args'] == 'test-suite-suffix':
+            suffix = mozharness['chunk-suffix'].replace('<CHUNK>', str(test['this-chunk']))
+            for i, c in enumerate(command):
+                if isinstance(c, basestring) and c.startswith('--test-suite'):
+                    command[i] += suffix
+
+    if 'download-symbols' in mozharness:
+        download_symbols = mozharness['download-symbols']
+        download_symbols = {True: 'true', False: 'false'}.get(download_symbols, download_symbols)
+        command.append('--download-symbols=' + download_symbols)
+
+@worker_setup_function("macosx-engine")
+def macosx_engine_setup(config, test, taskdesc):
+    mozharness = test['mozharness']
+
+    installer_url = ARTIFACT_URL.format('<build>', mozharness['build-artifact-name'])
+    test_packages_url = ARTIFACT_URL.format('<build>',
+                                            'public/build/target.test_packages.json')
+    mozharness_url = ARTIFACT_URL.format('<build>',
+                                         'public/build/mozharness.zip')
+
+    # taskdesc['worker-type'] = {
+    #     'default': 'aws-provisioner-v1/macosx-test',
+    #     'large': 'aws-provisioner-v1/macosx-test-large',
+    #     'xlarge': 'aws-provisioner-v1/macosx-test-xlarge',
+    # }[test['instance-size']]
+
+    taskdesk['worker-type'] = 'test-dummy-provisioner/dummy-worker-tc'
+
+    worker = taskdesc['worker'] = {}
+    worker['implementation'] = test['worker-implementation']
+
+    worker['artifacts'] = [{
+        'name': prefix,
+        'path': path,
+        'type': 'directory',
+    } for (prefix, path) in ARTIFACTS]
+
+    env = worker['env'] = {
+        'GECKO_HEAD_REPOSITORY': config.params['head_repository'],
+        'GECKO_HEAD_REV': config.params['head_rev'],
+        'MOZHARNESS_CONFIG': ' '.join(mozharness['config']),
+        'MOZHARNESS_SCRIPT': mozharness['script'],
+        'MOZHARNESS_URL': {'task-reference': mozharness_url},
+        'MOZILLA_BUILD_URL': {'task-reference': installer_url},
+    }
+
+    # assemble the command line
+
+    worker['link'] = '{}/raw-file/{}/taskcluster/scripts/test_packages_url/test-macosx.sh'.format(
+        config.params['head_repository'], config.params['head_rev']
+    )
+
+    command = worker['command'] = ["./test-macosx.sh"]
+    if mozharness.get('no-read-buildbot-config'):
+        command.append("--no-read-buildbot-config")
+    command.extend([
+        {"task-reference": "--installer-url=" + installer_url},
+        {"task-reference": "--test-packages-url=" + test_packages_url},
+    ])
+    if mozharness_url.get('blob-upload-branch'):
+        command.append('--blob-upload-branch=' + config.params['project'])
     command.extend(mozharness.get('extra-options', []))
 
     # TODO: remove the need for run['chunked']

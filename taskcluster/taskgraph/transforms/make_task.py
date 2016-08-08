@@ -162,6 +162,35 @@ task_description_schema = Schema({
             'product': basestring,
             Extra: basestring,  # additional properties are allowed
         },
+    }, {
+        'implementation': 'macosx-engine',
+
+        'engine': {
+            # A link for an executable to download
+            'link': basestring,
+
+            # the command to run
+            'command': [basestring],
+
+            # environment variables
+            'env': {basestring: taskref_or_string},
+
+            # artifacts to extract from the task image after completion
+            'artifacts': [{
+                # type of artifact -- simple file, or recursive directory
+                'type': Any('file', 'directory'),
+
+                # task image path from which to read artifact
+                'path': basestring,
+
+                # name of the produced artifact (root of the names for
+                # type=directory)
+                'name': basestring,
+
+                # relative expiration date
+                'expires': basestring
+            }],
+        }
     }),
 
 })
@@ -282,6 +311,24 @@ def build_generic_worker_payload(config, task, task_def):
         'maxRunTime': worker['max-run-time'],
     }
 
+@payload_builder('macosx-engine')
+def build_macosx_engine_payload(config, task, task_def):
+    worker = task['worker']
+    artifacts = map(lambda artifact: {
+        'name': artifact['name'],
+        'path': artifact['path'],
+        'type': artifact['type'],
+        'expires': task_def['expires']
+    }, worker['artifacts']);
+
+    task_def['payload'] = {
+        'engine': {
+            'link': worker['link'],
+            'command': worker['command'],
+            'env': worker['env'],
+            'artifacts': artifacts
+        }
+    }
 
 transforms = TransformSequence()
 

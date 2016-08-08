@@ -54,3 +54,28 @@ asan-tests:
     - reftest
     - reftest-no-accel
     - xpcshell
+
+mscosx64-tests:
+    - cppunit
+    - crashtest
+    - external-media-tests
+    - firefox-ui-functional-local
+    - firefox-ui-functional-remote
+    - gtest
+    - jsreftest
+    - marionette
+    - mochitest
+    - mochitest-a11y
+    - mochitest-browser-chrome
+    - mochitest-chrome
+    - mochitest-clipboard
+    - mochitest-devtools-chrome
+    - mochitest-gpu
+    - mochitest-jetpack
+    - mochitest-media
+    - mochitest-other
+    - mochitest-webgl
+    - reftest
+    - web-platform-tests
+    - web-platform-tests-reftests
+    - xpcshell

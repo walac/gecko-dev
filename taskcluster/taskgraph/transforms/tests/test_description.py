@@ -143,6 +143,9 @@ test_description_schema = Schema({
         # buildbot config file, so tell it not to do so in TaskCluster
         Required('no-read-buildbot-config', default=False): bool,
 
+        # The branch name for the binary upload server.
+        Optional('blob-upload-branch'): bool,
+
         # The setting for --download-symbols (if omitted, the option will not
         # be passed to mozharness)
         Optional('download-symbols'): Any(True, False, 'ondemand'),
