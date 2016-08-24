@@ -18,9 +18,13 @@ fi
 ac_add_app_options i386 --with-unify-dist=../x86_64/dist
 ac_add_app_options x86_64 --with-unify-dist=../i386/dist
 
-ac_add_options --with-macos-sdk=/Developer/SDKs/MacOSX10.7.sdk
+if test `uname -s` != Linux; then
+  ac_add_options --with-macos-sdk=/Developer/SDKs/MacOSX10.7.sdk
+fi
 
-. $topsrcdir/build/macosx/mozconfig.common
+if test `uname -s` != Linux; then
+  . $topsrcdir/build/macosx/mozconfig.common
+fi
 
 # $MOZ_BUILD_APP is only defined when sourced by configure.  That's not a
 # problem, because the variables it affects only need to be set for
@@ -30,7 +34,7 @@ if test "$MOZ_BUILD_APP" = "i386" -o "$MOZ_BUILD_APP" = "x86_64"; then
   TARGET_CPU=$MOZ_BUILD_APP
 
   # $HOST_CXX is presently unused.  $HOST_CC will only be used during a cross
-  # compile.
+   compile.
   HOST_CC=$CC
   HOST_CXX=$CXX
 
@@ -58,3 +62,8 @@ if test "$MOZ_BUILD_APP" = "i386" -o "$MOZ_BUILD_APP" = "x86_64"; then
   export CC CXX HOST_CC HOST_CXX RANLIB AR AS LD STRIP OTOOL
 fi
 fi
+
+if test `uname -s` = Linux; then
+  . $topsrcdir/build/macosx/cross-mozconfig.common
+fi
+
