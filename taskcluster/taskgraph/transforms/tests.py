@@ -36,6 +36,7 @@ import copy
 import logging
 import os.path
 import re
+import itertools
 
 ARTIFACT_URL = 'https://queue.taskcluster.net/v1/task/{}/artifacts/{}'
 WORKER_TYPE = {
@@ -550,6 +551,38 @@ def set_retry_exit_status(config, tests):
        scripts to indicate a transient failure that should be retried."""
     for test in tests:
         test['retry-exit-status'] = 4
+        yield test
+
+
+@transforms.add
+def set_env(config, tests):
+    """Set extra environment variables from try command line."""
+    for test in tests:
+        if test.attributes['env']:
+            test['mozharness']['extra-options'].extend(
+                itertools.chain(
+                    ['--setenv', i] for i in test.attributes['env']
+                )
+            )
+        yield test
+
+
+@transforms.add
+def set_profile(config, tests):
+    """Set profiling mode for tests."""
+    for test in tests:
+        if test.attributes['profile']:
+            test['mozharness']['extra-options'].append('--spsProfile')
+        yield test
+
+
+@transforms.add
+def set_tag(config, tests):
+    """Set test for a specific tag."""
+    for test in tests:
+        tag = test.attributes['tag']
+        if tag:
+            test['mozharness']['extra-options'].extend(['--tag', tag])
         yield test
 
 

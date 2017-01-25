@@ -189,8 +189,11 @@ class TryOptionSyntax(object):
         - trigger_tests: the number of times tests should be triggered (--rebuild)
         - interactive: true if --interactive
         - notifications: either None if no notifications or one of 'all' or 'failure'
-
-        Note that -t is currently completely ignored.
+        - talos_trigger_tests: the number of time talos tests should be triggered (--rebuild-talos)
+        - env: additional environment variables (ENV=value)
+        - profile: run talos in profile mode
+        - tag: restrict tests to the specified tag
+        - no_retry: do not retry failed jobs
 
         The unittests and talos lists contain dictionaries of the form:
 
@@ -208,6 +211,11 @@ class TryOptionSyntax(object):
         self.trigger_tests = 0
         self.interactive = False
         self.notifications = None
+        self.talos_trigger_tests = 0
+        self.env = []
+        self.profile = False
+        self.tag = None
+        self.no_retry = False
 
         # shlex used to ensure we split correctly when giving values to argparse.
         parts = shlex.split(self.escape_whitespace_in_brackets(message))
@@ -235,6 +243,12 @@ class TryOptionSyntax(object):
         parser.add_argument('-f', '--failure-emails',
                             dest='notifications', action='store_const', const='failure')
         parser.add_argument('-j', '--job', dest='jobs', action='append')
+        parser.add_argument('--rebuild-talos', dest='talos_trigger_tests', action='store',
+                            type=int, default=1)
+        parser.add_argument('--setenv', dest='env', action='append')
+        parser.add_argument('--spsProfile', dest='profile', action='store_true')
+        parser.add_argument('--tag', dest='tag', action='store', default=None)
+        parser.add_argument('--no-retry', dest='no_retry', action='store_true')
         # In order to run test jobs multiple times
         parser.add_argument('--rebuild', dest='trigger_tests', type=int, default=1)
         args, _ = parser.parse_known_args(parts[try_idx:])
@@ -248,6 +262,11 @@ class TryOptionSyntax(object):
         self.trigger_tests = args.trigger_tests
         self.interactive = args.interactive
         self.notifications = args.notifications
+        self.talos_trigger_tests = args.talos_trigger_tests
+        self.env = args.env
+        self.profile = args.profile
+        self.tag = args.tag
+        self.no_retry = args.no_retry
 
     def parse_jobs(self, jobs_arg):
         if not jobs_arg or jobs_arg == ['all']:
@@ -559,5 +578,10 @@ class TryOptionSyntax(object):
             "jobs: " + none_for_all(self.jobs),
             "trigger_tests: " + str(self.trigger_tests),
             "interactive: " + str(self.interactive),
-            "notifications: " + self.notifications,
+            "notifications: " + str(self.notifications),
+            "talos_trigger_tests: " + str(self.talos_trigger_tests),
+            "env: " + str(self.env),
+            "profile: " + str(self.profile),
+            "tag: " + str(self.tag),
+            "no_retry: " + str(self.no_retry),
         ])
