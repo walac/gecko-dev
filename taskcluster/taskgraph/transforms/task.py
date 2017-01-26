@@ -247,7 +247,7 @@ task_description_schema = Schema({
             Extra: basestring,  # additional properties are allowed
         },
     }, {
-        'implementation': 'native-engine',
+        Required('implementation'): 'native-engine',
 
         # A link for an executable to download
         Optional('context'): basestring,
