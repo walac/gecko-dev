@@ -5,6 +5,7 @@
 
 import os
 import re
+import shutil
 
 
 def _get_default_logger():
@@ -104,6 +105,10 @@ def process_single_leak_file(leakLogFileName, processType, leakThreshold,
                       % processString)
             log.info("TEST-INFO | leakcheck | missing output line from log file %s"
                      % leakLogFileName)
+            # copy leakLogFileName -> BLOBBER_UPLOAD_DIR
+            shutil.copyfile(leakLogFileName,
+                    os.path.join(os.environ.get("MOZ_UPLOAD_DIR"),
+                        leakLogFileName.split('/')[-1]));
         return
 
     if totalBytesLeaked == 0:
