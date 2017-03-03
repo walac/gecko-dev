@@ -138,7 +138,8 @@ endif
 
 # Automatically add -jN to make flags if not defined. N defaults to number of cores.
 ifeq (,$(findstring -j,$(MOZ_MAKE_FLAGS)))
-  cores=$(shell $(PYTHON) -c 'import multiprocessing; print(multiprocessing.cpu_count())')
+  #cores=$(shell $(PYTHON) -c 'import multiprocessing; print(multiprocessing.cpu_count())')
+  cores=1
   MOZ_MAKE_FLAGS += -j$(cores)
 endif
 
