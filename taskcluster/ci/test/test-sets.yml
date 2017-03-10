@@ -185,6 +185,9 @@ macosx64-tests-talos:
     - talos-svgr
     - talos-tp5o
 
+macosx64-tests-talos-opt:
+    - talos-g2
+
 linux32-tests:
     - cppunit
     - crashtest
