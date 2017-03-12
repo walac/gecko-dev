@@ -127,7 +127,7 @@ class Talos(TestingMixin, MercurialScript, BlobUploadMixin, TooltoolMixin):
         [["--geckoProfile"], {
             "dest": "gecko_profile",
             "action": "store_true",
-            "default": False,
+            "default": True,
             "help": "Whether or not to profile the test run and save the profile results"
         }],
         [["--geckoProfileInterval"], {
