@@ -372,8 +372,7 @@ def main():
                 f.preload(log[key])
 
     # Fill startup cache
-    if isinstance(formatter, OmniJarFormatter) and launcher.can_launch() \
-      and buildconfig.substs['MOZ_DISABLE_STARTUPCACHE'] != '1':
+    if False:
         gre_path = None
         def get_bases():
             for b in sink.packager.get_bases(addons=False):
