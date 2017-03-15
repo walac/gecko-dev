@@ -434,15 +434,11 @@ LoggingEnabled()
 inline bool
 LoggingEnabledFor(const char *aTopLevelProtocol)
 {
-#if defined(DEBUG) || defined(FUZZING)
     const char *filter = PR_GetEnv("MOZ_IPC_MESSAGE_LOG");
     if (!filter) {
         return false;
     }
-    return strcmp(filter, "1") == 0 || strcmp(filter, aTopLevelProtocol) == 0;
-#else
-    return false;
-#endif
+    return strcmp(filter, "1") == 0 || strstr(filter, aTopLevelProtocol);
 }
 
 enum class MessageDirection {
