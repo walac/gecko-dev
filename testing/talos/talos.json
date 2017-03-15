@@ -52,12 +52,12 @@
             "pagesets_name": "tp5n.zip"
         },
         "g2": {
-            "tests": ["damp", "tps"],
+            "tests": ["damp"],
             "talos_options": ["--disable-e10s"],
             "pagesets_name": "tp5n.zip"
         },
         "g2-e10s": {
-            "tests": ["damp", "tps"],
+            "tests": ["damp"],
             "pagesets_name": "tp5n.zip"
         },
         "g3": {

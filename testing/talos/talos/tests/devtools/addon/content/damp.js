@@ -279,23 +279,23 @@ Damp.prototype = {
     }.bind(this));
 
     let subtests = {
-      webconsoleOpen: Task.async(function*() {
+      /* webconsoleOpen: Task.async(function*() {
         yield this.testSetup(url);
         yield openToolboxAndLog(label + ".webconsole", "webconsole");
         yield reloadPageAndLog(label + ".webconsole");
         yield closeToolboxAndLog(label + ".webconsole");
         yield this.testTeardown();
-      }),
+      }), */
 
       inspectorOpen: Task.async(function*() {
         yield this.testSetup(url);
         yield openToolboxAndLog(label + ".inspector", "inspector");
-        yield reloadPageAndLog(label + ".inspector");
-        yield closeToolboxAndLog(label + ".inspector");
+        //yield reloadPageAndLog(label + ".inspector");
+        //yield closeToolboxAndLog(label + ".inspector");
         yield this.testTeardown();
       }),
 
-      debuggerOpen: Task.async(function*() {
+      /* debuggerOpen: Task.async(function*() {
         yield this.testSetup(url);
         yield openToolboxAndLog(label + ".jsdebugger", "jsdebugger");
         yield reloadPageAndLog(label + ".jsdebugger");
@@ -338,7 +338,7 @@ Damp.prototype = {
         yield this.takeCensus(label);
         yield closeToolboxAndLog(label + ".memory");
         yield this.testTeardown();
-      }),
+      }), */
     };
 
     // Construct the sequence array: config.repeat times config.subtests
@@ -461,14 +461,14 @@ Damp.prototype = {
 
     let tests = [];
     tests = tests.concat(this._getToolLoadingTests(SIMPLE_URL, "simple"));
-    tests = tests.concat(this._getToolLoadingTests(COMPLICATED_URL, "complicated"));
+    //tests = tests.concat(this._getToolLoadingTests(COMPLICATED_URL, "complicated"));
 
-    if (config.subtests.indexOf("consoleBulkLogging") > -1) {
+    /* if (config.subtests.indexOf("consoleBulkLogging") > -1) {
       tests = tests.concat(this._consoleBulkLoggingTest);
     }
     if (config.subtests.indexOf("consoleStreamLogging") > -1) {
       tests = tests.concat(this._consoleStreamLoggingTest);
-    }
+    } */
     this._doSequence(tests, this._doneInternal);
   }
 }
