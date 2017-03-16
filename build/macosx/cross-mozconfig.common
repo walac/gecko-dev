@@ -22,14 +22,14 @@ CROSS_CCTOOLS_PATH=$topsrcdir/cctools
 # `browser/config/tooltool-manifests/macosx64/cross-releng.manifest`.
 CROSS_SYSROOT=$topsrcdir/MacOSX10.7.sdk
 CROSS_PRIVATE_FRAMEWORKS=$CROSS_SYSROOT/System/Library/PrivateFrameworks
-FLAGS="-target x86_64-apple-darwin11 -B $CROSS_CCTOOLS_PATH/bin -isysroot $CROSS_SYSROOT"
+FLAGS="-target x86_64-apple-darwin11.2.0 -B $CROSS_CCTOOLS_PATH/bin -isysroot $CROSS_SYSROOT"
 
 export CC="$topsrcdir/clang/bin/clang $FLAGS"
 export CXX="$topsrcdir/clang/bin/clang++ $FLAGS"
 export CPP="$topsrcdir/clang/bin/clang $FLAGS -E"
 export LLVMCONFIG=$topsrcdir/clang/bin/llvm-config
 export LDFLAGS="-Wl,-syslibroot,$CROSS_SYSROOT -Wl,-dead_strip -Wl,-no_data_in_code_info"
-export TOOLCHAIN_PREFIX=$CROSS_CCTOOLS_PATH/bin/x86_64-apple-darwin11-
+export TOOLCHAIN_PREFIX=$CROSS_CCTOOLS_PATH/bin/x86_64-apple-darwin11.2.0-
 export DSYMUTIL=$topsrcdir/clang/bin/llvm-dsymutil
 export MKFSHFS=$topsrcdir/hfsplus-tools/newfs_hfs
 export DMG_TOOL=$topsrcdir/dmg/dmg
@@ -42,7 +42,7 @@ export HOST_CFLAGS="-g"
 export HOST_CXXFLAGS="-g"
 export HOST_LDFLAGS="-g"
 
-ac_add_options --target=x86_64-apple-darwin
+ac_add_options --target=x86_64-apple-darwin11.2.0
 ac_add_options --with-macos-private-frameworks=$CROSS_PRIVATE_FRAMEWORKS
 
 if [ "x$MOZ_PKG_SPECIAL" != "xasan" ]; then
