@@ -1119,7 +1119,9 @@ fi
 dnl Checks for library functions.
 dnl ========================================================
 AC_PROG_GCC_TRADITIONAL
-AC_FUNC_MEMCMP
+if test "$target" == "$host"; then
+    AC_FUNC_MEMCMP
+fi
 AC_CHECK_FUNCS([getc_unlocked _getc_nolock gmtime_r localtime_r pthread_getname_np])
 
 dnl check for clock_gettime(), the CLOCK_MONOTONIC clock
@@ -1316,7 +1318,7 @@ AC_CACHE_CHECK(for C++ dynamic_cast to void*,
                             }],
                            ac_cv_cpp_dynamic_cast_void_ptr=yes,
                            ac_cv_cpp_dynamic_cast_void_ptr=no,
-                           ac_cv_cpp_dynamic_cast_void_ptr=no)])
+                           ac_cv_cpp_dynamic_cast_void_ptr=yes)])
 if test "$ac_cv_cpp_dynamic_cast_void_ptr" = yes ; then
    AC_DEFINE(HAVE_CPP_DYNAMIC_CAST_TO_VOID_PTR)
 fi
