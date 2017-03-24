@@ -12,6 +12,7 @@ config = {
         'checkout-sources',
         'build',
         'generate-build-stats',
+        'package-objdir',
         'update',  # decided by query_is_nightly()
     ],
     "buildbot_json_path": "buildprops.json",

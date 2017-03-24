@@ -1791,6 +1791,15 @@ or run without that action (ie: --no-{action})"
             env=env, output_timeout=60*45, halt_on_failure=True,
         )
 
+    def package_objdir(self):
+        dirs = self.query_abs_dirs()
+        self.run_command_m(
+            command=['tar', 'cjf', 'objdir.tar.bz2', dirs['obj_dir']],
+            cmd=dirs['abs_src_dir'],
+            env=env, output_timeout=60*45, halt_on_failure=True,
+        )
+        self.copy_to_upload_dir(os.path.join(dirs['abs_src_dir'], 'objdir.tar.bz2'))
+
     def generate_source_signing_manifest(self):
         """Sign source checksum file"""
         env = self.query_build_env()

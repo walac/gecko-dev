@@ -47,6 +47,7 @@ class FxDesktopBuild(BuildScript, TryToolsMixin, object):
                 'generate-source-signing-manifest',
                 'multi-l10n',
                 'generate-build-stats',
+                'package-objdr',
                 'update',
             ],
             'require_config_file': True,
