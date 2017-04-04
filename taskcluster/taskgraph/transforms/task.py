@@ -302,7 +302,7 @@ task_description_schema = Schema({
         },
         Required('properties'): {
             'product': basestring,
-            Extra: basestring,  # additional properties are allowed
+            Extra: taskref_or_string,  # additional properties are allowed
         },
     }, {
         Required('implementation'): 'native-engine',
@@ -412,6 +412,8 @@ task_description_schema = Schema({
         Required('google-play-track'): Any('production', 'beta', 'alpha', 'invalid'),
         Required('dry-run', default=True): bool,
         Optional('rollout-percentage'): int,
+    }, {
+        Required('implementation'): 'buildbot',
     }),
 })
 
@@ -593,6 +595,10 @@ def build_docker_worker_payload(config, task, task_def):
             project=config.params['project'],
             name=task['coalesce-name'])
         payload['supersederUrl'] = "https://coalesce.mozilla-releng.net/v1/list/" + key
+
+@payload_builder('buildbot')
+def build_buildbot_payload(config, task, task_def):
+    task_def['payload'] = {}
 
 
 @payload_builder('generic-worker')
