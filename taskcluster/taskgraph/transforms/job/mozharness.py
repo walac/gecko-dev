@@ -173,25 +173,26 @@ def mozharness_on_docker_worker_setup(config, job, taskdesc):
 @run_job_using("generic-worker", "mozharness", schema=mozharness_run_schema)
 def mozharness_on_generic_worker(config, job, taskdesc):
     run = job['run']
+    build_platform = job['attributes']['build_platform']
 
-    # fail if invalid run options are included
-    invalid = []
-    for prop in ['actions', 'custom-build-variant-cfg',
-                 'tooltool-downloads', 'secrets', 'taskcluster-proxy',
-                 'need-xvfb']:
-        if prop in run and run[prop]:
-            invalid.append(prop)
-    if not run.get('keep-artifacts', True):
-        invalid.append('keep-artifacts')
-    if invalid:
-        raise Exception("Jobs run using mozharness on Windows do not support properties " +
-                        ', '.join(invalid))
+    if build_platform.startswith('win'):
+        # fail if invalid run options are included
+        invalid = []
+        for prop in ['actions', 'custom-build-variant-cfg',
+                     'tooltool-downloads', 'secrets', 'taskcluster-proxy',
+                     'need-xvfb']:
+            if prop in run and run[prop]:
+                invalid.append(prop)
+        if not run.get('keep-artifacts', True):
+            raise Exception("Jobs run using mozharness on Windows do not support properties " +
+                            ', '.join(invalid))
 
     worker = taskdesc['worker']
 
     worker['artifacts'] = [{
-        'path': r'public/build',
+        'path': r'build/artifacts',
         'type': 'directory',
+        'name': 'public/build',
     }]
 
     docker_worker_add_gecko_vcs_env_vars(config, job, taskdesc)
@@ -203,49 +204,97 @@ def mozharness_on_generic_worker(config, job, taskdesc):
         'MOZ_SIMPLE_PACKAGE_NAME': 'target',
     })
 
-    if not job['attributes']['build_platform'].startswith('win'):
-        raise Exception(
-            "Task generation for mozharness build jobs currently only supported on Windows"
-        )
+    if job['attributes']['build_platform'].startswith('win'):
 
-    mh_command = [r'c:\mozilla-build\python\python.exe']
-    mh_command.append('\\'.join([r'.\build\src\testing', run['script'].replace('/', '\\')]))
-    for cfg in run['config']:
-        mh_command.append('--config ' + cfg.replace('/', '\\'))
-    mh_command.append('--branch ' + config.params['project'])
-    mh_command.append(r'--skip-buildbot-actions --work-dir %cd:Z:=z:%\build')
-    for option in run.get('options', []):
-        mh_command.append('--' + option)
+        mh_command = [r'c:\mozilla-build\python\python.exe']
+        mh_command.append('\\'.join([r'.\build\src\testing', run['script'].replace('/', '\\')]))
+        for cfg in run['config']:
+            mh_command.append('--config ' + cfg.replace('/', '\\'))
+        mh_command.append('--branch ' + config.params['project'])
+        mh_command.append(r'--skip-buildbot-actions --work-dir %cd:Z:=z:%\build')
+        for option in run.get('options', []):
+            mh_command.append('--' + option)
 
-    hg_command = ['"c:\\Program Files\\Mercurial\\hg.exe"']
-    hg_command.append('robustcheckout')
-    hg_command.extend(['--sharebase', 'y:\\hg-shared'])
-    hg_command.append('--purge')
-    hg_command.extend(['--upstream', 'https://hg.mozilla.org/mozilla-unified'])
-    hg_command.extend(['--revision', env['GECKO_HEAD_REV']])
-    hg_command.append(env['GECKO_HEAD_REPOSITORY'])
-    hg_command.append('.\\build\\src')
+        hg_command = ['"c:\\Program Files\\Mercurial\\hg.exe"']
+        hg_command.append('robustcheckout')
+        hg_command.extend(['--sharebase', 'y:\\hg-shared'])
+        hg_command.append('--purge')
+        hg_command.extend(['--upstream', 'https://hg.mozilla.org/mozilla-unified'])
+        hg_command.extend(['--revision', env['GECKO_HEAD_REV']])
+        hg_command.append(env['GECKO_HEAD_REPOSITORY'])
+        hg_command.append('.\\build\\src')
 
-    worker['command'] = []
-    if taskdesc.get('needs-sccache'):
+        worker['command'] = []
+        if taskdesc.get('needs-sccache'):
+            worker['command'].extend([
+                # Make the comment part of the first command, as it will help users to
+                # understand what is going on, and why these steps are implemented.
+                dedent('''\
+                :: sccache currently uses the full compiler commandline as input to the
+                :: cache hash key, so create a symlink to the task dir and build from
+                :: the symlink dir to get consistent paths.
+                if exist z:\\build rmdir z:\\build'''),
+                r'mklink /d z:\build %cd%',
+                # Grant delete permission on the link to everyone.
+                r'icacls z:\build /grant *S-1-1-0:D /L',
+                r'cd /d z:\build',
+            ])
         worker['command'].extend([
-            # Make the comment part of the first command, as it will help users to
-            # understand what is going on, and why these steps are implemented.
-            dedent('''\
-            :: sccache currently uses the full compiler commandline as input to the
-            :: cache hash key, so create a symlink to the task dir and build from
-            :: the symlink dir to get consistent paths.
-            if exist z:\\build rmdir z:\\build'''),
-            r'mklink /d z:\build %cd%',
-            # Grant delete permission on the link to everyone.
-            r'icacls z:\build /grant *S-1-1-0:D /L',
-            r'cd /d z:\build',
+            ' '.join(hg_command),
+            ' '.join(mh_command)
         ])
+    else:
+        env.update({
+            'MOZHARNESS_CONFIG': ' '.join(run['config']),
+            'MOZHARNESS_SCRIPT': run['script'],
+            'MH_BRANCH': config.params['project'],
+            'MH_BUILD_POOL': 'taskcluster-native',
+            'MOZ_BUILD_DATE': config.params['moz_build_date'],
+            'MOZ_SCM_LEVEL': config.params['level'],
+            'HG_STORE_PATH': '${PWD}/hg-store',
+        })
 
-    worker['command'].extend([
-        ' '.join(hg_command),
-        ' '.join(mh_command)
-    ])
+        if 'actions' in run:
+            env['MOZHARNESS_ACTIONS'] = ' '.join(run['actions'])
+
+        if 'options' in run:
+            env['MOZHARNESS_OPTIONS'] = ' '.join(run['options'])
+
+        if 'custom-build-variant-cfg' in run:
+            env['MH_CUSTOM_BUILD_VARIANT_CFG'] = run['custom-build-variant-cfg']
+
+        if 'job-script' in run:
+            env['JOB_SCRIPT'] = run['job-script']
+
+        clone_gecko = [
+            'hg',
+            'robustcheckout',
+            '--sharebase',
+            '/Users/cltbld/hg-share',
+            '--purge',
+            '--upstream',
+            'https://hg.mozilla.org/mozilla-unified',
+            '--revision',
+            env['GECKO_HEAD_REV'],
+            env['GECKO_HEAD_REPOSITORY'],
+            'build/src',
+        ]
+
+        clone_tools = [
+            'hg',
+            'clone',
+            '--branch',
+            'default',
+            'https://hg.mozilla.org/build/tools',
+            'build/tools',
+        ]
+
+        worker['command'] = [
+            ['mkdir', '-p', 'build/artifacts'],
+            clone_gecko,
+            clone_tools,
+            ['build/src/taskcluster/scripts/builder/build-macosx.sh'],
+        ]
 
 
 @run_job_using('buildbot-bridge', 'mozharness', schema=mozharness_run_schema)

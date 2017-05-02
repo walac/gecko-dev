@@ -41,4 +41,11 @@ config = {
             'UPLOAD_PATH': '/home/worker/artifacts',
         },
     },
+    "taskcluster-native": {
+        'graph_server': 'graphs.mozilla.org',
+        'stage_server': 'ignored',
+        'upload_env': {
+            'UPLOAD_HOST': 'localhost',
+        },
+    },
 }

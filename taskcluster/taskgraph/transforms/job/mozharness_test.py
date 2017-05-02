@@ -191,12 +191,7 @@ def mozharness_test_on_generic_worker(config, job, taskdesc):
         })
 
     build_platform = taskdesc['attributes']['build_platform']
-    build_type = taskdesc['attributes']['build_type']
-
-    if build_platform == 'macosx64' and build_type == 'opt':
-        target = 'firefox-{}.en-US.{}'.format(get_firefox_version(), 'mac')
-    else:
-        target = 'target'
+    target = 'target'
 
     installer_url = get_artifact_url('<build>', mozharness['build-artifact-name'])
 
