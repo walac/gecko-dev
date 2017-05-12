@@ -405,7 +405,7 @@ def set_worker_implementation(config, tests):
         test_platform = test['test-platform']
         if test_platform.startswith('macosx'):
             if config.config['args'].taskcluster_worker:
-                test['worker-implementation'] = 'native-engine'
+                test['worker-implementation'] = 'generic-worker'
             else:
                 test['worker-implementation'] = 'generic-worker'
         elif test.get('suite', '') == 'talos':
