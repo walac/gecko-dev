@@ -268,13 +268,8 @@ def mozharness_on_generic_worker(config, job, taskdesc):
 
         clone_gecko = [
             'hg',
-            'robustcheckout',
-            '--sharebase',
-            '/Users/cltbld/hg-share',
-            '--purge',
-            '--upstream',
-            'https://hg.mozilla.org/mozilla-unified',
-            '--revision',
+            'clone',
+            '--rev',
             env['GECKO_HEAD_REV'],
             env['GECKO_HEAD_REPOSITORY'],
             'build/src',
