@@ -38,10 +38,6 @@ export MOZ_CRASHREPORTER_NO_REPORT=1
 export MOZ_OBJDIR=obj-firefox
 export TINDERBOX_OUTPUT=1
 
-# use "simple" package names so that they can be hard-coded in the task's
-# extras.locations
-export MOZ_SIMPLE_PACKAGE_NAME=target
-
 # Do not try to upload symbols (see https://bugzilla.mozilla.org/show_bug.cgi?id=1164615)
 export MOZ_AUTOMATION_UPLOAD_SYMBOLS=0
 
