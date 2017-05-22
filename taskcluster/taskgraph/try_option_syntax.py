@@ -24,6 +24,7 @@ BUILD_TYPE_ALIASES = {
 # consider anything in this whitelist of kinds to be governed by -b/-p
 BUILD_KINDS = set([
     'build',
+    'build-signing',
     'artifact-build',
     'hazard',
     'l10n',
