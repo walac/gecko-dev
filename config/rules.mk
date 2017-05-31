@@ -994,6 +994,8 @@ env $(environment_cleaner) $(rust_unlock_unstable) $(rustflags_override) \
 	PKG_CONFIG_ALLOW_CROSS=1 \
 	RUST_BACKTRACE=1 \
 	MOZ_TOPOBJDIR=$(topobjdir) \
+	RANLIB=$(RANLIB) \
+	AR=$(AR) \
 	$(1) \
 	$(CARGO) build $(cargo_build_flags)
 endef
