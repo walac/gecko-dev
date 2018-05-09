@@ -214,7 +214,30 @@ task_description_schema = Schema({
 
     # information specific to the worker implementation that will run this task
     'worker': Any({
-        Required('implementation'): Any('docker-worker', 'docker-engine'),
+        Required('implementation'): 'docker-engine',
+        Required('os'): 'linux',
+
+        Required('docker-image'): Any(
+            # a raw Docker image path (repo/image:tag)
+            basestring,
+            # an in-tree generated docker image (from `taskcluster/docker/<name>`)
+            {'in-tree': basestring},
+        ),
+
+        Required('command'): [taskref_or_string],
+        Required('max-run-time'): basestring,
+        Required('env'): {basestring: taskref_or_string},
+
+        Optional('artifacts'): [{
+            Required('type'): Any('file', 'directory'),
+            Required('path'): basestring,
+            Required('name'): basestring,
+            Optional('expires'): basestring,
+        }],
+
+        Optional('enable-relengapi-proxy'): bool,
+    }, {
+        Required('implementation'): 'docker-worker',
         Required('os'): 'linux',
 
         # For tasks that will run in docker-worker or docker-engine, this is the
@@ -686,6 +709,35 @@ def verify_index(config, index):
     product = index['product']
     if product not in config.graph_config['index']['products']:
         raise Exception(UNSUPPORTED_INDEX_PRODUCT_ERROR.format(product=product))
+
+@payload_builder('docker-engine')
+def build_docker_engine_payload(config, task, task_def):
+    worker = task['worker']
+    image = worker['docker-image']
+    if isinstance(image, dict):
+        if 'in-tree' in image:
+            name = image['in-tree']
+            docker_image_task = 'build-docker-image-' + image['in-tree']
+            task.setdefault('dependencies', {})['docker-image'] = docker_image_task
+
+            image = {
+                "path": "public/image.tar.zst",
+                "taskId": {"task-reference": "<docker-image>"},
+                "runId": 0,
+            }
+        else:
+            raise Exception("unknown docker image type")
+
+    worker['env']['SCCACHE_DISABLE'] = '1'
+
+    task_def['payload'] = payload = {
+        'image': image,
+        'env': worker['env'],
+        'command': worker['command'],
+        'enableRelengAPIProxy': worker['enable-relengapi-proxy'],
+    }
+
+    payload['maxRunTime'] = '60 minutes'
 
 
 @payload_builder('docker-worker')
@@ -1197,7 +1249,7 @@ def set_defaults(config, tasks):
         task.setdefault('needs-sccache', False)
 
         worker = task['worker']
-        if worker['implementation'] in ('docker-worker', 'docker-engine'):
+        if worker['implementation'] == 'docker-worker':
             worker.setdefault('relengapi-proxy', False)
             worker.setdefault('chain-of-trust', False)
             worker.setdefault('taskcluster-proxy', False)
@@ -1210,6 +1262,9 @@ def set_defaults(config, tasks):
             if 'caches' in worker:
                 for c in worker['caches']:
                     c.setdefault('skip-untrusted', False)
+        elif worker['implementation'] == 'docker-engine':
+            worker.setdefault('env', {})
+            worker.setdefault('enable-relengapi-proxy', True)
         elif worker['implementation'] == 'generic-worker':
             worker.setdefault('env', {})
             worker.setdefault('os-groups', [])

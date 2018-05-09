@@ -99,11 +99,12 @@ def support_vcs_checkout(config, job, taskdesc, sparse=False):
         if sparse:
             name += '-sparse'
 
-        taskdesc['worker'].setdefault('caches', []).append({
-            'type': 'persistent',
-            'name': name,
-            'mount-point': '/builds/worker/checkouts',
-        })
+        if taskdesc['worker']['implementation'] != 'docker-engine':
+            taskdesc['worker'].setdefault('caches', []).append({
+                'type': 'persistent',
+                'name': name,
+                'mount-point': '/builds/worker/checkouts',
+            })
 
     taskdesc['worker'].setdefault('env', {}).update({
         'GECKO_BASE_REPOSITORY': config.params['base_repository'],
@@ -126,7 +127,7 @@ def support_vcs_checkout(config, job, taskdesc, sparse=False):
     taskdesc['scopes'].append('secrets:get:project/taskcluster/gecko/hgfingerprint')
 
     # only some worker platforms have taskcluster-proxy enabled
-    if job['worker']['implementation'] in ('docker-worker', 'docker-engine'):
+    if job['worker']['implementation'] == 'docker-worker':
         taskdesc['worker']['taskcluster-proxy'] = True
 
 

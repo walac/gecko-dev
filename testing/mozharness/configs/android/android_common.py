@@ -18,7 +18,7 @@ config = {
         'run-tests',
     ],
     "tooltool_cache": "/builds/worker/tooltool_cache",
-    "tooltool_servers": ['http://relengapi/tooltool/'],
+    "tooltool_servers": ['http://taskcluster/relengapi/tooltool/'],
     "hostutils_manifest_path": "testing/config/tooltool-manifests/linux64/hostutils.manifest",
     "avds_dir": "/builds/worker/workspace/build/.android",
     "minidump_stackwalk_path": "/usr/local/bin/linux64-minidump_stackwalk",

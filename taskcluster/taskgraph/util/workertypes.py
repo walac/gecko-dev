@@ -49,6 +49,7 @@ WORKER_TYPES = {
     "scriptworker-prov-v1/shipit-dev": ('shipit', None),
     "scriptworker-prov-v1/treescript-v1": ('treescript', None),
     'releng-hardware/gecko-t-osx-1010': ('generic-worker', 'macosx'),
+    'manual-packet/tc-worker-docker-v1': ('docker-engine', 'linux'),
 }
 
 

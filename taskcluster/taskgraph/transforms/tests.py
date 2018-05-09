@@ -46,9 +46,9 @@ import math
 
 # default worker types keyed by instance-size
 LINUX_WORKER_TYPES = {
-    'large': 'aws-provisioner-v1/gecko-t-linux-large',
-    'xlarge': 'aws-provisioner-v1/gecko-t-linux-xlarge',
-    'default': 'aws-provisioner-v1/gecko-t-linux-large',
+    'large': 'manual-packet/tc-worker-docker-v1',
+    'xlarge': 'manual-packet/tc-worker-docker-v1',
+    'default': 'manual-packet/tc-worker-docker-v1',
 }
 
 # windows worker types keyed by test-platform and virtualization
