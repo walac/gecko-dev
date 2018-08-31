@@ -1055,7 +1055,7 @@ HTMLContentSink::IsScriptExecuting()
 void
 HTMLContentSink::ContinueInterruptedParsingIfEnabled()
 {
-  if (mParser->IsParserEnabled()) {
+  if (mParser && mParser->IsParserEnabled()) {
     static_cast<nsIParser*>(mParser.get())->ContinueInterruptedParsing();
   }
 }

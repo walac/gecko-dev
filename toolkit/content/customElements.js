@@ -113,7 +113,7 @@ function getInterfaceProxy(obj) {
           };
         }
         return propOrMethod;
-      }
+      },
     });
   }
 
@@ -127,6 +127,7 @@ for (let script of [
   "chrome://global/content/elements/stringbundle.js",
   "chrome://global/content/elements/general.js",
   "chrome://global/content/elements/textbox.js",
+  "chrome://global/content/elements/tabbox.js",
 ]) {
   Services.scriptloader.loadSubScript(script, window);
 }

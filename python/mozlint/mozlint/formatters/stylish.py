@@ -7,6 +7,7 @@ from __future__ import absolute_import, unicode_literals
 from mozterm import Terminal
 
 from ..result import Issue
+from ..util.string import pluralize
 
 
 class StylishFormatter(object):
@@ -49,11 +50,6 @@ class StylishFormatter(object):
         self.max_level = max(self.max_level, len(str(err.level)))
         self.max_message = max(self.max_message, len(err.message))
 
-    def _pluralize(self, s, num):
-        if num != 1:
-            s += 's'
-        return str(num) + ' ' + s
-
     def __call__(self, result):
         message = []
         failed = result.failed
@@ -73,13 +69,18 @@ class StylishFormatter(object):
                 else:
                     num_warnings += 1
 
-            for err in errors:
+            for err in sorted(errors, key=lambda e: (int(e.lineno), int(e.column or 0))):
+                if err.column:
+                    col = ":" + str(err.column).ljust(self.max_column)
+                else:
+                    col = "".ljust(self.max_column+1)
+
                 message.append(self.fmt.format(
                     normal=self.term.normal,
                     c1=self.color('grey'),
                     c2=self.color('red') if err.level == 'error' else self.color('yellow'),
                     lineno=str(err.lineno).rjust(self.max_lineno),
-                    column=(":" + str(err.column).ljust(self.max_column)) if err.column else "",
+                    column=col,
                     level=err.level.ljust(self.max_level),
                     message=err.message.ljust(self.max_message),
                     rule='{} '.format(err.rule) if err.rule else '',
@@ -99,10 +100,10 @@ class StylishFormatter(object):
         message.append(self.fmt_summary.format(
             t=self.term,
             c=self.color('brightred') if num_errors or failed else self.color('brightyellow'),
-            problem=self._pluralize('problem', num_errors + num_warnings + len(failed)),
-            error=self._pluralize('error', num_errors),
-            warning=self._pluralize('warning', num_warnings),
-            failure=', {}'.format(self._pluralize('failure', len(failed))) if failed else '',
+            problem=pluralize('problem', num_errors + num_warnings + len(failed)),
+            error=pluralize('error', num_errors),
+            warning=pluralize('warning', num_warnings or result.total_suppressed_warnings),
+            failure=', {}'.format(pluralize('failure', len(failed))) if failed else '',
         ))
 
         return '\n'.join(message)

@@ -319,7 +319,7 @@ nsDocShell::nsDocShell()
   , mChromeEventHandler(nullptr)
   , mDefaultScrollbarPref(Scrollbar_Auto, Scrollbar_Auto)
   , mCharsetReloadState(eCharsetReloadInit)
-  , mOrientationLock(eScreenOrientation_None)
+  , mOrientationLock(hal::eScreenOrientation_None)
   , mParentCharsetSource(0)
   , mMarginWidth(-1)
   , mMarginHeight(-1)
@@ -2029,14 +2029,14 @@ nsDocShell::SetFullscreenAllowed(bool aFullscreenAllowed)
   return NS_OK;
 }
 
-ScreenOrientationInternal
+hal::ScreenOrientation
 nsDocShell::OrientationLock()
 {
   return mOrientationLock;
 }
 
 void
-nsDocShell::SetOrientationLock(ScreenOrientationInternal aOrientationLock)
+nsDocShell::SetOrientationLock(hal::ScreenOrientation aOrientationLock)
 {
   mOrientationLock = aOrientationLock;
 }
@@ -10161,15 +10161,16 @@ nsDocShell::InternalLoad(nsIURI* aURI,
   // lock the orientation of the document to the document's default
   // orientation. We don't explicitly check for a top-level browsing context
   // here because orientation is only set on top-level browsing contexts.
-  if (OrientationLock() != eScreenOrientation_None) {
+  if (OrientationLock() != hal::eScreenOrientation_None) {
 #ifdef DEBUG
     nsCOMPtr<nsIDocShellTreeItem> parent;
     GetSameTypeParent(getter_AddRefs(parent));
     MOZ_ASSERT(!parent);
 #endif
-    SetOrientationLock(eScreenOrientation_None);
+    SetOrientationLock(hal::eScreenOrientation_None);
     if (mIsActive) {
-      ScreenOrientation::UpdateActiveOrientationLock(eScreenOrientation_None);
+      ScreenOrientation::UpdateActiveOrientationLock(
+        hal::eScreenOrientation_None);
     }
   }
 
@@ -14314,10 +14315,6 @@ nsDocShell::GetColorMatrix(uint32_t* aMatrixLen, float** aMatrix)
 
   if (mColorMatrix) {
     *aMatrix = (float*)moz_xmalloc(20 * sizeof(float));
-    if (!*aMatrix) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-
     MOZ_ASSERT(20 * sizeof(float) == sizeof(mColorMatrix->components));
     *aMatrixLen = 20;
     memcpy(*aMatrix, mColorMatrix->components, 20 * sizeof(float));
@@ -14337,6 +14334,13 @@ nsDocShell::GetBrowsingContext() const
 {
   RefPtr<BrowsingContext> browsingContext = mBrowsingContext;
   return browsingContext.forget();
+}
+
+NS_IMETHODIMP
+nsDocShell::GetBrowsingContext(BrowsingContext** aBrowsingContext)
+{
+  *aBrowsingContext = do_AddRef(mBrowsingContext).take();
+  return NS_OK;
 }
 
 void

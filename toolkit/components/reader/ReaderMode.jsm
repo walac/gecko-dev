@@ -141,8 +141,7 @@ var ReaderMode = {
       Cu.reportError(e);
       return;
     }
-    let flags =  webNav.LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL |
-      webNav.LOAD_FLAGS_DISALLOW_INHERIT_OWNER;
+    let flags = webNav.LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL;
     webNav.loadURI(originalURL, flags, referrerURI, null, null, principal);
   },
 
@@ -480,7 +479,7 @@ var ReaderMode = {
       host: doc.baseURIObject.host,
       prePath: doc.baseURIObject.prePath,
       scheme: doc.baseURIObject.scheme,
-      pathBase: Services.io.newURI(".", null, doc.baseURIObject).spec
+      pathBase: Services.io.newURI(".", null, doc.baseURIObject).spec,
     };
 
     let serializer = new XMLSerializer();

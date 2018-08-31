@@ -3,6 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
+const { Localization } = ChromeUtils.import("resource://gre/modules/Localization.jsm", {});
+
 const POPUP_NOTIFICATION_ID = "contextual-feature-recommendation";
 
 const DELAY_BEFORE_EXPAND_MS = 1000;
@@ -34,10 +36,18 @@ class PageAction {
     this.button = win.document.getElementById("cfr-button");
     this.label = win.document.getElementById("cfr-label");
 
+    // This should NOT be use directly to dispatch message-defined actions attached to buttons.
+    // Please use dispatchUserAction instead.
     this._dispatchToASRouter = dispatchToASRouter;
+
     this._popupStateChange = this._popupStateChange.bind(this);
     this._collapse = this._collapse.bind(this);
     this._handleClick = this._handleClick.bind(this);
+    this.dispatchUserAction = this.dispatchUserAction.bind(this);
+
+    this._l10n = new Localization([
+      "browser/newtab/asrouter.ftl"
+    ]);
 
     // Saved timeout IDs for scheduled state changes, so they can be cancelled
     this.stateTransitionTimeoutIDs = [];
@@ -45,10 +55,10 @@ class PageAction {
     this.container.onclick = this._handleClick;
   }
 
-  async show(notificationText, shouldExpand = false) {
+  async show(notification_text, shouldExpand = false) {
     this.container.hidden = false;
 
-    this.label.value = notificationText;
+    this.label.value = await this.getStrings({string: notification_text});
 
     // Wait for layout to flush to avoid a synchronous reflow then calculate the
     // label width. We can safely get the width even though the recommendation is
@@ -72,6 +82,13 @@ class PageAction {
     this.container.hidden = true;
     this._clearScheduledStateChanges();
     this.urlbar.removeAttribute("cfr-recommendation-state");
+  }
+
+  dispatchUserAction(action) {
+    this._dispatchToASRouter(
+      {type: "USER_ACTION", data: action},
+      {browser: this.window.gBrowser.selectedBrowser}
+    );
   }
 
   _expand(delay = 0) {
@@ -118,10 +135,38 @@ class PageAction {
   }
 
   /**
+   * getStrings - Handles getting the localized strings vs message overrides.
+   *              If string_id is not defined it assumes you passed in an override
+   *              message and it just returns it.
+   *              If hasAttributes is true it will try to fetch and reduce them
+   *              into an object with key and value.
+   */
+  async getStrings({string, hasAttributes}) {
+    if (!string.string_id) {
+      return string;
+    }
+
+    const [localeStrings] = await this._l10n.formatMessages([{id: string.string_id}]);
+
+    if (hasAttributes && localeStrings.attributes) {
+      const attributes = localeStrings.attributes.reduce((acc, attribute) => {
+        acc[attribute.name] = attribute.value;
+        return acc;
+      }, {});
+      return {
+        value: localeStrings.value,
+        attributes
+      };
+    } else {
+      return localeStrings.value;
+    }
+  }
+
+  /**
    * Respond to a user click on the recommendation by showing a doorhanger/
    * popup notification
    */
-  _handleClick(event) {
+  async _handleClick(event) {
     const browser = this.window.gBrowser.selectedBrowser;
     if (!RecommendationMap.has(browser)) {
       // There's no recommendation for this browser, so the user shouldn't have
@@ -140,16 +185,18 @@ class PageAction {
     browser.cfrpopupnotificationanchor = this.container;
 
     const {primary, secondary} = content.buttons;
+    const primaryBtnStrings = await this.getStrings({string: primary.label, hasAttributes: true});
+    const secondaryBtnStrings = await this.getStrings({string: secondary.label, hasAttributes: true});
 
     const mainAction = {
-      label: primary.label,
-      accessKey: primary.accessKey,
-      callback: () => this._dispatchToASRouter(primary.action)
+      label: primaryBtnStrings.value,
+      accessKey: primaryBtnStrings.attributes.accesskey,
+      callback: () => this.dispatchUserAction(primary.action)
     };
 
     const secondaryActions = [{
-      label: secondary.label,
-      accessKey: secondary.accessKey,
+      label: secondaryBtnStrings.value,
+      accessKey: secondaryBtnStrings.attributes.accesskey,
       callback: this._collapse
     }];
 
@@ -162,7 +209,7 @@ class PageAction {
     this.window.PopupNotifications.show(
       browser,
       POPUP_NOTIFICATION_ID,
-      content.text,
+      await this.getStrings({string: content.text}),
       "cfr",
       mainAction,
       secondaryActions,
@@ -196,7 +243,7 @@ const CFRPageActions = {
       if (isHostMatch(browser, host)) {
         // The browser has a recommendation specified with this host, so show
         // the page action
-        pageAction.show(content.notification_text);
+        pageAction.show(this.getStrings({string: content.notification_text}));
       } else {
         // The user has navigated away from the specified host in the given
         // browser, so the recommendation is no longer valid and should be removed
@@ -210,17 +257,35 @@ const CFRPageActions = {
   },
 
   /**
+   * Force a recommendation to be shown. Should only happen via the Admin page.
+   * @param browser             The browser for the recommendation
+   * @param recommendation      The recommendation to show
+   * @param dispatchToASRouter  A function to dispatch resulting actions to
+   * @return                    Did adding the recommendation succeed?
+   */
+  async forceRecommendation(browser, recommendation, dispatchToASRouter) {
+    // If we are forcing via the Admin page, the browser comes in a different format
+    const win = browser.browser.ownerGlobal;
+    const {id, content} = recommendation;
+    RecommendationMap.set(browser.browser, {id, content});
+    if (!PageActionMap.has(win)) {
+      PageActionMap.set(win, new PageAction(win, dispatchToASRouter));
+    }
+    await PageActionMap.get(win).show(this.getStrings({string: recommendation.content.notification_text}), true);
+    return true;
+  },
+
+  /**
    * Add a recommendation specific to the given browser and host.
    * @param browser             The browser for the recommendation
    * @param host                The host for the recommendation
    * @param recommendation      The recommendation to show
    * @param dispatchToASRouter  A function to dispatch resulting actions to
-   * @param force               Force the recommendation to appear if the host doesn't match
    * @return                    Did adding the recommendation succeed?
    */
-  async addRecommendation(browser, host, recommendation, dispatchToASRouter, force = false) {
+  async addRecommendation(browser, host, recommendation, dispatchToASRouter) {
     const win = browser.ownerGlobal;
-    if (browser !== win.gBrowser.selectedBrowser || !(force || isHostMatch(browser, host))) {
+    if (browser !== win.gBrowser.selectedBrowser || !isHostMatch(browser, host)) {
       return false;
     }
     const {id, content} = recommendation;
@@ -243,5 +308,6 @@ const CFRPageActions = {
     RecommendationMap.clear();
   }
 };
+this.CFRPageActions = CFRPageActions;
 
 const EXPORTED_SYMBOLS = ["CFRPageActions"];

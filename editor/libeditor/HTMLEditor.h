@@ -222,6 +222,19 @@ public:
   nsresult OnMouseMove(dom::MouseEvent* aMouseEvent);
 
   /**
+   * IsCSSEnabled() returns true if this editor treats styles with style
+   * attribute of HTML elements.  Otherwise, if this editor treats all styles
+   * with "font style elements" like <b>, <i>, etc, and <blockquote> to indent,
+   * align attribute to align contents, returns false.
+   */
+  bool IsCSSEnabled() const
+  {
+    // TODO: removal of mCSSAware and use only the presence of mCSSEditUtils
+    return mCSSAware && mCSSEditUtils && mCSSEditUtils->IsCSSPrefChecked();
+  }
+
+
+  /**
    * Enable/disable object resizers for <img> elements, <table> elements,
    * absolute positioned elements (required absolute position editor enabled).
    */
@@ -690,12 +703,6 @@ protected: // May be called by friends.
                            bool aSafeToAskFrames,
                            bool* aSeenBR);
 
-  bool IsCSSEnabled() const
-  {
-    // TODO: removal of mCSSAware and use only the presence of mCSSEditUtils
-    return mCSSAware && mCSSEditUtils && mCSSEditUtils->IsCSSPrefChecked();
-  }
-
   static bool HasAttributes(Element* aElement)
   {
     MOZ_ASSERT(aElement);
@@ -730,7 +737,7 @@ protected: // May be called by friends.
                                   const nsAString* aValue,
                                   nsAString* outValue = nullptr);
 
-  bool IsInLink(nsINode* aNode, nsCOMPtr<nsINode>* outLink = nullptr);
+  static dom::Element* GetLinkElement(nsINode* aNode);
 
   /**
    * Small utility routine to test if a break node is visible to user.

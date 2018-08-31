@@ -71,7 +71,6 @@
 #endif // defined(JS_BUILD_BINAST)
 #include "frontend/Parser.h"
 #include "gc/PublicIterators.h"
-#include "gc/Zone.h"
 #include "jit/arm/Simulator-arm.h"
 #include "jit/InlinableNatives.h"
 #include "jit/Ion.h"
@@ -79,11 +78,14 @@
 #include "jit/JitRealm.h"
 #include "jit/shared/CodeGenerator-shared.h"
 #include "js/AutoByteString.h"
+#include "js/CompilationAndEvaluation.h"
+#include "js/CompileOptions.h"
 #include "js/Debug.h"
 #include "js/GCVector.h"
 #include "js/Initialization.h"
 #include "js/JSON.h"
 #include "js/Printf.h"
+#include "js/SourceBufferHolder.h"
 #include "js/StableStringChars.h"
 #include "js/StructuredClone.h"
 #include "js/SweepingAPI.h"
@@ -131,6 +133,7 @@ using namespace js::cli;
 using namespace js::shell;
 
 using JS::AutoStableStringChars;
+using JS::CompileOptions;
 
 using js::shell::RCFile;
 
@@ -715,7 +718,7 @@ GetLine(FILE* file, const char * prompt)
         if (*t == '\n') {
             /* Line was read. We remove '\n' and exit. */
             *t = '\0';
-            return buffer;
+            break;
         }
 
         if (len + 1 == size) {
@@ -729,7 +732,7 @@ GetLine(FILE* file, const char * prompt)
         }
         current = buffer + len;
     } while (true);
-    return nullptr;
+    return buffer;
 }
 
 static bool
@@ -991,8 +994,8 @@ EnqueueJob(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    if (!IsCallable(args.get(0))) {
-        JS_ReportErrorASCII(cx, "EnqueueJob's first argument must be callable");
+    if (!IsFunctionObject(args.get(0))) {
+        JS_ReportErrorASCII(cx, "EnqueueJob's first argument must be a function");
         return false;
     }
 
@@ -1050,7 +1053,7 @@ SetPromiseRejectionTrackerCallback(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    if (!IsCallable(args.get(0))) {
+    if (!IsFunctionObject(args.get(0))) {
         JS_ReportErrorASCII(cx,
                             "setPromiseRejectionTrackerCallback expects a function as its sole "
                             "argument");
@@ -4306,7 +4309,7 @@ EnsureModuleLoaderScriptObjectMap(JSContext* cx)
     if (priv->moduleLoaderScriptObjectMap)
         return priv->moduleLoaderScriptObjectMap.get();
 
-    Zone* zone = cx->zone();
+    JS::Zone* zone = cx->zone();
     auto* map = cx->new_<ScriptObjectMap>(zone);
     if (!map)
         return nullptr;
@@ -4411,8 +4414,8 @@ ParseModule(JSContext* cx, unsigned argc, Value* vp)
         return false;
 
     const char16_t* chars = stableChars.twoByteRange().begin().get();
-    SourceBufferHolder srcBuf(chars, scriptContents->length(),
-                              SourceBufferHolder::NoOwnership);
+    JS::SourceBufferHolder srcBuf(chars, scriptContents->length(),
+                                  JS::SourceBufferHolder::NoOwnership);
 
     RootedScript script(cx, frontend::CompileModule(cx, options, srcBuf));
     if (!script)
@@ -7218,7 +7221,9 @@ WasmLoop(JSContext* cx, unsigned argc, Value* vp)
         }
     }
 
+#ifdef __AFL_HAVE_MANUAL_CONTROL  // to silence unreachable code warning
     return true;
+#endif
 }
 
 static const JSFunctionSpecWithHelp shell_functions[] = {

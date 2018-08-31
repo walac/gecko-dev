@@ -592,6 +592,7 @@ nsHttpChannel::OnBeforeConnect()
     mConnectionInfo->SetBeConservative((mCaps & NS_HTTP_BE_CONSERVATIVE) || mBeConservative);
     mConnectionInfo->SetTlsFlags(mTlsFlags);
     mConnectionInfo->SetTrrUsed(mTRR);
+    mConnectionInfo->SetTrrDisabled(mCaps & NS_HTTP_DISABLE_TRR);
 
     // notify "http-on-before-connect" observers
     gHttpHandler->OnBeforeConnect(this);
@@ -740,6 +741,8 @@ nsHttpChannel::ConnectOnTailUnblock()
 
     bool isTrackingResource = mIsThirdPartyTrackingResource; // is atomic
     if (isTrackingResource && CheckFastBlocked()) {
+        AntiTrackingCommon::NotifyRejection(this,
+                                            nsIWebProgressListener::STATE_BLOCKED_SLOW_TRACKING_CONTENT);
         Unused << AsyncAbort(NS_ERROR_ABORT);
         CloseCacheEntry(false);
         return NS_OK;
@@ -3897,7 +3900,7 @@ nsHttpChannel::OpenCacheEntryInternal(bool isHttps,
         extension.Append("TRR");
     }
 
-    if (!AntiTrackingCommon::IsFirstPartyStorageAccessGrantedFor(this, mURI)) {
+    if (!AntiTrackingCommon::IsFirstPartyStorageAccessGrantedFor(this, mURI, nullptr)) {
         nsCOMPtr<nsIURI> topWindowURI;
         rv = GetTopWindowURI(getter_AddRefs(topWindowURI));
         bool isDocument = false;
