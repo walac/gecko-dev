@@ -59,7 +59,7 @@ if CONFIG['MOZ_ENABLE_D3D10_LAYER']:
         'RenderCompositorANGLE.cpp',
     ]
 
-if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('android', 'gtk3'):
+if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('android', 'gtk3', 'gonk'):
     CXXFLAGS += CONFIG['MOZ_CAIRO_CFLAGS']
     CXXFLAGS += CONFIG['CAIRO_FT_CFLAGS']
 
