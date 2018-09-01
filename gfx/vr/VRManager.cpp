@@ -24,14 +24,14 @@
 #if defined(XP_WIN)
 #include "gfxVROculus.h"
 #endif
-#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID))
+#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK))
 #include "gfxVROpenVR.h"
 #include "gfxVROSVR.h"
 #endif
 
 #include "gfxVRPuppet.h"
 #include "ipc/VRLayerParent.h"
-#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID))
+#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK))
 #include "service/VRService.h"
 #endif
 
@@ -83,7 +83,7 @@ VRManager::VRManager()
    * to support everyone else.
    */
 
-#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID))
+#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK))
   // The VR Service accesses all hardware from a separate process
   // and replaces the other VRSystemManager when enabled.
   if (!gfxPrefs::VRProcessEnabled()) {
@@ -118,7 +118,7 @@ VRManager::VRManager()
   }
 #endif
 
-#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID))
+#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK))
   if (!mVRService) {
     // OpenVR is cross platform compatible
     mgr = VRSystemManagerOpenVR::Create();
@@ -156,7 +156,7 @@ VRManager::Destroy()
   for (uint32_t i = 0; i < mManagers.Length(); ++i) {
     mManagers[i]->Destroy();
   }
-#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID))
+#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK))
   if (mVRService) {
     mVRService->Stop();
     mVRService = nullptr;
@@ -173,7 +173,7 @@ VRManager::Shutdown()
   for (uint32_t i = 0; i < mManagers.Length(); ++i) {
     mManagers[i]->Shutdown();
   }
-#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID))
+#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK))
   if (mVRService) {
     mVRService->Stop();
   }
@@ -376,7 +376,7 @@ VRManager::RefreshVRDisplays(bool aMustDispatch)
   * or interrupt other VR activities.
   */
   if (mVRDisplaysRequested || aMustDispatch) {
-#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID))
+#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK))
     // Tell VR process to start VR service.
     if (gfxPrefs::VRProcessEnabled() && !mVRServiceStarted) {
       RefPtr<Runnable> task = NS_NewRunnableFunction(

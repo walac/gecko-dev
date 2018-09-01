@@ -57,7 +57,7 @@ private:
                             VRLayerTextureType* aTextureType,
                             VRLayerTextureHandle* aTextureHandle);
   void PushState(bool aNotifyCond = false);
-#if defined(MOZ_WIDGET_ANDROID)
+#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
   bool PullState(const std::function<bool()>& aWaitCondition = nullptr);
   void PostVRTask();
   void RunVRTask();
@@ -96,7 +96,7 @@ public:
                              double aDuration,
                              const VRManagerPromise& aPromise) override;
   virtual void StopVibrateHaptic(uint32_t aControllerIdx) override;
-#if defined(MOZ_WIDGET_ANDROID)
+#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
   bool PullState(VRDisplayState* aDisplayState,
                  VRHMDSensorState* aSensorState = nullptr,
                  VRControllerState* aControllerState = nullptr,
@@ -119,10 +119,12 @@ private:
   int mShmemFD;
 #elif defined(XP_WIN)
   base::ProcessHandle mShmemFile;
-#elif defined(MOZ_WIDGET_ANDROID)
+#elif defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
   bool mDoShutdown;
-  bool mExternalStructFailed;
   bool mEnumerationCompleted;
+#endif
+#ifdef MOZ_WIDGET_ANDROID
+  bool mExternalStructFailed;
 #endif
 
   volatile VRExternalShmem* mExternalShmem;

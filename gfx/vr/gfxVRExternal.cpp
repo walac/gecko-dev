@@ -313,7 +313,7 @@ VRDisplayExternal::PushState(bool aNotifyCond)
   manager->PushState(&mBrowserState, aNotifyCond);
 }
 
-#if defined(MOZ_WIDGET_ANDROID)
+#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
 bool
 VRDisplayExternal::PullState(const std::function<bool()>& aWaitCondition)
 {
@@ -459,7 +459,7 @@ VRSystemManagerExternal::OpenShmem()
 void
 VRSystemManagerExternal::CheckForShutdown()
 {
-#if defined(MOZ_WIDGET_ANDROID)
+#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
   if (mDoShutdown) {
     Shutdown();
   }
@@ -671,7 +671,7 @@ VRSystemManagerExternal::RemoveControllers()
 }
 
 
-#if defined(MOZ_WIDGET_ANDROID)
+#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
 bool
 VRSystemManagerExternal::PullState(VRDisplayState* aDisplayState,
                                    VRHMDSensorState* aSensorState /* = nullptr */,
@@ -745,7 +745,7 @@ VRSystemManagerExternal::PushState(VRBrowserState* aBrowserState, bool aNotifyCo
   MOZ_ASSERT(aBrowserState);
   MOZ_ASSERT(mExternalShmem);
   if (mExternalShmem) {
-#if defined(MOZ_WIDGET_ANDROID)
+#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
     if (pthread_mutex_lock((pthread_mutex_t*)&(mExternalShmem->browserMutex)) == 0) {
       memcpy((void *)&(mExternalShmem->browserState), aBrowserState, sizeof(VRBrowserState));
       if (aNotifyCond) {

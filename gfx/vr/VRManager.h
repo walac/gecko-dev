@@ -23,7 +23,7 @@ namespace gfx {
 class VRLayerParent;
 class VRManagerParent;
 class VRDisplayHost;
-#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID))
+#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK))
 class VRService;
 #endif
 class VRSystemManagerPuppet;
@@ -97,7 +97,7 @@ private:
   TimeStamp mLastActiveTime;
   RefPtr<VRSystemManagerPuppet> mPuppetManager;
   RefPtr<VRSystemManagerExternal> mExternalManager;
-#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID))
+#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK))
   RefPtr<VRService> mVRService;
 #endif
   bool mVRDisplaysRequested;
