@@ -34,7 +34,7 @@
 #include "UnscaledFontFreeType.h"
 #endif
 
-#ifdef MOZ_WIDGET_ANDROID
+#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
 #include "ScaledFontFreeType.h"
 #include "NativeFontResourceFreeType.h"
 #endif
@@ -624,7 +624,7 @@ Factory::CreateScaledFontForNativeFont(const NativeFont &aNativeFont,
 #elif defined(MOZ_WIDGET_GTK)
   case NativeFontType::FONTCONFIG_PATTERN:
     return MakeAndAddRef<ScaledFontFontconfig>(aScaledFont, static_cast<FcPattern*>(aNativeFont.mFont), aUnscaledFont, aSize);
-#elif defined(MOZ_WIDGET_ANDROID)
+#elif defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
   case NativeFontType::FREETYPE_FACE:
     return MakeAndAddRef<ScaledFontFreeType>(aScaledFont, static_cast<FT_Face>(aNativeFont.mFont), aUnscaledFont, aSize);
 #endif
@@ -656,7 +656,7 @@ Factory::CreateNativeFontResource(uint8_t *aData, uint32_t aSize, BackendType aB
   case FontType::FONTCONFIG:
     return NativeFontResourceFontconfig::Create(aData, aSize,
                                                 static_cast<FT_Library>(aFontContext));
-#elif defined(MOZ_WIDGET_ANDROID)
+#elif defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
   case FontType::FREETYPE:
     return NativeFontResourceFreeType::Create(aData, aSize,
                                               static_cast<FT_Library>(aFontContext));
