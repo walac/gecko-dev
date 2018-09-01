@@ -132,7 +132,7 @@ set_config('L10NBASEDIR', l10n_base)
 # reason.
 option('--enable-default-toolkit', nargs=1,
        choices=('cairo-windows', 'cairo-gtk3', 'cairo-gtk3-wayland',
-                'cairo-cocoa', 'cairo-uikit', 'cairo-android'),
+                'cairo-cocoa', 'cairo-uikit', 'cairo-android', 'cairo-gonk'),
        help='Select default toolkit')
 
 @depends('--enable-default-toolkit', target, '--help')
@@ -146,7 +146,7 @@ def toolkit(value, target, _):
     elif target.os == 'iOS':
         platform_choices = ('cairo-uikit',)
     elif target.os == 'Android':
-        platform_choices = ('cairo-android',)
+        platform_choices = ('cairo-android', 'cairo-gonk')
     else:
         platform_choices = ('cairo-gtk3', 'cairo-gtk3-wayland')
 
