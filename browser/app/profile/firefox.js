@@ -271,6 +271,12 @@ pref("browser.urlbar.doubleClickSelectsAll", true);
 pref("browser.urlbar.doubleClickSelectsAll", false);
 #endif
 
+// Whether using `ctrl` when hitting return/enter in the URL bar
+// (or clicking 'go') should prefix 'www.' and suffix
+// browser.fixup.alternate.suffix to the URL bar value prior to
+// navigating.
+pref("browser.urlbar.ctrlCanonizesURLs", true);
+
 // Control autoFill behavior
 pref("browser.urlbar.autoFill", true);
 pref("browser.urlbar.speculativeConnect.enabled", true);
@@ -1464,8 +1470,8 @@ pref("browser.translation.detectLanguage", false);
 pref("browser.translation.neverForLanguages", "");
 // Show the translation UI bits, like the info bar, notification icon and preferences.
 pref("browser.translation.ui.show", false);
-// Allows to define the translation engine. Bing is default, Yandex may optionally switched on.
-pref("browser.translation.engine", "bing");
+// Allows to define the translation engine. Google is default, Bing or Yandex are other options.
+pref("browser.translation.engine", "Google");
 
 // Telemetry settings.
 // Determines if Telemetry pings can be archived locally.
@@ -1759,3 +1765,8 @@ pref("intl.multilingual.enabled", false);
 // Curve25519 public keys for Prio servers
 pref("prio.publicKeyA", "35AC1C7576C7C6EDD7FED6BCFC337B34D48CB4EE45C86BEEFB40BD8875707733");
 pref("prio.publicKeyB", "26E6674E65425B823F1F1D5F96E3BB3EF9E406EC7FBA7DEF8B08A35DD135AF50");
+
+#ifdef NIGHTLY_BUILD
+pref("browser.fastblock.enabled", true);
+#endif
+

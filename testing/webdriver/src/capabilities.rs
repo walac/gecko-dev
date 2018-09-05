@@ -1,7 +1,6 @@
 use common::MAX_SAFE_INTEGER;
 use error::{ErrorStatus, WebDriverError, WebDriverResult};
 use serde_json::{Map, Value};
-use std::convert::From;
 use url::Url;
 
 pub type Capabilities = Map<String, Value>;
@@ -122,7 +121,7 @@ impl SpecNewSessionParameters {
             capabilities.remove(&key);
         }
 
-        for (key, value) in capabilities.iter() {
+        for (key, value) in &capabilities {
             match &**key {
                 x @ "acceptInsecureCerts" | x @ "setWindowRect" => if !value.is_boolean() {
                     return Err(WebDriverError::new(
@@ -145,7 +144,7 @@ impl SpecNewSessionParameters {
                     SpecNewSessionParameters::validate_unhandled_prompt_behaviour(value)?
                 }
                 x => {
-                    if !x.contains(":") {
+                    if !x.contains(':') {
                         return Err(WebDriverError::new(
                             ErrorStatus::InvalidArgument,
                             format!(
@@ -164,7 +163,7 @@ impl SpecNewSessionParameters {
 
     fn validate_page_load_strategy(value: &Value) -> WebDriverResult<()> {
         match value {
-            &Value::String(ref x) => match &**x {
+            Value::String(x) => match &**x {
                 "normal" | "eager" | "none" => {}
                 x => {
                     return Err(WebDriverError::new(
@@ -190,7 +189,7 @@ impl SpecNewSessionParameters {
             "proxy is not an object"
         );
 
-        for (key, value) in obj.iter() {
+        for (key, value) in obj {
             match &**key {
                 "proxyType" => match value.as_str() {
                     Some("pac") | Some("direct") | Some("autodetect") | Some("system")
@@ -211,10 +210,12 @@ impl SpecNewSessionParameters {
 
                 "proxyAutoconfigUrl" => match value.as_str() {
                     Some(x) => {
-                        Url::parse(x).or(Err(WebDriverError::new(
-                            ErrorStatus::InvalidArgument,
-                            format!("proxyAutoconfigUrl is not a valid URL: {}", x),
-                        )))?;
+                        Url::parse(x).or_else(|_| {
+                            Err(WebDriverError::new(
+                                ErrorStatus::InvalidArgument,
+                                format!("proxyAutoconfigUrl is not a valid URL: {}", x),
+                            ))
+                        })?;
                     }
                     None => {
                         return Err(WebDriverError::new(
@@ -274,8 +275,8 @@ impl SpecNewSessionParameters {
         Ok(())
     }
 
-    /// Validate whether a named capability is JSON value is a string containing a host
-    /// and possible port
+    /// Validate whether a named capability is JSON value is a string
+    /// containing a host and possible port
     fn validate_host(value: &Value, entry: &str) -> WebDriverResult<()> {
         match value.as_str() {
             Some(host) => {
@@ -287,14 +288,18 @@ impl SpecNewSessionParameters {
                 }
 
                 // Temporarily add a scheme so the host can be parsed as URL
-                let s = String::from(format!("http://{}", host));
-                let url = Url::parse(s.as_str()).or(Err(WebDriverError::new(
-                    ErrorStatus::InvalidArgument,
-                    format!("{} is not a valid URL: {}", entry, host),
-                )))?;
+                let url = Url::parse(&format!("http://{}", host)).or_else(|_| {
+                    Err(WebDriverError::new(
+                        ErrorStatus::InvalidArgument,
+                        format!("{} is not a valid URL: {}", entry, host),
+                    ))
+                })?;
 
-                if url.username() != "" || url.password() != None || url.path() != "/"
-                    || url.query() != None || url.fragment() != None
+                if url.username() != ""
+                    || url.password() != None
+                    || url.path() != "/"
+                    || url.query() != None
+                    || url.fragment() != None
                 {
                     return Err(WebDriverError::new(
                         ErrorStatus::InvalidArgument,
@@ -321,7 +326,7 @@ impl SpecNewSessionParameters {
             "timeouts capability is not an object"
         );
 
-        for (key, value) in obj.iter() {
+        for (key, value) in obj {
             match &**key {
                 x @ "script" | x @ "pageLoad" | x @ "implicit" => {
                     let timeout = try_opt!(
@@ -388,10 +393,10 @@ impl CapabilitiesMatching for SpecNewSessionParameters {
         browser_capabilities: &mut T,
     ) -> WebDriverResult<Option<Capabilities>> {
         let default = vec![Map::new()];
-        let capabilities_list = if self.firstMatch.len() > 0 {
-            &self.firstMatch
-        } else {
+        let capabilities_list = if self.firstMatch.is_empty() {
             &default
+        } else {
+            &self.firstMatch
         };
 
         let merged_capabilities = capabilities_list
@@ -407,7 +412,7 @@ impl CapabilitiesMatching for SpecNewSessionParameters {
                     ));
                 }
                 let mut merged = self.alwaysMatch.clone();
-                for (key, value) in first_match_entry.clone().into_iter() {
+                for (key, value) in first_match_entry.clone() {
                     merged.insert(key, value);
                 }
                 Ok(merged)
@@ -420,7 +425,7 @@ impl CapabilitiesMatching for SpecNewSessionParameters {
             .filter_map(|merged| {
                 browser_capabilities.init(merged);
 
-                for (key, value) in merged.iter() {
+                for (key, value) in merged {
                     match &**key {
                         "browserName" => {
                             let browserValue = browser_capabilities
@@ -488,7 +493,7 @@ impl CapabilitiesMatching for SpecNewSessionParameters {
                             }
                         }
                         name => {
-                            if name.contains(":") {
+                            if name.contains(':') {
                                 if !browser_capabilities
                                     .accept_custom(name, value, merged)
                                     .unwrap_or(false)
@@ -502,10 +507,10 @@ impl CapabilitiesMatching for SpecNewSessionParameters {
                     }
                 }
 
-                return Some(merged);
+                Some(merged)
             })
             .next()
-            .map(|x| x.clone());
+            .cloned();
         Ok(selected)
     }
 }

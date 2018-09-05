@@ -228,8 +228,8 @@ pref("devtools.scratchpad.enabled", false);
 // Make sure the DOM panel is hidden by default
 pref("devtools.dom.enabled", false);
 
-// Make sure the Accessibility panel is hidden by default
-pref("devtools.accessibility.enabled", false);
+// Enable the Accessibility panel.
+pref("devtools.accessibility.enabled", true);
 // Counter to promote the Accessibility panel.
 // @remove after release 63 (See Bug 1482461)
 pref("devtools.promote.accessibility", 1);
@@ -332,6 +332,13 @@ pref("devtools.responsive.show-setting-tooltip", false);
 // Enable new about:debugging.
 pref("devtools.aboutdebugging.new-enabled", false);
 pref("devtools.aboutdebugging.network-locations", "[]");
+// Debug target pane collapse/expand settings.
+pref("devtools.aboutdebugging.collapsibilities.installedExtension", false);
+pref("devtools.aboutdebugging.collapsibilities.otherWorker", false);
+pref("devtools.aboutdebugging.collapsibilities.serviceWorker", false);
+pref("devtools.aboutdebugging.collapsibilities.sharedWorker", false);
+pref("devtools.aboutdebugging.collapsibilities.tab", false);
+pref("devtools.aboutdebugging.collapsibilities.temporaryExtension", false);
 
 // about:debugging: only show system add-ons in local builds by default.
 #ifdef MOZILLA_OFFICIAL

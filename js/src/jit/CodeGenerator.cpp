@@ -10212,9 +10212,10 @@ CodeGenerator::generateWasm(wasm::FuncTypeIdDesc funcTypeId, wasm::BytecodeOffse
 bool
 CodeGenerator::generate()
 {
-    JitSpew(JitSpew_Codegen, "# Emitting code for script %s:%u",
+    JitSpew(JitSpew_Codegen, "# Emitting code for script %s:%u:%u",
             gen->info().script()->filename(),
-            gen->info().script()->lineno());
+            gen->info().script()->lineno(),
+            gen->info().script()->column());
 
     // Initialize native code table with an entry to the start of
     // top-level script.
@@ -10558,9 +10559,11 @@ CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints)
         ionScript->copyConstants(vp);
         for (size_t i = 0; i < graph.numConstants(); i++) {
             const Value& v = vp[i];
-            if ((v.isObject() || v.isString()) && IsInsideNursery(v.toGCThing())) {
-                cx->runtime()->gc.storeBuffer().putWholeCell(script);
-                break;
+            if (v.isGCThing()) {
+                if (gc::StoreBuffer* sb = v.toGCThing()->storeBuffer()) {
+                    sb->putWholeCell(script);
+                    break;
+                }
             }
         }
     }

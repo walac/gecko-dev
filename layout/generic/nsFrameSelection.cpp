@@ -51,7 +51,6 @@ static NS_DEFINE_CID(kFrameTraversalCID, NS_FRAMETRAVERSAL_CID);
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsCaret.h"
-#include "AccessibleCaretEventHub.h"
 
 #include "mozilla/MouseEvents.h"
 #include "mozilla/TextEvents.h"
@@ -61,7 +60,6 @@ static NS_DEFINE_CID(kFrameTraversalCID, NS_FRAMETRAVERSAL_CID);
 #include "nsIDocument.h"
 
 #include "nsISelectionController.h" //for the enums
-#include "SelectionChangeListener.h"
 #include "nsCopySupport.h"
 #include "nsIClipboard.h"
 #include "nsIFrameInlines.h"
@@ -654,13 +652,8 @@ nsFrameSelection::Init(nsIPresShell *aShell, nsIContent *aLimiter,
 
   mAccessibleCaretEnabled = aAccessibleCaretEnabled;
   if (mAccessibleCaretEnabled) {
-    RefPtr<AccessibleCaretEventHub> eventHub = mShell->GetAccessibleCaretEventHub();
-    if (eventHub) {
-      int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
-      if (mDomSelections[index]) {
-        mDomSelections[index]->AddSelectionListener(eventHub);
-      }
-    }
+    int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
+    mDomSelections[index]->MaybeNotifyAccessibleCaretEventHub(aShell);
   }
 
   bool plaintextControl = (aLimiter != nullptr);
@@ -673,10 +666,7 @@ nsFrameSelection::Init(nsIPresShell *aShell, nsIContent *aLimiter,
       (doc && nsContentUtils::IsSystemPrincipal(doc->NodePrincipal()))) {
     int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
     if (mDomSelections[index]) {
-      // The Selection instance will hold a strong reference to its selectionchangelistener
-      // so we don't have to worry about that!
-      RefPtr<SelectionChangeListener> listener = new SelectionChangeListener;
-      mDomSelections[index]->AddSelectionListener(listener);
+      mDomSelections[index]->EnableSelectionChangeEvent();
     }
   }
 }
@@ -2868,11 +2858,8 @@ void
 nsFrameSelection::DisconnectFromPresShell()
 {
   if (mAccessibleCaretEnabled) {
-    RefPtr<AccessibleCaretEventHub> eventHub = mShell->GetAccessibleCaretEventHub();
-    if (eventHub) {
-      int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
-      mDomSelections[index]->RemoveSelectionListener(eventHub);
-    }
+    int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
+    mDomSelections[index]->StopNotifyingAccessibleCaretEventHub();
   }
 
   StopAutoScrollTimer();

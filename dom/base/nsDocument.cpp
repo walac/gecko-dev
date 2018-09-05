@@ -1415,6 +1415,11 @@ nsIDocument::nsIDocument()
     mHasUnsafeEvalCSP(false),
     mHasUnsafeInlineCSP(false),
     mHasTrackingContentBlocked(false),
+    mHasSlowTrackingContentBlocked(false),
+    mHasAllCookiesBlocked(false),
+    mHasTrackingCookiesBlocked(false),
+    mHasForeignCookiesBlocked(false),
+    mHasCookiesBlockedByPermission(false),
     mHasTrackingContentLoaded(false),
     mBFCacheDisallowed(false),
     mHasHadDefaultView(false),
@@ -12640,6 +12645,11 @@ nsIDocument::SetUserHasInteracted(bool aUserHasInteracted)
   MOZ_LOG(gUserInteractionPRLog, LogLevel::Debug,
           ("Document %p has been interacted by user.", this));
   mUserHasInteracted = aUserHasInteracted;
+
+  nsCOMPtr<nsILoadInfo> loadInfo = mChannel ? mChannel->GetLoadInfo() : nullptr;
+  if (loadInfo) {
+    loadInfo->SetDocumentHasUserInteracted(aUserHasInteracted);
+  }
 
   if (aUserHasInteracted) {
     MaybeAllowStorageForOpener();

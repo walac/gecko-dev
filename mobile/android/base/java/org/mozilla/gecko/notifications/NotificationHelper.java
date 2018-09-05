@@ -105,11 +105,19 @@ public final class NotificationHelper implements BundleEventListener {
          * Built-in updater - use only when <code>AppConstants.MOZ_UPDATER</code> is true.
          */
         UPDATER,
+        /**
+         * Synced tabs notification channel
+         */
+        SYNCED_TABS,
+        /**
+         * Leanplum notification channel - use only when <code>AppConstants.MOZ_ANDROID_MMA</code> is true.
+         */
+        LP_DEFAULT,
     }
 
     // Holds the mapping between the Channel enum used by the rest of our codebase and the
     // channel ID used for communication with the system NotificationManager.
-    private final Map<Channel, String> mDefinedNotificationChannels = new HashMap<Channel, String>(5) {{
+    private final Map<Channel, String> mDefinedNotificationChannels = new HashMap<Channel, String>(7) {{
         final String DEFAULT_CHANNEL_TAG = "default-notification-channel";
         put(Channel.DEFAULT, DEFAULT_CHANNEL_TAG);
 
@@ -122,10 +130,18 @@ public final class NotificationHelper implements BundleEventListener {
         final String MEDIA_CHANNEL_TAG = "media-notification-channel";
         put(Channel.MEDIA, MEDIA_CHANNEL_TAG);
 
+        if (AppConstants.MOZ_ANDROID_MMA) {
+            final String LP_DEFAULT_CHANNEL_TAG = "lp-default-notification-channel";
+            put(Channel.LP_DEFAULT, LP_DEFAULT_CHANNEL_TAG);
+        }
+
         if (AppConstants.MOZ_UPDATER) {
             final String UPDATER_CHANNEL_TAG = "updater-notification-channel";
             put(Channel.UPDATER, UPDATER_CHANNEL_TAG);
         }
+
+        final String SYNCED_TABS_CHANNEL_TAG = "synced-tabs-notification-channel";
+        put(Channel.SYNCED_TABS, SYNCED_TABS_CHANNEL_TAG);
     }};
 
     // Holds a list of notifications that should be cleared if the Fennec Activity is shut down.
@@ -174,6 +190,7 @@ public final class NotificationHelper implements BundleEventListener {
         }
     }
 
+    @SuppressWarnings("fallthrough")
     @TargetApi(26)
     private void createChannel(Channel definedChannel) {
         final NotificationManager notificationManager = (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -205,6 +222,20 @@ public final class NotificationHelper implements BundleEventListener {
                 case UPDATER: {
                     channel = new NotificationChannel(mDefinedNotificationChannels.get(definedChannel),
                             mContext.getString(R.string.updater_notification_channel),
+                            NotificationManager.IMPORTANCE_LOW);
+                }
+                break;
+
+                case SYNCED_TABS: {
+                    channel = new NotificationChannel(mDefinedNotificationChannels.get(definedChannel),
+                            mContext.getString(R.string.synced_tabs_notification_channel),
+                            NotificationManager.IMPORTANCE_HIGH);
+                }
+                break;
+
+                case LP_DEFAULT: {
+                    channel = new NotificationChannel(mDefinedNotificationChannels.get(definedChannel),
+                            mContext.getString(R.string.leanplum_default_notifications_channel),
                             NotificationManager.IMPORTANCE_LOW);
                 }
                 break;

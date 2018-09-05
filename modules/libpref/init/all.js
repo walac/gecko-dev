@@ -2297,6 +2297,9 @@ pref("network.cookie.move.interval_sec",    10);
 
 pref("network.cookie.maxNumber", 3000);
 pref("network.cookie.maxPerHost", 180);
+// Cookies quota for each host. If cookies exceed the limit maxPerHost,
+// (maxPerHost - quotaPerHost) cookies will be evicted.
+pref("network.cookie.quotaPerHost", 150);
 
 // The PAC file to load.  Ignored unless network.proxy.type is 2.
 pref("network.proxy.autoconfig_url", "");
@@ -3112,10 +3115,10 @@ pref("layout.display-list.dump-parent", false);
 // Toggle retaining display lists between paints
 #if !defined(ANDROID)
 pref("layout.display-list.retain", true);
+pref("layout.display-list.retain.chrome", true);
 #else
 pref("layout.display-list.retain", false);
 #endif
-pref("layout.display-list.retain.chrome", false);
 
 // Set the maximum amount of modified frames allowed before doing a full
 // display list rebuild.
@@ -5576,10 +5579,6 @@ pref("layout.accessiblecaret.enabled_on_touch", true);
 pref("layout.accessiblecaret.width", "34.0");
 pref("layout.accessiblecaret.height", "36.0");
 pref("layout.accessiblecaret.margin-left", "-18.5");
-pref("layout.accessiblecaret.bar.width", "2.0");
-
-// Show no selection bars at the two ends of the selection highlight.
-pref("layout.accessiblecaret.bar.enabled", false);
 
 // Show the caret when long tapping on an empty content.
 pref("layout.accessiblecaret.caret_shown_when_long_tapping_on_empty_content", false);

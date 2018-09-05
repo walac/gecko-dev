@@ -381,10 +381,10 @@ Link::LinkState() const
     if (mHistory && hrefURI) {
 #ifdef ANDROID
       nsCOMPtr<IHistory> history = services::GetHistoryService();
-#elseif defined(MOZ_PLACES)
+#elif defined(MOZ_PLACES)
       History* history = History::GetService();
 #else
-      nsCOMPtr<IHistory> history = nullptr;
+      nsCOMPtr<IHistory> history;
 #endif
       if (history) {
         nsresult rv = history->RegisterVisitedCallback(hrefURI, self);
@@ -848,10 +848,10 @@ Link::UnregisterFromHistory()
   if (mHistory && mCachedURI) {
 #ifdef ANDROID
     nsCOMPtr<IHistory> history = services::GetHistoryService();
-#elseif defined(MOZ_PLACES)
+#elif defined(MOZ_PLACES)
     History* history = History::GetService();
 #else
-    nsCOMPtr<IHistory> history = nullptr;
+    nsCOMPtr<IHistory> history;
 #endif
     if (history) {
       nsresult rv = history->UnregisterVisitedCallback(mCachedURI, this);
