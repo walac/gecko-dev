@@ -342,7 +342,8 @@ public:
   typedef MozPromise<bool /* aIgnored */, RefPtr<MediaMgrError>, true> InitPromise;
 
   MOZ_DECLARE_WEAKREFERENCE_TYPENAME(SourceListener)
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING_WITH_MAIN_THREAD_DESTRUCTION(SourceListener)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING_WITH_MAIN_THREAD_DESTRUCTION_AND_RECORDING(SourceListener,
+                                                                                   recordreplay::Behavior::Preserve)
 
   SourceListener();
 
@@ -4193,12 +4194,12 @@ SourceListener::InitializeAsync()
         if (NS_FAILED(rv)) {
           nsString log;
           if (rv == NS_ERROR_NOT_AVAILABLE) {
-            log.AssignASCII("Concurrent mic process limit.");
+            log.AssignLiteral("Concurrent mic process limit.");
             aHolder.Reject(MakeRefPtr<MediaMgrError>(
                   MediaMgrError::Name::NotReadableError, log), __func__);
             return;
           }
-          log.AssignASCII("Starting audio failed");
+          log.AssignLiteral("Starting audio failed");
           aHolder.Reject(MakeRefPtr<MediaMgrError>(
                 MediaMgrError::Name::AbortError, log), __func__);
           return;
@@ -4217,7 +4218,7 @@ SourceListener::InitializeAsync()
             }
           }
           nsString log;
-          log.AssignASCII("Starting video failed");
+          log.AssignLiteral("Starting video failed");
           aHolder.Reject(MakeRefPtr<MediaMgrError>(MediaMgrError::Name::AbortError, log), __func__);
           return;
         }

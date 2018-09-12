@@ -119,7 +119,6 @@
 #include "nsISelectionDisplay.h"
 #include "nsISHEntry.h"
 #include "nsISHistory.h"
-#include "nsISHistoryInternal.h"
 #include "nsISiteSecurityService.h"
 #include "nsISocketProvider.h"
 #include "nsIStringBundle.h"
@@ -146,7 +145,7 @@
 #include "nsIWritablePropertyBag2.h"
 #include "nsIWyciwygChannel.h"
 
-#include "nsPICommandUpdater.h"
+#include "nsCommandManager.h"
 #include "nsPIDOMWindow.h"
 #include "nsPILoadGroupInternal.h"
 #include "nsPIWindowRoot.h"
@@ -323,8 +322,8 @@ nsDocShell::nsDocShell()
   , mMarginWidth(-1)
   , mMarginHeight(-1)
   , mItemType(typeContent)
-  , mPreviousTransIndex(-1)
-  , mLoadedTransIndex(-1)
+  , mPreviousEntryIndex(-1)
+  , mLoadedEntryIndex(-1)
   , mChildOffset(0)
   , mSandboxFlags(0)
   , mBusyFlags(BUSY_FLAGS_NONE)
@@ -423,7 +422,7 @@ nsDocShell::~nsDocShell()
   Destroy();
 
   if (mSessionHistory) {
-    mSessionHistory->LegacySHistoryInternal()->SetRootDocShell(nullptr);
+    mSessionHistory->LegacySHistory()->SetRootDocShell(nullptr);
   }
 
   if (--gDocShellCount == 0) {
@@ -1070,7 +1069,7 @@ nsDocShell::FirePageHideNotificationInternal(bool aIsUnload,
       RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
       if (rootSH && mOSHE) {
         int32_t index = rootSH->Index();
-        rootSH->LegacySHistoryInternal()->RemoveDynEntries(index, mOSHE);
+        rootSH->LegacySHistory()->RemoveDynEntries(index, mOSHE);
       }
     }
 
@@ -1552,10 +1551,50 @@ nsDocShell::GetHasTrackingContentBlocked(bool* aHasTrackingContentBlocked)
 }
 
 NS_IMETHODIMP
+nsDocShell::GetHasSlowTrackingContentBlocked(bool* aHasSlowTrackingContentBlocked)
+{
+  nsCOMPtr<nsIDocument> doc(GetDocument());
+  *aHasSlowTrackingContentBlocked = doc && doc->GetHasSlowTrackingContentBlocked();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDocShell::GetHasTrackingContentLoaded(bool* aHasTrackingContentLoaded)
 {
   nsCOMPtr<nsIDocument> doc(GetDocument());
   *aHasTrackingContentLoaded = doc && doc->GetHasTrackingContentLoaded();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::GetHasCookiesBlockedByPermission(bool* aHasCookiesBlockedByPermission)
+{
+  nsCOMPtr<nsIDocument> doc(GetDocument());
+  *aHasCookiesBlockedByPermission = doc && doc->GetHasCookiesBlockedByPermission();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::GetHasCookiesBlockedDueToTrackers(bool* aHasCookiesBlockedDueToTrackers)
+{
+  nsCOMPtr<nsIDocument> doc(GetDocument());
+  *aHasCookiesBlockedDueToTrackers = doc && doc->GetHasTrackingCookiesBlocked();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::GetHasAllCookiesBeenBlocked(bool* aHasAllCookiesBeenBlocked)
+{
+  nsCOMPtr<nsIDocument> doc(GetDocument());
+  *aHasAllCookiesBeenBlocked = doc && doc->GetHasAllCookiesBlocked();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::GetHasForeignCookiesBeenBlocked(bool* aHasForeignCookiesBeenBlocked)
+{
+  nsCOMPtr<nsIDocument> doc(GetDocument());
+  *aHasForeignCookiesBeenBlocked = doc && doc->GetHasForeignCookiesBlocked();
   return NS_OK;
 }
 
@@ -2247,16 +2286,16 @@ nsDocShell::SetUseErrorPages(bool aUseErrorPages)
 }
 
 NS_IMETHODIMP
-nsDocShell::GetPreviousTransIndex(int32_t* aPreviousTransIndex)
+nsDocShell::GetPreviousEntryIndex(int32_t* aPreviousEntryIndex)
 {
-  *aPreviousTransIndex = mPreviousTransIndex;
+  *aPreviousEntryIndex = mPreviousEntryIndex;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsDocShell::GetLoadedTransIndex(int32_t* aLoadedTransIndex)
+nsDocShell::GetLoadedEntryIndex(int32_t* aLoadedEntryIndex)
 {
-  *aLoadedTransIndex = mLoadedTransIndex;
+  *aLoadedEntryIndex = mLoadedEntryIndex;
   return NS_OK;
 }
 
@@ -2268,8 +2307,8 @@ nsDocShell::HistoryPurged(int32_t aNumEntries)
   // eviction.  We need to adjust by the number of entries that we
   // just purged from history, so that we look at the right session history
   // entries during eviction.
-  mPreviousTransIndex = std::max(-1, mPreviousTransIndex - aNumEntries);
-  mLoadedTransIndex = std::max(0, mLoadedTransIndex - aNumEntries);
+  mPreviousEntryIndex = std::max(-1, mPreviousEntryIndex - aNumEntries);
+  mLoadedEntryIndex = std::max(0, mLoadedEntryIndex - aNumEntries);
 
   nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
   while (iter.HasMore()) {
@@ -2283,29 +2322,29 @@ nsDocShell::HistoryPurged(int32_t aNumEntries)
 }
 
 nsresult
-nsDocShell::HistoryTransactionRemoved(int32_t aIndex)
+nsDocShell::HistoryEntryRemoved(int32_t aIndex)
 {
   // These indices are used for fastback cache eviction, to determine
   // which session history entries are candidates for content viewer
   // eviction.  We need to adjust by the number of entries that we
   // just purged from history, so that we look at the right session history
   // entries during eviction.
-  if (aIndex == mPreviousTransIndex) {
-    mPreviousTransIndex = -1;
-  } else if (aIndex < mPreviousTransIndex) {
-    --mPreviousTransIndex;
+  if (aIndex == mPreviousEntryIndex) {
+    mPreviousEntryIndex = -1;
+  } else if (aIndex < mPreviousEntryIndex) {
+    --mPreviousEntryIndex;
   }
-  if (mLoadedTransIndex == aIndex) {
-    mLoadedTransIndex = 0;
-  } else if (aIndex < mLoadedTransIndex) {
-    --mLoadedTransIndex;
+  if (mLoadedEntryIndex == aIndex) {
+    mLoadedEntryIndex = 0;
+  } else if (aIndex < mLoadedEntryIndex) {
+    --mLoadedEntryIndex;
   }
 
   nsTObserverArray<nsDocLoader*>::ForwardIterator iter(mChildList);
   while (iter.HasMore()) {
     nsCOMPtr<nsIDocShell> shell = do_QueryObject(iter.GetNext());
     if (shell) {
-      static_cast<nsDocShell*>(shell.get())->HistoryTransactionRemoved(aIndex);
+      static_cast<nsDocShell*>(shell.get())->HistoryEntryRemoved(aIndex);
     }
   }
 
@@ -3785,7 +3824,7 @@ nsDocShell::AddChildSHEntryInternal(nsISHEntry* aCloneRef,
     }
 
     rv = mSessionHistory->LegacySHistory()->GetEntryAtIndex(
-      index, false, getter_AddRefs(currentHE));
+      index, getter_AddRefs(currentHE));
     NS_ENSURE_TRUE(currentHE, NS_ERROR_FAILURE);
 
     nsCOMPtr<nsISHEntry> currentEntry(do_QueryInterface(currentHE));
@@ -3797,7 +3836,7 @@ nsDocShell::AddChildSHEntryInternal(nsISHEntry* aCloneRef,
         aNewEntry, aCloneChildren, getter_AddRefs(nextEntry));
 
       if (NS_SUCCEEDED(rv)) {
-        rv = mSessionHistory->LegacySHistoryInternal()->AddEntry(nextEntry, true);
+        rv = mSessionHistory->LegacySHistory()->AddEntry(nextEntry, true);
       }
     }
   } else {
@@ -3827,7 +3866,7 @@ nsDocShell::AddChildSHEntryToParent(nsISHEntry* aNewEntry, int32_t aChildOffset,
   // current index by 1
   RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
   if (rootSH) {
-    mPreviousTransIndex = rootSH->Index();
+    mPreviousEntryIndex = rootSH->Index();
   }
 
   nsresult rv;
@@ -3838,10 +3877,10 @@ nsDocShell::AddChildSHEntryToParent(nsISHEntry* aNewEntry, int32_t aChildOffset,
   }
 
   if (rootSH) {
-    mLoadedTransIndex = rootSH->Index();
+    mLoadedEntryIndex = rootSH->Index();
 #ifdef DEBUG_PAGE_CACHE
-    printf("Previous index: %d, Loaded index: %d\n\n", mPreviousTransIndex,
-           mLoadedTransIndex);
+    printf("Previous index: %d, Loaded index: %d\n\n", mPreviousEntryIndex,
+           mLoadedEntryIndex);
 #endif
   }
 
@@ -3882,7 +3921,7 @@ nsDocShell::RemoveFromSessionHistory()
   }
   int32_t index = sessionHistory->Index();
   AutoTArray<nsID, 16> ids({mHistoryID});
-  sessionHistory->LegacySHistoryInternal()->RemoveEntries(ids, index);
+  sessionHistory->LegacySHistory()->RemoveEntries(ids, index);
   return NS_OK;
 }
 
@@ -4004,7 +4043,7 @@ nsDocShell::ClearFrameHistory(nsISHEntry* aEntry)
     }
   }
   int32_t index = rootSH->Index();
-  rootSH->LegacySHistoryInternal()->RemoveEntries(ids, index);
+  rootSH->LegacySHistory()->RemoveEntries(ids, index);
 }
 
 //-------------------------------------
@@ -4107,11 +4146,11 @@ nsDocShell::GotoIndex(int32_t aIndex)
   }
   RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
   NS_ENSURE_TRUE(rootSH, NS_ERROR_FAILURE);
-  return rootSH->LegacySHistoryWebNav()->GotoIndex(aIndex);
+  return rootSH->LegacySHistoryImpl()->GotoIndex(aIndex);
 }
 
 NS_IMETHODIMP
-nsDocShell::LoadURI(const char16_t* aURI,
+nsDocShell::LoadURI(const nsAString& aURI,
                     uint32_t aLoadFlags,
                     nsIURI* aReferringURI,
                     nsIInputStream* aPostStream,
@@ -4124,7 +4163,7 @@ nsDocShell::LoadURI(const char16_t* aURI,
 }
 
 NS_IMETHODIMP
-nsDocShell::LoadURIWithOptions(const char16_t* aURI,
+nsDocShell::LoadURIWithOptions(const nsAString& aURI,
                                uint32_t aLoadFlags,
                                nsIURI* aReferringURI,
                                uint32_t aReferrerPolicy,
@@ -4191,7 +4230,8 @@ nsDocShell::LoadURIWithOptions(const char16_t* aURI,
     if (aLoadFlags & LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP) {
       nsCOMPtr<nsIObserverService> serv = services::GetObserverService();
       if (serv) {
-        serv->NotifyObservers(fixupInfo, "keyword-uri-fixup", aURI);
+        serv->NotifyObservers(fixupInfo, "keyword-uri-fixup",
+                              PromiseFlatString(aURI).get());
       }
     }
   }
@@ -4199,7 +4239,7 @@ nsDocShell::LoadURIWithOptions(const char16_t* aURI,
   // what happens
 
   if (NS_ERROR_MALFORMED_URI == rv) {
-    if (DisplayLoadError(rv, uri, aURI, nullptr) &&
+    if (DisplayLoadError(rv, uri, PromiseFlatString(aURI).get(), nullptr) &&
         (aLoadFlags & LOAD_FLAGS_ERROR_LOAD_CHANGES_RV) != 0) {
       return NS_ERROR_LOAD_SHOWED_ERRORPAGE;
     }
@@ -4862,7 +4902,7 @@ nsDocShell::Reload(uint32_t aReloadFlags)
   RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
   bool canReload = true;
   if (rootSH) {
-    rootSH->LegacySHistoryInternal()
+    rootSH->LegacySHistory()
       ->NotifyOnHistoryReload(mCurrentURI, aReloadFlags, &canReload);
   }
 
@@ -7315,7 +7355,7 @@ nsDocShell::EndPageLoad(nsIWebProgress* aProgress,
           nsCOMPtr<nsIPrincipal> triggeringPrincipal = loadInfo
             ? loadInfo->TriggeringPrincipal()
             : nsContentUtils::GetSystemPrincipal();
-          return LoadURI(newSpecW.get(),       // URI string
+          return LoadURI(newSpecW,             // URI string
                          LOAD_FLAGS_NONE,      // Load flags
                          nullptr,              // Referring URI
                          newPostData,          // Post data stream
@@ -8081,12 +8121,12 @@ nsDocShell::RestoreFromHistory()
   mURIResultedInDocument = true;
   RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
   if (rootSH) {
-    mPreviousTransIndex = rootSH->Index();
-    rootSH->LegacySHistoryInternal()->UpdateIndex();
-    mLoadedTransIndex = rootSH->Index();
+    mPreviousEntryIndex = rootSH->Index();
+    rootSH->LegacySHistory()->UpdateIndex();
+    mLoadedEntryIndex = rootSH->Index();
 #ifdef DEBUG_PAGE_CACHE
-    printf("Previous index: %d, Loaded index: %d\n\n", mPreviousTransIndex,
-           mLoadedTransIndex);
+    printf("Previous index: %d, Loaded index: %d\n\n", mPreviousEntryIndex,
+           mLoadedEntryIndex);
 #endif
   }
 
@@ -8613,7 +8653,7 @@ nsDocShell::CreateContentViewer(const nsACString& aContentType,
         idx = mSessionHistory->Index();
       }
       mSessionHistory->LegacySHistory()->
-        GetEntryAtIndex(idx, false, getter_AddRefs(mLSHE));
+        GetEntryAtIndex(idx, getter_AddRefs(mLSHE));
     }
 
     mLoadType = LOAD_ERROR_PAGE;
@@ -9016,7 +9056,7 @@ nsDocShell::CopyFavicon(nsIURI* aOldURI,
 #endif
 }
 
-struct InternalLoadData 
+struct InternalLoadData
 {
 public:
   InternalLoadData(nsDocShell* aDocShell,
@@ -9166,7 +9206,7 @@ public:
                 aSourceDocShell,
                 aBaseURI,
                 nullptr,
-                nullptr) 
+                nullptr)
   {}
 
   NS_IMETHOD
@@ -9265,7 +9305,7 @@ NS_IMPL_CYCLE_COLLECTION(LoadURIDelegateHandler, mLoadData.mDocShell,
                          mLoadData.mURI, mLoadData.mOriginalURI,
                          mLoadData.mResultPrincipalURI, mLoadData.mReferrer,
                          mLoadData.mTriggeringPrincipal,
-                         mLoadData.mPrincipalToInherit, 
+                         mLoadData.mPrincipalToInherit,
                          mLoadData.mPostData, mLoadData.mHeadersData,
                          mLoadData.mSHEntry, mLoadData.mSourceDocShell,
                          mLoadData.mBaseURI)
@@ -9546,7 +9586,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
     if (NS_SUCCEEDED(rv) && promise) {
       const uint32_t flags = aFlags | INTERNAL_LOAD_FLAGS_DELEGATES_CHECKED;
 
-      RefPtr<LoadURIDelegateHandler> handler = 
+      RefPtr<LoadURIDelegateHandler> handler =
         new LoadURIDelegateHandler(this, aURI, aOriginalURI, aResultPrincipalURI,
                                    aKeepResultPrincipalURIIfSet,
                                    aLoadReplace, aReferrer, aReferrerPolicy,
@@ -10037,7 +10077,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
         int32_t index = mSessionHistory->Index();
         nsCOMPtr<nsISHEntry> shEntry;
         mSessionHistory->LegacySHistory()->GetEntryAtIndex(
-          index, false, getter_AddRefs(shEntry));
+          index, getter_AddRefs(shEntry));
         NS_ENSURE_TRUE(shEntry, NS_ERROR_FAILURE);
         shEntry->SetTitle(mTitle);
       }
@@ -11534,9 +11574,9 @@ nsDocShell::OnNewURI(nsIURI* aURI, nsIChannel* aChannel,
     }
     nsCOMPtr<nsISHEntry> currentSH;
     mSessionHistory->LegacySHistory()->GetEntryAtIndex(
-      index, false, getter_AddRefs(currentSH));
+      index, getter_AddRefs(currentSH));
     if (currentSH != mLSHE) {
-      mSessionHistory->LegacySHistoryInternal()->ReplaceEntry(index, mLSHE);
+      mSessionHistory->LegacySHistory()->ReplaceEntry(index, mLSHE);
     }
   }
 
@@ -11568,12 +11608,12 @@ nsDocShell::OnNewURI(nsIURI* aURI, nsIChannel* aChannel,
   if (rootSH &&
        ((mLoadType & (LOAD_CMD_HISTORY | LOAD_CMD_RELOAD)) ||
          mLoadType == LOAD_NORMAL_REPLACE)) {
-    mPreviousTransIndex = rootSH->Index();
-    rootSH->LegacySHistoryInternal()->UpdateIndex();
-    mLoadedTransIndex = rootSH->Index();
+    mPreviousEntryIndex = rootSH->Index();
+    rootSH->LegacySHistory()->UpdateIndex();
+    mLoadedEntryIndex = rootSH->Index();
 #ifdef DEBUG_PAGE_CACHE
     printf("Previous index: %d, Loaded index: %d\n\n",
-           mPreviousTransIndex, mLoadedTransIndex);
+           mPreviousEntryIndex, mLoadedEntryIndex);
 #endif
   }
 
@@ -11842,7 +11882,7 @@ nsDocShell::AddState(JS::Handle<JS::Value> aData, const nsAString& aTitle,
 
     // Set the new SHEntry's title (bug 655273).
     nsString title;
-    mOSHE->GetTitle(getter_Copies(title));
+    mOSHE->GetTitle(title);
     newSHEntry->SetTitle(title);
 
     // AddToSessionHistory may not modify mOSHE.  In case it doesn't,
@@ -11881,7 +11921,7 @@ nsDocShell::AddState(JS::Handle<JS::Value> aData, const nsAString& aTitle,
   if (!aReplace) {
     int32_t curIndex = rootSH->Index();
     if (curIndex > -1) {
-      rootSH->LegacySHistoryInternal()->EvictOutOfRangeContentViewers(curIndex);
+      rootSH->LegacySHistory()->EvictOutOfRangeContentViewers(curIndex);
     }
   } else {
     nsCOMPtr<nsISHEntry> rootSHEntry = nsSHistory::GetRootSHEntry(newSHEntry);
@@ -11889,7 +11929,7 @@ nsDocShell::AddState(JS::Handle<JS::Value> aData, const nsAString& aTitle,
     int32_t index = -1;
     rv = rootSH->LegacySHistory()->GetIndexOfEntry(rootSHEntry, &index);
     if (NS_SUCCEEDED(rv) && index > -1) {
-      rootSH->LegacySHistoryInternal()->ReplaceEntry(index, rootSHEntry);
+      rootSH->LegacySHistory()->ReplaceEntry(index, rootSHEntry);
     }
   }
 
@@ -12206,8 +12246,7 @@ nsDocShell::AddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel,
 
       // Replace the current entry with the new entry
       if (index >= 0) {
-        rv = mSessionHistory->LegacySHistoryInternal()->ReplaceEntry(index,
-                                                                     entry);
+        rv = mSessionHistory->LegacySHistory()->ReplaceEntry(index, entry);
       } else {
         // If we're trying to replace an inexistant shistory entry, append.
         addToSHistory = true;
@@ -12216,15 +12255,14 @@ nsDocShell::AddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel,
 
     if (addToSHistory) {
       // Add to session history
-      mPreviousTransIndex = mSessionHistory->Index();
+      mPreviousEntryIndex = mSessionHistory->Index();
 
       bool shouldPersist = ShouldAddToSessionHistory(aURI, aChannel);
-      rv = mSessionHistory->LegacySHistoryInternal()->AddEntry(
-        entry, shouldPersist);
-      mLoadedTransIndex = mSessionHistory->Index();
+      rv = mSessionHistory->LegacySHistory()->AddEntry(entry, shouldPersist);
+      mLoadedEntryIndex = mSessionHistory->Index();
 #ifdef DEBUG_PAGE_CACHE
       printf("Previous index: %d, Loaded index: %d\n\n",
-             mPreviousTransIndex, mLoadedTransIndex);
+             mPreviousEntryIndex, mLoadedEntryIndex);
 #endif
     }
   } else {
@@ -13248,11 +13286,7 @@ nsresult
 nsDocShell::EnsureCommandHandler()
 {
   if (!mCommandManager) {
-    nsCOMPtr<nsPICommandUpdater> commandUpdater =
-      do_CreateInstance("@mozilla.org/embedcomp/command-manager;1");
-    if (!commandUpdater) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
+    nsCOMPtr<nsPICommandUpdater> commandUpdater = new nsCommandManager();
 
     nsCOMPtr<nsPIDOMWindowOuter> domWindow = GetWindow();
     nsresult rv = commandUpdater->Init(domWindow);

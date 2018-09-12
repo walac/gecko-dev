@@ -38,6 +38,7 @@ nsSHEntry::nsSHEntry()
   , mIsSrcdocEntry(false)
   , mScrollRestorationIsManual(false)
   , mLoadedInThisProcess(false)
+  , mPersist(true)
 {
 }
 
@@ -257,7 +258,7 @@ nsSHEntry::GetSticky(bool* aSticky)
 }
 
 NS_IMETHODIMP
-nsSHEntry::GetTitle(char16_t** aTitle)
+nsSHEntry::GetTitle(nsAString& aTitle)
 {
   // Check for empty title...
   if (mTitle.IsEmpty() && mURI) {
@@ -268,7 +269,7 @@ nsSHEntry::GetTitle(char16_t** aTitle)
     }
   }
 
-  *aTitle = ToNewUnicode(mTitle);
+  aTitle = mTitle;
   return NS_OK;
 }
 
@@ -1001,3 +1002,20 @@ nsSHEntry::SetAsHistoryLoad()
   mLoadType = LOAD_HISTORY;
   return NS_OK;
 }
+
+NS_IMETHODIMP
+nsSHEntry::GetPersist(bool* aPersist)
+{
+  NS_ENSURE_ARG_POINTER(aPersist);
+
+  *aPersist = mPersist;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSHEntry::SetPersist(bool aPersist)
+{
+  mPersist = aPersist;
+  return NS_OK;
+}
+

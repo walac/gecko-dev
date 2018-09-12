@@ -10,10 +10,11 @@ const CB_UI_ENABLED_PREF = "browser.contentblocking.ui.enabled";
  * Opens a new private window and loads "about:privatebrowsing" there.
  */
 async function openAboutPrivateBrowsing() {
-  let win = await BrowserTestUtils.openNewBrowserWindow({ private: true });
+  let win = await BrowserTestUtils.openNewBrowserWindow({
+    private: true,
+    waitForTabURL: "about:privatebrowsing",
+  });
   let tab = win.gBrowser.selectedBrowser;
-  tab.loadURI("about:privatebrowsing");
-  await BrowserTestUtils.browserLoaded(tab);
   return { win, tab };
 }
 
@@ -53,7 +54,9 @@ add_task(async function test_links() {
   Services.prefs.setCharPref("app.support.baseURL", "https://example.com/");
   Services.prefs.setCharPref("privacy.trackingprotection.introURL",
                              "https://example.com/tour");
+  Services.prefs.setBoolPref(CB_UI_ENABLED_PREF, false);
   registerCleanupFunction(function() {
+    Services.prefs.clearUserPref(CB_UI_ENABLED_PREF);
     Services.prefs.clearUserPref("privacy.trackingprotection.introURL");
     Services.prefs.clearUserPref("app.support.baseURL");
   });
@@ -68,6 +71,33 @@ add_task(async function test_links() {
   await testLinkOpensUrl({ win, tab,
     elementId: "startTour",
     expectedUrl: "https://example.com/tour",
+  });
+
+  await BrowserTestUtils.closeWindow(win);
+});
+
+add_task(async function test_links_CB() {
+  // Use full version and change the remote URLs to prevent network access.
+  Services.prefs.setCharPref("app.support.baseURL", "https://example.com/");
+  Services.prefs.setCharPref("privacy.trackingprotection.introURL",
+                             "https://example.com/tour");
+  Services.prefs.setBoolPref(CB_UI_ENABLED_PREF, true);
+  registerCleanupFunction(function() {
+    Services.prefs.clearUserPref(CB_UI_ENABLED_PREF);
+    Services.prefs.clearUserPref("privacy.trackingprotection.introURL");
+    Services.prefs.clearUserPref("app.support.baseURL");
+  });
+
+  let { win, tab } = await openAboutPrivateBrowsing();
+
+  await testLinkOpensTab({ win, tab,
+    elementId: "learnMore",
+    expectedUrl: "https://example.com/private-browsing",
+  });
+
+  await testLinkOpensUrl({ win, tab,
+    elementId: "startTour",
+    expectedUrl: "https://example.com/tour?variation=1",
   });
 
   await BrowserTestUtils.closeWindow(win);

@@ -202,6 +202,176 @@ VARCACHE_PREF(
   uint32_t, 5000
 )
 
+// Disable the ImageBitmap-extensions for now.
+VARCACHE_PREF(
+  "canvas.imagebitmap_extensions.enabled",
+   canvas_imagebitmap_extensions_enabled,
+  RelaxedAtomicBool, false
+)
+
+// SW Cache API
+VARCACHE_PREF(
+  "dom.caches.enabled",
+   dom_caches_enabled,
+  RelaxedAtomicBool, true
+)
+
+VARCACHE_PREF(
+  "dom.caches.testing.enabled",
+   dom_caches_testing_enabled,
+  RelaxedAtomicBool, false
+)
+
+// Enable printing performance marks/measures to log
+VARCACHE_PREF(
+  "dom.performance.enable_user_timing_logging",
+   dom_performance_enable_user_timing_logging,
+  RelaxedAtomicBool, false
+)
+
+VARCACHE_PREF(
+  "dom.webnotifications.enabled",
+   dom_webnotifications_enabled,
+  RelaxedAtomicBool, true
+)
+
+VARCACHE_PREF(
+  "dom.webnotifications.serviceworker.enabled",
+   dom_webnotifications_serviceworker_enabled,
+  RelaxedAtomicBool, true
+)
+
+#ifdef NIGHTLY_BUILD
+# define PREF_VALUE  true
+#else
+# define PREF_VALUE  false
+#endif
+VARCACHE_PREF(
+  "dom.webnotifications.requireinteraction.enabled",
+   dom_webnotifications_requireinteraction_enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+VARCACHE_PREF(
+  "dom.serviceWorkers.enabled",
+   dom_serviceWorkers_enabled,
+  RelaxedAtomicBool, false
+)
+
+VARCACHE_PREF(
+  "dom.serviceWorkers.testing.enabled",
+   dom_serviceWorkers_testing_enabled,
+  RelaxedAtomicBool, false
+)
+
+// Enable Storage API for all platforms except Android.
+#if !defined(MOZ_WIDGET_ANDROID)
+# define PREF_VALUE true
+#else
+# define PREF_VALUE false
+#endif
+VARCACHE_PREF(
+  "dom.storageManager.enabled",
+   dom_storageManager_enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+// WHATWG promise rejection events. See
+// https://html.spec.whatwg.org/multipage/webappapis.html#promiserejectionevent
+// TODO: Enable the event interface once actually firing it (bug 1362272).
+VARCACHE_PREF(
+  "dom.promise_rejection_events.enabled",
+   dom_promise_rejection_events_enabled,
+  RelaxedAtomicBool, false
+)
+
+// Push
+VARCACHE_PREF(
+  "dom.push.enabled",
+   dom_push_enabled,
+  RelaxedAtomicBool, false
+)
+
+// Streams API
+VARCACHE_PREF(
+  "dom.streams.enabled",
+   dom_streams_enabled,
+  RelaxedAtomicBool, false
+)
+
+#if !defined(MOZ_WIDGET_ANDROID)
+# define PREF_VALUE true
+#else
+# define PREF_VALUE false
+#endif
+VARCACHE_PREF(
+  "dom.webkitBlink.dirPicker.enabled",
+   dom_webkitBlink_dirPicker_enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+// Network Information API
+#if defined(MOZ_WIDGET_ANDROID)
+# define PREF_VALUE true
+#else
+# define PREF_VALUE false
+#endif
+VARCACHE_PREF(
+  "dom.netinfo.enabled",
+   dom_netinfo_enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+VARCACHE_PREF(
+  "dom.fetchObserver.enabled",
+   dom_fetchObserver_enabled,
+  RelaxedAtomicBool, false
+)
+
+// Enable Performance Observer API
+VARCACHE_PREF(
+  "dom.enable_performance_observer",
+   dom_enable_performance_observer,
+  RelaxedAtomicBool, true
+)
+
+// Enable passing the "storage" option to indexedDB.open.
+VARCACHE_PREF(
+  "dom.indexedDB.storageOption.enabled",
+   dom_indexedDB_storageOption_enabled,
+  RelaxedAtomicBool, false
+)
+
+#ifdef JS_BUILD_BINAST
+VARCACHE_PREF(
+  "dom.script_loader.binast_encoding.enabled",
+   dom_script_loader_binast_encoding_enabled,
+  RelaxedAtomicBool, false
+)
+#endif
+
+#ifdef MOZILLA_OFFICIAL
+# define PREF_VALUE false
+#else
+# define PREF_VALUE true
+#endif
+VARCACHE_PREF(
+  "browser.dom.window.dump.enabled",
+   browser_dom_window_dump_enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+VARCACHE_PREF(
+  "dom.worker.canceling.timeoutMilliseconds",
+   dom_worker_canceling_timeoutMilliseconds,
+  RelaxedAtomicUint32, 30000 /* 30 seconds */
+)
+
 //---------------------------------------------------------------------------
 // Clear-Site-Data prefs
 //---------------------------------------------------------------------------
@@ -238,6 +408,12 @@ VARCACHE_PREF(
   bool, true
 )
 
+VARCACHE_PREF(
+  "gfx.offscreencanvas.enabled",
+   gfx_offscreencanvas_enabled,
+  RelaxedAtomicBool, false
+)
+
 //---------------------------------------------------------------------------
 // HTML5 parser prefs
 //---------------------------------------------------------------------------
@@ -269,6 +445,110 @@ VARCACHE_PREF(
 //---------------------------------------------------------------------------
 // Layout prefs
 //---------------------------------------------------------------------------
+
+// Debug-only pref to force enable the AccessibleCaret. If you want to
+// control AccessibleCaret by mouse, you'll need to set
+// "layout.accessiblecaret.hide_carets_for_mouse_input" to false.
+VARCACHE_PREF(
+  "layout.accessiblecaret.enabled",
+   layout_accessiblecaret_enabled,
+  bool, false
+)
+
+// Enable the accessible caret on platforms/devices
+// that we detect have touch support. Note that this pref is an
+// additional way to enable the accessible carets, rather than
+// overriding the layout.accessiblecaret.enabled pref.
+VARCACHE_PREF(
+  "layout.accessiblecaret.enabled_on_touch",
+   layout_accessiblecaret_enabled_on_touch,
+  bool, false
+)
+
+// By default, carets become tilt only when they are overlapping.
+VARCACHE_PREF(
+  "layout.accessiblecaret.always_tilt",
+   layout_accessiblecaret_always_tilt,
+  bool, false
+)
+
+// Show caret in cursor mode when long tapping on an empty content. This
+// also changes the default update behavior in cursor mode, which is based
+// on the emptiness of the content, into something more heuristic. See
+// AccessibleCaretManager::UpdateCaretsForCursorMode() for the details.
+VARCACHE_PREF(
+  "layout.accessiblecaret.caret_shown_when_long_tapping_on_empty_content",
+   layout_accessiblecaret_caret_shown_when_long_tapping_on_empty_content,
+  bool, false
+)
+
+// 0 = by default, always hide carets for selection changes due to JS calls.
+// 1 = update any visible carets for selection changes due to JS calls,
+//     but don't show carets if carets are hidden.
+// 2 = always show carets for selection changes due to JS calls.
+VARCACHE_PREF(
+  "layout.accessiblecaret.script_change_update_mode",
+   layout_accessiblecaret_script_change_update_mode,
+  int32_t, 0
+)
+
+// Allow one caret to be dragged across the other caret without any limitation.
+// This matches the built-in convention for all desktop platforms.
+VARCACHE_PREF(
+  "layout.accessiblecaret.allow_dragging_across_other_caret",
+   layout_accessiblecaret_allow_dragging_across_other_caret,
+  bool, true
+)
+
+// Optionally provide haptic feedback on long-press selection events.
+VARCACHE_PREF(
+  "layout.accessiblecaret.hapticfeedback",
+   layout_accessiblecaret_hapticfeedback,
+  bool, false
+)
+
+// Smart phone-number selection on long-press is not enabled by default.
+VARCACHE_PREF(
+  "layout.accessiblecaret.extend_selection_for_phone_number",
+   layout_accessiblecaret_extend_selection_for_phone_number,
+  bool, false
+)
+
+// Keep the accessible carets hidden when the user is using mouse input (as
+// opposed to touch/pen/etc.).
+VARCACHE_PREF(
+  "layout.accessiblecaret.hide_carets_for_mouse_input",
+   layout_accessiblecaret_hide_carets_for_mouse_input,
+  bool, true
+)
+
+// CSS attributes (width, height, margin-left) of the AccessibleCaret in CSS
+// pixels.
+VARCACHE_PREF(
+  "layout.accessiblecaret.width",
+   layout_accessiblecaret_width,
+  float, 34.0f
+)
+
+VARCACHE_PREF(
+  "layout.accessiblecaret.height",
+   layout_accessiblecaret_height,
+  float, 36.0f
+)
+
+VARCACHE_PREF(
+  "layout.accessiblecaret.margin-left",
+   layout_accessiblecaret_margin_left,
+  float, -18.5f
+)
+
+// Simulate long tap events to select words. Mainly used in manual testing
+// with mouse.
+VARCACHE_PREF(
+  "layout.accessiblecaret.use_long_tap_injector",
+   layout_accessiblecaret_use_long_tap_injector,
+  bool, false
+)
 
 // Is parallel CSS parsing enabled?
 VARCACHE_PREF(
@@ -474,6 +754,13 @@ VARCACHE_PREF(
 VARCACHE_PREF(
   "layout.css.unknown-webkit-pseudo-element",
    layout_css_unknown_webkit_pseudo_element,
+  bool, true
+)
+
+// Is path() supported in clip-path?
+VARCACHE_PREF(
+  "layout.css.clip-path-path.enabled",
+   layout_css_clip_path_path_enabled,
   bool, false
 )
 
@@ -1299,6 +1586,19 @@ VARCACHE_PREF(
   uint32_t, 2592000 // 30 days (in seconds)
 )
 
+// Anti-fingerprinting, disabled by default
+VARCACHE_PREF(
+  "privacy.resistFingerprinting",
+   privacy_resistFingerprinting,
+  RelaxedAtomicBool, false
+)
+
+VARCACHE_PREF(
+  "privacy.resistFingerprinting.autoDeclineNoUserInputCanvasPrompts",
+   privacy_resistFingerprinting_autoDeclineNoUserInputCanvasPrompts,
+  RelaxedAtomicBool, false
+)
+
 //---------------------------------------------------------------------------
 // Security prefs
 //---------------------------------------------------------------------------
@@ -1322,12 +1622,6 @@ VARCACHE_PREF(
 )
 
 VARCACHE_PREF(
-  "security.csp.enable_violation_events",
-   security_csp_enable_violation_events,
-  bool, true
-)
-
-VARCACHE_PREF(
   "security.csp.reporting.script-sample.max-length",
    security_csp_reporting_script_sample_max_length,
   int32_t, 40
@@ -1341,6 +1635,16 @@ VARCACHE_PREF(
   "view_source.editor.external",
    view_source_editor_external,
   bool, false
+)
+
+//---------------------------------------------------------------------------
+// DevTools prefs
+//---------------------------------------------------------------------------
+
+VARCACHE_PREF(
+  "devtools.enabled",
+   devtools_enabled,
+  RelaxedAtomicBool, false
 )
 
 //---------------------------------------------------------------------------

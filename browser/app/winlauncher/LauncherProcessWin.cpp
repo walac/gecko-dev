@@ -90,6 +90,9 @@ ProcessCmdLine(int& aArgc, wchar_t* aArgv[])
   if (mozilla::CheckArg(aArgc, aArgv, L"wait-for-browser",
                         static_cast<const wchar_t**>(nullptr),
                         mozilla::CheckArgFlag::RemoveArg) == mozilla::ARG_FOUND ||
+      mozilla::CheckArg(aArgc, aArgv, L"marionette",
+                        static_cast<const wchar_t**>(nullptr),
+                        mozilla::CheckArgFlag::None) == mozilla::ARG_FOUND ||
       mozilla::EnvHasValue("MOZ_AUTOMATION")) {
     result |= mozilla::LauncherFlags::eWaitForBrowser;
   }
@@ -219,7 +222,7 @@ LauncherMain(int argc, wchar_t* argv[])
   }
 
   const Maybe<bool> isSafeMode = IsSafeModeRequested(argc, argv,
-                                                     SafeModeFlag::None);
+                                                     SafeModeFlag::NoKeyPressCheck);
   if (!isSafeMode) {
     ShowError(ERROR_INVALID_PARAMETER);
     return 1;

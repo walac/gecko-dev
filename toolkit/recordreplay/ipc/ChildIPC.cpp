@@ -18,6 +18,7 @@
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/layers/ImageDataSerializer.h"
 #include "mozilla/Sprintf.h"
+#include "mozilla/StackWalk.h"
 #include "mozilla/VsyncDispatcher.h"
 
 #include "InfallibleVector.h"
@@ -60,13 +61,14 @@ static FileHandle gCheckpointReadFd;
 // receipt and then processed during InitRecordingOrReplayingProcess.
 static IntroductionMessage* gIntroductionMessage;
 
+// When recording, whether developer tools server code runs in the middleman.
+static bool gDebuggerRunsInMiddleman;
+
 // Processing routine for incoming channel messages.
 static void
 ChannelMessageHandler(Message* aMsg)
 {
-  MOZ_RELEASE_ASSERT(MainThreadShouldPause() ||
-                     aMsg->mType == MessageType::CreateCheckpoint ||
-                     aMsg->mType == MessageType::Terminate);
+  MOZ_RELEASE_ASSERT(MainThreadShouldPause() || aMsg->CanBeSentWhileUnpaused());
 
   switch (aMsg->mType) {
   case MessageType::Introduction: {
@@ -83,6 +85,11 @@ ChannelMessageHandler(Message* aMsg)
       uint8_t data = 0;
       DirectWrite(gCheckpointWriteFd, &data, 1);
     }
+    break;
+  }
+  case MessageType::SetDebuggerRunsInMiddleman: {
+    MOZ_RELEASE_ASSERT(IsRecording());
+    PauseMainThreadAndInvokeCallback([=]() { gDebuggerRunsInMiddleman = true; });
     break;
   }
   case MessageType::Terminate: {
@@ -308,10 +315,56 @@ ParentProcessId()
   return gParentPid;
 }
 
+bool
+DebuggerRunsInMiddleman()
+{
+  return RecordReplayValue(gDebuggerRunsInMiddleman);
+}
+
 void
 MaybeCreateInitialCheckpoint()
 {
   NewCheckpoint(/* aTemporary = */ false);
+}
+
+struct StackWalkData
+{
+  // Current buffer and allocated size, which may be internal to the original
+  // allocation.
+  char* mBuf;
+  size_t mSize;
+
+  StackWalkData(char* aBuf, size_t aSize)
+    : mBuf(aBuf), mSize(aSize)
+  {}
+
+  void append(const char* aText) {
+    size_t len = strlen(aText);
+    if (len <= mSize) {
+      memcpy(mBuf, aText, len);
+      mBuf += len;
+      mSize -= len;
+    }
+  }
+};
+
+static void
+StackWalkCallback(uint32_t aFrameNumber, void* aPC, void* aSP, void* aClosure)
+{
+  StackWalkData* data = (StackWalkData*) aClosure;
+
+  MozCodeAddressDetails details;
+  MozDescribeCodeAddress(aPC, &details);
+
+  data->append(" ### ");
+  data->append(details.function[0] ? details.function : "???");
+}
+
+static void
+SetCurrentStackString(const char* aAssertion, char* aBuf, size_t aSize)
+{
+  StackWalkData data(aBuf, aSize);
+  MozStackWalk(StackWalkCallback, /* aSkipFrames = */ 2, /* aFrameCount = */ 32, &data);
 }
 
 void
@@ -335,6 +388,13 @@ ReportFatalError(const Maybe<MinidumpInfo>& aMinidump, const char* aFormat, ...)
   char buf[2048];
   VsprintfLiteral(buf, aFormat, ap);
   va_end(ap);
+
+  // Include stack information in the error message as well, if we are on the
+  // thread where the fatal error occurred.
+  if (aMinidump.isNothing()) {
+    size_t len = strlen(buf);
+    SetCurrentStackString(buf, buf + len, sizeof(buf) - len);
+  }
 
   // Construct a FatalErrorMessage on the stack, to avoid touching the heap.
   char msgBuf[4096];
@@ -408,6 +468,10 @@ already_AddRefed<gfx::DrawTarget>
 DrawTargetForRemoteDrawing(LayoutDeviceIntSize aSize)
 {
   MOZ_RELEASE_ASSERT(!NS_IsMainThread());
+
+  if (aSize.IsEmpty()) {
+    return nullptr;
+  }
 
   gPaintMessage = Some(PaintMessage(aSize.width, aSize.height));
 

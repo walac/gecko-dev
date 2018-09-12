@@ -658,17 +658,8 @@ html|*.urlbar-input:-moz-lwtheme::placeholder,
 
 %include ../shared/sidebar.inc.css
 
-#sidebar-box {
-  background-color: -moz-Field;
-  color: -moz-FieldText;
-}
-
-#sidebar-header {
-  border-bottom: 1px solid ThreeDLightShadow;
-}
-
-.sidebar-splitter {
-  border-color: ThreeDLightShadow;
+#browser {
+  --sidebar-border-color: ThreeDLightShadow;
 }
 
 .browserContainer > findbar {
@@ -949,7 +940,6 @@ notification[value="translation"] {
 
 %include ../shared/fullscreen/warning.inc.css
 %include ../shared/ctrlTab.inc.css
-%include ../shared/plugin-doorhanger.inc.css
 
 /* Customization mode */
 

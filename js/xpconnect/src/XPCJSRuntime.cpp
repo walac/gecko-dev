@@ -27,6 +27,7 @@
 #include "nsIDocShell.h"
 #include "nsIDocument.h"
 #include "nsIRunnable.h"
+#include "nsIPlatformInfo.h"
 #include "nsPIDOMWindow.h"
 #include "nsPrintfCString.h"
 #include "nsWindowSizes.h"
@@ -676,7 +677,7 @@ void XPCJSRuntime::TraceNativeBlackRoots(JSTracer* trc)
             roots->TraceJSAll(trc);
     }
 
-    dom::TraceBlackJS(trc, nsXPConnect::XPConnect()->IsShuttingDown());
+    dom::TraceBlackJS(trc, nsIXPConnect::XPConnect()->GetIsShuttingDown());
 }
 
 void XPCJSRuntime::TraceAdditionalNativeGrayRoots(JSTracer* trc)
@@ -1042,6 +1043,29 @@ OnLargeAllocationFailureCallback()
     }
 
     r->BlockUntilDone();
+}
+
+bool
+mozilla::GetBuildId(JS::BuildIdCharVector* aBuildID)
+{
+    nsCOMPtr<nsIPlatformInfo> info = do_GetService("@mozilla.org/xre/app-info;1");
+    if (!info) {
+        return false;
+    }
+
+    nsCString buildID;
+    nsresult rv = info->GetPlatformBuildID(buildID);
+    NS_ENSURE_SUCCESS(rv, false);
+
+    if (!aBuildID->resize(buildID.Length())) {
+        return false;
+    }
+
+    for (size_t i = 0; i < buildID.Length(); i++) {
+        (*aBuildID)[i] = buildID[i];
+    }
+
+    return true;
 }
 
 size_t
@@ -2951,6 +2975,7 @@ XPCJSRuntime::Initialize(JSContext* cx)
     js::SetWindowProxyClass(cx, &OuterWindowProxyClass);
     js::SetXrayJitInfo(&gXrayJitInfo);
     JS::SetProcessLargeAllocationFailureCallback(OnLargeAllocationFailureCallback);
+    JS::SetProcessBuildIdOp(GetBuildId);
 
     // The JS engine needs to keep the source code around in order to implement
     // Function.prototype.toSource(). It'd be nice to not have to do this for
@@ -2989,8 +3014,6 @@ XPCJSRuntime::Initialize(JSContext* cx)
 bool
 XPCJSRuntime::InitializeStrings(JSContext* cx)
 {
-    JSAutoRequest ar(cx);
-
     // if it is our first context then we need to generate our string ids
     if (JSID_IS_VOID(mStrIDs[0])) {
         RootedString str(cx);
@@ -3202,7 +3225,6 @@ XPCJSRuntime::InitSingletonScopes()
 {
     // This all happens very early, so we don't bother with cx pushing.
     JSContext* cx = XPCJSContext::Get()->Context();
-    JSAutoRequest ar(cx);
     RootedValue v(cx);
     nsresult rv;
 

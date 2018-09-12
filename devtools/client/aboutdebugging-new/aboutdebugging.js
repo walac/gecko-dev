@@ -25,6 +25,9 @@ const { L10nRegistry, FileSource } =
 const actions = require("./src/actions/index");
 const { configureStore } = require("./src/create-store");
 const {
+  setDebugTargetCollapsibilities,
+} = require("./src/modules/debug-target-collapsibilities");
+const {
   addNetworkLocationsObserver,
   getNetworkLocations,
 } = require("./src/modules/network-locations");
@@ -61,12 +64,14 @@ const AboutDebugging = {
     // XXX Until the strings for the updated about:debugging stabilize, we
     // locate them outside the regular directory for locale resources so that
     // they don't get picked up by localization tools.
-    const temporarySource = new FileSource(
-      "aboutdebugging",
-      ["en-US"],
-      "chrome://devtools/content/aboutdebugging-new/tmp-locale/{locale}/"
-    );
-    L10nRegistry.registerSource(temporarySource);
+    if (!L10nRegistry.sources.has("aboutdebugging")) {
+      const temporarySource = new FileSource(
+        "aboutdebugging",
+        ["en-US"],
+        "chrome://devtools/content/aboutdebugging-new/tmp-locale/{locale}/"
+      );
+      L10nRegistry.registerSource(temporarySource);
+    }
 
     const locales = Services.locale.getAppLocalesAsBCP47();
     const generator =
@@ -81,6 +86,7 @@ const AboutDebugging = {
   },
 
   destroy() {
+    setDebugTargetCollapsibilities(this.store.getState().ui.debugTargetCollapsibilities);
     unmountComponentAtNode(this.mount);
   },
 

@@ -550,8 +550,14 @@ WindowGlobalOrNull(JSObject* aObj);
 nsGlobalWindowInner*
 CurrentWindowOrNull(JSContext* cx);
 
-void
-SimulateActivityCallback(bool aActive);
+class MOZ_RAII AutoScriptActivity
+{
+    bool mActive;
+    bool mOldValue;
+  public:
+    explicit AutoScriptActivity(bool aActive);
+    ~AutoScriptActivity();
+};
 
 // This function may be used off-main-thread, in which case it is benignly
 // racey.
@@ -751,6 +757,13 @@ bool IsChromeOrXBLOrUAWidget(JSContext* cx, JSObject* /* unused */);
 bool ThreadSafeIsChromeOrXBLOrUAWidget(JSContext* cx, JSObject* obj);
 
 } // namespace dom
+
+/**
+ * Fill the given vector with the buildid.
+ */
+bool
+GetBuildId(JS::BuildIdCharVector* aBuildID);
+
 } // namespace mozilla
 
 #endif

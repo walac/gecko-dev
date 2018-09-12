@@ -428,22 +428,10 @@ GetGtkHeaderBarButtonLayout(WidgetNodeType* aButtonLayout, int aMaxButtonNums)
   NS_ASSERTION(aMaxButtonNums >= TOOLBAR_BUTTONS,
                "Requested number of buttons is higher than storage capacity!");
 
-  static auto sGtkHeaderBarGetDecorationLayoutPtr =
-    (const gchar* (*)(GtkWidget*))
-    dlsym(RTLD_DEFAULT, "gtk_header_bar_get_decoration_layout");
-
   const gchar* decorationLayout = nullptr;
-  if (sGtkHeaderBarGetDecorationLayoutPtr) {
-      GtkWidget* headerBar = GetWidget(MOZ_GTK_HEADER_BAR);
-      decorationLayout = sGtkHeaderBarGetDecorationLayoutPtr(headerBar);
-      if (!decorationLayout) {
-          GtkSettings *settings = gtk_settings_get_for_screen(
-              gdk_screen_get_default());
-          g_object_get(settings, "gtk-decoration-layout",
-                       &decorationLayout,
-                       nullptr);
-      }
-  }
+  GtkSettings *settings =
+      gtk_settings_get_for_screen(gdk_screen_get_default());
+  g_object_get(settings, "gtk-decoration-layout", &decorationLayout, nullptr);
 
   // Use a default layout
   if (!decorationLayout) {
@@ -2331,6 +2319,23 @@ moz_gtk_header_bar_paint(WidgetNodeType widgetType,
     // titlebar bottom. It does not fit well with Firefox tabs so
     // draw with some extent to make the titlebar bottom part invisible.
     #define TITLEBAR_EXTENT 4
+
+    if (widgetType == MOZ_GTK_HEADER_BAR) {
+        GtkStyleContext* windowStyle = GetStyleContext(MOZ_GTK_WINDOW);
+        bool solidDecorations =
+            gtk_style_context_has_class(windowStyle, "solid-csd");
+        GtkStyleContext *decorationStyle =
+            GetStyleContext(solidDecorations ? MOZ_GTK_WINDOW_DECORATION_SOLID:
+                                               MOZ_GTK_WINDOW_DECORATION,
+                            GTK_TEXT_DIR_LTR,
+                            state_flags);
+
+        gtk_render_background(decorationStyle, cr, rect->x, rect->y,
+                              rect->width, rect->height + TITLEBAR_EXTENT);
+        gtk_render_frame(decorationStyle, cr, rect->x, rect->y,
+                         rect->width, rect->height + TITLEBAR_EXTENT);
+    }
+
     gtk_render_background(style, cr, rect->x, rect->y,
                           rect->width, rect->height + TITLEBAR_EXTENT);
     gtk_render_frame(style, cr, rect->x, rect->y,

@@ -598,13 +598,13 @@ APZCTreeManager::SampleForWebRender(wr::TransactionWrapper& aTxn,
   AssertOnSamplerThread();
   MutexAutoLock lock(mMapLock);
 
-  bool activeAnimations = false;
+  // Sample async transforms on scrollable layers.
   for (const auto& mapping : mApzcMap) {
     AsyncPanZoomController* apzc = mapping.second;
 
     // Apply any additional async scrolling for testing purposes (used for
     // reftest-async-scroll and reftest-async-zoom).
-    auto _ = MakeUnique<AutoApplyAsyncTestAttributes>(apzc);
+    AutoApplyAsyncTestAttributes testAttributeApplier(apzc);
 
     ParentLayerPoint layerTranslation = apzc->GetCurrentAsyncTransform(
         AsyncPanZoomController::eForCompositing).mTranslation;
@@ -621,7 +621,6 @@ APZCTreeManager::SampleForWebRender(wr::TransactionWrapper& aTxn,
         wr::ToLayoutPoint(LayoutDevicePoint::FromUnknownPoint(asyncScrollDelta.ToUnknownPoint())));
 
     apzc->ReportCheckerboard(aSampleTime);
-    activeAnimations |= apzc->AdvanceAnimations(aSampleTime);
   }
 
   // Now collect all the async transforms needed for the scrollthumbs.
@@ -654,6 +653,15 @@ APZCTreeManager::SampleForWebRender(wr::TransactionWrapper& aTxn,
   }
   aTxn.AppendTransformProperties(scrollbarTransforms);
 
+  // Advance animations. It's important that this happens after
+  // sampling all async transforms, because AdvanceAnimations() updates
+  // the effective scroll offset to the value it should have for the *next*
+  // composite after this one (if the APZ frame delay is enabled).
+  bool activeAnimations = false;
+  for (const auto& mapping : mApzcMap) {
+    AsyncPanZoomController* apzc = mapping.second;
+    activeAnimations |= apzc->AdvanceAnimations(aSampleTime);
+  }
   if (activeAnimations) {
     RefPtr<CompositorController> controller;
     CompositorBridgeParent::CallWithIndirectShadowTree(mRootLayersId,
@@ -3053,7 +3061,7 @@ APZCTreeManager::ComputeTransformForNode(const HitTestingTreeNode* aNode) const
   if (AsyncPanZoomController* apzc = aNode->GetApzc()) {
     // Apply any additional async scrolling for testing purposes (used for
     // reftest-async-scroll and reftest-async-zoom).
-    auto _ = MakeUnique<AutoApplyAsyncTestAttributes>(apzc);
+    AutoApplyAsyncTestAttributes testAttributeApplier(apzc);
     // If the node represents scrollable content, apply the async transform
     // from its APZC.
     return aNode->GetTransform() *
@@ -3145,7 +3153,7 @@ APZCTreeManager::ComputeTransformForScrollThumb(
 
   // Apply any additional async scrolling for testing purposes (used for
   // reftest-async-scroll and reftest-async-zoom).
-  auto _ = MakeUnique<AutoApplyAsyncTestAttributes>(aApzc);
+  AutoApplyAsyncTestAttributes testAttributeApplier(aApzc);
 
   AsyncTransformComponentMatrix asyncTransform =
     aApzc->GetCurrentAsyncTransform(AsyncPanZoomController::eForCompositing);

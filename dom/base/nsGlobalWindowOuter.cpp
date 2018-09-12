@@ -66,7 +66,7 @@
 
 // Helper Classes
 #include "nsJSUtils.h"
-#include "jsapi.h"              // for JSAutoRequest
+#include "jsapi.h"
 #include "js/Wrapper.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsReadableUtils.h"
@@ -216,6 +216,7 @@
 #include "mozilla/DOMEventTargetHelper.h"
 #include "prrng.h"
 #include "nsSandboxFlags.h"
+#include "nsBaseCommandController.h"
 #include "mozilla/dom/AudioContext.h"
 #include "mozilla/dom/BrowserElementDictionariesBinding.h"
 #include "mozilla/dom/cache/CacheStorage.h"
@@ -2933,10 +2934,10 @@ nsGlobalWindowOuter::GetControllersOuter(ErrorResult& aError)
     }
 
     // Add in the default controller
-    nsCOMPtr<nsIController> controller = do_CreateInstance(
-                               NS_WINDOWCONTROLLER_CONTRACTID, &rv);
-    if (NS_FAILED(rv)) {
-      aError.Throw(rv);
+    nsCOMPtr<nsIController> controller =
+      nsBaseCommandController::CreateWindowController();
+    if (!controller) {
+      aError.Throw(NS_ERROR_FAILURE);
       return nullptr;
     }
 
@@ -5291,8 +5292,16 @@ nsGlobalWindowOuter::NotifyContentBlockingState(unsigned aState,
   securityUI->GetState(&state);
   if (aState == nsIWebProgressListener::STATE_BLOCKED_TRACKING_CONTENT) {
     doc->SetHasTrackingContentBlocked(true);
+  } else if (aState == nsIWebProgressListener::STATE_BLOCKED_SLOW_TRACKING_CONTENT) {
+    doc->SetHasSlowTrackingContentBlocked(true);
+  } else if (aState == nsIWebProgressListener::STATE_COOKIES_BLOCKED_BY_PERMISSION) {
+    doc->SetHasCookiesBlockedByPermission(true);
   } else if (aState == nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER) {
     doc->SetHasTrackingCookiesBlocked(true);
+  } else if (aState == nsIWebProgressListener::STATE_COOKIES_BLOCKED_ALL) {
+    doc->SetHasAllCookiesBlocked(true);
+  } else if (aState == nsIWebProgressListener::STATE_COOKIES_BLOCKED_FOREIGN) {
+    doc->SetHasForeignCookiesBlocked(true);
   } else {
     // Ignore nsIWebProgressListener::STATE_BLOCKED_UNSAFE_CONTENT;
   }
@@ -6325,7 +6334,7 @@ nsGlobalWindowOuter::FindOuter(const nsAString& aString, bool aCaseSensitive,
   }
 
   // Set the options of the search
-  aError = finder->SetSearchString(PromiseFlatString(aString).get());
+  aError = finder->SetSearchString(aString);
   if (aError.Failed()) {
     return false;
   }
@@ -7053,7 +7062,8 @@ nsGlobalWindowOuter::MaybeAllowStorageForOpenedWindow(nsIURI* aURI)
 
   // We don't care when the asynchronous work finishes here.
   Unused << AntiTrackingCommon::AddFirstPartyStorageAccessGrantedFor(origin,
-                                                                     inner);
+                                                                     inner,
+                                                                     AntiTrackingCommon::eHeuristic);
 }
 
 //*****************************************************************************

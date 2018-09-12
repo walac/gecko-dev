@@ -45,7 +45,6 @@ bool AutoScriptEvaluate::StartEvaluating(HandleObject scope)
 
     mEvaluated = true;
 
-    JS_BeginRequest(mJSContext);
     mAutoRealm.emplace(mJSContext, scope);
 
     // Saving the exception state keeps us from interfering with another script
@@ -64,8 +63,6 @@ AutoScriptEvaluate::~AutoScriptEvaluate()
     if (!mJSContext || !mEvaluated)
         return;
     mState->restore();
-
-    JS_EndRequest(mJSContext);
 }
 
 // It turns out that some errors may be not worth reporting. So, this
@@ -587,6 +584,29 @@ nsXPCWrappedJSClass::DelegatedQueryInterface(nsXPCWrappedJS* self,
         NS_ADDREF(root);
         *aInstancePtr = (void*) static_cast<nsISupportsWeakReference*>(root);
         return NS_OK;
+    }
+
+    // If we're asked to QI to nsISimpleEnumerator and the wrapped object does not have a
+    // QueryInterface method, assume it is a JS iterator, and wrap it into an equivalent
+    // nsISimpleEnumerator.
+    if (aIID.Equals(NS_GET_IID(nsISimpleEnumerator))) {
+        bool found;
+        XPCJSContext* xpccx = ccx.GetContext();
+        if (JS_HasPropertyById(aes.cx(), obj,
+                               xpccx->GetStringID(xpccx->IDX_QUERY_INTERFACE),
+                               &found) && !found) {
+            nsresult rv;
+            nsCOMPtr<nsIJSEnumerator> jsEnum;
+            if (!XPCConvert::JSObject2NativeInterface(aes.cx(),
+                                                      getter_AddRefs(jsEnum), obj,
+                                                      &NS_GET_IID(nsIJSEnumerator),
+                                                      nullptr, &rv)) {
+                return rv;
+            }
+            nsCOMPtr<nsISimpleEnumerator> res = new XPCWrappedJSIterator(jsEnum);
+            res.forget(aInstancePtr);
+            return NS_OK;
+        }
     }
 
     // Checks for any existing wrapper explicitly constructed for this iid.

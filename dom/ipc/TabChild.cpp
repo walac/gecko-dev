@@ -1157,7 +1157,7 @@ TabChild::RecvLoadURL(const nsCString& aURI,
   }
 
   nsresult rv =
-    WebNavigation()->LoadURI(NS_ConvertUTF8toUTF16(aURI).get(),
+    WebNavigation()->LoadURI(NS_ConvertUTF8toUTF16(aURI),
                              nsIWebNavigation::LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP |
                              nsIWebNavigation::LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL,
                              nullptr, nullptr, nullptr, nsContentUtils::GetSystemPrincipal());
@@ -2302,7 +2302,8 @@ static bool
 LoadScriptInMiddleman(const nsString& aURL)
 {
   return // Middleman processes run devtools server side scripts.
-         StringBeginsWith(aURL, NS_LITERAL_STRING("resource://devtools/"))
+         (StringBeginsWith(aURL, NS_LITERAL_STRING("resource://devtools/")) &&
+          recordreplay::parent::DebuggerRunsInMiddleman())
          // This script includes event listeners needed to propagate document
          // title changes.
       || aURL.EqualsLiteral("chrome://global/content/browser-child.js")

@@ -58,6 +58,7 @@
 #include "nsStreamUtils.h"
 #include "nsThreadUtils.h"
 #include "nsCORSListenerProxy.h"
+#include "nsApplicationCache.h"
 
 #ifdef MOZ_TASK_TRACER
 #include "GeckoTaskTracer.h"
@@ -296,6 +297,7 @@ NS_INTERFACE_MAP_BEGIN(HttpChannelChild)
   NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIAssociatedContentSecurity, GetAssociatedContentSecurity())
   NS_INTERFACE_MAP_ENTRY(nsIDivertableChannel)
   NS_INTERFACE_MAP_ENTRY(nsIThreadRetargetableRequest)
+  NS_INTERFACE_MAP_ENTRY_CONCRETE(HttpChannelChild)
 NS_INTERFACE_MAP_END_INHERITING(HttpBaseChannel)
 
 //-----------------------------------------------------------------------------
@@ -401,10 +403,7 @@ HttpChannelChild::AssociateApplicationCache(const nsCString &groupID,
                                             const nsCString &clientID)
 {
   LOG(("HttpChannelChild::AssociateApplicationCache [this=%p]\n", this));
-  nsresult rv;
-  mApplicationCache = do_CreateInstance(NS_APPLICATIONCACHE_CONTRACTID, &rv);
-  if (NS_FAILED(rv))
-    return;
+  mApplicationCache = new nsApplicationCache();
 
   mLoadedFromApplicationCache = true;
   mApplicationCache->InitAsHandle(groupID, clientID);
@@ -2159,6 +2158,13 @@ HttpChannelChild::Redirect3Complete(OverrideRunnable* aRunnable)
     return true;
   }
   return false;
+}
+
+mozilla::ipc::IPCResult
+HttpChannelChild::RecvCancelRedirected()
+{
+  CleanupRedirectingChannel(NS_BINDING_REDIRECTED);
+  return IPC_OK();
 }
 
 void
@@ -4126,6 +4132,16 @@ HttpChannelChild::MaybeCallSynthesizedCallback()
 
   mSynthesizedCallback->BodyComplete(mStatus);
   mSynthesizedCallback = nullptr;
+}
+
+nsresult
+HttpChannelChild::CrossProcessRedirectFinished(nsresult aStatus)
+{
+  if (!mIPCOpen) {
+    return NS_BINDING_FAILED;
+  }
+  Unused << SendCrossProcessRedirectDone(aStatus);
+  return NS_OK;
 }
 
 } // namespace net

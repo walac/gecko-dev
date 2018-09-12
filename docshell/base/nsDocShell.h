@@ -254,14 +254,16 @@ public:
                          LOCATION_CHANGE_SAME_DOCUMENT);
   }
 
-  nsresult HistoryTransactionRemoved(int32_t aIndex);
+  nsresult HistoryEntryRemoved(int32_t aIndex);
 
   // Notify Scroll observers when an async panning/zooming transform
   // has started being applied
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY
   void NotifyAsyncPanZoomStarted();
 
   // Notify Scroll observers when an async panning/zooming transform
   // is no longer applied
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY
   void NotifyAsyncPanZoomStopped();
 
   void SetInFrameSwap(bool aInSwap)
@@ -1029,11 +1031,11 @@ private: // data members
   // Create() is called, the type is not expected to change.
   int32_t mItemType;
 
-  // Index into the SHTransaction list, indicating the previous and current
-  // transaction at the time that this DocShell begins to load. Consequently
+  // Index into the nsISHEntry array, indicating the previous and current
+  // entry at the time that this DocShell begins to load. Consequently
   // root docshell's indices can differ from child docshells'.
-  int32_t mPreviousTransIndex;
-  int32_t mLoadedTransIndex;
+  int32_t mPreviousEntryIndex;
+  int32_t mLoadedEntryIndex;
 
   // Offset in the parent's child list.
   // -1 if the docshell is added dynamically to the parent shell.

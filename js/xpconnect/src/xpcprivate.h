@@ -108,6 +108,7 @@
 #include "nsIComponentManager.h"
 #include "nsIComponentRegistrar.h"
 #include "nsISupportsPrimitives.h"
+#include "nsISimpleEnumerator.h"
 #include "nsMemory.h"
 #include "nsIXPConnect.h"
 #include "nsIXPCScriptable.h"
@@ -229,18 +230,6 @@ public:
 
     // non-interface implementation
 public:
-    // These get non-addref'd pointers
-    static nsXPConnect* XPConnect()
-    {
-        // Do a release-mode assert that we're not doing anything significant in
-        // XPConnect off the main thread. If you're an extension developer hitting
-        // this, you need to change your code. See bug 716167.
-        if (!MOZ_LIKELY(NS_IsMainThread()))
-            MOZ_CRASH();
-
-        return gSelf;
-    }
-
     static XPCJSRuntime* GetRuntimeInstance();
 
     static bool IsISupportsDescendant(const nsXPTInterfaceInfo* info);
@@ -259,14 +248,10 @@ public:
         return gSystemPrincipal;
     }
 
-    static already_AddRefed<nsXPConnect> GetSingleton();
-
     // Called by module code in dll startup
     static void InitStatics();
     // Called by module code on dll shutdown.
     static void ReleaseXPConnectSingleton();
-
-    bool IsShuttingDown() const {return mShuttingDown;}
 
     void RecordTraversal(void* p, nsISupports* s);
 
@@ -283,10 +268,13 @@ private:
     XPCJSRuntime*                   mRuntime;
     bool                            mShuttingDown;
 
+    friend class nsIXPConnect;
+
 public:
     static nsIScriptSecurityManager* gScriptSecurityManager;
     static nsIPrincipal* gSystemPrincipal;
 };
+
 
 /***************************************************************************/
 
@@ -373,7 +361,14 @@ public:
 
     PRTime GetWatchdogTimestamp(WatchdogTimestampCategory aCategory);
 
-    static void ActivityCallback(void* arg, bool active);
+    static bool RecordScriptActivity(bool aActive);
+
+    bool SetHasScriptActivity(bool aActive) {
+        bool oldValue = mHasScriptActivity;
+        mHasScriptActivity = aActive;
+        return oldValue;
+    }
+
     static bool InterruptCallback(JSContext* cx);
 
     // Mapping of often used strings to jsid atoms that live 'forever'.
@@ -460,6 +455,8 @@ private:
     // Accumulates total time we actually waited for telemetry
     mozilla::TimeDuration mSlowScriptActualWait;
     bool mTimeoutAccumulated;
+
+    bool mHasScriptActivity;
 
     // mPendingResult is used to implement Components.returnCode.  Only really
     // meaningful while calling through XPCWrappedJS.
@@ -763,10 +760,9 @@ inline void CHECK_STATE(int s) const {MOZ_ASSERT(mState >= s, "bad state");}
 #endif
 
 private:
-    JSAutoRequest                   mAr;
     State                           mState;
 
-    RefPtr<nsXPConnect>           mXPC;
+    nsCOMPtr<nsIXPConnect>          mXPC;
 
     XPCJSContext*                   mXPCJSContext;
     JSContext*                      mJSContext;
@@ -1948,6 +1944,31 @@ private:
     nsString             mName;
     nsCOMPtr<nsIVariant> mValue;
 };
+
+namespace xpc {
+
+// A wrapper around JS iterators which presents an equivalent
+// nsISimpleEnumerator interface for their contents.
+class XPCWrappedJSIterator final : public nsISimpleEnumerator
+{
+public:
+    NS_DECL_CYCLE_COLLECTION_CLASS(XPCWrappedJSIterator)
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+    NS_DECL_NSISIMPLEENUMERATOR
+    NS_DECL_NSISIMPLEENUMERATORBASE
+
+    explicit XPCWrappedJSIterator(nsIJSEnumerator* aEnum);
+
+private:
+    ~XPCWrappedJSIterator() = default;
+
+    nsCOMPtr<nsIJSEnumerator> mEnum;
+    nsCOMPtr<nsIGlobalObject> mGlobal;
+    nsCOMPtr<nsISupports> mNext;
+    mozilla::Maybe<bool> mHasNext;
+};
+
+} // namespace xpc
 
 /***************************************************************************/
 // class here just for static methods

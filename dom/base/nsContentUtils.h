@@ -434,8 +434,14 @@ public:
   /**
    * Returns true if aNode1 is before aNode2 in the same connected
    * tree.
+   * aNode1Index and aNode2Index are in/out arguments. If non-null, and value is
+   * not -1, that value is used instead of calling slow ComputeIndexOf on the
+   * parent node. If value is -1, the value will be set to the return value of
+   * ComputeIndexOf.
    */
-  static bool PositionIsBefore(nsINode* aNode1, nsINode* aNode2);
+  static bool PositionIsBefore(nsINode* aNode1, nsINode* aNode2,
+                               int32_t* aNode1Index = nullptr,
+                               int32_t* aNode2Index = nullptr);
 
   /**
    *  Utility routine to compare two "points", where a point is a
@@ -1156,12 +1162,6 @@ public:
   ExtractErrorValues(JSContext* aCx, JS::Handle<JS::Value> aValue,
                      nsACString& aSourceSpecOut, uint32_t *aLineOut,
                      uint32_t *aColumnOut, nsString& aMessageOut);
-
-  /**
-   * Helper function to tell if user ever enabled DevTools explicitely.
-   * Allows making DevTools related API no-op until user do so.
-   */
-  static bool DevToolsEnabled(JSContext* aCx);
 
   static nsresult CalculateBufferSizeForImage(const uint32_t& aStride,
                                             const mozilla::gfx::IntSize& aImageSize,

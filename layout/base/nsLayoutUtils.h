@@ -870,7 +870,7 @@ public:
                                              const nsIFrame* aAncestor,
                                              bool* aPreservesAxisAlignedRectangles = nullptr,
                                              mozilla::Maybe<Matrix4x4Flagged>* aMatrixCache = nullptr,
-                                             bool aStopAtStackingContextAndDisplayPort = false,
+                                             bool aStopAtStackingContextAndDisplayPortAndOOFFrame = false,
                                              nsIFrame** aOutAncestor = nullptr);
 
 
@@ -2236,7 +2236,6 @@ public:
   }
 
   // There are a bunch of callers of SurfaceFromElement.  Just mark it as
-  // MOZ_CAN_RUN_SCRIPT_BOUNDARY for now.
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
   static SurfaceFromElementResult SurfaceFromElement(nsIImageLoadingContent *aElement,
                                                      uint32_t aSurfaceFlags,
@@ -2401,11 +2400,6 @@ public:
    * Checks whether we want to layerize animated images whenever possible.
    */
   static bool AnimatedImageLayersEnabled();
-
-  /**
-   * Checks if we should enable parsing for CSS Filters.
-   */
-  static bool CSSFiltersEnabled();
 
   /**
    * Checks whether support for inter-character ruby is enabled.
@@ -2799,6 +2793,10 @@ public:
    * layout calculations. The fields set are dev-to-css ratio, pres shell
    * resolution, cumulative resolution, zoom, composition size, root
    * composition size, scroll offset and scrollable rect.
+   *
+   * Note that for the RCD-RSF, the scroll offset returned is the layout
+   * viewport offset; if you need the visual viewport offset, that needs to
+   * be queried independently via nsIPresShell::GetVisualViewportOffset().
    *
    * By contrast, ComputeFrameMetrics() computes all the fields, but requires
    * extra inputs and can only be called during frame layer building.

@@ -15,6 +15,7 @@
 
 #include "nsHttp.h"
 #include "nsHttpChannel.h"
+#include "nsHttpChannelAuthProvider.h"
 #include "nsHttpHandler.h"
 #include "nsIApplicationCacheService.h"
 #include "nsIApplicationCacheContainer.h"
@@ -70,7 +71,6 @@
 #include "nsIPrincipal.h"
 #include "nsIScriptError.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsISSLStatus.h"
 #include "nsITransportSecurityInfo.h"
 #include "nsIWebProgressListener.h"
 #include "LoadContextInfo.h"
@@ -116,6 +116,8 @@
 #include "nsIMultiplexInputStream.h"
 #include "../../cache2/CacheFileUtils.h"
 #include "nsINetworkLinkService.h"
+#include "mozilla/dom/PromiseNativeHandler.h"
+#include "mozilla/dom/Promise.h"
 
 #ifdef MOZ_TASK_TRACER
 #include "GeckoTaskTracer.h"
@@ -699,11 +701,13 @@ nsHttpChannel::CheckFastBlocked()
     static bool sFastBlockInited = false;
     static bool sIsFastBlockEnabled = false;
     static uint32_t sFastBlockTimeout = 0;
+    static uint32_t sFastBlockLimit = 0;
 
     if (!sFastBlockInited) {
         sFastBlockInited = true;
         Preferences::AddBoolVarCache(&sIsFastBlockEnabled, "browser.fastblock.enabled");
         Preferences::AddUintVarCache(&sFastBlockTimeout, "browser.fastblock.timeout");
+        Preferences::AddUintVarCache(&sFastBlockLimit, "browser.fastblock.limit");
     }
 
     TimeStamp timestamp;
@@ -720,19 +724,25 @@ nsHttpChannel::CheckFastBlocked()
         (mLoadInfo && mLoadInfo->GetDocumentHasUserInteracted())) {
 
         LOG(("FastBlock passed (invalid) [this=%p]\n", this));
-        
+
         return false;
     }
 
     TimeDuration duration = TimeStamp::NowLoRes() - timestamp;
-    bool isFastBlocking = duration.ToMilliseconds() >= sFastBlockTimeout;
+    bool hasFastBlockStarted = duration.ToMilliseconds() >= sFastBlockTimeout;
+    bool hasFastBlockStopped = false;
+    if ((sFastBlockLimit != 0) && (sFastBlockLimit > sFastBlockTimeout)) {
+        hasFastBlockStopped = duration.ToMilliseconds() > sFastBlockLimit;
+    }
+    const bool isFastBlocking = hasFastBlockStarted && !hasFastBlockStopped;
 
     if (isFastBlocking && mLoadInfo) {
         MOZ_ALWAYS_SUCCEEDS(mLoadInfo->SetIsTrackerBlocked(true));
     }
 
-    LOG(("FastBlock %s (%lf) [this=%p]\n",
-         isFastBlocking ? "timeout" : "passed",
+    LOG(("FastBlock started=%d stopped=%d (%lf) [this=%p]\n",
+         static_cast<int>(hasFastBlockStarted),
+         static_cast<int>(hasFastBlockStopped),
          duration.ToMilliseconds(),
          this));
     return isFastBlocking;
@@ -1922,7 +1932,7 @@ GetPKPConsoleErrorTag(uint32_t failureResult, nsAString& consoleErrorTag)
  */
 nsresult
 nsHttpChannel::ProcessSingleSecurityHeader(uint32_t aType,
-                                           nsISSLStatus *aSSLStatus,
+                                           nsITransportSecurityInfo* aSecInfo,
                                            uint32_t aFlags)
 {
     nsHttpAtom atom;
@@ -1949,7 +1959,7 @@ nsHttpChannel::ProcessSingleSecurityHeader(uint32_t aType,
         NS_GetOriginAttributes(this, originAttributes);
         uint32_t failureResult;
         uint32_t headerSource = nsISiteSecurityService::SOURCE_ORGANIC_REQUEST;
-        rv = sss->ProcessHeader(aType, mURI, securityHeader, aSSLStatus,
+        rv = sss->ProcessHeader(aType, mURI, securityHeader, aSecInfo,
                                 aFlags, headerSource, originAttributes,
                                 nullptr, nullptr, &failureResult);
         if (NS_FAILED(rv)) {
@@ -2024,17 +2034,13 @@ nsHttpChannel::ProcessSecurityHeaders()
     // Get the TransportSecurityInfo
     nsCOMPtr<nsITransportSecurityInfo> transSecInfo = do_QueryInterface(mSecurityInfo);
     NS_ENSURE_TRUE(transSecInfo, NS_ERROR_FAILURE);
-    nsCOMPtr<nsISSLStatus> sslStatus;
-    rv = transSecInfo->GetSSLStatus(getter_AddRefs(sslStatus));
-    NS_ENSURE_SUCCESS(rv, rv);
-    NS_ENSURE_TRUE(sslStatus, NS_ERROR_FAILURE);
 
     rv = ProcessSingleSecurityHeader(nsISiteSecurityService::HEADER_HSTS,
-                                     sslStatus, flags);
+                                     transSecInfo, flags);
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = ProcessSingleSecurityHeader(nsISiteSecurityService::HEADER_HPKP,
-                                     sslStatus, flags);
+                                     transSecInfo, flags);
     NS_ENSURE_SUCCESS(rv, rv);
 
     return NS_OK;
@@ -2160,10 +2166,6 @@ nsHttpChannel::ProcessSSLInformation()
         do_QueryInterface(mSecurityInfo);
     if (!securityInfo)
         return;
-    nsCOMPtr<nsISSLStatus> sslstat;
-    securityInfo->GetSSLStatus(getter_AddRefs(sslstat));
-    if (!sslstat)
-        return;
 
     uint32_t state;
     if (securityInfo &&
@@ -2179,7 +2181,7 @@ nsHttpChannel::ProcessSSLInformation()
 
     // Send (SHA-1) signature algorithm errors to the web console
     nsCOMPtr<nsIX509Cert> cert;
-    sslstat->GetServerCert(getter_AddRefs(cert));
+    securityInfo->GetServerCert(getter_AddRefs(cert));
     if (cert) {
         UniqueCERTCertificate nssCert(cert->GetCert());
         if (nssCert) {
@@ -6490,11 +6492,8 @@ nsHttpChannel::BeginConnect()
         Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_USE_ALTSVC, false);
     }
 
-    mAuthProvider =
-        do_CreateInstance("@mozilla.org/network/http-channel-auth-provider;1",
-                          &rv);
-    if (NS_SUCCEEDED(rv))
-        rv = mAuthProvider->Init(this);
+    mAuthProvider = new nsHttpChannelAuthProvider();
+    rv = mAuthProvider->Init(this);
     if (NS_FAILED(rv)) {
         return rv;
     }
@@ -7103,6 +7102,77 @@ nsHttpChannel::GetRequestMethod(nsACString& aMethod)
 // nsHttpChannel::nsIRequestObserver
 //-----------------------------------------------------------------------------
 
+// This class is used to convert from a DOM promise to a MozPromise.
+// Once we have a native implementation of nsIRedirectProcessChooser we can
+// remove it and use MozPromises directly.
+class DomPromiseListener final
+    : dom::PromiseNativeHandler
+{
+    NS_DECL_ISUPPORTS
+
+    static RefPtr<nsHttpChannel::TabPromise>
+    Create(dom::Promise* aDOMPromise)
+    {
+        MOZ_ASSERT(aDOMPromise);
+        RefPtr<DomPromiseListener> handler = new DomPromiseListener();
+        RefPtr<nsHttpChannel::TabPromise> promise = handler->mPromiseHolder.Ensure(__func__);
+        aDOMPromise->AppendNativeHandler(handler);
+        return promise;
+    }
+
+    virtual void
+    ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue) override
+    {
+        nsCOMPtr<nsITabParent> tabParent;
+        JS::Rooted<JSObject*> obj(aCx, &aValue.toObject());
+        nsresult rv = UnwrapArg<nsITabParent>(aCx, obj, getter_AddRefs(tabParent));
+        if (NS_FAILED(rv)) {
+            mPromiseHolder.Reject(rv, __func__);
+            return;
+        }
+        mPromiseHolder.Resolve(tabParent, __func__);
+    }
+
+    virtual void
+    RejectedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue) override
+    {
+        if (!aValue.isInt32()) {
+            mPromiseHolder.Reject(NS_ERROR_DOM_NOT_NUMBER_ERR, __func__);
+            return;
+        }
+        mPromiseHolder.Reject((nsresult) aValue.toInt32(), __func__);
+    }
+
+private:
+    DomPromiseListener() = default;
+    ~DomPromiseListener() = default;
+    MozPromiseHolder<nsHttpChannel::TabPromise> mPromiseHolder;
+};
+
+NS_IMPL_ISUPPORTS0(DomPromiseListener)
+
+nsresult
+nsHttpChannel::StartCrossProcessRedirect()
+{
+    nsresult rv = CheckRedirectLimit(nsIChannelEventSink::REDIRECT_INTERNAL);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    RefPtr<HttpChannelParentListener> listener = do_QueryObject(mCallbacks);
+    MOZ_ASSERT(listener);
+
+    nsCOMPtr<nsILoadInfo> redirectLoadInfo =
+      CloneLoadInfoForRedirect(mURI, nsIChannelEventSink::REDIRECT_INTERNAL);
+
+    listener->TriggerCrossProcessRedirect(this,
+                                          redirectLoadInfo,
+                                          mCrossProcessRedirectIdentifier);
+
+    // This will suspend the channel
+    rv = WaitForRedirectCallback();
+
+    return rv;
+}
+
 NS_IMETHODIMP
 nsHttpChannel::OnStartRequest(nsIRequest *request, nsISupports *ctxt)
 {
@@ -7206,6 +7276,32 @@ nsHttpChannel::OnStartRequest(nsIRequest *request, nsISupports *ctxt)
         rv = StartRedirectChannelToURI(mURI, nsIChannelEventSink::REDIRECT_INTERNAL);
         if (NS_SUCCEEDED(rv))
             return NS_OK;
+    }
+
+    // Check if the channel should be redirected to another process.
+    // If so, trigger a redirect, and the HttpChannelParentListener will
+    // redirect to the correct process
+    nsCOMPtr<nsIRedirectProcessChooser> requestChooser =
+        do_GetClassObject("@mozilla.org/network/processChooser");
+    if (requestChooser) {
+        nsCOMPtr<nsITabParent> tp;
+        nsCOMPtr<nsIParentChannel> parentChannel;
+        NS_QueryNotificationCallbacks(this, parentChannel);
+
+        RefPtr<dom::Promise> tabPromise;
+        rv = requestChooser->GetChannelRedirectTarget(this, parentChannel, &mCrossProcessRedirectIdentifier, getter_AddRefs(tabPromise));
+
+        if (NS_SUCCEEDED(rv) && tabPromise) {
+            // The promise will be handled in AsyncOnChannelRedirect.
+            mRedirectTabPromise = DomPromiseListener::Create(tabPromise);
+
+            PushRedirectAsyncFunc(&nsHttpChannel::ContinueOnStartRequest3);
+            rv = StartCrossProcessRedirect();
+            if (NS_SUCCEEDED(rv)) {
+                return NS_OK;
+            }
+            PopRedirectAsyncFunc(&nsHttpChannel::ContinueOnStartRequest3);
+        }
     }
 
     // avoid crashing if mListener happens to be null...

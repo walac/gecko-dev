@@ -73,7 +73,7 @@ type WrImageKey = ImageKey;
 /// cbindgen:field-names=[mNamespace, mHandle]
 pub type WrFontKey = FontKey;
 /// cbindgen:field-names=[mNamespace, mHandle]
-type WrFontInstanceKey = FontInstanceKey;
+pub type WrFontInstanceKey = FontInstanceKey;
 /// cbindgen:field-names=[mNamespace, mHandle]
 type WrYuvColorSpace = YuvColorSpace;
 
@@ -344,7 +344,7 @@ struct WrExternalImage {
     size: usize,
 }
 
-type LockExternalImageCallback = unsafe extern "C" fn(*mut c_void, WrExternalImageId, u8) -> WrExternalImage;
+type LockExternalImageCallback = unsafe extern "C" fn(*mut c_void, WrExternalImageId, u8, ImageRendering) -> WrExternalImage;
 type UnlockExternalImageCallback = unsafe extern "C" fn(*mut c_void, WrExternalImageId, u8);
 
 #[repr(C)]
@@ -357,10 +357,11 @@ pub struct WrExternalImageHandler {
 impl ExternalImageHandler for WrExternalImageHandler {
     fn lock(&mut self,
             id: ExternalImageId,
-            channel_index: u8)
+            channel_index: u8,
+            rendering: ImageRendering)
             -> ExternalImage {
 
-        let image = unsafe { (self.lock_func)(self.external_image_obj, id.into(), channel_index) };
+        let image = unsafe { (self.lock_func)(self.external_image_obj, id.into(), channel_index, rendering) };
         ExternalImage {
             uv: TexelRect::new(image.u0, image.v0, image.u1, image.v1),
             source: match image.image_type {
@@ -937,7 +938,6 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
         blob_image_handler: Some(Box::new(Moz2dBlobImageHandler::new(workers.clone()))),
         workers: Some(workers.clone()),
         thread_listener: Some(Box::new(GeckoProfilerThreadListener::new())),
-        enable_render_on_scroll: false,
         resource_override_path: unsafe {
             let override_charptr = gfx_wr_resource_path_override();
             if override_charptr.is_null() {

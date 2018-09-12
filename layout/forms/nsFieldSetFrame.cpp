@@ -79,7 +79,8 @@ nsFieldSetFrame::GetLegend() const
   return mFrames.FirstChild();
 }
 
-class nsDisplayFieldSetBorder : public nsDisplayItem {
+class nsDisplayFieldSetBorder final : public nsDisplayItem
+{
 public:
   nsDisplayFieldSetBorder(nsDisplayListBuilder* aBuilder,
                           nsFieldSetFrame* aFrame)
@@ -407,7 +408,7 @@ nsFieldSetFrame::Reflow(nsPresContext*           aPresContext,
   WritingMode innerWM = inner ? inner->GetWritingMode() : wm;
   WritingMode legendWM = legend ? legend->GetWritingMode() : wm;
   LogicalSize innerAvailSize = aReflowInput.ComputedSizeWithPadding(innerWM);
-  LogicalSize legendAvailSize = aReflowInput.ComputedSizeWithPadding(legendWM);
+  LogicalSize legendAvailSize = aReflowInput.ComputedSize(legendWM);
   innerAvailSize.BSize(innerWM) = legendAvailSize.BSize(legendWM) =
     NS_UNCONSTRAINEDSIZE;
 

@@ -34,11 +34,13 @@ import org.mozilla.gecko.util.HardwareCodecCapabilityUtils;
 import org.mozilla.gecko.util.HardwareUtils;
 import org.mozilla.gecko.util.IOUtils;
 import org.mozilla.gecko.util.ProxySelector;
+import org.mozilla.gecko.util.StrictModeContext;
 import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.geckoview.BuildConfig;
 
 import android.annotation.SuppressLint;
 import android.app.ActivityManager;
+import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -70,7 +72,6 @@ import android.os.Bundle;
 import android.os.LocaleList;
 import android.os.Looper;
 import android.os.PowerManager;
-import android.os.StrictMode;
 import android.os.Vibrator;
 import android.provider.Settings;
 import android.support.annotation.Nullable;
@@ -92,6 +93,11 @@ public class GeckoAppShell
     private GeckoAppShell() { }
 
     private static class GeckoCrashHandler extends CrashHandler {
+
+        public GeckoCrashHandler(final Class<? extends Service> handlerService) {
+            super(handlerService);
+        }
+
         @Override
         protected String getAppPackageName() {
             final Context appContext = getAppContext();
@@ -156,12 +162,21 @@ public class GeckoAppShell
     private static String sAppNotes;
     private static CrashHandler sCrashHandler;
 
-    public static synchronized CrashHandler ensureCrashHandling() {
+    public static synchronized CrashHandler ensureCrashHandling(final Class<? extends Service> handler) {
         if (sCrashHandler == null) {
-            sCrashHandler = new GeckoCrashHandler();
+            sCrashHandler = new GeckoCrashHandler(handler);
         }
 
         return sCrashHandler;
+    }
+
+    private static Class<? extends Service> sCrashHandlerService;
+    public static synchronized void setCrashHandlerService(final Class<? extends Service> handlerService) {
+        sCrashHandlerService = handlerService;
+    }
+
+    public static synchronized Class<? extends Service> getCrashHandlerService() {
+        return sCrashHandlerService;
     }
 
     public static synchronized boolean isCrashHandlingEnabled() {
@@ -914,6 +929,7 @@ public class GeckoAppShell
         return type + "/" + subType;
     }
 
+    @SuppressWarnings("try")
     @WrapForJNI(calledFrom = "gecko")
     private static boolean openUriExternal(String targetURI,
                                            String mimeType,
@@ -928,11 +944,9 @@ public class GeckoAppShell
         // Bug 1450449 - Downloaded files already are already in a public directory and aren't
         // really owned exclusively by Firefox, so there's no real benefit to using
         // content:// URIs here.
-        StrictMode.VmPolicy prevPolicy = StrictMode.getVmPolicy();
-        StrictMode.setVmPolicy(StrictMode.VmPolicy.LAX);
-        boolean success = geckoInterface.openUriExternal(targetURI, mimeType, packageName, className, action, title);
-        StrictMode.setVmPolicy(prevPolicy);
-        return success;
+        try (StrictModeContext unused = StrictModeContext.allowAllVmPolicies()) {
+            return geckoInterface.openUriExternal(targetURI, mimeType, packageName, className, action, title);
+        }
     }
 
     @WrapForJNI(dispatchTo = "gecko")

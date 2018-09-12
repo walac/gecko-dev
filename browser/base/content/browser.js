@@ -16,6 +16,7 @@ const {WebExtensionPolicy} = Cu.getGlobalForObject(Services);
 // lazy module getters
 
 XPCOMUtils.defineLazyModuleGetters(this, {
+  AddonManager: "resource://gre/modules/AddonManager.jsm",
   BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
@@ -976,7 +977,8 @@ function handleUriInChrome(aBrowser, aUri) {
                                               .getTypeFromURI(aUri);
       if (mimeType == "application/x-xpinstall") {
         let systemPrincipal = Services.scriptSecurityManager.getSystemPrincipal();
-        AddonManager.getInstallForURL(aUri.spec, mimeType).then(install => {
+        AddonManager.getInstallForURL(aUri.spec, mimeType, null, null, null, null, null,
+                                      {source: "file-url"}).then(install => {
           AddonManager.installAddonFromWebpage(mimeType, aBrowser, systemPrincipal,
                                                install);
         });
@@ -1557,6 +1559,8 @@ var gBrowserInit = {
       }
     });
 
+    CaptivePortalWatcher.delayedStartup();
+
     this.delayedStartupFinished = true;
 
     _resolveDelayedStartup();
@@ -1633,6 +1637,8 @@ var gBrowserInit = {
   _handleURIToLoad() {
     this._callWithURIToLoad(uriToLoad => {
       if (!uriToLoad || uriToLoad == "about:blank") {
+        // We don't check whether window.arguments[6] (userContextId) is set
+        // because tabbrowser.js takes care of that for the initial tab.
         return;
       }
 
@@ -2960,7 +2966,6 @@ var BrowserOnClick = {
   onCertError(browser, elementId, isTopFrame, location, securityInfoAsString, frameId) {
     let secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
     let securityInfo;
-    let sslStatus;
 
     switch (elementId) {
       case "exceptionDialogButton":
@@ -2969,24 +2974,23 @@ var BrowserOnClick = {
         }
 
         securityInfo = getSecurityInfo(securityInfoAsString);
-        sslStatus = securityInfo.SSLStatus;
         let params = { exceptionAdded: false,
-                       sslStatus };
+                       securityInfo };
         if (Services.prefs.getBoolPref("browser.security.newcerterrorpage.enabled", false)) {
           let overrideService = Cc["@mozilla.org/security/certoverride;1"]
                                   .getService(Ci.nsICertOverrideService);
           let flags = 0;
-          if (sslStatus.isUntrusted) {
+          if (securityInfo.isUntrusted) {
             flags |= overrideService.ERROR_UNTRUSTED;
           }
-          if (sslStatus.isDomainMismatch) {
+          if (securityInfo.isDomainMismatch) {
             flags |= overrideService.ERROR_MISMATCH;
           }
-          if (sslStatus.isNotValidAtThisTime) {
+          if (securityInfo.isNotValidAtThisTime) {
             flags |= overrideService.ERROR_TIME;
           }
           let uri = Services.uriFixup.createFixupURI(location, 0);
-          let cert = sslStatus.serverCert;
+          let cert = securityInfo.serverCert;
           overrideService.rememberValidityOverride(
             uri.asciiHost, uri.port,
             cert,
@@ -3034,25 +3038,24 @@ var BrowserOnClick = {
         }
 
         securityInfo = getSecurityInfo(securityInfoAsString);
-        sslStatus = securityInfo.SSLStatus;
         let errorInfo = getDetailedCertErrorInfo(location,
                                                  securityInfo);
         let validityInfo = {
-          notAfter: sslStatus.serverCert.validity.notAfter,
-          notBefore: sslStatus.serverCert.validity.notBefore,
-          notAfterLocalTime: sslStatus.serverCert.validity.notAfterLocalTime,
-          notBeforeLocalTime: sslStatus.serverCert.validity.notBeforeLocalTime,
+          notAfter: securityInfo.serverCert.validity.notAfter,
+          notBefore: securityInfo.serverCert.validity.notBefore,
+          notAfterLocalTime: securityInfo.serverCert.validity.notAfterLocalTime,
+          notBeforeLocalTime: securityInfo.serverCert.validity.notBeforeLocalTime,
         };
         browser.messageManager.sendAsyncMessage("CertErrorDetails", {
             code: securityInfo.errorCode,
             info: errorInfo,
             codeString: securityInfo.errorCodeString,
-            certIsUntrusted: sslStatus.isUntrusted,
-            certSubjectAltNames: sslStatus.serverCert.subjectAltNames,
+            certIsUntrusted: securityInfo.isUntrusted,
+            certSubjectAltNames: securityInfo.serverCert.subjectAltNames,
             validity: validityInfo,
             url: location,
-            isDomainMismatch: sslStatus.isDomainMismatch,
-            isNotValidAtThisTime: sslStatus.isNotValidAtThisTime,
+            isDomainMismatch: securityInfo.isDomainMismatch,
+            isNotValidAtThisTime: securityInfo.isNotValidAtThisTime,
             frameId,
         });
         break;
@@ -4292,6 +4295,19 @@ function toOpenWindowByType(inType, uri, features) {
     window.open(uri, "_blank", "chrome,extrachrome,menubar,resizable,scrollbars,status,toolbar");
 }
 
+/**
+ * Open a new browser window.
+ *
+ * @param {Object} options
+ *        {
+ *          private: A boolean indicating if the window should be
+ *                   private
+ *          remote:  A boolean indicating if the window should run
+ *                   remote browser tabs or not. If omitted, the window
+ *                   will choose the profile default state.
+ *        }
+ * @return a reference to the new window.
+ */
 function OpenBrowserWindow(options) {
   var telemetryObj = {};
   TelemetryStopwatch.start("FX_NEW_WINDOW_MS", telemetryObj);
@@ -5300,32 +5316,6 @@ var TabsProgressListener = {
         TelemetryStopwatch.cancel("FX_PAGE_LOAD_MS", aBrowser);
       }
     }
-
-    // We used to listen for clicks in the browser here, but when that
-    // became unnecessary, removing the code below caused focus issues.
-    // This code should be removed. Tracked in bug 1337794.
-    let isRemoteBrowser = aBrowser.isRemoteBrowser;
-    // We check isRemoteBrowser here to avoid requesting the doc CPOW
-    let doc = isRemoteBrowser ? null : aWebProgress.DOMWindow.document;
-
-    if (!isRemoteBrowser &&
-        aStateFlags & Ci.nsIWebProgressListener.STATE_STOP &&
-        Components.isSuccessCode(aStatus) &&
-        doc.documentURI.startsWith("about:") &&
-        !doc.documentURI.toLowerCase().startsWith("about:blank") &&
-        !doc.documentURI.toLowerCase().startsWith("about:home") &&
-        !doc.documentElement.hasAttribute("hasBrowserHandlers")) {
-      // STATE_STOP may be received twice for documents, thus store an
-      // attribute to ensure handling it just once.
-      doc.documentElement.setAttribute("hasBrowserHandlers", "true");
-      aBrowser.addEventListener("pagehide", function onPageHide(event) {
-        if (event.target.defaultView.frameElement)
-          return;
-        aBrowser.removeEventListener("pagehide", onPageHide, true);
-        if (event.target.documentElement)
-          event.target.documentElement.removeAttribute("hasBrowserHandlers");
-      }, true);
-    }
   },
 
   onLocationChange(aBrowser, aWebProgress, aRequest, aLocationURI, aFlags) {
@@ -6289,44 +6279,66 @@ function UpdateCurrentCharset(target) {
   }
 }
 
-function UpdateDownloadsAutoHide(popup) {
-  let checkbox = popup.querySelector(".customize-context-autoHide");
-  let isDownloads = popup.triggerNode && ["downloads-button", "wrapper-downloads-button"].includes(popup.triggerNode.id);
-  checkbox.hidden = !isDownloads;
-  if (this.window.DownloadsButton.autoHideDownloadsButton) {
-    checkbox.setAttribute("checked", "true");
-  } else {
-    checkbox.removeAttribute("checked");
-  }
-}
+var ToolbarContextMenu = {
+  updateDownloadsAutoHide(popup) {
+    let checkbox = popup.querySelector(".customize-context-autoHide");
+    let isDownloads = popup.triggerNode && ["downloads-button", "wrapper-downloads-button"].includes(popup.triggerNode.id);
+    checkbox.hidden = !isDownloads;
+    if (DownloadsButton.autoHideDownloadsButton) {
+      checkbox.setAttribute("checked", "true");
+    } else {
+      checkbox.removeAttribute("checked");
+    }
+  },
 
-function onDownloadsAutoHideChange(event) {
-  let autoHide = event.target.getAttribute("checked") == "true";
-  Services.prefs.setBoolPref("browser.download.autohideButton", autoHide);
-}
+  onDownloadsAutoHideChange(event) {
+    let autoHide = event.target.getAttribute("checked") == "true";
+    Services.prefs.setBoolPref("browser.download.autohideButton", autoHide);
+  },
 
-function getUnwrappedTriggerNode(popup) {
-  // Toolbar buttons are wrapped in customize mode. Unwrap if necessary.
-  let {triggerNode} = popup;
-  if (triggerNode && gCustomizeMode.isWrappedToolbarItem(triggerNode)) {
-    return triggerNode.firstElementChild;
-  }
-  return triggerNode;
-}
+  _getUnwrappedTriggerNode(popup) {
+    // Toolbar buttons are wrapped in customize mode. Unwrap if necessary.
+    let {triggerNode} = popup;
+    if (triggerNode && gCustomizeMode.isWrappedToolbarItem(triggerNode)) {
+      return triggerNode.firstElementChild;
+    }
+    return triggerNode;
+  },
 
-function UpdateManageExtension(popup) {
-  let checkbox = popup.querySelector(".customize-context-manageExtension");
-  let separator = checkbox.nextElementSibling;
-  let node = getUnwrappedTriggerNode(popup);
-  let isWebExt = node && node.hasAttribute("data-extensionid");
-  checkbox.hidden = separator.hidden = !isWebExt;
-}
+  updateExtension(popup) {
+    let removeExtension = popup.querySelector(".customize-context-removeExtension");
+    let manageExtension = removeExtension.nextElementSibling;
+    let separator = manageExtension.nextElementSibling;
+    let node = this._getUnwrappedTriggerNode(popup);
+    let isWebExt = node && node.hasAttribute("data-extensionid");
+    removeExtension.hidden = manageExtension.hidden = separator.hidden = !isWebExt;
+  },
 
-function openAboutAddonsForContextAction(popup) {
-  let id = getUnwrappedTriggerNode(popup).getAttribute("data-extensionid");
-  let viewID = "addons://detail/" + encodeURIComponent(id);
-  BrowserOpenAddonsMgr(viewID);
-}
+  async removeExtensionForContextAction(popup) {
+    let id = this._getUnwrappedTriggerNode(popup).getAttribute("data-extensionid");
+    let addon = await AddonManager.getAddonByID(id);
+    let {name} = addon;
+    let brand = document.getElementById("bundle_brand").getString("brandShorterName");
+    let {getFormattedString, getString} = gNavigatorBundle;
+    let title = getFormattedString("webext.remove.confirmation.title", [name]);
+    let message = getFormattedString("webext.remove.confirmation.message", [name, brand]);
+    let btnTitle = getString("webext.remove.confirmation.button");
+    let {BUTTON_TITLE_IS_STRING: titleString, BUTTON_TITLE_CANCEL: titleCancel,
+         BUTTON_POS_0, BUTTON_POS_1, confirmEx} = Services.prompt;
+    let btnFlags = BUTTON_POS_0 * titleString + BUTTON_POS_1 * titleCancel;
+    let response = confirmEx(null, title, message, btnFlags, btnTitle, null, null, null,
+                             {value: 0});
+    if (response == 0) {
+      addon.uninstall();
+    }
+  },
+
+  openAboutAddonsForContextAction(popup) {
+    let id = this._getUnwrappedTriggerNode(popup).getAttribute("data-extensionid");
+    let viewID = "addons://detail/" + encodeURIComponent(id);
+    BrowserOpenAddonsMgr(viewID);
+  },
+};
 
 var gPageStyleMenu = {
   // This maps from a <browser> element (or, more specifically, a

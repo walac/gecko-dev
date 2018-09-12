@@ -24,6 +24,7 @@ const startId          = 8;
 const elemId           = 9;
 const codeId           = 10;
 const dataId           = 11;
+const gcFeatureOptInId = 42;
 
 // User-defined section names
 const nameName         = "name";
@@ -177,6 +178,10 @@ function moduleWithSections(sectionArray) {
     return toU8(bytes);
 }
 
+function gcFeatureOptInSection(version) {
+    return { name: gcFeatureOptInId, body: [ version & 0x7F ] }
+}
+
 function sigSection(sigs) {
     var body = [];
     body.push(...varU32(sigs.length));
@@ -200,12 +205,13 @@ function declSection(decls) {
     return { name: functionId, body };
 }
 
-function funcBody(func) {
+function funcBody(func, withEndCode=true) {
     var body = varU32(func.locals.length);
     for (let local of func.locals)
         body.push(...varU32(local));
     body = body.concat(...func.body);
-    body.push(EndCode);
+    if (withEndCode)
+        body.push(EndCode);
     body.splice(0, 0, ...varU32(body.length));
     return body;
 }

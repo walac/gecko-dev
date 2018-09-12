@@ -31,7 +31,6 @@ use prim_store::{OpacityBinding, ScrollNodeAndClipChain, TextRunPrimitive};
 use render_backend::{DocumentView};
 use resource_cache::{FontInstanceMap, ImageRequest};
 use scene::{Scene, ScenePipeline, StackingContextHelpers};
-use scene_builder::{BuiltScene, SceneRequest};
 use spatial_node::{SpatialNodeType, StickyFrameInfo};
 use std::{f32, iter, mem};
 use tiling::{CompositeOps, ScrollbarPrimitive};
@@ -963,8 +962,8 @@ impl<'a> DisplayListFlattener<'a> {
 
             // If not already isolated for some other reason,
             // make this picture as isolated.
-            if parent_pic.composite_mode.is_none() {
-                parent_pic.composite_mode = Some(PictureCompositeMode::Blit);
+            if parent_pic.requested_composite_mode.is_none() {
+                parent_pic.requested_composite_mode = Some(PictureCompositeMode::Blit);
             }
         }
 
@@ -1046,36 +1045,6 @@ impl<'a> DisplayListFlattener<'a> {
             *self.picture_stack.last().unwrap()
         };
 
-        // For each filter, create a new image with that composite mode.
-        for filter in composite_ops.filters.iter().rev() {
-            let picture = PicturePrimitive::new_image(
-                self.get_next_picture_id(),
-                Some(PictureCompositeMode::Filter(*filter)),
-                false,
-                pipeline_id,
-                None,
-                true,
-            );
-
-            let src_prim = BrushPrimitive::new_picture(picture);
-            let src_prim_index = self.prim_store.add_primitive(
-                &LayoutRect::zero(),
-                &max_clip,
-                true,
-                clip_chain_id,
-                spatial_node_index,
-                None,
-                PrimitiveContainer::Brush(src_prim),
-            );
-
-            let parent_pic = self.prim_store.get_pic_mut(parent_prim_index);
-            parent_prim_index = src_prim_index;
-
-            parent_pic.add_primitive(src_prim_index);
-
-            self.picture_stack.push(src_prim_index);
-        }
-
         // Same for mix-blend-mode.
         if let Some(mix_blend_mode) = composite_ops.mix_blend_mode {
             let picture = PicturePrimitive::new_image(
@@ -1101,6 +1070,36 @@ impl<'a> DisplayListFlattener<'a> {
 
             let parent_pic = self.prim_store.get_pic_mut(parent_prim_index);
             parent_prim_index = src_prim_index;
+            parent_pic.add_primitive(src_prim_index);
+
+            self.picture_stack.push(src_prim_index);
+        }
+
+        // For each filter, create a new image with that composite mode.
+        for filter in composite_ops.filters.iter().rev() {
+            let picture = PicturePrimitive::new_image(
+                self.get_next_picture_id(),
+                Some(PictureCompositeMode::Filter(*filter)),
+                false,
+                pipeline_id,
+                None,
+                true,
+            );
+
+            let src_prim = BrushPrimitive::new_picture(picture);
+            let src_prim_index = self.prim_store.add_primitive(
+                &LayoutRect::zero(),
+                &max_clip,
+                true,
+                clip_chain_id,
+                spatial_node_index,
+                None,
+                PrimitiveContainer::Brush(src_prim),
+            );
+
+            let parent_pic = self.prim_store.get_pic_mut(parent_prim_index);
+            parent_prim_index = src_prim_index;
+
             parent_pic.add_primitive(src_prim_index);
 
             self.picture_stack.push(src_prim_index);
@@ -1997,31 +1996,6 @@ impl<'a> DisplayListFlattener<'a> {
 
     pub fn simple_scroll_and_clip_chain(&mut self, id: &ClipId) -> ScrollNodeAndClipChain {
         self.map_clip_and_scroll(&ClipAndScrollInfo::simple(*id))
-    }
-}
-
-pub fn build_scene(config: &FrameBuilderConfig, request: SceneRequest) -> BuiltScene {
-
-    let mut clip_scroll_tree = ClipScrollTree::new();
-    let mut new_scene = Scene::new();
-
-    let frame_builder = DisplayListFlattener::create_frame_builder(
-        FrameBuilder::empty(), // WIP, we're not really recycling anything here, clean this up.
-        &request.scene,
-        &mut clip_scroll_tree,
-        request.font_instances,
-        &request.view,
-        &request.output_pipelines,
-        config,
-        &mut new_scene,
-        request.scene_id,
-    );
-
-    BuiltScene {
-        scene: new_scene,
-        frame_builder,
-        clip_scroll_tree,
-        removed_pipelines: request.removed_pipelines,
     }
 }
 

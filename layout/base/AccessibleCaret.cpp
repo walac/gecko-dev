@@ -8,7 +8,7 @@
 
 #include "AccessibleCaretLogger.h"
 #include "mozilla/FloatingPoint.h"
-#include "mozilla/Preferences.h"
+#include "mozilla/StaticPrefs.h"
 #include "mozilla/ToString.h"
 #include "nsCanvasFrame.h"
 #include "nsCaret.h"
@@ -30,14 +30,8 @@ using namespace dom;
 
 NS_IMPL_ISUPPORTS(AccessibleCaret::DummyTouchListener, nsIDOMEventListener)
 
-float AccessibleCaret::sWidth = 0.0f;
-float AccessibleCaret::sHeight = 0.0f;
-float AccessibleCaret::sMarginLeft = 0.0f;
-float AccessibleCaret::sBarWidth = 0.0f;
-
 NS_NAMED_LITERAL_STRING(AccessibleCaret::sTextOverlayElementId, "text-overlay");
 NS_NAMED_LITERAL_STRING(AccessibleCaret::sCaretImageElementId, "image");
-NS_NAMED_LITERAL_STRING(AccessibleCaret::sSelectionBarElementId, "bar");
 
 #define AC_PROCESS_ENUM_TO_STREAM(e) case(e): aStream << #e; break;
 std::ostream&
@@ -80,15 +74,6 @@ AccessibleCaret::AccessibleCaret(nsIPresShell* aPresShell)
     MOZ_ASSERT(mPresShell->GetDocument());
     InjectCaretElement(mPresShell->GetDocument());
   }
-
-  static bool prefsAdded = false;
-  if (!prefsAdded) {
-    Preferences::AddFloatVarCache(&sWidth, "layout.accessiblecaret.width");
-    Preferences::AddFloatVarCache(&sHeight, "layout.accessiblecaret.height");
-    Preferences::AddFloatVarCache(&sMarginLeft, "layout.accessiblecaret.margin-left");
-    Preferences::AddFloatVarCache(&sBarWidth, "layout.accessiblecaret.bar.width");
-    prefsAdded = true;
-  }
 }
 
 AccessibleCaret::~AccessibleCaret()
@@ -122,23 +107,6 @@ AccessibleCaret::SetAppearance(Appearance aAppearance)
     mImaginaryCaretRect = nsRect();
     mZoomLevel = 0.0f;
   }
-}
-
-void
-AccessibleCaret::SetSelectionBarEnabled(bool aEnabled)
-{
-  if (mSelectionBarEnabled == aEnabled) {
-    return;
-  }
-
-  AC_LOG("Set selection bar %s", aEnabled ? "Enabled" : "Disabled");
-
-  ErrorResult rv;
-  CaretElement().ClassList()->Toggle(NS_LITERAL_STRING("no-bar"),
-                                     Optional<bool>(!aEnabled), rv);
-  MOZ_ASSERT(!rv.Failed());
-
-  mSelectionBarEnabled = aEnabled;
 }
 
 /* static */ nsAutoString
@@ -233,13 +201,11 @@ AccessibleCaret::CreateCaretElement(nsIDocument* aDocument) const
   // <div class="moz-accessiblecaret">  <- CaretElement()
   //   <div id="text-overlay"           <- TextOverlayElement()
   //   <div id="image">                 <- CaretImageElement()
-  //   <div id="bar">                   <- SelectionBarElement()
 
   ErrorResult rv;
   RefPtr<Element> parent = aDocument->CreateHTMLElement(nsGkAtoms::div);
   parent->ClassList()->Add(NS_LITERAL_STRING("moz-accessiblecaret"), rv);
   parent->ClassList()->Add(NS_LITERAL_STRING("none"), rv);
-  parent->ClassList()->Add(NS_LITERAL_STRING("no-bar"), rv);
 
   auto CreateAndAppendChildElement = [aDocument, &parent](
     const nsLiteralString& aElementId)
@@ -251,7 +217,6 @@ AccessibleCaret::CreateCaretElement(nsIDocument* aDocument) const
 
   CreateAndAppendChildElement(sTextOverlayElementId);
   CreateAndAppendChildElement(sCaretImageElementId);
-  CreateAndAppendChildElement(sSelectionBarElementId);
 
   return parent.forget();
 }
@@ -339,11 +304,12 @@ AccessibleCaret::SetCaretElementStyle(const nsRect& aRect, float aZoomLevel)
                         nsPresContext::AppUnitsToIntCSSPixels(position.y));
   // We can't use AppendPrintf here, because it does locale-specific
   // formatting of floating-point values.
-  styleStr.AppendFloat(sWidth/aZoomLevel);
+  styleStr.AppendFloat(StaticPrefs::layout_accessiblecaret_width() / aZoomLevel);
   styleStr.AppendLiteral("px; height: ");
-  styleStr.AppendFloat(sHeight/aZoomLevel);
+  styleStr.AppendFloat(StaticPrefs::layout_accessiblecaret_height() / aZoomLevel);
   styleStr.AppendLiteral("px; margin-left: ");
-  styleStr.AppendFloat(sMarginLeft/aZoomLevel);
+  styleStr.AppendFloat(
+    StaticPrefs::layout_accessiblecaret_margin_left() / aZoomLevel);
   styleStr.AppendLiteral("px");
 
   CaretElement().SetAttr(kNameSpaceID_None, nsGkAtoms::style, styleStr, true);
@@ -352,7 +318,6 @@ AccessibleCaret::SetCaretElementStyle(const nsRect& aRect, float aZoomLevel)
   // Set style string for children.
   SetTextOverlayElementStyle(aRect, aZoomLevel);
   SetCaretImageElementStyle(aRect, aZoomLevel);
-  SetSelectionBarElementStyle(aRect, aZoomLevel);
 }
 
 void
@@ -376,23 +341,6 @@ AccessibleCaret::SetCaretImageElementStyle(const nsRect& aRect,
                         nsPresContext::AppUnitsToIntCSSPixels(aRect.height));
   CaretImageElement()->SetAttr(kNameSpaceID_None, nsGkAtoms::style, styleStr,
                                true);
-  AC_LOG("%s: %s", __FUNCTION__, NS_ConvertUTF16toUTF8(styleStr).get());
-}
-
-void
-AccessibleCaret::SetSelectionBarElementStyle(const nsRect& aRect,
-                                             float aZoomLevel)
-{
-  nsAutoString styleStr;
-  styleStr.AppendPrintf("height: %dpx; width: ",
-                        nsPresContext::AppUnitsToIntCSSPixels(aRect.height));
-  // We can't use AppendPrintf here, because it does locale-specific
-  // formatting of floating-point values.
-  styleStr.AppendFloat(sBarWidth / aZoomLevel);
-  styleStr.AppendLiteral("px");
-
-  SelectionBarElement()->SetAttr(kNameSpaceID_None, nsGkAtoms::style, styleStr,
-                                 true);
   AC_LOG("%s: %s", __FUNCTION__, NS_ConvertUTF16toUTF8(styleStr).get());
 }
 

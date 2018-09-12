@@ -298,18 +298,6 @@ class SessionHistoryListener extends Handler {
     this.collectFrom(oldIndex);
   }
 
-  OnHistoryGoBack(backURI) {
-    // We ought to collect the previously current entry as well, see bug 1350567.
-    this.collectFrom(kLastIndex);
-    return true;
-  }
-
-  OnHistoryGoForward(forwardURI) {
-    // We ought to collect the previously current entry as well, see bug 1350567.
-    this.collectFrom(kLastIndex);
-    return true;
-  }
-
   OnHistoryGotoIndex(index, gotoURI) {
     // We ought to collect the previously current entry as well, see bug 1350567.
     this.collectFrom(kLastIndex);
@@ -536,7 +524,15 @@ class SessionStorageListener extends Handler {
     if (!this._changes[domain]) {
       this._changes[domain] = {};
     }
-    this._changes[domain][key] = newValue;
+
+    // If the key isn't defined, then .clear() was called, and we send
+    // up null for this domain to indicate that storage has been cleared
+    // for it.
+    if (!key) {
+      this._changes[domain] = null;
+    } else {
+      this._changes[domain][key] = newValue;
+    }
 
     this.messageQueue.push("storagechange", () => {
       let tmp = this._changes;

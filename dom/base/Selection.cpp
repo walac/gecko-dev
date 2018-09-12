@@ -60,7 +60,6 @@
 #include "nsINamed.h"
 
 #include "nsISelectionController.h" //for the enums
-#include "SelectionChangeListener.h"
 #include "nsCopySupport.h"
 #include "nsIClipboard.h"
 #include "nsIFrameInlines.h"
@@ -737,6 +736,8 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Selection)
   // we don't want to notify the listeners during JS GC (they could be
   // in JS!).
   tmp->mNotifyAutoCopy = false;
+  tmp->StopNotifyingAccessibleCaretEventHub();
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mSelectionChangeEventDispatcher)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSelectionListeners)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mCachedRange)
   tmp->RemoveAllRanges(IgnoreErrors());
@@ -753,6 +754,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Selection)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAnchorFocusRange)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCachedRange)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFrameSelection)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSelectionChangeEventDispatcher)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSelectionListeners)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(Selection)
@@ -2126,7 +2128,8 @@ Selection::AddRangeJS(nsRange& aRange, ErrorResult& aRv)
 void
 Selection::AddRange(nsRange& aRange, ErrorResult& aRv)
 {
-  return AddRangeInternal(aRange, GetParentObject(), aRv);
+  RefPtr<nsIDocument> document(GetParentObject());
+  return AddRangeInternal(aRange, document, aRv);
 }
 
 void
@@ -3488,7 +3491,7 @@ Selection::NotifySelectionListeners()
   // We've notified all selection listeners even when some of them are removed
   // (and may be destroyed) during notifying one of them.  Therefore, we should
   // copy all listeners to the local variable first.
-  AutoTArray<nsCOMPtr<nsISelectionListener>, 8>
+  AutoTArray<nsCOMPtr<nsISelectionListener>, 5>
     selectionListeners(mSelectionListeners);
 
   int16_t reason = frameSelection->PopReason();
@@ -3497,6 +3500,16 @@ Selection::NotifySelectionListeners()
     AutoCopyListener::OnSelectionChange(doc, *this, reason);
   }
 
+  if (mAccessibleCaretEventHub) {
+    RefPtr<AccessibleCaretEventHub> hub(mAccessibleCaretEventHub);
+    hub->OnSelectionChange(doc, this, reason);
+  }
+
+  if (mSelectionChangeEventDispatcher) {
+    RefPtr<SelectionChangeEventDispatcher> dispatcher(
+                                             mSelectionChangeEventDispatcher);
+    dispatcher->OnSelectionChange(doc, this, reason);
+  }
   for (auto& listener : selectionListeners) {
     listener->NotifySelectionChanged(doc, this, reason);
   }

@@ -147,6 +147,7 @@ class CDATASection;
 class Comment;
 struct CustomElementDefinition;
 class DocGroup;
+class DocumentL10n;
 class DocumentFragment;
 class DocumentTimeline;
 class DocumentType;
@@ -978,11 +979,43 @@ public:
   }
 
   /**
+   * Get slow tracking content blocked flag for this document.
+   */
+  bool GetHasSlowTrackingContentBlocked()
+  {
+    return mHasSlowTrackingContentBlocked;
+  }
+
+  /**
+   * Get all cookies blocked flag for this document.
+   */
+  bool GetHasAllCookiesBlocked()
+  {
+    return mHasAllCookiesBlocked;
+  }
+
+  /**
    * Get tracking cookies blocked flag for this document.
    */
   bool GetHasTrackingCookiesBlocked()
   {
     return mHasTrackingCookiesBlocked;
+  }
+
+  /**
+   * Get third-party cookies blocked flag for this document.
+   */
+  bool GetHasForeignCookiesBlocked()
+  {
+    return mHasForeignCookiesBlocked;
+  }
+
+  /**
+   * Get cookies blocked by site permission flag for this document.
+   */
+  bool GetHasCookiesBlockedByPermission()
+  {
+    return mHasCookiesBlockedByPermission;
   }
 
   /**
@@ -994,11 +1027,43 @@ public:
   }
 
   /**
+   * Set the slow tracking content blocked flag for this document.
+   */
+  void SetHasSlowTrackingContentBlocked(bool aHasSlowTrackingContentBlocked)
+  {
+    mHasSlowTrackingContentBlocked = aHasSlowTrackingContentBlocked;
+  }
+
+  /**
+   * Set the all cookies blocked flag for this document.
+   */
+  void SetHasAllCookiesBlocked(bool aHasAllCookiesBlocked)
+  {
+    mHasAllCookiesBlocked = aHasAllCookiesBlocked;
+  }
+
+  /**
    * Set the tracking cookies blocked flag for this document.
    */
   void SetHasTrackingCookiesBlocked(bool aHasTrackingCookiesBlocked)
   {
     mHasTrackingCookiesBlocked = aHasTrackingCookiesBlocked;
+  }
+
+  /**
+   * Set the third-party cookies blocked flag for this document.
+   */
+  void SetHasForeignCookiesBlocked(bool aHasForeignCookiesBlocked)
+  {
+    mHasForeignCookiesBlocked = aHasForeignCookiesBlocked;
+  }
+
+  /**
+   * Set the cookies blocked by site permission flag for this document.
+   */
+  void SetHasCookiesBlockedByPermission(bool aHasCookiesBlockedByPermission)
+  {
+    mHasCookiesBlockedByPermission = aHasCookiesBlockedByPermission;
   }
 
   /**
@@ -3498,6 +3563,69 @@ public:
   // For more information on Flash classification, see
   // toolkit/components/url-classifier/flash-block-lists.rst
   mozilla::dom::FlashClassification DocumentFlashClassification();
+
+  /**
+   * Localization
+   *
+   * For more information on DocumentL10n see
+   * intl/l10n/docs/fluent_tutorial.rst
+   */
+
+public:
+  /**
+   * This is a public method exposed on Document WebIDL
+   * to chrome only documents.
+   */
+  mozilla::dom::DocumentL10n* GetL10n();
+
+  /**
+   * This method should be called when the container
+   * of l10n resources parsing is completed.
+   *
+   * It triggers initial async fetch of the resources
+   * as early as possible.
+   *
+   * In HTML case this is </head>.
+   * In XUL case this is </linkset>.
+   */
+  void OnL10nResourceContainerParsed();
+
+  /**
+   * This method should be called when a link element
+   * with rel="localization" is being added to the
+   * l10n resource container element.
+   */
+  void LocalizationLinkAdded(Element* aLinkElement);
+
+  /**
+   * This method should be called when a link element
+   * with rel="localization" is being removed.
+   */
+  void LocalizationLinkRemoved(Element* aLinkElement);
+
+protected:
+  /**
+   * This method should be collect as soon as the
+   * parsing of the document is completed.
+   *
+   * In HTML this happens when readyState becomes
+   * `interactive`.
+   * In XUL it happens at `DoneWalking`, during
+   * `MozBeforeInitialXULLayout`.
+   *
+   * It triggers the initial translation of the
+   * document.
+   */
+  void TriggerInitialDocumentTranslation();
+
+  RefPtr<mozilla::dom::DocumentL10n> mDocumentL10n;
+
+private:
+  void InitializeLocalization(nsTArray<nsString>& aResourceIds);
+
+  nsTArray<nsString> mL10nResources;
+
+public:
   bool IsThirdParty();
 
   bool IsScopedStyleEnabled();
@@ -4003,8 +4131,20 @@ protected:
   // True if a document has blocked Tracking Content
   bool mHasTrackingContentBlocked : 1;
 
+  // True if a document has blocked Slow Tracking Content
+  bool mHasSlowTrackingContentBlocked : 1;
+
+  // True if a document has blocked All Cookies
+  bool mHasAllCookiesBlocked : 1;
+
   // True if a document has blocked Tracking Cookies
   bool mHasTrackingCookiesBlocked : 1;
+
+  // True if a document has blocked Foreign Cookies
+  bool mHasForeignCookiesBlocked : 1;
+
+  // True if a document has blocked Cookies By Site Permission
+  bool mHasCookiesBlockedByPermission : 1;
 
   // True if a document has loaded Tracking Content
   bool mHasTrackingContentLoaded : 1;

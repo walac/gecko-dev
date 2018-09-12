@@ -19,6 +19,7 @@
 #include "nsURILoader.h"
 #include "nsDocLoader.h"
 #include "nsOSHelperAppService.h"
+#include "nsOSPermissionRequest.h"
 #include "nsExternalProtocolHandler.h"
 #include "nsPrefetchService.h"
 #include "nsOfflineCacheUpdate.h"
@@ -81,7 +82,6 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsExternalProtocolHandler)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsPrefetchService, Init)
 NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsOfflineCacheUpdateService,
                                          nsOfflineCacheUpdateService::GetInstance)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsOfflineCacheUpdate)
 NS_GENERIC_FACTORY_CONSTRUCTOR(PlatformLocalHandlerApp_t)
 #ifdef MOZ_ENABLE_DBUS
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsDBusHandlerApp)
@@ -90,6 +90,9 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsDBusHandlerApp)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsExternalURLHandlerService)
 #endif
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(ContentHandlerService, Init)
+
+// OS access permissions
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsOSPermissionRequest)
 
 // session history
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsSHEntry)
@@ -104,8 +107,8 @@ NS_DEFINE_NAMED_CID(NS_EXTERNALHELPERAPPSERVICE_CID);
 NS_DEFINE_NAMED_CID(NS_EXTERNALPROTOCOLHANDLER_CID);
 NS_DEFINE_NAMED_CID(NS_PREFETCHSERVICE_CID);
 NS_DEFINE_NAMED_CID(NS_OFFLINECACHEUPDATESERVICE_CID);
-NS_DEFINE_NAMED_CID(NS_OFFLINECACHEUPDATE_CID);
 NS_DEFINE_NAMED_CID(NS_LOCALHANDLERAPP_CID);
+NS_DEFINE_NAMED_CID(NS_OSPERMISSIONREQUEST_CID);
 #ifdef MOZ_ENABLE_DBUS
 NS_DEFINE_NAMED_CID(NS_DBUSHANDLERAPP_CID);
 #endif
@@ -125,12 +128,12 @@ const mozilla::Module::CIDEntry kDocShellCIDs[] = {
   { &kNS_URI_LOADER_CID, false, nullptr, nsURILoaderConstructor },
   { &kNS_DOCUMENTLOADER_SERVICE_CID, false, nullptr, nsDocLoaderConstructor },
   { &kNS_EXTERNALHELPERAPPSERVICE_CID, false, nullptr, nsOSHelperAppServiceConstructor },
+  { &kNS_OSPERMISSIONREQUEST_CID, false, nullptr, nsOSPermissionRequestConstructor },
   { &kNS_CONTENTHANDLERSERVICE_CID, false, nullptr, ContentHandlerServiceConstructor,
     mozilla::Module::CONTENT_PROCESS_ONLY },
   { &kNS_EXTERNALPROTOCOLHANDLER_CID, false, nullptr, nsExternalProtocolHandlerConstructor },
   { &kNS_PREFETCHSERVICE_CID, false, nullptr, nsPrefetchServiceConstructor },
   { &kNS_OFFLINECACHEUPDATESERVICE_CID, false, nullptr, nsOfflineCacheUpdateServiceConstructor },
-  { &kNS_OFFLINECACHEUPDATE_CID, false, nullptr, nsOfflineCacheUpdateConstructor },
   { &kNS_LOCALHANDLERAPP_CID, false, nullptr, PlatformLocalHandlerApp_tConstructor },
 #ifdef MOZ_ENABLE_DBUS
   { &kNS_DBUSHANDLERAPP_CID, false, nullptr, nsDBusHandlerAppConstructor },
@@ -186,7 +189,6 @@ const mozilla::Module::ContractIDEntry kDocShellContracts[] = {
   { NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX"default", &kNS_EXTERNALPROTOCOLHANDLER_CID },
   { NS_PREFETCHSERVICE_CONTRACTID, &kNS_PREFETCHSERVICE_CID },
   { NS_OFFLINECACHEUPDATESERVICE_CONTRACTID, &kNS_OFFLINECACHEUPDATESERVICE_CID },
-  { NS_OFFLINECACHEUPDATE_CONTRACTID, &kNS_OFFLINECACHEUPDATE_CID },
   { NS_LOCALHANDLERAPP_CONTRACTID, &kNS_LOCALHANDLERAPP_CID },
 #ifdef MOZ_ENABLE_DBUS
   { NS_DBUSHANDLERAPP_CONTRACTID, &kNS_DBUSHANDLERAPP_CID },
@@ -197,6 +199,7 @@ const mozilla::Module::ContractIDEntry kDocShellContracts[] = {
   { NS_SHENTRY_CONTRACTID, &kNS_SHENTRY_CID },
   { NS_LOADCONTEXT_CONTRACTID, &kNS_LOADCONTEXT_CID },
   { NS_PRIVATELOADCONTEXT_CONTRACTID, &kNS_PRIVATELOADCONTEXT_CID },
+  { NS_OSPERMISSIONREQUEST_CONTRACTID, &kNS_OSPERMISSIONREQUEST_CID, mozilla::Module::MAIN_PROCESS_ONLY },
   { nullptr }
 };
 

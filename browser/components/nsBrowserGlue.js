@@ -239,7 +239,6 @@ let ACTORS = {
 
       messages: [
         "BrowserPlugins:ActivatePlugins",
-        "BrowserPlugins:NotificationShown",
         "BrowserPlugins:ContextMenuCommand",
         "BrowserPlugins:NPAPIPluginProcessCrashed",
         "BrowserPlugins:CrashReportSubmitted",
@@ -1001,6 +1000,8 @@ BrowserGlue.prototype = {
   _beforeUIStartup: function BG__beforeUIStartup() {
     SessionStartup.init();
 
+    PdfJs.earlyInit();
+
     // check if we're in safe mode
     if (Services.appinfo.inSafeMode) {
       Services.ww.openWindow(null, "chrome://browser/content/safeMode.xul",
@@ -1045,6 +1046,8 @@ BrowserGlue.prototype = {
       toolbar_field_border: "rgba(249, 249, 250, 0.2)",
       ntp_background: "#2A2A2E",
       ntp_text: "rgb(249, 249, 250)",
+      sidebar: "#19191a",
+      sidebar_text: "rgb(249, 249, 250)",
       author: vendorShortName,
     }, {
       useInDarkMode: true,

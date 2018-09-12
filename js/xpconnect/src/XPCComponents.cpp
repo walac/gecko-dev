@@ -15,7 +15,7 @@
 #include "nsContentUtils.h"
 #include "nsCycleCollector.h"
 #include "jsfriendapi.h"
-#include "js/AutoByteString.h"
+#include "js/CharacterEncoding.h"
 #include "js/SavedFrameAPI.h"
 #include "js/StructuredClone.h"
 #include "mozilla/Attributes.h"
@@ -69,7 +69,7 @@ JSValIsInterfaceOfType(JSContext* cx, HandleValue v, REFNSIID iid)
     if (v.isPrimitive())
         return false;
 
-    nsXPConnect* xpc = nsXPConnect::XPConnect();
+    nsIXPConnect* xpc = nsIXPConnect::XPConnect();
     RootedObject obj(cx, &v.toObject());
     return NS_SUCCEEDED(xpc->GetWrappedNativeOfJSObject(cx, obj, getter_AddRefs(wn))) && wn &&
         NS_SUCCEEDED(wn->Native()->QueryInterface(iid, getter_AddRefs(iface))) && iface;
@@ -246,19 +246,19 @@ nsXPCComponents_Interfaces::Resolve(nsIXPConnectWrappedNative* wrapper,
     if (!JSID_IS_STRING(id))
         return NS_OK;
 
-    JSAutoByteString name;
     RootedString str(cx, JSID_TO_STRING(id));
+    JS::UniqueChars name = JS_EncodeStringToLatin1(cx, str);
 
     // we only allow interfaces by name here
-    if (name.encodeLatin1(cx, str) && name.ptr()[0] != '{') {
-        const nsXPTInterfaceInfo* info = nsXPTInterfaceInfo::ByName(name.ptr());
+    if (name && name[0] != '{') {
+        const nsXPTInterfaceInfo* info = nsXPTInterfaceInfo::ByName(name.get());
         if (!info)
             return NS_OK;
 
         nsCOMPtr<nsIJSIID> nsid = nsJSIID::NewID(info);
 
         if (nsid) {
-            nsXPConnect* xpc = nsXPConnect::XPConnect();
+            nsIXPConnect* xpc = nsIXPConnect::XPConnect();
             RootedObject idobj(cx);
             if (NS_SUCCEEDED(xpc->WrapNative(cx, obj,
                                              static_cast<nsIJSIID*>(nsid),
@@ -431,10 +431,10 @@ nsXPCComponents_InterfacesByID::Resolve(nsIXPConnectWrappedNative* wrapper,
     if (38 != JS_GetStringLength(str))
         return NS_OK;
 
-    JSAutoByteString utf8str;
-    if (utf8str.encodeUtf8(cx, str)) {
+    JS::UniqueChars utf8str = JS_EncodeStringToUTF8(cx, str);
+    if (utf8str) {
         nsID iid;
-        if (!iid.Parse(utf8str.ptr()))
+        if (!iid.Parse(utf8str.get()))
             return NS_OK;
 
         const nsXPTInterfaceInfo* info = nsXPTInterfaceInfo::ByIID(iid);
@@ -446,7 +446,7 @@ nsXPCComponents_InterfacesByID::Resolve(nsIXPConnectWrappedNative* wrapper,
         if (!nsid)
             return NS_ERROR_OUT_OF_MEMORY;
 
-        nsXPConnect* xpc = nsXPConnect::XPConnect();
+        nsIXPConnect* xpc = nsIXPConnect::XPConnect();
         RootedObject idobj(cx);
         if (NS_SUCCEEDED(xpc->WrapNative(cx, obj,
                                          static_cast<nsIJSIID*>(nsid),
@@ -623,13 +623,15 @@ nsXPCComponents_Classes::Resolve(nsIXPConnectWrappedNative* wrapper,
     RootedId id(cx, idArg);
     RootedObject obj(cx, objArg);
 
-    JSAutoByteString name;
-    if (JSID_IS_STRING(id) &&
-        name.encodeLatin1(cx, JSID_TO_STRING(id)) &&
-        name.ptr()[0] != '{') { // we only allow contractids here
-        nsCOMPtr<nsIJSCID> nsid = nsJSCID::NewID(name.ptr());
+    if (!JSID_IS_STRING(id))
+        return NS_OK;
+
+    JS::UniqueChars name = JS_EncodeStringToLatin1(cx, JSID_TO_STRING(id));
+    if (name &&
+        name[0] != '{') { // we only allow contractids here
+        nsCOMPtr<nsIJSCID> nsid = nsJSCID::NewID(name.get());
         if (nsid) {
-            nsXPConnect* xpc = nsXPConnect::XPConnect();
+            nsIXPConnect* xpc = nsIXPConnect::XPConnect();
             RootedObject idobj(cx);
             if (NS_SUCCEEDED(xpc->WrapNative(cx, obj,
                                              static_cast<nsIJSCID*>(nsid),
@@ -832,14 +834,14 @@ nsXPCComponents_ClassesByID::Resolve(nsIXPConnectWrappedNative* wrapper,
     if (!JSID_IS_STRING(id))
         return NS_OK;
 
-    JSAutoByteString name;
     RootedString str(cx, JSID_TO_STRING(id));
-    if (name.encodeLatin1(cx, str) && name.ptr()[0] == '{' &&
-        IsRegisteredCLSID(name.ptr())) // we only allow canonical CLSIDs here
+    JS::UniqueChars name = JS_EncodeStringToLatin1(cx, str);
+    if (name && name[0] == '{' &&
+        IsRegisteredCLSID(name.get())) // we only allow canonical CLSIDs here
     {
-        nsCOMPtr<nsIJSCID> nsid = nsJSCID::NewID(name.ptr());
+        nsCOMPtr<nsIJSCID> nsid = nsJSCID::NewID(name.get());
         if (nsid) {
-            nsXPConnect* xpc = nsXPConnect::XPConnect();
+            nsIXPConnect* xpc = nsIXPConnect::XPConnect();
             RootedObject idobj(cx);
             if (NS_SUCCEEDED(xpc->WrapNative(cx, obj,
                                              static_cast<nsIJSCID*>(nsid),
@@ -998,14 +1000,16 @@ nsXPCComponents_Results::Resolve(nsIXPConnectWrappedNative* wrapper,
 {
     RootedObject obj(cx, objArg);
     RootedId id(cx, idArg);
-    JSAutoByteString name;
+    if (!JSID_IS_STRING(id))
+        return NS_OK;
 
-    if (JSID_IS_STRING(id) && name.encodeLatin1(cx, JSID_TO_STRING(id))) {
+    JS::UniqueChars name = JS_EncodeStringToLatin1(cx, JSID_TO_STRING(id));
+    if (name) {
         const char* rv_name;
         const void* iter = nullptr;
         nsresult rv;
         while (nsXPCException::IterateNSResults(&rv, &rv_name, nullptr, &iter)) {
-            if (!strcmp(name.ptr(), rv_name)) {
+            if (!strcmp(name.get(), rv_name)) {
                 *resolvedp = true;
                 if (!JS_DefinePropertyById(cx, obj, id, (uint32_t)rv,
                                            JSPROP_ENUMERATE |
@@ -1161,15 +1165,17 @@ nsXPCComponents_ID::CallOrConstruct(nsIXPConnectWrappedNative* wrapper,
 
     // convert the first argument into a string and see if it looks like an id
 
-    JSString* jsstr;
-    JSAutoByteString bytes;
-    nsID id;
-
-    if (!(jsstr = ToString(cx, args[0])) ||
-        !bytes.encodeLatin1(cx, jsstr) ||
-        !id.Parse(bytes.ptr())) {
+    JSString* jsstr = ToString(cx, args[0]);
+    if (!jsstr)
         return ThrowAndFail(NS_ERROR_XPC_BAD_ID_STRING, cx, _retval);
-    }
+
+    JS::UniqueChars bytes = JS_EncodeStringToLatin1(cx, jsstr);
+    if (!bytes)
+        return ThrowAndFail(NS_ERROR_XPC_BAD_ID_STRING, cx, _retval);
+
+    nsID id;
+    if (!id.Parse(bytes.get()))
+        return ThrowAndFail(NS_ERROR_XPC_BAD_ID_STRING, cx, _retval);
 
     // make the new object and return it.
 
@@ -1314,7 +1320,7 @@ nsXPCComponents_Exception::Construct(nsIXPConnectWrappedNative* wrapper, JSConte
 struct MOZ_STACK_CLASS ExceptionArgParser
 {
     ExceptionArgParser(JSContext* context,
-                       nsXPConnect* xpconnect)
+                       nsIXPConnect* xpconnect)
         : eMsg("exception")
         , eResult(NS_ERROR_FAILURE)
         , cx(context)
@@ -1382,7 +1388,8 @@ struct MOZ_STACK_CLASS ExceptionArgParser
         JSString* str = ToString(cx, v);
         if (!str)
            return false;
-        eMsg = messageBytes.encodeLatin1(cx, str);
+        messageBytes = JS_EncodeStringToLatin1(cx, str);
+        eMsg = messageBytes.get();
         return !!eMsg;
     }
 
@@ -1453,11 +1460,11 @@ struct MOZ_STACK_CLASS ExceptionArgParser
      */
 
     // If there's a non-default exception string, hold onto the allocated bytes.
-    JSAutoByteString messageBytes;
+    JS::UniqueChars messageBytes;
 
     // Various bits and pieces that are helpful to have around.
     JSContext* cx;
-    nsXPConnect* xpc;
+    nsIXPConnect* xpc;
 };
 
 // static
@@ -1466,7 +1473,7 @@ nsXPCComponents_Exception::CallOrConstruct(nsIXPConnectWrappedNative* wrapper,
                                            JSContext* cx, HandleObject obj,
                                            const CallArgs& args, bool* _retval)
 {
-    nsXPConnect* xpc = nsXPConnect::XPConnect();
+    nsIXPConnect* xpc = nsIXPConnect::XPConnect();
 
     MOZ_DIAGNOSTIC_ASSERT(nsContentUtils::IsCallerChrome());
 
@@ -1675,7 +1682,7 @@ nsresult
 nsXPCConstructor::CallOrConstruct(nsIXPConnectWrappedNative* wrapper,JSContext* cx,
                                   HandleObject obj, const CallArgs& args, bool* _retval)
 {
-    nsXPConnect* xpc = nsXPConnect::XPConnect();
+    nsIXPConnect* xpc = nsIXPConnect::XPConnect();
 
     // security check not required because we are going to call through the
     // code which is reflected into JS which will do that for us later.
@@ -1852,7 +1859,7 @@ nsXPCComponents_Constructor::CallOrConstruct(nsIXPConnectWrappedNative* wrapper,
 
     // get the various other object pointers we need
 
-    nsXPConnect* xpc = nsXPConnect::XPConnect();
+    nsIXPConnect* xpc = nsIXPConnect::XPConnect();
     XPCWrappedNativeScope* scope = ObjectScope(obj);
     nsCOMPtr<nsIXPCComponents> comp;
 
@@ -1871,12 +1878,17 @@ nsXPCComponents_Constructor::CallOrConstruct(nsIXPConnectWrappedNative* wrapper,
     nsCOMPtr<nsIJSCID> cClassID;
     nsCOMPtr<nsIJSIID> cInterfaceID;
     const char*        cInitializer = nullptr;
-    JSAutoByteString  cInitializerBytes;
+    JS::UniqueChars cInitializerBytes;
 
     if (args.length() >= 3) {
         // args[2] is an initializer function or property name
         RootedString str(cx, ToString(cx, args[2]));
-        if (!str || !(cInitializer = cInitializerBytes.encodeLatin1(cx, str)))
+        if (!str)
+            return ThrowAndFail(NS_ERROR_XPC_BAD_CONVERT_JS, cx, _retval);
+
+        cInitializerBytes = JS_EncodeStringToLatin1(cx, str);
+        cInitializer = cInitializerBytes.get();
+        if (!cInitializer)
             return ThrowAndFail(NS_ERROR_XPC_BAD_CONVERT_JS, cx, _retval);
     }
 

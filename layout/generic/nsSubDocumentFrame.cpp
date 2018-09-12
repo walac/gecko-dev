@@ -565,9 +565,9 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     if (ignoreViewportScrolling && !constructResolutionItem) {
       zoomFlags |= nsDisplayOwnLayerFlags::eGenerateScrollableLayer;
     }
-    nsDisplayZoom* zoomItem =
-      MakeDisplayItem<nsDisplayZoom>(aBuilder, subdocRootFrame, &childItems,
-                                   subdocAPD, parentAPD, zoomFlags);
+    nsDisplayZoom* zoomItem = MakeDisplayItem<nsDisplayZoom>(
+      aBuilder, subdocRootFrame, this, &childItems, subdocAPD, parentAPD, zoomFlags);
+
     childItems.AppendToTop(zoomItem);
     needsOwnLayer = false;
   }
@@ -577,9 +577,9 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     flags |= nsDisplayOwnLayerFlags::eGenerateScrollableLayer;
   }
   if (constructResolutionItem) {
-    nsDisplayResolution* resolutionItem =
-      MakeDisplayItem<nsDisplayResolution>(aBuilder, subdocRootFrame, &childItems,
-                                           flags);
+    nsDisplayResolution* resolutionItem = MakeDisplayItem<nsDisplayResolution>(
+      aBuilder, subdocRootFrame, this, &childItems, flags);
+
     childItems.AppendToTop(resolutionItem);
     needsOwnLayer = false;
   }
@@ -1057,7 +1057,7 @@ nsSubDocumentFrame::GetMarginAttributes()
 }
 
 nsFrameLoader*
-nsSubDocumentFrame::FrameLoader()
+nsSubDocumentFrame::FrameLoader() const
 {
   nsIContent* content = GetContent();
   if (!content)
@@ -1070,6 +1070,12 @@ nsSubDocumentFrame::FrameLoader()
     }
   }
   return mFrameLoader;
+}
+
+mozilla::layout::RenderFrameParent*
+nsSubDocumentFrame::GetRenderFrameParent() const
+{
+  return FrameLoader() ? FrameLoader()->GetCurrentRenderFrame() : nullptr;
 }
 
 // XXX this should be called ObtainDocShell or something like that,

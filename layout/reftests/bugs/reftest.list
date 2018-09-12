@@ -867,7 +867,7 @@ fuzzy-if(skiaContent,0-2,0-5) == 402629-3.html 402629-3-ref.html
 == 403129-3.html 403129-3-ref.html
 == 403129-4.html 403129-4-ref.html
 random == 403134-1.html 403134-1-ref.html # bug 405377
-== 403181-1.xml 403181-1-ref.xml
+fuzzy-if(webrender,130-131,177-177) skip-if(winWidget&&!isDebugBuild&&webrender) == 403181-1.xml 403181-1-ref.xml
 == 403249-1a.html 403249-1-ref.html
 == 403249-1b.html 403249-1-ref.html
 == 403249-2a.html 403249-2-ref.html
@@ -1014,7 +1014,7 @@ asserts(1) == 418574-2.html 418574-2-ref.html # bug 478135
 == 421436-1b.html 421436-1-ref.html
 fuzzy-if(skiaContent,0-1,0-40) == 421632-1.html 421632-1-ref.html
 != 421710-1.html about:blank
-fails-if(Android) fails-if(usesRepeatResampling&&!(webrender&&winWidget)) == 421885-1.xml 421885-1-ref.xml
+fails-if(Android) fuzzy-if(webrender,63-64,1024-1024) fails-if(usesRepeatResampling&&!(webrender&&winWidget)) == 421885-1.xml 421885-1-ref.xml
 == 421955-1.html 421955-1-ref.html
 == 422249-1.html 422249-1-ref.html
 == 422394-1.html 422394-1-ref.html
@@ -2082,3 +2082,4 @@ fuzzy(0-1,0-625) == 1466638-1.html 1466638-1-ref.html
 == 1475971-1.html 1475971-1-ref.html
 == 1483649-1.xul 1483649-1-ref.xul
 test-pref(layout.css.contain.enabled,true) == 1483946.html 1483946-ref.html
+test-pref(layout.css.visited_links_enabled,false) == 1488155.html 1488155-ref.html

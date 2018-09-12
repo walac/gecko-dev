@@ -79,6 +79,28 @@ const ThemeVariableMap = [
   ["--autocomplete-popup-highlight-color", {
     lwtProperty: "popup_highlight_text",
   }],
+  ["--sidebar-background-color", {
+    lwtProperty: "sidebar",
+    optionalElementID: "sidebar-box",
+    processColor(rgbaChannels, element) {
+      if (!rgbaChannels) {
+        element.removeAttribute("lwt-sidebar");
+        return null;
+      }
+      const {r, g, b} = rgbaChannels;
+      element.setAttribute("lwt-sidebar", "true");
+      // Drop alpha channel
+      return `rgb(${r}, ${g}, ${b})`;
+    },
+  }],
+  ["--sidebar-text-color", {
+    lwtProperty: "sidebar_text",
+    optionalElementID: "sidebar-box",
+  }],
+  ["--sidebar-border-color", {
+    lwtProperty: "sidebar_border",
+    optionalElementID: "browser",
+  }],
 ];
 
 const ThemeContentPropertyList = [

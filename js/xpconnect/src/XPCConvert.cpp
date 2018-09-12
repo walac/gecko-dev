@@ -11,6 +11,7 @@
 
 #include "xpcprivate.h"
 #include "nsIScriptError.h"
+#include "nsISimpleEnumerator.h"
 #include "nsWrapperCache.h"
 #include "nsJSUtils.h"
 #include "nsQueryObject.h"
@@ -21,7 +22,6 @@
 
 #include "jsapi.h"
 #include "jsfriendapi.h"
-#include "js/AutoByteString.h"
 #include "js/CharacterEncoding.h"
 
 #include "mozilla/dom/BindingUtils.h"
@@ -1197,7 +1197,7 @@ XPCConvert::ConstructException(nsresult rv, const char* message,
     nsCOMPtr<nsIScriptError> errorObject = do_QueryInterface(data);
     if (errorObject) {
         nsString xmsg;
-        if (NS_SUCCEEDED(errorObject->GetMessageMoz(getter_Copies(xmsg)))) {
+        if (NS_SUCCEEDED(errorObject->GetMessageMoz(xmsg))) {
             CopyUTF16toUTF8(xmsg, sxmsg);
             msg = sxmsg.get();
         }
@@ -1333,11 +1333,11 @@ XPCConvert::JSValToXPCException(MutableHandleValue s,
             // extract the report and build an xpcexception from that
             const JSErrorReport* report;
             if (nullptr != (report = JS_ErrorFromException(cx, obj))) {
-                JSAutoByteString toStringResult;
+                JS::UniqueChars toStringResult;
                 RootedString str(cx, ToString(cx, s));
                 if (str)
-                    toStringResult.encodeUtf8(cx, str);
-                return JSErrorToXPCException(toStringResult.ptr(), ifaceName,
+                    toStringResult = JS_EncodeStringToUTF8(cx, str);
+                return JSErrorToXPCException(toStringResult.get(), ifaceName,
                                              methodName, report, exceptn);
             }
 
@@ -1352,12 +1352,12 @@ XPCConvert::JSValToXPCException(MutableHandleValue s,
             if (!str)
                 return NS_ERROR_FAILURE;
 
-            JSAutoByteString strBytes(cx, str);
+            JS::UniqueChars strBytes = JS_EncodeStringToLatin1(cx, str);
             if (!strBytes)
                 return NS_ERROR_FAILURE;
 
             return ConstructException(NS_ERROR_XPC_JS_THREW_JS_OBJECT,
-                                      strBytes.ptr(), ifaceName, methodName,
+                                      strBytes.get(), ifaceName, methodName,
                                       nullptr, exceptn, cx, s.address());
         }
     }
@@ -1420,10 +1420,9 @@ XPCConvert::JSValToXPCException(MutableHandleValue s,
 
     JSString* str = ToString(cx, s);
     if (str) {
-        JSAutoByteString strBytes(cx, str);
-        if (!!strBytes) {
+        if (JS::UniqueChars strBytes = JS_EncodeStringToLatin1(cx, str)) {
             return ConstructException(NS_ERROR_XPC_JS_THREW_STRING,
-                                      strBytes.ptr(), ifaceName, methodName,
+                                      strBytes.get(), ifaceName, methodName,
                                       nullptr, exceptn, cx, s.address());
         }
     }
