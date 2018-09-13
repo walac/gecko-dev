@@ -283,9 +283,12 @@ window._gBrowser = {
   },
 
   _setupInitialBrowserAndTab() {
+    // See browser.js for the meaning of window.arguments.
+    let userContextId = window.arguments && window.arguments[6];
+
     // Bug 1362774 will adjust this to only set `uriIsAboutBlank` when
     // necessary. For now, we always pass it.
-    let browser = this._createBrowser({uriIsAboutBlank: true});
+    let browser = this._createBrowser({uriIsAboutBlank: true, userContextId});
     browser.setAttribute("primary", "true");
     browser.setAttribute("blank", "true");
     browser.droppedLinkHandler = handleDroppedLink;
@@ -304,6 +307,12 @@ window._gBrowser = {
     tab._tPos = 0;
     tab._fullyOpen = true;
     tab.linkedBrowser = browser;
+
+    if (userContextId) {
+      tab.setAttribute("usercontextid", userContextId);
+      ContextualIdentityService.setTabStyle(tab);
+    }
+
     this._tabForBrowser.set(browser, tab);
 
     this._appendStatusPanel();
@@ -925,7 +934,7 @@ window._gBrowser = {
     // Update the URL bar.
     let webProgress = newBrowser.webProgress;
     this._callProgressListeners(null, "onLocationChange",
-                                [webProgress, null, newBrowser.currentURI, 0],
+                                [webProgress, null, newBrowser.currentURI, 0, true],
                                 true, false);
 
     let securityUI = newBrowser.securityUI;
@@ -1094,7 +1103,9 @@ window._gBrowser = {
         newBrowser._urlbarFocused &&
         gURLBar &&
         gURLBar.focused;
-      if (!keepFocusOnUrlBar) {
+      // In an HTML document (built with MOZ_BROWSER_XHTML), the activeElement
+      // can be null, so check before attempting to blur it (Bug 1485157).
+      if (!keepFocusOnUrlBar && document.activeElement) {
         // Clear focus so that _adjustFocusAfterTabSwitch can detect if
         // some element has been focused and respect that.
         document.activeElement.blur();

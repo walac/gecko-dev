@@ -211,6 +211,7 @@
 #include "mozilla/dom/ClientInfo.h"
 #include "mozilla/dom/ClientState.h"
 #include "mozilla/dom/DocumentFragment.h"
+#include "mozilla/dom/DocumentL10n.h"
 #include "mozilla/dom/DocumentTimeline.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/HTMLBodyElement.h"
@@ -274,6 +275,7 @@
 #include "nsIURIClassifier.h"
 #include "nsIURIMutator.h"
 #include "mozilla/DocumentStyleRootIterator.h"
+#include "mozilla/PendingFullscreenEvent.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "nsHTMLTags.h"
@@ -1885,6 +1887,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDisplayDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFontFaceSet)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mReadyForIdle)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocumentL10n)
 
   // Traverse all nsDocument nsCOMPtrs.
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mParser)
@@ -2031,6 +2034,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFontFaceSet)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mReadyForIdle);
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mCommandDispatcher)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocumentL10n);
 
   tmp->mParentDocument = nullptr;
 
@@ -2227,6 +2231,23 @@ nsIDocument::Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup)
   }
 
   mChannel = aChannel;
+}
+
+/**
+ * DocumentL10n is currently allowed for system
+ * principal.
+ *
+ * In the future we'll want to expose it to non-web-exposed
+ * about:* pages.
+ */
+bool
+PrincipalAllowsL10n(nsIPrincipal* principal)
+{
+  if (nsContentUtils::IsSystemPrincipal(principal)) {
+    return true;
+  }
+
+  return false;
 }
 
 void
@@ -3303,6 +3324,102 @@ nsIDocument::GetAllowPlugins()
   return true;
 }
 
+void
+nsIDocument::InitializeLocalization(nsTArray<nsString>& aResourceIds)
+{
+  MOZ_ASSERT(!mDocumentL10n, "mDocumentL10n should not be initialized yet");
+
+  DocumentL10n* l10n = new DocumentL10n(this);
+  MOZ_ALWAYS_TRUE(l10n->Init(aResourceIds));
+  mDocumentL10n = l10n;
+}
+
+DocumentL10n*
+nsIDocument::GetL10n()
+{
+  return mDocumentL10n;
+}
+
+bool
+nsDocument::DocumentSupportsL10n(JSContext* aCx, JSObject* aObject)
+{
+  return PrincipalAllowsL10n(nsContentUtils::SubjectPrincipal(aCx));
+}
+
+void
+nsIDocument::LocalizationLinkAdded(Element* aLinkElement)
+{
+  if (!PrincipalAllowsL10n(NodePrincipal())) {
+    return;
+  }
+
+  nsAutoString href;
+  aLinkElement->GetAttr(kNameSpaceID_None, nsGkAtoms::href, href);
+  // If the link is added after the DocumentL10n instance
+  // has been initialized, just pass the resource ID to it.
+  if (mDocumentL10n) {
+    AutoTArray<nsString, 1> resourceIds;
+    resourceIds.AppendElement(href);
+    mDocumentL10n->AddResourceIds(resourceIds);
+  } else {
+    // Otherwise, we're still parsing the document.
+    // In that case, add it to the pending list. This list
+    // will be resolved once the end of l10n resource
+    // container is reached.
+    mL10nResources.AppendElement(href);
+  }
+}
+
+void
+nsIDocument::LocalizationLinkRemoved(Element* aLinkElement)
+{
+  if (!PrincipalAllowsL10n(NodePrincipal())) {
+    return;
+  }
+
+  nsAutoString href;
+  aLinkElement->GetAttr(kNameSpaceID_None, nsGkAtoms::href, href);
+  if (mDocumentL10n) {
+    AutoTArray<nsString, 1> resourceIds;
+    resourceIds.AppendElement(href);
+    uint32_t remaining = mDocumentL10n->RemoveResourceIds(resourceIds);
+    if (remaining == 0) {
+      mDocumentL10n = nullptr;
+    }
+  } else {
+    mL10nResources.RemoveElement(href);
+  }
+}
+
+/**
+ * This method should be called once the end of the l10n
+ * resource container has been parsed.
+ *
+ * In XUL this is the end of the first </linkset>,
+ * In XHTML/HTML this is the end of </head>.
+ *
+ * This milestone is used to allow for batch
+ * localization context I/O and building done
+ * once when all resources in the document have been
+ * collected.
+ */
+void
+nsIDocument::OnL10nResourceContainerParsed()
+{
+  if (!mL10nResources.IsEmpty()) {
+    InitializeLocalization(mL10nResources);
+    mL10nResources.Clear();
+  }
+}
+
+void
+nsIDocument::TriggerInitialDocumentTranslation()
+{
+  if (mDocumentL10n) {
+    mDocumentL10n->TriggerInitialDocumentTranslation();
+  }
+}
+
 bool
 nsDocument::IsWebAnimationsEnabled(JSContext* aCx, JSObject* /*unused*/)
 {
@@ -3919,7 +4036,7 @@ nsIDocument::DeleteShell()
 {
   mExternalResourceMap.HideViewers();
   if (nsPresContext* presContext = mPresShell->GetPresContext()) {
-    presContext->RefreshDriver()->CancelPendingEvents(this);
+    presContext->RefreshDriver()->CancelPendingFullscreenEvents(this);
   }
 
   // When our shell goes away, request that all our images be immediately
@@ -8435,26 +8552,14 @@ NotifyPageHide(nsIDocument* aDocument, void* aData)
 }
 
 static void
-DispatchCustomEventWithFlush(nsINode* aTarget, const nsAString& aEventType,
-                             bool aBubbles, bool aOnlyChromeDispatch)
+DispatchFullscreenChange(nsIDocument* aTarget)
 {
-  RefPtr<Event> event = NS_NewDOMEvent(aTarget, nullptr, nullptr);
-  event->InitEvent(aEventType, aBubbles, false);
-  event->SetTrusted(true);
-  if (aOnlyChromeDispatch) {
-    event->WidgetEventPtr()->mFlags.mOnlyChromeDispatch = true;
+  if (nsPresContext* presContext = aTarget->GetPresContext()) {
+    auto pendingEvent =
+      MakeUnique<PendingFullscreenEvent>(FullscreenEventType::Change, aTarget);
+    presContext->RefreshDriver()->
+      ScheduleFullscreenEvent(std::move(pendingEvent));
   }
-  if (nsPresContext* presContext = aTarget->OwnerDoc()->GetPresContext()) {
-    presContext->RefreshDriver()->ScheduleEventDispatch(aTarget, event);
-  }
-}
-
-static void
-DispatchFullScreenChange(nsIDocument* aTarget)
-{
-  DispatchCustomEventWithFlush(
-    aTarget, NS_LITERAL_STRING("fullscreenchange"),
-    /* Bubbles */ true, /* OnlyChrome */ false);
 }
 
 static void ClearPendingFullscreenRequests(nsIDocument* aDoc);
@@ -8555,7 +8660,7 @@ nsIDocument::OnPageHide(bool aPersisted, EventTarget* aDispatchStartTarget,
   EnumerateActivityObservers(NotifyActivityChanged, nullptr);
 
   ClearPendingFullscreenRequests(this);
-  if (FullScreenStackTop()) {
+  if (FullscreenStackTop()) {
     // If this document was fullscreen, we should exit fullscreen in this
     // doctree branch. This ensures that if the user navigates while in
     // fullscreen mode we don't leave its still visible ancestor documents
@@ -8577,9 +8682,9 @@ nsIDocument::OnPageHide(bool aPersisted, EventTarget* aDispatchStartTarget,
     // documents have their fullscreen state reset.
     CleanupFullscreenState();
 
-    // If anyone was listening to this document's state, advertizing the state
-    // change would be the least of the politeness.
-    DispatchFullScreenChange(this);
+    // The fullscreenchange event is to be queued in the refresh driver,
+    // however a hidden page wouldn't trigger that again, so it makes no
+    // sense to dispatch such event here.
   }
 }
 
@@ -8793,6 +8898,10 @@ nsIDocument::SetReadyStateInternal(ReadyState rs)
   // At the time of loading start, we don't have timing object, record time.
   if (READYSTATE_LOADING == rs) {
     mLoadingTimeStamp = mozilla::TimeStamp::Now();
+  }
+
+  if (READYSTATE_INTERACTIVE == rs) {
+    TriggerInitialDocumentTranslation();
   }
 
   RecordNavigationTiming(rs);
@@ -9565,6 +9674,21 @@ nsIDocument::CreateStaticClone(nsIDocShell* aCloneContainer)
                                  "Cloning a stylesheet didn't work!");
             if (clonedSheet) {
               clonedDoc->AddStyleSheet(clonedSheet);
+            }
+          }
+        }
+      }
+
+      for (int t = 0; t < AdditionalSheetTypeCount; ++t) {
+        auto& sheets = mAdditionalSheets[additionalSheetType(t)];
+        for (StyleSheet* sheet : sheets) {
+          if (sheet->IsApplicable()) {
+            RefPtr<StyleSheet> clonedSheet =
+              sheet->Clone(nullptr, nullptr, clonedDoc, nullptr);
+            NS_WARNING_ASSERTION(clonedSheet,
+                                 "Cloning a stylesheet didn't work!");
+            if (clonedSheet) {
+              clonedDoc->AddAdditionalStyleSheet(additionalSheetType(t), clonedSheet);
             }
           }
         }
@@ -10464,7 +10588,7 @@ nsIDocument::SetFullscreenRoot(nsIDocument* aRoot)
 void
 nsIDocument::ExitFullscreen()
 {
-  RestorePreviousFullScreenState();
+  RestorePreviousFullscreenState();
 }
 
 static void
@@ -10519,7 +10643,7 @@ nsIDocument::AsyncExitFullscreen(nsIDocument* aDoc)
 static bool
 CountFullscreenSubDocuments(nsIDocument* aDoc, void* aData)
 {
-  if (aDoc->FullScreenStackTop()) {
+  if (aDoc->FullscreenStackTop()) {
     uint32_t* count = static_cast<uint32_t*>(aData);
     (*count)++;
   }
@@ -10539,107 +10663,10 @@ nsIDocument::IsFullscreenLeaf()
 {
   // A fullscreen leaf document is fullscreen, and has no fullscreen
   // subdocuments.
-  if (!FullScreenStackTop()) {
+  if (!FullscreenStackTop()) {
     return false;
   }
   return CountFullscreenSubDocuments(this) == 0;
-}
-
-static bool
-ResetFullScreen(nsIDocument* aDocument, void* aData)
-{
-  if (aDocument->FullScreenStackTop()) {
-    NS_ASSERTION(CountFullscreenSubDocuments(aDocument) <= 1,
-        "Should have at most 1 fullscreen subdocument.");
-    aDocument->CleanupFullscreenState();
-    NS_ASSERTION(!aDocument->FullScreenStackTop(),
-                 "Should reset full-screen");
-    auto changed = reinterpret_cast<nsCOMArray<nsIDocument>*>(aData);
-    changed->AppendElement(aDocument);
-    aDocument->EnumerateSubDocuments(ResetFullScreen, aData);
-  }
-  return true;
-}
-
-// Since nsIDocument::ExitFullscreenInDocTree() could be called from
-// Element::UnbindFromTree() where it is not safe to synchronously run
-// script. This runnable is the script part of that function.
-class ExitFullscreenScriptRunnable : public Runnable
-{
-public:
-  explicit ExitFullscreenScriptRunnable(nsCOMArray<nsIDocument>&& aDocuments)
-    : mozilla::Runnable("ExitFullscreenScriptRunnable")
-    , mDocuments(std::move(aDocuments))
-  {
-  }
-
-  NS_IMETHOD Run() override
-  {
-    // Dispatch MozDOMFullscreen:Exited to the last document in
-    // the list since we want this event to follow the same path
-    // MozDOMFullscreen:Entered dispatched.
-    nsIDocument* lastDocument = mDocuments[mDocuments.Length() - 1];
-    nsContentUtils::DispatchEventOnlyToChrome(
-      lastDocument, ToSupports(lastDocument),
-      NS_LITERAL_STRING("MozDOMFullscreen:Exited"),
-      CanBubble::eYes, Cancelable::eNo, /* DefaultAction */ nullptr);
-    // Ensure the window exits fullscreen.
-    if (nsPIDOMWindowOuter* win = mDocuments[0]->GetWindow()) {
-      win->SetFullscreenInternal(FullscreenReason::ForForceExitFullscreen, false);
-    }
-    return NS_OK;
-  }
-
-private:
-  nsCOMArray<nsIDocument> mDocuments;
-};
-
-/* static */ void
-nsIDocument::ExitFullscreenInDocTree(nsIDocument* aMaybeNotARootDoc)
-{
-  MOZ_ASSERT(aMaybeNotARootDoc);
-
-  // Unlock the pointer
-  UnlockPointer();
-
-  nsCOMPtr<nsIDocument> root = aMaybeNotARootDoc->GetFullscreenRoot();
-  if (!root || !root->FullScreenStackTop()) {
-    // If a document was detached before exiting from fullscreen, it is
-    // possible that the root had left fullscreen state. In this case,
-    // we would not get anything from the ResetFullScreen() call. Root's
-    // not being a fullscreen doc also means the widget should have
-    // exited fullscreen state. It means even if we do not return here,
-    // we would actually do nothing below except crashing ourselves via
-    // dispatching the "MozDOMFullscreen:Exited" event to an nonexistent
-    // document.
-    return;
-  }
-
-  // Stores a list of documents to which we must dispatch "fullscreenchange".
-  // We're required by the spec to dispatch the events in leaf-to-root
-  // order when exiting fullscreen, but we traverse the doctree in a
-  // root-to-leaf order, so we save references to the documents we must
-  // dispatch to so that we dispatch in the specified order.
-  nsCOMArray<nsIDocument> changed;
-
-  // Walk the tree of fullscreen documents, and reset their fullscreen state.
-  ResetFullScreen(root, static_cast<void*>(&changed));
-
-  // Dispatch "fullscreenchange" events. Note this loop is in reverse
-  // order so that the events for the leaf document arrives before the root
-  // document, as required by the spec.
-  for (uint32_t i = 0; i < changed.Length(); ++i) {
-    DispatchFullScreenChange(changed[changed.Length() - i - 1]);
-  }
-
-  NS_ASSERTION(!root->FullScreenStackTop(),
-    "Fullscreen root should no longer be a fullscreen doc...");
-
-  // Move the top-level window out of fullscreen mode.
-  FullscreenRoots::Remove(root);
-
-  nsContentUtils::AddScriptRunner(
-    new ExitFullscreenScriptRunnable(std::move(changed)));
 }
 
 bool
@@ -10649,7 +10676,8 @@ GetFullscreenLeaf(nsIDocument* aDoc, void* aData)
     nsIDocument** result = static_cast<nsIDocument**>(aData);
     *result = aDoc;
     return false;
-  } else if (aDoc->FullScreenStackTop()) {
+  }
+  if (aDoc->FullscreenStackTop()) {
     aDoc->EnumerateSubDocuments(GetFullscreenLeaf, aData);
   }
   return true;
@@ -10668,20 +10696,119 @@ GetFullscreenLeaf(nsIDocument* aDoc)
   nsIDocument* root = nsContentUtils::GetRootDocument(aDoc);
   // Check that the root is actually fullscreen so we don't waste time walking
   // around its descendants.
-  if (!root->FullScreenStackTop()) {
+  if (!root->FullscreenStackTop()) {
     return nullptr;
   }
   GetFullscreenLeaf(root, &leaf);
   return leaf;
 }
 
-void
-nsIDocument::RestorePreviousFullScreenState()
+static bool
+ResetFullscreen(nsIDocument* aDocument, void* aData)
 {
-  NS_ASSERTION(!FullScreenStackTop() || !FullscreenRoots::IsEmpty(),
+  if (aDocument->FullscreenStackTop()) {
+    NS_ASSERTION(CountFullscreenSubDocuments(aDocument) <= 1,
+        "Should have at most 1 fullscreen subdocument.");
+    aDocument->CleanupFullscreenState();
+    NS_ASSERTION(!aDocument->FullscreenStackTop(),
+                 "Should reset fullscreen");
+    DispatchFullscreenChange(aDocument);
+    aDocument->EnumerateSubDocuments(ResetFullscreen, nullptr);
+  }
+  return true;
+}
+
+// Since nsIDocument::ExitFullscreenInDocTree() could be called from
+// Element::UnbindFromTree() where it is not safe to synchronously run
+// script. This runnable is the script part of that function.
+class ExitFullscreenScriptRunnable : public Runnable
+{
+public:
+  explicit ExitFullscreenScriptRunnable(nsIDocument* aRoot, nsIDocument* aLeaf)
+    : mozilla::Runnable("ExitFullscreenScriptRunnable")
+    , mRoot(aRoot)
+    , mLeaf(aLeaf)
+  {
+  }
+
+  NS_IMETHOD Run() override
+  {
+    // Dispatch MozDOMFullscreen:Exited to the original fullscreen leaf
+    // document since we want this event to follow the same path that
+    // MozDOMFullscreen:Entered was dispatched.
+    nsContentUtils::DispatchEventOnlyToChrome(
+      mLeaf, ToSupports(mLeaf),
+      NS_LITERAL_STRING("MozDOMFullscreen:Exited"),
+      CanBubble::eYes, Cancelable::eNo, /* DefaultAction */ nullptr);
+    // Ensure the window exits fullscreen.
+    if (nsPIDOMWindowOuter* win = mRoot->GetWindow()) {
+      win->SetFullscreenInternal(FullscreenReason::ForForceExitFullscreen, false);
+    }
+    return NS_OK;
+  }
+
+private:
+  nsCOMPtr<nsIDocument> mRoot;
+  nsCOMPtr<nsIDocument> mLeaf;
+};
+
+/* static */ void
+nsIDocument::ExitFullscreenInDocTree(nsIDocument* aMaybeNotARootDoc)
+{
+  MOZ_ASSERT(aMaybeNotARootDoc);
+
+  // Unlock the pointer
+  UnlockPointer();
+
+  nsCOMPtr<nsIDocument> root = aMaybeNotARootDoc->GetFullscreenRoot();
+  if (!root || !root->FullscreenStackTop()) {
+    // If a document was detached before exiting from fullscreen, it is
+    // possible that the root had left fullscreen state. In this case,
+    // we would not get anything from the ResetFullscreen() call. Root's
+    // not being a fullscreen doc also means the widget should have
+    // exited fullscreen state. It means even if we do not return here,
+    // we would actually do nothing below except crashing ourselves via
+    // dispatching the "MozDOMFullscreen:Exited" event to an nonexistent
+    // document.
+    return;
+  }
+
+  // Record the fullscreen leaf document for MozDOMFullscreen:Exited.
+  // See ExitFullscreenScriptRunnable::Run for details. We have to
+  // record it here because we don't have such information after we
+  // reset the fullscreen state below.
+  nsIDocument* fullscreenLeaf = GetFullscreenLeaf(root);
+
+  // Walk the tree of fullscreen documents, and reset their fullscreen state.
+  ResetFullscreen(root, nullptr);
+
+  NS_ASSERTION(!root->FullscreenStackTop(),
+    "Fullscreen root should no longer be a fullscreen doc...");
+
+  // Move the top-level window out of fullscreen mode.
+  FullscreenRoots::Remove(root);
+
+  nsContentUtils::AddScriptRunner(
+    new ExitFullscreenScriptRunnable(root, fullscreenLeaf));
+}
+
+static void
+DispatchFullscreenNewOriginEvent(nsIDocument* aDoc)
+{
+  RefPtr<AsyncEventDispatcher> asyncDispatcher =
+    new AsyncEventDispatcher(
+        aDoc, NS_LITERAL_STRING("MozDOMFullscreen:NewOrigin"),
+        CanBubble::eYes, ChromeOnlyDispatch::eYes);
+  asyncDispatcher->PostDOMEvent();
+}
+
+void
+nsIDocument::RestorePreviousFullscreenState()
+{
+  NS_ASSERTION(!FullscreenStackTop() || !FullscreenRoots::IsEmpty(),
     "Should have at least 1 fullscreen root when fullscreen!");
 
-  if (!FullScreenStackTop() || !GetWindow() || FullscreenRoots::IsEmpty()) {
+  if (!FullscreenStackTop() || !GetWindow() || FullscreenRoots::IsEmpty()) {
     return;
   }
 
@@ -10696,10 +10823,10 @@ nsIDocument::RestorePreviousFullScreenState()
   MOZ_ASSERT(doc == this, "Must have reached this doc");
   // Collect all ancestor documents which we are going to change.
   for (; doc; doc = doc->GetParentDocument()) {
-    MOZ_ASSERT(!doc->mFullScreenStack.IsEmpty(),
+    MOZ_ASSERT(!doc->mFullscreenStack.IsEmpty(),
                "Ancestor of fullscreen document must also be in fullscreen");
     if (doc != this) {
-      Element* top = doc->FullScreenStackTop();
+      Element* top = doc->FullscreenStackTop();
       if (top->IsHTMLElement(nsGkAtoms::iframe)) {
         if (static_cast<HTMLIFrameElement*>(top)->FullscreenFlag()) {
           // If this is an iframe, and it explicitly requested
@@ -10709,14 +10836,14 @@ nsIDocument::RestorePreviousFullScreenState()
       }
     }
     exitDocs.AppendElement(doc);
-    if (doc->mFullScreenStack.Length() > 1) {
+    if (doc->mFullscreenStack.Length() > 1) {
       break;
     }
   }
 
   nsIDocument* lastDoc = exitDocs.LastElement();
   if (!lastDoc->GetParentDocument() &&
-      lastDoc->mFullScreenStack.Length() == 1) {
+      lastDoc->mFullscreenStack.Length() == 1) {
     // If we are fully exiting fullscreen, don't touch anything here,
     // just wait for the window to get out from fullscreen first.
     AskWindowToExitFullscreen(this);
@@ -10733,16 +10860,18 @@ nsIDocument::RestorePreviousFullScreenState()
   // The last document will either rollback one fullscreen element, or
   // completely exit from the fullscreen state as well.
   nsIDocument* newFullscreenDoc;
-  if (lastDoc->mFullScreenStack.Length() > 1) {
-    lastDoc->FullScreenStackPop();
+  if (lastDoc->mFullscreenStack.Length() > 1) {
+    lastDoc->FullscreenStackPop();
     newFullscreenDoc = lastDoc;
   } else {
     lastDoc->CleanupFullscreenState();
     newFullscreenDoc = lastDoc->GetParentDocument();
   }
-  // Dispatch the fullscreenchange event to all document listed.
-  for (nsIDocument* d : exitDocs) {
-    DispatchFullScreenChange(d);
+  // Dispatch the fullscreenchange event to all document listed. Note
+  // that the loop order is reversed so that events are dispatched in
+  // the tree order as indicated in the spec.
+  for (nsIDocument* d : Reversed(exitDocs)) {
+    DispatchFullscreenChange(d);
   }
 
   MOZ_ASSERT(newFullscreenDoc, "If we were going to exit from fullscreen on "
@@ -10754,24 +10883,23 @@ nsIDocument::RestorePreviousFullScreenState()
     // a fullscreen element in a parent document. If this document is
     // cross origin, dispatch an event to chrome so it knows to show
     // the warning UI.
-    DispatchCustomEventWithFlush(
-      newFullscreenDoc, NS_LITERAL_STRING("MozDOMFullscreen:NewOrigin"),
-      /* Bubbles */ true, /* ChromeOnly */ true);
+    DispatchFullscreenNewOriginEvent(newFullscreenDoc);
   }
 }
 
-class nsCallRequestFullScreen : public Runnable
+class nsCallRequestFullscreen : public Runnable
 {
 public:
-  explicit nsCallRequestFullScreen(UniquePtr<FullscreenRequest>&& aRequest)
-    : mozilla::Runnable("nsCallRequestFullScreen")
+  explicit nsCallRequestFullscreen(UniquePtr<FullscreenRequest> aRequest)
+    : mozilla::Runnable("nsCallRequestFullscreen")
     , mRequest(std::move(aRequest))
   {
   }
 
   NS_IMETHOD Run() override
   {
-    mRequest->GetDocument()->RequestFullScreen(std::move(mRequest));
+    nsIDocument* doc = mRequest->GetDocument();
+    doc->RequestFullscreen(std::move(mRequest));
     return NS_OK;
   }
 
@@ -10779,29 +10907,29 @@ public:
 };
 
 void
-nsIDocument::AsyncRequestFullScreen(UniquePtr<FullscreenRequest>&& aRequest)
+nsIDocument::AsyncRequestFullscreen(UniquePtr<FullscreenRequest> aRequest)
 {
   if (!aRequest->GetElement()) {
     MOZ_ASSERT_UNREACHABLE(
-      "Must pass non-null element to nsDocument::AsyncRequestFullScreen");
+      "Must pass non-null element to nsDocument::AsyncRequestFullscreen");
     return;
   }
 
-  // Request full-screen asynchronously.
+  // Request fullscreen asynchronously.
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
-  nsCOMPtr<nsIRunnable> event = new nsCallRequestFullScreen(std::move(aRequest));
+  nsCOMPtr<nsIRunnable> event = new nsCallRequestFullscreen(std::move(aRequest));
   Dispatch(TaskCategory::Other, event.forget());
 }
 
 void
 nsIDocument::DispatchFullscreenError(const char* aMessage)
 {
-  RefPtr<AsyncEventDispatcher> asyncDispatcher =
-    new AsyncEventDispatcher(this,
-                             NS_LITERAL_STRING("fullscreenerror"),
-                             CanBubble::eYes,
-                             ChromeOnlyDispatch::eNo);
-  asyncDispatcher->PostDOMEvent();
+  if (nsPresContext* presContext = GetPresContext()) {
+    auto pendingEvent =
+      MakeUnique<PendingFullscreenEvent>(FullscreenEventType::Error, this);
+    presContext->RefreshDriver()->
+      ScheduleFullscreenEvent(std::move(pendingEvent));
+  }
   nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
                                   NS_LITERAL_CSTRING("DOM"), this,
                                   nsContentUtils::eDOM_PROPERTIES,
@@ -10820,7 +10948,7 @@ static void
 ClearFullscreenStateOnElement(Element* aElement)
 {
   // Remove styles from existing top element.
-  EventStateManager::SetFullScreenState(aElement, false);
+  EventStateManager::SetFullscreenState(aElement, false);
   // Reset iframe fullscreen flag.
   if (aElement->IsHTMLElement(nsGkAtoms::iframe)) {
     static_cast<HTMLIFrameElement*>(aElement)->SetFullscreenFlag(false);
@@ -10837,56 +10965,56 @@ nsIDocument::CleanupFullscreenState()
   // efficient. NOTE that fullscreen-ancestor state would be removed
   // in bug 1199529, and the elements may not in hierarchy order
   // after bug 1195213.
-  for (nsWeakPtr& weakPtr : Reversed(mFullScreenStack)) {
+  for (nsWeakPtr& weakPtr : Reversed(mFullscreenStack)) {
     if (nsCOMPtr<Element> element = do_QueryReferent(weakPtr)) {
       ClearFullscreenStateOnElement(element);
     }
   }
-  mFullScreenStack.Clear();
+  mFullscreenStack.Clear();
   mFullscreenRoot = nullptr;
   UpdateViewportScrollbarOverrideForFullscreen(this);
 }
 
 bool
-nsIDocument::FullScreenStackPush(Element* aElement)
+nsIDocument::FullscreenStackPush(Element* aElement)
 {
-  NS_ASSERTION(aElement, "Must pass non-null to FullScreenStackPush()");
-  Element* top = FullScreenStackTop();
+  NS_ASSERTION(aElement, "Must pass non-null to FullscreenStackPush()");
+  Element* top = FullscreenStackTop();
   if (top == aElement || !aElement) {
     return false;
   }
-  EventStateManager::SetFullScreenState(aElement, true);
-  mFullScreenStack.AppendElement(do_GetWeakReference(aElement));
-  NS_ASSERTION(FullScreenStackTop() == aElement, "Should match");
+  EventStateManager::SetFullscreenState(aElement, true);
+  mFullscreenStack.AppendElement(do_GetWeakReference(aElement));
+  NS_ASSERTION(FullscreenStackTop() == aElement, "Should match");
   UpdateViewportScrollbarOverrideForFullscreen(this);
   return true;
 }
 
 void
-nsIDocument::FullScreenStackPop()
+nsIDocument::FullscreenStackPop()
 {
-  if (mFullScreenStack.IsEmpty()) {
+  if (mFullscreenStack.IsEmpty()) {
     return;
   }
 
-  ClearFullscreenStateOnElement(FullScreenStackTop());
+  ClearFullscreenStateOnElement(FullscreenStackTop());
 
   // Remove top element. Note the remaining top element in the stack
-  // will not have full-screen style bits set, so we will need to restore
+  // will not have fullscreen style bits set, so we will need to restore
   // them on the new top element before returning.
-  uint32_t last = mFullScreenStack.Length() - 1;
-  mFullScreenStack.RemoveElementAt(last);
+  uint32_t last = mFullscreenStack.Length() - 1;
+  mFullscreenStack.RemoveElementAt(last);
 
   // Pop from the stack null elements (references to elements which have
   // been GC'd since they were added to the stack) and elements which are
   // no longer in this document.
-  while (!mFullScreenStack.IsEmpty()) {
-    Element* element = FullScreenStackTop();
+  while (!mFullscreenStack.IsEmpty()) {
+    Element* element = FullscreenStackTop();
     if (!element || !element->IsInUncomposedDoc() || element->OwnerDoc() != this) {
-      NS_ASSERTION(!element->State().HasState(NS_EVENT_STATE_FULL_SCREEN),
-                   "Should have already removed full-screen styles");
-      uint32_t last = mFullScreenStack.Length() - 1;
-      mFullScreenStack.RemoveElementAt(last);
+      NS_ASSERTION(!element->State().HasState(NS_EVENT_STATE_FULLSCREEN),
+                   "Should have already removed fullscreen styles");
+      uint32_t last = mFullscreenStack.Length() - 1;
+      mFullscreenStack.RemoveElementAt(last);
     } else {
       // The top element of the stack is now an in-doc element. Return here.
       break;
@@ -10897,16 +11025,16 @@ nsIDocument::FullScreenStackPop()
 }
 
 Element*
-nsIDocument::FullScreenStackTop()
+nsIDocument::FullscreenStackTop()
 {
-  if (mFullScreenStack.IsEmpty()) {
+  if (mFullscreenStack.IsEmpty()) {
     return nullptr;
   }
-  uint32_t last = mFullScreenStack.Length() - 1;
-  nsCOMPtr<Element> element(do_QueryReferent(mFullScreenStack[last]));
-  NS_ASSERTION(element, "Should have full-screen element!");
-  NS_ASSERTION(element->IsInComposedDoc(), "Full-screen element should be in doc");
-  NS_ASSERTION(element->OwnerDoc() == this, "Full-screen element should be in this doc");
+  uint32_t last = mFullscreenStack.Length() - 1;
+  nsCOMPtr<Element> element(do_QueryReferent(mFullscreenStack[last]));
+  NS_ASSERTION(element, "Should have fullscreen element!");
+  NS_ASSERTION(element->IsInComposedDoc(), "Fullscreen element should be in doc");
+  NS_ASSERTION(element->OwnerDoc() == this, "Fullscreen element should be in this doc");
   return element;
 }
 
@@ -10914,9 +11042,9 @@ nsTArray<Element*>
 nsIDocument::GetFullscreenStack() const
 {
   nsTArray<Element*> elements;
-  for (const nsWeakPtr& ptr : mFullScreenStack) {
+  for (const nsWeakPtr& ptr : mFullscreenStack) {
     if (nsCOMPtr<Element> elem = do_QueryReferent(ptr)) {
-      MOZ_ASSERT(elem->State().HasState(NS_EVENT_STATE_FULL_SCREEN));
+      MOZ_ASSERT(elem->State().HasState(NS_EVENT_STATE_FULLSCREEN));
       elements.AppendElement(elem);
     }
   }
@@ -10967,17 +11095,17 @@ nsresult nsIDocument::RemoteFrameFullscreenChanged(Element* aFrameElement)
   // Ensure the frame element is the fullscreen element in this document.
   // If the frame element is already the fullscreen element in this document,
   // this has no effect.
-  auto request = MakeUnique<FullscreenRequest>(aFrameElement);
-  request->mIsCallerChrome = false;
+  auto request = MakeUnique<FullscreenRequest>(aFrameElement,
+                                               CallerType::NonSystem);
   request->mShouldNotifyNewOrigin = false;
-  RequestFullScreen(std::move(request));
+  RequestFullscreen(std::move(request));
 
   return NS_OK;
 }
 
 nsresult nsIDocument::RemoteFrameFullscreenReverted()
 {
-  RestorePreviousFullScreenState();
+  RestorePreviousFullscreenState();
   return NS_OK;
 }
 
@@ -10990,7 +11118,7 @@ nsIDocument::IsUnprefixedFullscreenEnabled(JSContext* aCx, JSObject* aObject)
 }
 
 static bool
-HasFullScreenSubDocument(nsIDocument* aDoc)
+HasFullscreenSubDocument(nsIDocument* aDoc)
 {
   uint32_t count = CountFullscreenSubDocuments(aDoc);
   NS_ASSERTION(count <= 1, "Fullscreen docs should have at most 1 fullscreen child!");
@@ -11001,11 +11129,11 @@ HasFullScreenSubDocument(nsIDocument* aDoc)
 // in the given document. Returns a static string indicates the reason
 // why it is not enabled otherwise.
 static const char*
-GetFullscreenError(nsIDocument* aDoc, bool aCallerIsChrome)
+GetFullscreenError(nsIDocument* aDoc, CallerType aCallerType)
 {
-  bool apiEnabled = nsContentUtils::IsFullScreenApiEnabled();
-  if (apiEnabled && aCallerIsChrome) {
-    // Chrome code can always use the full-screen API, provided it's not
+  bool apiEnabled = nsContentUtils::IsFullscreenApiEnabled();
+  if (apiEnabled && aCallerType == CallerType::System) {
+    // Chrome code can always use the fullscreen API, provided it's not
     // explicitly disabled.
     return nullptr;
   }
@@ -11025,11 +11153,11 @@ GetFullscreenError(nsIDocument* aDoc, bool aCallerIsChrome)
 
 bool
 nsIDocument::FullscreenElementReadyCheck(Element* aElement,
-                                         bool aWasCallerChrome)
+                                         CallerType aCallerType)
 {
   NS_ASSERTION(aElement,
-    "Must pass non-null element to nsDocument::RequestFullScreen");
-  if (!aElement || aElement == FullScreenStackTop()) {
+    "Must pass non-null element to nsDocument::RequestFullscreen");
+  if (!aElement || aElement == FullscreenStackTop()) {
     return false;
   }
   if (!aElement->IsInComposedDoc()) {
@@ -11044,7 +11172,7 @@ nsIDocument::FullscreenElementReadyCheck(Element* aElement,
     DispatchFullscreenError("FullscreenDeniedLostWindow");
     return false;
   }
-  if (const char* msg = GetFullscreenError(this, aWasCallerChrome)) {
+  if (const char* msg = GetFullscreenError(this, aCallerType)) {
     DispatchFullscreenError(msg);
     return false;
   }
@@ -11052,17 +11180,17 @@ nsIDocument::FullscreenElementReadyCheck(Element* aElement,
     DispatchFullscreenError("FullscreenDeniedHidden");
     return false;
   }
-  if (HasFullScreenSubDocument(this)) {
+  if (HasFullscreenSubDocument(this)) {
     DispatchFullscreenError("FullscreenDeniedSubDocFullScreen");
     return false;
   }
   //XXXsmaug Note, we don't follow the latest fullscreen spec here.
   //         This whole check could be probably removed.
-  if (FullScreenStackTop() &&
+  if (FullscreenStackTop() &&
       !nsContentUtils::ContentIsHostIncludingDescendantOf(aElement,
-                                                          FullScreenStackTop())) {
-    // If this document is full-screen, only grant full-screen requests from
-    // a descendant of the current full-screen element.
+                                                          FullscreenStackTop())) {
+    // If this document is fullscreen, only grant fullscreen requests from
+    // a descendant of the current fullscreen element.
     DispatchFullscreenError("FullscreenDeniedNotDescendant");
     return false;
   }
@@ -11073,7 +11201,7 @@ nsIDocument::FullscreenElementReadyCheck(Element* aElement,
   // Deny requests when a windowed plugin is focused.
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (!fm) {
-    NS_WARNING("Failed to retrieve focus manager in full-screen request.");
+    NS_WARNING("Failed to retrieve focus manager in fullscreen request.");
     return false;
   }
   if (nsContentUtils::HasPluginWithUncontrolledEventDispatch(fm->GetFocusedElement())) {
@@ -11083,9 +11211,10 @@ nsIDocument::FullscreenElementReadyCheck(Element* aElement,
   return true;
 }
 
-FullscreenRequest::FullscreenRequest(Element* aElement)
+FullscreenRequest::FullscreenRequest(Element* aElement, CallerType aCallerType)
   : mElement(aElement)
   , mDocument(static_cast<nsDocument*>(aElement->OwnerDoc()))
+  , mCallerType(aCallerType)
 {
   MOZ_COUNT_CTOR(FullscreenRequest);
 }
@@ -11103,7 +11232,7 @@ FullscreenRequest::~FullscreenRequest()
 class PendingFullscreenRequestList
 {
 public:
-  static void Add(UniquePtr<FullscreenRequest>&& aRequest)
+  static void Add(UniquePtr<FullscreenRequest> aRequest)
   {
     sList.insertBack(aRequest.release());
   }
@@ -11238,7 +11367,7 @@ ShouldApplyFullscreenDirectly(nsIDocument* aDoc,
 }
 
 void
-nsIDocument::RequestFullScreen(UniquePtr<FullscreenRequest>&& aRequest)
+nsIDocument::RequestFullscreen(UniquePtr<FullscreenRequest> aRequest)
 {
   nsCOMPtr<nsPIDOMWindowOuter> rootWin = GetRootWindow(this);
   if (!rootWin) {
@@ -11262,7 +11391,7 @@ nsIDocument::RequestFullScreen(UniquePtr<FullscreenRequest>&& aRequest)
 
   // We don't need to check element ready before this point, because
   // if we called ApplyFullscreen, it would check that for us.
-  if (!FullscreenElementReadyCheck(elem, aRequest->mIsCallerChrome)) {
+  if (!FullscreenElementReadyCheck(elem, aRequest->mCallerType)) {
     return;
   }
 
@@ -11309,7 +11438,7 @@ bool
 nsIDocument::ApplyFullscreen(const FullscreenRequest& aRequest)
 {
   Element* elem = aRequest.GetElement();
-  if (!FullscreenElementReadyCheck(elem, aRequest.mIsCallerChrome)) {
+  if (!FullscreenElementReadyCheck(elem, aRequest.mCallerType)) {
     return false;
   }
 
@@ -11324,29 +11453,29 @@ nsIDocument::ApplyFullscreen(const FullscreenRequest& aRequest)
   // as specified.
   AutoTArray<nsIDocument*, 8> changed;
 
-  // Remember the root document, so that if a full-screen document is hidden
-  // we can reset full-screen state in the remaining visible full-screen documents.
+  // Remember the root document, so that if a fullscreen document is hidden
+  // we can reset fullscreen state in the remaining visible fullscreen documents.
   nsIDocument* fullScreenRootDoc = nsContentUtils::GetRootDocument(this);
 
   // If a document is already in fullscreen, then unlock the mouse pointer
   // before setting a new document to fullscreen
   UnlockPointer();
 
-  // Set the full-screen element. This sets the full-screen style on the
-  // element, and the full-screen-ancestor styles on ancestors of the element
+  // Set the fullscreen element. This sets the fullscreen style on the
+  // element, and the fullscreen-ancestor styles on ancestors of the element
   // in this document.
-  DebugOnly<bool> x = FullScreenStackPush(elem);
-  NS_ASSERTION(x, "Full-screen state of requesting doc should always change!");
+  DebugOnly<bool> x = FullscreenStackPush(elem);
+  NS_ASSERTION(x, "Fullscreen state of requesting doc should always change!");
   // Set the iframe fullscreen flag.
   if (elem->IsHTMLElement(nsGkAtoms::iframe)) {
     static_cast<HTMLIFrameElement*>(elem)->SetFullscreenFlag(true);
   }
   changed.AppendElement(this);
 
-  // Propagate up the document hierarchy, setting the full-screen element as
+  // Propagate up the document hierarchy, setting the fullscreen element as
   // the element's container in ancestor documents. This also sets the
   // appropriate css styles as well. Note we don't propagate down the
-  // document hierarchy, the full-screen element (or its container) is not
+  // document hierarchy, the fullscreen element (or its container) is not
   // visible there. Stop when we reach the root document.
   nsIDocument* child = this;
   while (true) {
@@ -11358,14 +11487,14 @@ nsIDocument::ApplyFullscreen(const FullscreenRequest& aRequest)
     }
     nsIDocument* parent = child->GetParentDocument();
     Element* element = parent->FindContentForSubDocument(child);
-    if (static_cast<nsDocument*>(parent)->FullScreenStackPush(element)) {
+    if (static_cast<nsDocument*>(parent)->FullscreenStackPush(element)) {
       changed.AppendElement(parent);
       child = parent;
     } else {
       // We've reached either the root, or a point in the doctree where the
-      // new full-screen element container is the same as the previous
-      // full-screen element's container. No more changes need to be made
-      // to the full-screen stacks of documents further up the tree.
+      // new fullscreen element container is the same as the previous
+      // fullscreen element's container. No more changes need to be made
+      // to the fullscreen stacks of documents further up the tree.
       break;
     }
   }
@@ -11392,16 +11521,14 @@ nsIDocument::ApplyFullscreen(const FullscreenRequest& aRequest)
   // shouldn't rely on this event itself.
   if (aRequest.mShouldNotifyNewOrigin &&
       !nsContentUtils::HaveEqualPrincipals(previousFullscreenDoc, this)) {
-    DispatchCustomEventWithFlush(
-      this, NS_LITERAL_STRING("MozDOMFullscreen:NewOrigin"),
-      /* Bubbles */ true, /* ChromeOnly */ true);
+    DispatchFullscreenNewOriginEvent(this);
   }
 
-  // Dispatch "fullscreenchange" events. Note this loop is in reverse
-  // order so that the events for the root document arrives before the leaf
-  // document, as required by the spec.
-  for (uint32_t i = 0; i < changed.Length(); ++i) {
-    DispatchFullScreenChange(changed[changed.Length() - i - 1]);
+  // Dispatch "fullscreenchange" events. Note that the loop order is
+  // reversed so that events are dispatched in the tree order as
+  // indicated in the spec.
+  for (nsIDocument* d : Reversed(changed)) {
+    DispatchFullscreenChange(d);
   }
   return true;
 }
@@ -11409,7 +11536,7 @@ nsIDocument::ApplyFullscreen(const FullscreenRequest& aRequest)
 bool
 nsIDocument::FullscreenEnabled(CallerType aCallerType)
 {
-  return !GetFullscreenError(this, aCallerType == CallerType::System);
+  return !GetFullscreenError(this, aCallerType);
 }
 
 void
@@ -12769,7 +12896,8 @@ nsIDocument::MaybeAllowStorageForOpener()
 
   // We don't care when the asynchronous work finishes here.
   Unused << AntiTrackingCommon::AddFirstPartyStorageAccessGrantedFor(origin,
-                                                                     openerInner);
+                                                                     openerInner,
+                                                                     AntiTrackingCommon::eHeuristic);
 }
 
 bool

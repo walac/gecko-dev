@@ -27,32 +27,55 @@
 namespace js {
 
 struct AsmJSMetadata;
-class WasmInstanceObject;
 
 namespace wasm {
 
-struct LinkDataTier;
 struct MetadataTier;
 struct Metadata;
-class LinkData;
 
-// ShareableBytes is a reference-counted Vector of bytes.
+// LinkData contains all the metadata necessary to patch all the locations
+// that depend on the absolute address of a ModuleSegment. This happens in a
+// "linking" step after compilation and after the module's code is serialized.
+// The LinkData is serialized along with the Module but does not (normally, see
+// Module::debugLinkData_ comment) persist after (de)serialization, which
+// distinguishes it from Metadata, which is stored in the Code object.
 
-struct ShareableBytes : ShareableBase<ShareableBytes>
+struct LinkDataCacheablePod
 {
-    // Vector is 'final', so instead make Vector a member and add boilerplate.
-    Bytes bytes;
-    ShareableBytes() = default;
-    explicit ShareableBytes(Bytes&& bytes) : bytes(std::move(bytes)) {}
-    size_t sizeOfExcludingThis(MallocSizeOf m) const { return bytes.sizeOfExcludingThis(m); }
-    const uint8_t* begin() const { return bytes.begin(); }
-    const uint8_t* end() const { return bytes.end(); }
-    size_t length() const { return bytes.length(); }
-    bool append(const uint8_t *p, uint32_t ct) { return bytes.append(p, ct); }
+    uint32_t trapOffset = 0;
+
+    LinkDataCacheablePod() = default;
 };
 
-typedef RefPtr<ShareableBytes> MutableBytes;
-typedef RefPtr<const ShareableBytes> SharedBytes;
+struct LinkData : LinkDataCacheablePod
+{
+    const Tier tier;
+
+    explicit LinkData(Tier tier) : tier(tier) {}
+
+    LinkDataCacheablePod& pod() { return *this; }
+    const LinkDataCacheablePod& pod() const { return *this; }
+
+    struct InternalLink {
+        uint32_t patchAtOffset;
+        uint32_t targetOffset;
+#ifdef JS_CODELABEL_LINKMODE
+        uint32_t mode;
+#endif
+    };
+    typedef Vector<InternalLink, 0, SystemAllocPolicy> InternalLinkVector;
+
+    struct SymbolicLinkArray : EnumeratedArray<SymbolicAddress, SymbolicAddress::Limit, Uint32Vector> {
+        WASM_DECLARE_SERIALIZABLE(SymbolicLinkArray)
+    };
+
+    InternalLinkVector  internalLinks;
+    SymbolicLinkArray   symbolicLinks;
+
+    WASM_DECLARE_SERIALIZABLE(LinkData)
+};
+
+typedef UniquePtr<LinkData> UniqueLinkData;
 
 // Executable code must be deallocated specially.
 
@@ -145,18 +168,18 @@ class ModuleSegment : public CodeSegment
     ModuleSegment(Tier tier,
                   UniqueCodeBytes codeBytes,
                   uint32_t codeLength,
-                  const LinkDataTier& linkData);
+                  const LinkData& linkData);
 
     static UniqueModuleSegment create(Tier tier,
                                       jit::MacroAssembler& masm,
-                                      const LinkDataTier& linkData);
+                                      const LinkData& linkData);
     static UniqueModuleSegment create(Tier tier,
                                       const Bytes& unlinkedBytes,
-                                      const LinkDataTier& linkData);
+                                      const LinkData& linkData);
 
     bool initialize(const CodeTier& codeTier,
                     const ShareableBytes& bytecode,
-                    const LinkDataTier& linkData,
+                    const LinkData& linkData,
                     const Metadata& metadata,
                     const MetadataTier& metadataTier);
 
@@ -169,8 +192,8 @@ class ModuleSegment : public CodeSegment
     // Structured clone support:
 
     size_t serializedSize() const;
-    uint8_t* serialize(uint8_t* cursor, const LinkDataTier& linkData) const;
-    static const uint8_t* deserialize(const uint8_t* cursor, const LinkDataTier& linkData,
+    uint8_t* serialize(uint8_t* cursor, const LinkData& linkData) const;
+    static const uint8_t* deserialize(const uint8_t* cursor, const LinkData& linkData,
                                       UniqueModuleSegment* segment);
 
     const CodeRange* lookupRange(const void* pc) const;
@@ -368,7 +391,7 @@ struct MetadataCacheablePod
 {
     ModuleKind            kind;
     MemoryUsage           memoryUsage;
-    HasGcTypes            temporaryHasGcTypes;
+    HasGcTypes            temporaryGcTypesConfigured;
     uint32_t              minMemoryLength;
     uint32_t              globalDataLength;
     Maybe<uint32_t>       maxMemoryLength;
@@ -379,7 +402,7 @@ struct MetadataCacheablePod
     explicit MetadataCacheablePod(ModuleKind kind)
       : kind(kind),
         memoryUsage(MemoryUsage::None),
-        temporaryHasGcTypes(HasGcTypes::False),
+        temporaryGcTypesConfigured(HasGcTypes::False),
         minMemoryLength(0),
         globalDataLength(0),
         filenameIsURL(false)
@@ -576,7 +599,7 @@ class LazyStubTier
     // them in a single stub. Jit entries won't be used until
     // setJitEntries() is actually called, after the Code owner has committed
     // tier2.
-    bool createTier2(HasGcTypes gcTypesEnabled, const Uint32Vector& funcExportIndices,
+    bool createTier2(HasGcTypes gcTypesConfigured, const Uint32Vector& funcExportIndices,
                      const CodeTier& codeTier, Maybe<size_t>* stubSegmentIndex);
     void setJitEntries(const Maybe<size_t>& stubSegmentIndex, const Code& code);
 
@@ -601,8 +624,9 @@ class CodeTier
     ExclusiveData<LazyStubTier> lazyStubs_;
 
     static const MutexId& mutexForTier(Tier tier) {
-        if (tier == Tier::Baseline)
+        if (tier == Tier::Baseline) {
             return mutexid::WasmLazyStubsTier1;
+        }
         MOZ_ASSERT(tier == Tier::Ion);
         return mutexid::WasmLazyStubsTier2;
     }
@@ -619,7 +643,7 @@ class CodeTier
 
     bool initialize(const Code& code,
                     const ShareableBytes& bytecode,
-                    const LinkDataTier& linkData,
+                    const LinkData& linkData,
                     const Metadata& metadata);
 
     Tier tier() const { return segment_->tier(); }
@@ -631,8 +655,8 @@ class CodeTier
     const CodeRange* lookupRange(const void* pc) const;
 
     size_t serializedSize() const;
-    uint8_t* serialize(uint8_t* cursor, const LinkDataTier& linkData) const;
-    static const uint8_t* deserialize(const uint8_t* cursor, const LinkDataTier& linkData,
+    uint8_t* serialize(uint8_t* cursor, const LinkData& linkData) const;
+    static const uint8_t* deserialize(const uint8_t* cursor, const LinkData& linkData,
                                       UniqueCodeTier* codeTier);
     void addSizeOfMisc(MallocSizeOf mallocSizeOf, size_t* code, size_t* data) const;
 };
@@ -674,8 +698,9 @@ class JumpTables
     void setTieringEntry(size_t i, void* target) const {
         MOZ_ASSERT(i < numFuncs_);
         // See comment in wasm::Module::finishTier2.
-        if (mode_ == CompileMode::Tier1)
+        if (mode_ == CompileMode::Tier1) {
             tiering_.get()[i] = target;
+        }
     }
     void** tiering() const {
         return tiering_.get();
@@ -704,12 +729,16 @@ class Code : public ShareableBase<Code>
     SharedMetadata                      metadata_;
     ExclusiveData<CacheableCharsVector> profilingLabels_;
     JumpTables                          jumpTables_;
+    const DataSegmentVector             dataSegments_;
+    const ElemSegmentVector             elemSegments_;
 
   public:
-    Code(UniqueCodeTier tier1, const Metadata& metadata, JumpTables&& maybeJumpTables);
+    Code(UniqueCodeTier tier1, const Metadata& metadata,
+         JumpTables&& maybeJumpTables, DataSegmentVector&& dataSegments,
+         ElemSegmentVector&& elemSegments);
     bool initialized() const { return tier1_->initialized(); }
 
-    bool initialize(const ShareableBytes& bytecode, const LinkDataTier& linkData);
+    bool initialize(const ShareableBytes& bytecode, const LinkData& linkData);
 
     void setTieringEntry(size_t i, void* target) const { jumpTables_.setTieringEntry(i, target); }
     void** tieringJumpTable() const { return jumpTables_.tiering(); }
@@ -719,7 +748,7 @@ class Code : public ShareableBase<Code>
     uint32_t getFuncIndex(JSFunction* fun) const;
 
     bool setTier2(UniqueCodeTier tier2, const ShareableBytes& bytecode,
-                  const LinkDataTier& linkData) const;
+                  const LinkData& linkData) const;
     void commitTier2() const;
 
     bool hasTier2() const { return hasTier2_; }
@@ -731,6 +760,8 @@ class Code : public ShareableBase<Code>
 
     const CodeTier& codeTier(Tier tier) const;
     const Metadata& metadata() const { return *metadata_; }
+    const DataSegmentVector& dataSegments() const { return dataSegments_; }
+    const ElemSegmentVector& elemSegments() const { return elemSegments_; }
 
     const ModuleSegment& segment(Tier iter) const {
         return codeTier(iter).segment();

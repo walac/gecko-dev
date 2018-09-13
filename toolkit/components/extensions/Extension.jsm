@@ -45,6 +45,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   ExtensionPermissions: "resource://gre/modules/ExtensionPermissions.jsm",
   ExtensionStorage: "resource://gre/modules/ExtensionStorage.jsm",
   ExtensionStorageIDB: "resource://gre/modules/ExtensionStorageIDB.jsm",
+  ExtensionTelemetry: "resource://gre/modules/ExtensionTelemetry.jsm",
   ExtensionTestCommon: "resource://testing-common/ExtensionTestCommon.jsm",
   FileSource: "resource://gre/modules/L10nRegistry.jsm",
   L10nRegistry: "resource://gre/modules/L10nRegistry.jsm",
@@ -54,7 +55,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   OS: "resource://gre/modules/osfile.jsm",
   PluralForm: "resource://gre/modules/PluralForm.jsm",
   Schemas: "resource://gre/modules/Schemas.jsm",
-  TelemetryStopwatch: "resource://gre/modules/TelemetryStopwatch.jsm",
   XPIProvider: "resource://gre/modules/addons/XPIProvider.jsm",
 });
 
@@ -1765,7 +1765,7 @@ class Extension extends ExtensionData {
 
     this.policy.extension = this;
 
-    TelemetryStopwatch.start("WEBEXT_EXTENSION_STARTUP_MS", this);
+    ExtensionTelemetry.extensionStartup.stopwatchStart(this);
     try {
       await this.loadManifest();
 
@@ -1824,7 +1824,7 @@ class Extension extends ExtensionData {
 
       Management.emit("ready", this);
       this.emit("ready");
-      TelemetryStopwatch.finish("WEBEXT_EXTENSION_STARTUP_MS", this);
+      ExtensionTelemetry.extensionStartup.stopwatchFinish(this);
     } catch (errors) {
       for (let e of [].concat(errors)) {
         dump(`Extension error: ${e.message || e} ${e.filename || e.fileName}:${e.lineNumber} :: ${e.stack || new Error().stack}\n`);

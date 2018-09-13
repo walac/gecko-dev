@@ -435,6 +435,11 @@ button > hbox > label {
   margin-top: 1.5em;
 }
 
+#blockCookiesWarning {
+  margin-top: 1.5em !important;
+  margin-bottom: -1em !important;
+}
+
 /* Collapse the non-active vboxes in decks to use only the height the
    active vbox needs */
 #historyPane:not([selectedIndex="1"]) > #historyDontRememberPane,
@@ -946,10 +951,22 @@ menulist[indicator=true] > menupopup menuitem[indicator=true]:not([image]) > .me
   min-width: 20em;
 }
 
+#LanguagesDialog > .dialog-button-box > .dialog-button[dlgtype="help"],
 #BrowserLanguagesDialog > .dialog-button-box > .dialog-button[dlgtype="help"] {
   margin-inline-start: 0;
 }
 
-#activeLocales {
+#requestedLocales {
   min-height: 200px;
+}
+
+#availableLanguages,
+#availableLocales {
+  margin: 0;
+  margin-inline-end: 4px;
+}
+
+.add-web-language,
+.add-browser-language {
+  margin: 0 4px;
 }

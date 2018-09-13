@@ -443,6 +443,8 @@ These should match what Safari and other Apple applications use on OS X Lion. --
 <!ENTITY customizeMenu.autoHideDownloadsButton.accesskey "A">
 <!ENTITY customizeMenu.manageExtension.label "Manage Extension">
 <!ENTITY customizeMenu.manageExtension.accesskey "E">
+<!ENTITY customizeMenu.removeExtension.label "Remove Extension">
+<!ENTITY customizeMenu.removeExtension.accesskey "v">
 
 <!-- LOCALIZATION NOTE (moreMenu.label) This label is used in the new Photon
     app (hamburger) menu. When clicked, it opens a subview that contains
@@ -1082,8 +1084,6 @@ you can use these alternative items. Otherwise, their values should be empty.  -
 <!ENTITY pageActionButton.tooltip "Page actions">
 <!ENTITY pageAction.addToUrlbar.label "Add to Address Bar">
 <!ENTITY pageAction.removeFromUrlbar.label "Remove from Address Bar">
-<!ENTITY pageAction.allowInUrlbar.label "Show in Address Bar">
-<!ENTITY pageAction.disallowInUrlbar.label "Don’t Show in Address Bar">
 <!ENTITY pageAction.manageExtension.label "Manage Extension…">
 
 <!ENTITY sendToDevice.syncNotReady.label "Syncing Devices…">

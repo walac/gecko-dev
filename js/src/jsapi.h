@@ -54,26 +54,6 @@ namespace JS {
 class SourceBufferHolder;
 class TwoByteChars;
 
-#ifdef JS_DEBUG
-
-class JS_PUBLIC_API(AutoCheckRequestDepth)
-{
-    JSContext* cx;
-  public:
-    explicit AutoCheckRequestDepth(JSContext* cx);
-    ~AutoCheckRequestDepth();
-};
-
-# define CHECK_REQUEST(cx) \
-    JS::AutoCheckRequestDepth _autoCheckRequestDepth(cx)
-
-#else
-
-# define CHECK_REQUEST(cx) \
-    ((void) 0)
-
-#endif /* JS_DEBUG */
-
 /** AutoValueArray roots an internal fixed-size array of Values. */
 template <size_t N>
 class MOZ_RAII AutoValueArray : public AutoGCRooter
@@ -292,8 +272,9 @@ JS_NumberValue(double d)
 {
     int32_t i;
     d = JS::CanonicalizeNaN(d);
-    if (mozilla::NumberIsInt32(d, &i))
+    if (mozilla::NumberIsInt32(d, &i)) {
         return JS::Int32Value(i);
+    }
     return JS::DoubleValue(d);
 }
 
@@ -488,12 +469,6 @@ extern JS_PUBLIC_API(JSRuntime*)
 JS_GetRuntime(JSContext* cx);
 
 extern JS_PUBLIC_API(void)
-JS_BeginRequest(JSContext* cx);
-
-extern JS_PUBLIC_API(void)
-JS_EndRequest(JSContext* cx);
-
-extern JS_PUBLIC_API(void)
 JS_SetFutexCanWait(JSContext* cx);
 
 namespace js {
@@ -502,31 +477,6 @@ void
 AssertHeapIsIdle();
 
 } /* namespace js */
-
-class MOZ_RAII JSAutoRequest
-{
-  public:
-    explicit JSAutoRequest(JSContext* cx
-                           MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : mContext(cx)
-    {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-        JS_BeginRequest(mContext);
-    }
-    ~JSAutoRequest() {
-        JS_EndRequest(mContext);
-    }
-
-  protected:
-    JSContext* mContext;
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-
-#if 0
-  private:
-    static void* operator new(size_t) CPP_THROW_NEW { return 0; }
-    static void operator delete(void*, size_t) { }
-#endif
-};
 
 namespace JS {
 
@@ -539,6 +489,9 @@ class JS_PUBLIC_API(ContextOptions) {
         wasm_(true),
         wasmBaseline_(true),
         wasmIon_(true),
+#ifdef ENABLE_WASM_CRANELIFT
+        wasmForceCranelift_(false),
+#endif
 #ifdef ENABLE_WASM_GC
         wasmGc_(false),
 #endif
@@ -627,6 +580,18 @@ class JS_PUBLIC_API(ContextOptions) {
         wasmIon_ = !wasmIon_;
         return *this;
     }
+
+#ifdef ENABLE_WASM_CRANELIFT
+    bool wasmForceCranelift() const { return wasmForceCranelift_; }
+    ContextOptions& setWasmForceCranelift(bool flag) {
+        wasmForceCranelift_ = flag;
+        return *this;
+    }
+    ContextOptions& toggleWasmForceCranelift() {
+        wasmForceCranelift_ = !wasmForceCranelift_;
+        return *this;
+    }
+#endif
 
     bool testWasmAwaitTier2() const { return testWasmAwaitTier2_; }
     ContextOptions& setTestWasmAwaitTier2(bool flag) {
@@ -738,6 +703,9 @@ class JS_PUBLIC_API(ContextOptions) {
     bool wasm_ : 1;
     bool wasmBaseline_ : 1;
     bool wasmIon_ : 1;
+#ifdef ENABLE_WASM_CRANELIFT
+    bool wasmForceCranelift_ : 1;
+#endif
 #ifdef ENABLE_WASM_GC
     bool wasmGc_ : 1;
 #endif
@@ -1287,10 +1255,11 @@ struct JSPropertySpec {
 
 #ifdef DEBUG
         // Verify that our accessors match our JSPROP_GETTER flag.
-        if (flags & JSPROP_GETTER)
+        if (flags & JSPROP_GETTER) {
             checkAccessorsAreSelfHosted();
-        else
+        } else {
             checkAccessorsAreNative();
+        }
 #endif
         return (flags & JSPROP_GETTER);
     }
@@ -1634,8 +1603,9 @@ class JS_PUBLIC_API(RealmBehaviors)
         Override() : mode_(Default) {}
 
         bool get(bool defaultValue) const {
-            if (mode_ == Default)
+            if (mode_ == Default) {
                 return defaultValue;
+            }
             return mode_ == ForceTrue;
         }
 
@@ -1971,8 +1941,9 @@ class WrappedPtrOperations<JS::PropertyDescriptor, Wrapper>
 
     void assertCompleteIfFound() const {
 #ifdef DEBUG
-        if (object())
+        if (object()) {
             assertComplete();
+        }
 #endif
     }
 };
@@ -4654,22 +4625,22 @@ SetAsmJSCacheOps(JSContext* cx, const AsmJSCacheOps* callbacks);
  * engine, it is critical that the buildId shall change for each new build of
  * the JS engine.
  */
+
 typedef js::Vector<char, 0, js::SystemAllocPolicy> BuildIdCharVector;
 
 typedef bool
 (* BuildIdOp)(BuildIdCharVector* buildId);
 
 extern JS_PUBLIC_API(void)
-SetBuildIdOp(JSContext* cx, BuildIdOp buildIdOp);
+SetProcessBuildIdOp(BuildIdOp buildIdOp);
 
 /**
  * The WasmModule interface allows the embedding to hold a reference to the
  * underying C++ implementation of a JS WebAssembly.Module object for purposes
  * of efficient postMessage() and (de)serialization from a random thread.
  *
- * For postMessage() sharing:
- *
- * - GetWasmModule() is called when making a structured clone of payload
+ * In particular, this allows postMessage() of a WebAssembly.Module:
+ * GetWasmModule() is called when making a structured clone of a payload
  * containing a WebAssembly.Module object. The structured clone buffer holds a
  * refcount of the JS::WasmModule until createObject() is called in the target
  * agent's JSContext. The new WebAssembly.Module object continues to hold the
@@ -4677,22 +4648,6 @@ SetBuildIdOp(JSContext* cx, BuildIdOp buildIdOp);
  * dropped from any thread and so the virtual destructor (and all internal
  * methods of the C++ module) must be thread-safe.
  */
-
-class WasmModuleListener
-{
-  protected:
-    virtual ~WasmModuleListener() {}
-
-  public:
-    // These method signatures are chosen to exactly match nsISupports so that a
-    // plain nsISupports-implementing class can trivially implement this
-    // interface too. We can't simply #include "nsISupports.h" so we use MFBT
-    // equivalents for all the platform-dependent types.
-    virtual MozExternalRefCountType MOZ_XPCOM_ABI AddRef() = 0;
-    virtual MozExternalRefCountType MOZ_XPCOM_ABI Release() = 0;
-
-    virtual void onCompilationComplete() = 0;
-};
 
 struct WasmModule : js::AtomicRefCounted<WasmModule>
 {
@@ -4706,9 +4661,13 @@ IsWasmModuleObject(HandleObject obj);
 extern JS_PUBLIC_API(RefPtr<WasmModule>)
 GetWasmModule(HandleObject obj);
 
+/**
+ * This function will be removed when bug 1487479 expunges the last remaining
+ * bits of wasm IDB support.
+ */
+
 extern JS_PUBLIC_API(RefPtr<WasmModule>)
-DeserializeWasmModule(PRFileDesc* bytecode, BuildIdCharVector&& buildId,
-                      JS::UniqueChars filename, unsigned line);
+DeserializeWasmModule(PRFileDesc* bytecode, JS::UniqueChars filename, unsigned line);
 
 /**
  * Convenience class for imitating a JS level for-of loop. Typical usage:
@@ -4870,8 +4829,9 @@ struct JS_PUBLIC_API(FirstSubsumedFrame)
       , principals(p)
       , ignoreSelfHosted(ignoreSelfHostedFrames)
     {
-        if (principals)
+        if (principals) {
             JS_HoldPrincipals(principals);
+        }
     }
 
     // No copying because we want to avoid holding and dropping principals
@@ -4893,8 +4853,9 @@ struct JS_PUBLIC_API(FirstSubsumedFrame)
     }
 
     ~FirstSubsumedFrame() {
-        if (principals)
+        if (principals) {
             JS_DropPrincipals(cx, principals);
+        }
     }
 };
 

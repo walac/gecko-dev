@@ -3668,6 +3668,15 @@ nsWindow::Create(nsIWidget* aParent,
     bool            needsAlphaVisual = (mWindowType == eWindowType_popup &&
                                        aInitData->mSupportTranslucency);
 
+    // Some Gtk+ themes use non-rectangular toplevel windows. To fully support
+    // such themes we need to make toplevel window transparent with ARGB visual.
+    // It may cause performanance issue so let's put it under a preference
+    // and allow distros to enable it per default theme.
+    if (mWindowType == eWindowType_toplevel &&
+        Preferences::GetBool("mozilla.widget.use-argb-visuals", false)) {
+        needsAlphaVisual = true;
+    }
+
     if (aParent) {
         parentnsWindow = static_cast<nsWindow*>(aParent);
         parentGdkWindow = parentnsWindow->mGdkWindow;
@@ -3759,6 +3768,13 @@ nsWindow::Create(nsIWidget* aParent,
                     }
                 }
             }
+        }
+
+        // We have a toplevel window with transparency. Mark it as transparent
+        // now as nsWindow::SetTransparencyMode() can't be called after
+        // nsWindow is created (Bug 1344839).
+        if (mWindowType == eWindowType_toplevel && mHasAlphaVisual) {
+            mIsTransparent = true;
         }
 
         // We only move a general managed toplevel window if someone has
@@ -7364,4 +7380,41 @@ nsIWidget::CreateChildWindow()
 {
   nsCOMPtr<nsIWidget> window = new nsWindow();
   return window.forget();
+}
+
+bool
+nsWindow::GetTopLevelWindowActiveState(nsIFrame *aFrame)
+{
+  // Used by window frame and button box rendering. We can end up in here in
+  // the content process when rendering one of these moz styles freely in a
+  // page. Fail in this case, there is no applicable window focus state.
+  if (!XRE_IsParentProcess()) {
+    return false;
+  }
+  // All headless windows are considered active so they are painted.
+  if (gfxPlatform::IsHeadless()) {
+    return true;
+  }
+  // Get the widget. nsIFrame's GetNearestWidget walks up the view chain
+  // until it finds a real window.
+  nsWindow* window = static_cast<nsWindow*>(aFrame->GetNearestWidget());
+  if (!window) {
+    return false;
+  }
+
+  // Get our toplevel nsWindow.
+  if (!window->mIsTopLevel) {
+      GtkWidget *widget = window->GetMozContainerWidget();
+      if (!widget) {
+        return false;
+      }
+
+      GtkWidget *toplevelWidget = gtk_widget_get_toplevel(widget);
+      window = get_window_for_gtk_widget(toplevelWidget);
+      if (!window) {
+        return false;
+      }
+  }
+
+  return (gFocusWindow == window);
 }

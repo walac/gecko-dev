@@ -124,8 +124,6 @@ pref("dom.indexedDB.logging.enabled", true);
 pref("dom.indexedDB.logging.details", true);
 // Enable profiler marks for indexedDB events.
 pref("dom.indexedDB.logging.profiler-marks", false);
-// Enable passing the "storage" option to indexedDB.open.
-pref("dom.indexedDB.storageOption.enabled", false);
 
 // Whether or not File Handle is enabled.
 pref("dom.fileHandle.enabled", true);
@@ -146,8 +144,6 @@ pref("dom.select_events.textcontrols.enabled", false);
 // The number of workers per domain allowed to run concurrently.
 // We're going for effectively infinite, while preventing abuse.
 pref("dom.workers.maxPerDomain", 512);
-
-pref("dom.serviceWorkers.enabled", false);
 
 // The amount of time (milliseconds) service workers keep running after each event.
 pref("dom.serviceWorkers.idle_timeout", 30000);
@@ -171,9 +167,6 @@ pref("dom.enable_resource_timing", true);
 // Whether performance.GetEntries* will contain an entry for the active document
 pref("dom.enable_performance_navigation_timing", true);
 
-// Enable printing performance marks/measures to log
-pref("dom.performance.enable_user_timing_logging", false);
-
 // Enable notification of performance timing
 pref("dom.performance.enable_notify_performance_timing", false);
 
@@ -188,9 +181,6 @@ pref("dom.performance.time_to_non_blank_paint.enabled", false);
 
 // Enable exposing timeToDOMContentFlushed
 pref("dom.performance.time_to_dom_content_flushed.enabled", false);
-
-// Enable Performance Observer API
-pref("dom.enable_performance_observer", true);
 
 // Enable requestIdleCallback API
 pref("dom.requestIdleCallback.enabled", true);
@@ -968,9 +958,6 @@ pref("canvas.filters.enabled", true);
 pref("canvas.path.enabled", true);
 pref("canvas.capturestream.enabled", true);
 
-// Disable the ImageBitmap-extensions for now.
-pref("canvas.imagebitmap_extensions.enabled", false);
-
 // We want the ability to forcibly disable platform a11y, because
 // some non-a11y-related components attempt to bring it up.  See bug
 // 538530 for details about Windows; we have a pref here that allows it
@@ -1072,8 +1059,11 @@ pref("toolkit.asyncshutdown.crash_timeout", 180000); // 3 minutes
 // Extra logging for AsyncShutdown barriers and phases
 pref("toolkit.asyncshutdown.log", false);
 
+// Enable JS dump() function.
+// IMPORTANT: Keep this in condition in sync with StaticPrefList.h. The value
+// of MOZILLA_OFFICIAL is different between full and artifact builds, so without
+// it being specified, dump is disabled in artifact builds (see Bug 1490412).
 #ifdef MOZILLA_OFFICIAL
-// enable JS dump() function.
 pref("browser.dom.window.dump.enabled", false, sticky);
 #else
 pref("browser.dom.window.dump.enabled", true, sticky);
@@ -1370,8 +1360,6 @@ pref("privacy.firstparty.isolate",                        false);
 // (top level URLs) can access resources through window.opener.
 // This pref is effective only when "privacy.firstparty.isolate" is true.
 pref("privacy.firstparty.isolate.restrict_opener_access", true);
-// Anti-fingerprinting, disabled by default
-pref("privacy.resistFingerprinting", false);
 // We automatically decline canvas permission requests if they are not initiated
 // from user input. Just in case that breaks something, we allow the user to revert
 // this behaior with this obscure pref. We do not intend to support this long term.
@@ -2952,9 +2940,6 @@ pref("layout.css.mix-blend-mode.enabled", true);
 
 // Is support for isolation enabled?
 pref("layout.css.isolation.enabled", true);
-
-// Is support for CSS Filters enabled?
-pref("layout.css.filters.enabled", true);
 
 // Is support for CSS Scrollbar color properties enabled?
 pref("layout.css.scrollbar-colors.enabled", false);
@@ -4799,8 +4784,6 @@ pref("webgl.dxgl.needs-finish", false);
 
 pref("dom.webgpu.enable", false);
 
-pref("gfx.offscreencanvas.enabled", false);
-
 // sendbuffer of 0 means use OS default, sendbuffer unset means use
 // gecko default which varies depending on windows version and is OS
 // default on non windows
@@ -5059,14 +5042,7 @@ pref("network.buffer.cache.count", 24);
 pref("network.buffer.cache.size",  32768);
 
 // Web Notification
-pref("dom.webnotifications.enabled", true);
-pref("dom.webnotifications.serviceworker.enabled", true);
 pref("dom.webnotifications.requireinteraction.count", 3);
-#ifdef NIGHTLY_BUILD
-pref("dom.webnotifications.requireinteraction.enabled", true);
-#else
-pref("dom.webnotifications.requireinteraction.enabled", false);
-#endif
 
 // Show favicons in web notifications.
 pref("alerts.showFavicons", false);
@@ -5115,12 +5091,8 @@ pref("dom.vibrator.max_vibrate_list_len", 128);
 // Battery API
 pref("dom.battery.enabled", true);
 
-// Streams API
-pref("dom.streams.enabled", false);
-
 // Push
 
-pref("dom.push.enabled", false);
 pref("dom.push.alwaysConnect", false);
 
 pref("dom.push.loglevel", "Error");
@@ -5186,11 +5158,6 @@ pref("dom.w3c_pointer_events.dispatch_by_pointer_messages", false);
 // W3C pointer events draft
 pref("dom.w3c_pointer_events.implicit_capture", false);
 
-// WHATWG promise rejection events. See
-// https://html.spec.whatwg.org/multipage/webappapis.html#promiserejectionevent
-// TODO: Enable the event interface once actually firing it (bug 1362272).
-pref("dom.promise_rejection_events.enabled", false);
-
 // W3C draft ImageCapture API
 pref("dom.imagecapture.enabled", false);
 
@@ -5206,13 +5173,6 @@ pref("media.ondevicechange.fakeDeviceChangeEvent.enabled", false);
 // those platforms we don't handle touch events anyway so it's conceptually
 // a no-op.
 pref("layout.css.touch_action.enabled", true);
-
-#if defined(MOZ_WIDGET_ANDROID)
-// Network Information API
-pref("dom.netinfo.enabled", true);
-#else
-pref("dom.netinfo.enabled", false);
-#endif
 
 // How long must we wait before declaring that a window is a "ghost" (i.e., a
 // likely leak)?  This should be longer than it usually takes for an eligible
@@ -5463,7 +5423,7 @@ pref("urlclassifier.trackingTable", "test-track-simple,base-track-digest256");
 pref("urlclassifier.trackingWhitelistTable", "test-trackwhite-simple,mozstd-trackwhite-digest256");
 
 // These tables will never trigger a gethash call.
-pref("urlclassifier.disallow_completions", "test-malware-simple,test-harmful-simple,test-phish-simple,test-unwanted-simple,test-track-simple,test-trackwhite-simple,test-block-simple,goog-downloadwhite-digest256,base-track-digest256,mozstd-trackwhite-digest256,content-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256,block-flash-digest256,except-flash-digest256,allow-flashallow-digest256,except-flashallow-digest256,block-flashsubdoc-digest256,except-flashsubdoc-digest256,except-flashinfobar-digest256,goog-passwordwhite-proto,ads-track-digest256,social-track-digest256,analytics-track-digest256");
+pref("urlclassifier.disallow_completions", "test-malware-simple,test-harmful-simple,test-phish-simple,test-unwanted-simple,test-track-simple,test-trackwhite-simple,test-block-simple,goog-downloadwhite-digest256,base-track-digest256,mozstd-trackwhite-digest256,content-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256,block-flash-digest256,except-flash-digest256,allow-flashallow-digest256,except-flashallow-digest256,block-flashsubdoc-digest256,except-flashsubdoc-digest256,except-flashinfobar-digest256,goog-passwordwhite-proto,ads-track-digest256,social-track-digest256,analytics-track-digest256,fastblock1-track-digest256,fastblock1-trackwhite-digest256,fastblock2-track-digest256,fastblock2-trackwhite-digest256,fastblock3-track-digest256");
 
 // Number of random entries to send with a gethash request
 pref("urlclassifier.gethashnoise", 4);
@@ -5535,7 +5495,7 @@ pref("browser.safebrowsing.reportPhishURL", "https://%LOCALE%.phish-report.mozil
 
 // Mozilla Safe Browsing provider (for tracking protection and plugin blocking)
 pref("browser.safebrowsing.provider.mozilla.pver", "2.2");
-pref("browser.safebrowsing.provider.mozilla.lists", "base-track-digest256,mozstd-trackwhite-digest256,content-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256,block-flash-digest256,except-flash-digest256,allow-flashallow-digest256,except-flashallow-digest256,block-flashsubdoc-digest256,except-flashsubdoc-digest256,except-flashinfobar-digest256,ads-track-digest256,social-track-digest256,analytics-track-digest256");
+pref("browser.safebrowsing.provider.mozilla.lists", "base-track-digest256,mozstd-trackwhite-digest256,content-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256,block-flash-digest256,except-flash-digest256,allow-flashallow-digest256,except-flashallow-digest256,block-flashsubdoc-digest256,except-flashsubdoc-digest256,except-flashinfobar-digest256,ads-track-digest256,social-track-digest256,analytics-track-digest256,fastblock1-track-digest256,fastblock1-trackwhite-digest256,fastblock2-track-digest256,fastblock2-trackwhite-digest256,fastblock3-track-digest256");
 pref("browser.safebrowsing.provider.mozilla.updateURL", "https://shavar.services.mozilla.com/downloads?client=SAFEBROWSING_ID&appver=%MAJOR_VERSION%&pver=2.2");
 pref("browser.safebrowsing.provider.mozilla.gethashURL", "https://shavar.services.mozilla.com/gethash?client=SAFEBROWSING_ID&appver=%MAJOR_VERSION%&pver=2.2");
 // Set to a date in the past to force immediate download in new profiles.
@@ -5616,9 +5576,6 @@ pref("dom.wakelock.enabled", false);
 pref("identity.fxaccounts.auth.uri", "https://api.accounts.firefox.com/v1");
 
 pref("beacon.enabled", true);
-
-// SW Cache API
-pref("dom.caches.enabled", true);
 
 // UDPSocket API
 pref("dom.udpsocket.enabled", false);
@@ -5816,7 +5773,6 @@ pref("osfile.reset_worker_delay", 30000);
 #endif
 
 #if !defined(MOZ_WIDGET_ANDROID)
-pref("dom.webkitBlink.dirPicker.enabled", true);
 pref("dom.webkitBlink.filesystem.enabled", true);
 #endif
 
@@ -5837,12 +5793,6 @@ pref("security.data_uri.block_toplevel_data_uri_navigations", true);
 // If true, all FTP subresource loads will be blocked.
 pref("security.block_ftp_subresources", true);
 
-// Enable Storage API for all platforms except Android.
-#if !defined(MOZ_WIDGET_ANDROID)
-pref("dom.storageManager.enabled", true);
-#else
-pref("dom.storageManager.enabled", false);
-#endif
 pref("dom.storageManager.prompt.testing", false);
 pref("dom.storageManager.prompt.testing.allow", false);
 
@@ -5928,11 +5878,17 @@ pref("general.document_open_conversion_depth_limit", 20);
 // documentElement and document.body are passive by default.
 pref("dom.event.default_to_passive_touch_listeners", true);
 
-// Enable FastBlock?
 pref("browser.fastblock.enabled", false);
-// The timeout (ms) since navigation start, all tracker connections been made
-// after this timeout will be canceled.
+// The amount of time (ms) since navigation start after which all
+// tracker connections will be cancelled.
 pref("browser.fastblock.timeout", 5000);
+// The amount of time (ms) since navigation start after which
+// we'll stop blocking tracker connections (0 = no limit).
+#ifdef NIGHTLY_BUILD
+pref("browser.fastblock.limit", 20000);
+#else
+pref("browser.fastblock.limit", 0);
+#endif
 
 // Enable clipboard readText() and writeText() by default
 pref("dom.events.asyncClipboard", true);
@@ -5941,9 +5897,19 @@ pref("dom.events.asyncClipboard.dataTransfer", false);
 // Should only be enabled in tests
 pref("dom.events.testing.asyncClipboard", false);
 
+// Enable to correctly draw CSD window headerbar
+#if defined(MOZ_WIDGET_GTK)
+pref("mozilla.widget.use-argb-visuals", false);
+#endif
+
 #ifdef NIGHTLY_BUILD
 // Disable moz* APIs in DataTransfer
 pref("dom.datatransfer.mozAtAPIs", false);
 #else
 pref("dom.datatransfer.mozAtAPIs", true);
+#endif
+
+// Whether or not Prio is supported on this platform.
+#ifdef MOZ_LIBPRIO
+pref("prio.enabled", false);
 #endif

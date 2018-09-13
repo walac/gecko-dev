@@ -59,8 +59,6 @@ pref("devtools.inspector.showUserAgentStyles", false);
 pref("devtools.inspector.showAllAnonymousContent", false);
 // Enable the CSS shapes highlighter
 pref("devtools.inspector.shapesHighlighter.enabled", true);
-// Enable the new Animation Inspector
-pref("devtools.new-animationinspector.enabled", true);
 // Enable the Font Editor
 pref("devtools.inspector.fonteditor.enabled", true);
 // Enable the font highlight-on-hover feature
@@ -82,6 +80,8 @@ pref("devtools.gridinspector.gridOutlineMaxRows", 50);
 pref("devtools.gridinspector.showGridAreas", false);
 pref("devtools.gridinspector.showGridLineNumbers", false);
 pref("devtools.gridinspector.showInfiniteLines", false);
+// Max number of grid highlighters that can be displayed
+pref("devtools.gridinspector.maxHighlighters", 1);
 
 // Whether or not the box model panel is opened in the layout view
 pref("devtools.layout.boxmodel.opened", true);
@@ -290,6 +290,13 @@ pref("devtools.webconsole.jsterm.codeMirror", true);
 pref("devtools.webconsole.jsterm.codeMirror", false);
 #endif
 
+// Enable console input reverse-search in Nightly builds
+#if defined(NIGHTLY_BUILD)
+pref("devtools.webconsole.jsterm.reverse-search", true);
+#else
+pref("devtools.webconsole.jsterm.reverse-search", false);
+#endif
+
 // Disable the new performance recording panel by default
 pref("devtools.performance.new-panel-enabled", false);
 
@@ -327,6 +334,12 @@ pref("devtools.responsive.reloadNotification.enabled", true);
 pref("devtools.responsive.show-setting-tooltip", true);
 #else
 pref("devtools.responsive.show-setting-tooltip", false);
+#endif
+// Show the custom user agent input in Nightly builds.
+#if defined(NIGHTLY_BUILD)
+pref("devtools.responsive.showUserAgentInput", true);
+#else
+pref("devtools.responsive.showUserAgentInput", false);
 #endif
 
 // Enable new about:debugging.

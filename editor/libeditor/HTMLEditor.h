@@ -21,9 +21,9 @@
 #include "nsICSSLoaderObserver.h"
 #include "nsIDocumentObserver.h"
 #include "nsIDOMEventListener.h"
+#include "nsIEditorBlobListener.h"
 #include "nsIEditorMailSupport.h"
 #include "nsIEditorStyleSheets.h"
-#include "nsIEditorUtils.h"
 #include "nsIHTMLAbsPosEditor.h"
 #include "nsIHTMLEditor.h"
 #include "nsIHTMLInlineTableEditor.h"
@@ -43,12 +43,14 @@ class nsRange;
 
 namespace mozilla {
 class AutoSelectionSetterAfterTableEdit;
+class DocumentResizeEventListener;
 class EmptyEditableFunctor;
 class ResizerSelectionListener;
 enum class EditSubAction : int32_t;
 struct PropItem;
 template<class T> class OwningNonNull;
 namespace dom {
+class Blob;
 class DocumentFragment;
 class Event;
 class MouseEvent;
@@ -1779,8 +1781,6 @@ protected: // Shouldn't be used by friend classes
    */
   nsresult RefereshEditingUI(Selection& aSelection);
 
-  nsresult ShowResizersInner(Element& aResizedElement);
-
   /**
    * Returns the offset of an element's frame to its absolute containing block.
    */
@@ -1798,13 +1798,31 @@ protected: // Shouldn't be used by friend classes
 
   void UpdateRootElement();
 
+  /**
+   * SetAllResizersPosition() moves all resizers to proper position.
+   * If the resizers are hidden or replaced with another set of resizers
+   * while this is running, this returns error.  So, callers shouldn't
+   * keep handling the resizers if this returns error.
+   */
   nsresult SetAllResizersPosition();
 
   /**
    * Shows active resizers around an element's frame
    * @param aResizedElement [IN] a DOM Element
    */
-  nsresult ShowResizers(Element& aResizedElement);
+  nsresult ShowResizersInternal(Element& aResizedElement);
+
+  /**
+   * Hide resizers if they are visible.  If this is called while there is no
+   * visible resizers, this does not return error, but does nothing.
+   */
+  nsresult HideResizersInternal();
+
+  /**
+   * RefreshResizersInternal() moves resizers to proper position.  This does
+   * nothing if there is no resizing target.
+   */
+  nsresult RefreshResizersInternal();
 
   ManualNACPtr CreateResizer(int16_t aLocation, nsIContent& aParentContent);
   void SetAnonymousElementPosition(int32_t aX, int32_t aY,
@@ -1812,9 +1830,19 @@ protected: // Shouldn't be used by friend classes
 
   ManualNACPtr CreateShadow(nsIContent& aParentContent,
                             Element& aOriginalObject);
-  nsresult SetShadowPosition(Element* aShadow, Element* aOriginalObject,
-                             int32_t aOriginalObjectX,
-                             int32_t aOriginalObjectY);
+
+  /**
+   * SetShadowPosition() moves the shadow element to proper position.
+   *
+   * @param aShadowElement      Must be mResizingShadow or mPositioningShadow.
+   * @param aElement            The element which has the shadow.
+   * @param aElementX           Left of aElement.
+   * @param aElementY           Top of aElement.
+   */
+  nsresult SetShadowPosition(Element& aShadowElement,
+                             Element& aElement,
+                             int32_t aElementLeft,
+                             int32_t aElementTop);
 
   ManualNACPtr CreateResizingInfo(nsIContent& aParentContent);
   nsresult SetResizingInfoPosition(int32_t aX, int32_t aY,
@@ -1866,14 +1894,29 @@ protected: // Shouldn't be used by friend classes
    * document. See chrome://editor/content/images/grabber.gif
    * @param aElement [IN] the element
    */
-  nsresult ShowGrabber(Element& aElement);
+  nsresult ShowGrabberInternal(Element& aElement);
+
+  /**
+   * Setting grabber to proper position for current mAbsolutelyPositionedObject.
+   * For example, while an element has grabber, the element may be resized
+   * or repositioned by script or something.  Then, you need to reset grabber
+   * position with this.
+   */
+  nsresult RefreshGrabberInternal();
 
   /**
    * hide the grabber if it shown.
    */
-  void HideGrabber();
+  void HideGrabberInternal();
 
-  ManualNACPtr CreateGrabber(nsIContent& aParentContent);
+  /**
+   * CreateGrabberInternal() creates a grabber for moving aParentContent.
+   * This sets mGrabber to the new grabber.  If this returns true, it's
+   * always non-nullptr.  Otherwise, i.e., the grabber is hidden during
+   * creation, this returns false.
+   */
+  bool CreateGrabberInternal(nsIContent& aParentContent);
+
   nsresult StartMoving();
   nsresult SetFinalPosition(int32_t aX, int32_t aY);
   void AddPositioningOffset(int32_t& aX, int32_t& aY);
@@ -1884,15 +1927,26 @@ protected: // Shouldn't be used by friend classes
                                                         nsAString& aReturn);
 
   /**
-   * Shows inline table editing UI around a table cell
-   * @param aCell [IN] a DOM Element being a table cell, td or th
+   * Shows inline table editing UI around a <table> element which contains
+   * aCellElement.  This returns error if creating UI is hidden during this,
+   * or detects another set of UI during this.  In such case, callers
+   * shouldn't keep handling anything for the UI.
+   *
+   * @param aCellElement    Must be an <td> or <th> element.
    */
-  nsresult ShowInlineTableEditingUI(Element* aCell);
+  nsresult ShowInlineTableEditingUIInternal(Element& aCellElement);
 
   /**
-   * Hide all inline table editing UI
+   * Hide all inline table editing UI.
    */
-  void HideInlineTableEditingUI();
+  void HideInlineTableEditingUIInternal();
+
+  /**
+   * RefreshInlineTableEditingUIInternal() moves inline table editing UI to
+   * proper position.  This returns error if the UI is hidden or replaced
+   * during moving.
+   */
+  nsresult RefreshInlineTableEditingUIInternal();
 
   /**
    * IsEmptyTextNode() returns true if aNode is a text node and does not have
@@ -1929,6 +1983,18 @@ protected: // Shouldn't be used by friend classes
                                       nsIContent& aParentContent,
                                       const nsAString& aAnonClass,
                                       bool aIsCreatedHidden);
+
+  /**
+   * Reads a blob into memory and notifies the BlobReader object when the read
+   * operation is finished.
+   *
+   * @param aBlob       The input blob
+   * @param aWindow     The global object under which the read should happen.
+   * @param aBlobReader The blob reader object to be notified when finished.
+   */
+  static nsresult SlurpBlob(dom::Blob* aBlob,
+                            nsPIDOMWindowOuter* aWindow,
+                            BlobReader* aBlobReader);
 protected:
   RefPtr<TypeInState> mTypeInState;
   RefPtr<ComposerCommandsUpdater> mComposerCommandsUpdater;
@@ -2034,7 +2100,7 @@ protected:
   int32_t mPositionedObjectBorderLeft;
   int32_t mPositionedObjectBorderTop;
 
-  nsCOMPtr<Element> mAbsolutelyPositionedObject;
+  RefPtr<Element> mAbsolutelyPositionedObject;
   ManualNACPtr mGrabber;
   ManualNACPtr mPositioningShadow;
 
@@ -2060,6 +2126,7 @@ protected:
 
   friend class AutoSelectionSetterAfterTableEdit;
   friend class CSSEditUtils;
+  friend class DocumentResizeEventListener;
   friend class EditorBase;
   friend class EmptyEditableFunctor;
   friend class HTMLEditRules;

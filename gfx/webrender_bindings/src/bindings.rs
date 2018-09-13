@@ -73,7 +73,7 @@ type WrImageKey = ImageKey;
 /// cbindgen:field-names=[mNamespace, mHandle]
 pub type WrFontKey = FontKey;
 /// cbindgen:field-names=[mNamespace, mHandle]
-type WrFontInstanceKey = FontInstanceKey;
+pub type WrFontInstanceKey = FontInstanceKey;
 /// cbindgen:field-names=[mNamespace, mHandle]
 type WrYuvColorSpace = YuvColorSpace;
 
@@ -344,7 +344,7 @@ struct WrExternalImage {
     size: usize,
 }
 
-type LockExternalImageCallback = unsafe extern "C" fn(*mut c_void, WrExternalImageId, u8) -> WrExternalImage;
+type LockExternalImageCallback = unsafe extern "C" fn(*mut c_void, WrExternalImageId, u8, ImageRendering) -> WrExternalImage;
 type UnlockExternalImageCallback = unsafe extern "C" fn(*mut c_void, WrExternalImageId, u8);
 
 #[repr(C)]
@@ -357,10 +357,11 @@ pub struct WrExternalImageHandler {
 impl ExternalImageHandler for WrExternalImageHandler {
     fn lock(&mut self,
             id: ExternalImageId,
-            channel_index: u8)
+            channel_index: u8,
+            rendering: ImageRendering)
             -> ExternalImage {
 
-        let image = unsafe { (self.lock_func)(self.external_image_obj, id.into(), channel_index) };
+        let image = unsafe { (self.lock_func)(self.external_image_obj, id.into(), channel_index, rendering) };
         ExternalImage {
             uv: TexelRect::new(image.u0, image.v0, image.u1, image.v1),
             source: match image.image_type {
@@ -893,6 +894,7 @@ fn env_var_to_bool(key: &'static str) -> bool {
 pub extern "C" fn wr_window_new(window_id: WrWindowId,
                                 window_width: u32,
                                 window_height: u32,
+                                support_low_priority_transactions: bool,
                                 gl_context: *mut c_void,
                                 thread_pool: *mut WrThreadPool,
                                 out_handle: &mut *mut DocumentHandle,
@@ -933,11 +935,11 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
     let opts = RendererOptions {
         enable_aa: true,
         enable_subpixel_aa: true,
+        support_low_priority_transactions,
         recorder: recorder,
         blob_image_handler: Some(Box::new(Moz2dBlobImageHandler::new(workers.clone()))),
         workers: Some(workers.clone()),
         thread_listener: Some(Box::new(GeckoProfilerThreadListener::new())),
-        enable_render_on_scroll: false,
         resource_override_path: unsafe {
             let override_charptr = gfx_wr_resource_path_override();
             if override_charptr.is_null() {
@@ -1067,6 +1069,11 @@ pub extern "C" fn wr_transaction_new(do_async: bool) -> *mut Transaction {
 #[no_mangle]
 pub extern "C" fn wr_transaction_delete(txn: *mut Transaction) {
     unsafe { let _ = Box::from_raw(txn); }
+}
+
+#[no_mangle]
+pub extern "C" fn wr_transaction_set_low_priority(txn: &mut Transaction, low_priority: bool) {
+    txn.set_low_priority(low_priority);
 }
 
 #[no_mangle]

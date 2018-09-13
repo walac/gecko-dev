@@ -65,6 +65,7 @@ public:
                                      ImageContainer* aContainer,
                                      mozilla::wr::DisplayListBuilder& aBuilder,
                                      mozilla::wr::IpcResourceUpdateQueue& aResources,
+                                     mozilla::wr::ImageRendering aRendering,
                                      const StackingContextHelper& aSc,
                                      gfx::IntSize& aSize,
                                      const Maybe<LayoutDeviceRect>& aAsyncImageBounds);
@@ -189,6 +190,7 @@ private:
 
   wr::usize mBuilderDumpIndex;
   wr::usize mDumpIndent;
+public:
   // Whether consecutive inactive display items should be grouped into one
   // blob image.
   bool mDoGrouping;

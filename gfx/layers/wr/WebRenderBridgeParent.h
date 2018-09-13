@@ -46,6 +46,7 @@ class WebRenderImageHost;
 class WebRenderBridgeParent final : public PWebRenderBridgeParent
                                   , public CompositorVsyncSchedulerOwner
                                   , public CompositableParentManager
+                                  , public layers::FrameRecorder
 {
 public:
   WebRenderBridgeParent(CompositorBridgeParentBase* aCompositorBridge,
@@ -225,7 +226,7 @@ private:
   void ReleaseTextureOfImage(const wr::ImageKey& aKey);
 
   LayersId GetLayersId() const;
-  void ProcessWebRenderParentCommands(const InfallibleTArray<WebRenderParentCommand>& aCommands,
+  bool ProcessWebRenderParentCommands(const InfallibleTArray<WebRenderParentCommand>& aCommands,
                                       wr::TransactionBuilder& aTxn);
 
   void ClearResources();

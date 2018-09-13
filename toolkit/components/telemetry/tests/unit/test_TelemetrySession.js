@@ -280,7 +280,6 @@ function checkPayload(payload, reason, successfulPings) {
   checkPayloadInfo(payload.info, reason);
 
   Assert.ok(payload.simpleMeasurements.totalTime >= 0);
-  Assert.ok(payload.simpleMeasurements.uptime >= 0);
   Assert.equal(payload.simpleMeasurements.startupInterrupted, 1);
   Assert.equal(payload.simpleMeasurements.shutdownDuration, SHUTDOWN_TIME);
   Assert.ok("maximalNumberOfConcurrentThreads" in payload.simpleMeasurements);
@@ -403,6 +402,11 @@ function checkPayload(payload, reason, successfulPings) {
 
   Assert.ok("processes" in payload, "The payload must have a processes section.");
   Assert.ok("parent" in payload.processes, "There must be at least a parent process.");
+
+  if (Services.prefs.getBoolPref("prio.enabled", false)) {
+    Assert.ok("prio" in payload, "The payload must have a prio section.");
+  }
+
   checkScalars(payload.processes);
 }
 

@@ -408,7 +408,7 @@ ScaleIntrinsicSizeForDensity(nsIContent& aContent, nsSize& aSize)
   }
 
   double density = selector->GetSelectedImageDensity();
-  MOZ_ASSERT(density > 0.0);
+  MOZ_ASSERT(density >= 0.0);
   if (density == 1.0) {
     return;
   }
@@ -1034,26 +1034,28 @@ nsImageFrame::GetContinuationOffset() const
 /* virtual */ nscoord
 nsImageFrame::GetMinISize(gfxContext *aRenderingContext)
 {
-  // XXX The caller doesn't account for constraints of the height,
-  // min-height, and max-height properties.
+  // XXX The caller doesn't account for constraints of the block-size,
+  // min-block-size, and max-block-size properties.
   DebugOnly<nscoord> result;
-  DISPLAY_MIN_WIDTH(this, result);
+  DISPLAY_MIN_INLINE_SIZE(this, result);
   EnsureIntrinsicSizeAndRatio();
-  return mIntrinsicSize.width.GetUnit() == eStyleUnit_Coord ?
-    mIntrinsicSize.width.GetCoordValue() : 0;
+  const nsStyleCoord& iSize = GetWritingMode().IsVertical() ?
+                                mIntrinsicSize.height : mIntrinsicSize.width;
+  return iSize.GetUnit() == eStyleUnit_Coord ? iSize.GetCoordValue() : 0;
 }
 
 /* virtual */ nscoord
 nsImageFrame::GetPrefISize(gfxContext *aRenderingContext)
 {
-  // XXX The caller doesn't account for constraints of the height,
-  // min-height, and max-height properties.
+  // XXX The caller doesn't account for constraints of the block-size,
+  // min-block-size, and max-block-size properties.
   DebugOnly<nscoord> result;
-  DISPLAY_PREF_WIDTH(this, result);
+  DISPLAY_PREF_INLINE_SIZE(this, result);
   EnsureIntrinsicSizeAndRatio();
+  const nsStyleCoord& iSize = GetWritingMode().IsVertical() ?
+                                mIntrinsicSize.height : mIntrinsicSize.width;
   // convert from normal twips to scaled twips (printing...)
-  return mIntrinsicSize.width.GetUnit() == eStyleUnit_Coord ?
-    mIntrinsicSize.width.GetCoordValue() : 0;
+  return iSize.GetUnit() == eStyleUnit_Coord ? iSize.GetCoordValue() : 0;
 }
 
 /* virtual */ IntrinsicSize
@@ -1382,7 +1384,8 @@ struct nsRecessedBorder : public nsStyleBorder {
   }
 };
 
-class nsDisplayAltFeedback : public nsDisplayItem {
+class nsDisplayAltFeedback final : public nsDisplayItem
+{
 public:
   nsDisplayAltFeedback(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame)
     : nsDisplayItem(aBuilder, aFrame) {}

@@ -434,8 +434,14 @@ public:
   /**
    * Returns true if aNode1 is before aNode2 in the same connected
    * tree.
+   * aNode1Index and aNode2Index are in/out arguments. If non-null, and value is
+   * not -1, that value is used instead of calling slow ComputeIndexOf on the
+   * parent node. If value is -1, the value will be set to the return value of
+   * ComputeIndexOf.
    */
-  static bool PositionIsBefore(nsINode* aNode1, nsINode* aNode2);
+  static bool PositionIsBefore(nsINode* aNode1, nsINode* aNode2,
+                               int32_t* aNode1Index = nullptr,
+                               int32_t* aNode2Index = nullptr);
 
   /**
    *  Utility routine to compare two "points", where a point is a
@@ -1156,12 +1162,6 @@ public:
   ExtractErrorValues(JSContext* aCx, JS::Handle<JS::Value> aValue,
                      nsACString& aSourceSpecOut, uint32_t *aLineOut,
                      uint32_t *aColumnOut, nsString& aMessageOut);
-
-  /**
-   * Helper function to tell if user ever enabled DevTools explicitely.
-   * Allows making DevTools related API no-op until user do so.
-   */
-  static bool DevToolsEnabled(JSContext* aCx);
 
   static nsresult CalculateBufferSizeForImage(const uint32_t& aStride,
                                             const mozilla::gfx::IntSize& aImageSize,
@@ -2260,9 +2260,9 @@ public:
   static bool IsFocusedContent(const nsIContent *aContent);
 
   /**
-   * Returns true if the DOM full-screen API is enabled.
+   * Returns true if the DOM fullscreen API is enabled.
    */
-  static bool IsFullScreenApiEnabled();
+  static bool IsFullscreenApiEnabled();
 
   /**
    * Returns true if the unprefixed fullscreen API is enabled.
@@ -2271,12 +2271,12 @@ public:
     { return sIsUnprefixedFullscreenApiEnabled; }
 
   /**
-   * Returns true if requests for full-screen are allowed in the current
+   * Returns true if requests for fullscreen are allowed in the current
    * context. Requests are only allowed if the user initiated them (like with
    * a mouse-click or key press), unless this check has been disabled by
    * setting the pref "full-screen-api.allow-trusted-requests-only" to false.
    */
-  static bool IsRequestFullScreenAllowed(mozilla::dom::CallerType aCallerType);
+  static bool IsRequestFullscreenAllowed(mozilla::dom::CallerType aCallerType);
 
   /**
    * Returns true if calling execCommand with 'cut' or 'copy' arguments
@@ -3449,9 +3449,9 @@ private:
   static bool sIsHandlingKeyBoardEvent;
   static bool sAllowXULXBL_for_file;
   static bool sDisablePopups;
-  static bool sIsFullScreenApiEnabled;
+  static bool sIsFullscreenApiEnabled;
   static bool sIsUnprefixedFullscreenApiEnabled;
-  static bool sTrustedFullScreenOnly;
+  static bool sTrustedFullscreenOnly;
   static bool sIsCutCopyAllowed;
   static uint32_t sHandlingInputTimeout;
   static bool sIsPerformanceTimingEnabled;

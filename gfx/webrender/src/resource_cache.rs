@@ -7,7 +7,7 @@ use api::{BlobImageDescriptor, BlobImageHandler, BlobImageRequest};
 use api::{ClearCache, ColorF, DevicePoint, DeviceUintPoint, DeviceUintRect, DeviceUintSize};
 use api::{FontInstanceKey, FontKey, FontTemplate, GlyphIndex};
 use api::{ExternalImageData, ExternalImageType, BlobImageResult, BlobImageParams};
-use api::{FontInstanceOptions, FontInstancePlatformOptions, FontVariation};
+use api::{FontInstanceData, FontInstanceOptions, FontInstancePlatformOptions, FontVariation};
 use api::{GlyphDimensions, IdNamespace};
 use api::{ImageData, ImageDescriptor, ImageKey, ImageRendering};
 use api::{TileOffset, TileSize, TileRange, NormalizedRect, BlobImageData};
@@ -42,6 +42,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use texture_cache::{TextureCache, TextureCacheHandle, Eviction};
 use tiling::SpecialRenderPasses;
+use util::drain_filter;
 
 const DEFAULT_TILE_SIZE: TileSize = 512;
 
@@ -350,6 +351,23 @@ impl BlobImageResources for Resources {
     fn get_font_data(&self, key: FontKey) -> &FontTemplate {
         self.font_templates.get(&key).unwrap()
     }
+    fn get_font_instance_data(&self, key: FontInstanceKey) -> Option<FontInstanceData> {
+        match self.font_instances.read().unwrap().get(&key) {
+            Some(instance) => Some(FontInstanceData {
+                font_key: instance.font_key,
+                size: instance.size,
+                options: Some(FontInstanceOptions {
+                  render_mode: instance.render_mode,
+                  flags: instance.flags,
+                  bg_color: instance.bg_color,
+                  synthetic_italics: instance.synthetic_italics,
+                }),
+                platform_options: instance.platform_options,
+                variations: instance.variations.clone(),
+            }),
+            None => None,
+        }
+    }
     fn get_image(&self, key: ImageKey) -> Option<(&ImageData, &ImageDescriptor)> {
         self.image_templates
             .get(key)
@@ -501,9 +519,8 @@ impl ResourceCache {
         updates: &mut Vec<ResourceUpdate>,
         profile_counters: &mut ResourceProfileCounters,
     ) {
-        let mut new_updates = Vec::with_capacity(updates.len());
-        for update in mem::replace(updates, Vec::new()) {
-            match update {
+        for update in updates.iter() {
+            match *update {
                 ResourceUpdate::AddImage(ref img) => {
                     if let ImageData::Blob(ref blob_data) = img.data {
                         self.add_blob_image(
@@ -524,7 +541,7 @@ impl ResourceCache {
                         );
                     }
                 }
-                ResourceUpdate::SetImageVisibleArea(key, area) => {
+                ResourceUpdate::SetImageVisibleArea(ref key, ref area) => {
                     if let Some(template) = self.blob_image_templates.get_mut(&key) {
                         if let Some(tile_size) = template.tiling {
                             template.viewport_tiles = Some(compute_tile_range(
@@ -537,8 +554,17 @@ impl ResourceCache {
                 }
                 _ => {}
             }
+        }
 
-            match update {
+        drain_filter(
+            updates,
+            |update| match *update {
+                ResourceUpdate::AddFont(_) |
+                ResourceUpdate::AddFontInstance(_) => true,
+                _ => false,
+            },
+            // Updates that were moved out of the array:
+            |update: ResourceUpdate| match update {
                 ResourceUpdate::AddFont(font) => {
                     match font {
                         AddFont::Raw(id, bytes, index) => {
@@ -550,7 +576,7 @@ impl ResourceCache {
                         }
                     }
                 }
-                ResourceUpdate::AddFontInstance(mut instance) => {
+                ResourceUpdate::AddFontInstance(instance) => {
                     self.add_font_instance(
                         instance.key,
                         instance.font_key,
@@ -560,13 +586,9 @@ impl ResourceCache {
                         instance.variations,
                     );
                 }
-                other => {
-                    new_updates.push(other);
-                }
+                _ => { unreachable!(); }
             }
-        }
-
-        *updates = new_updates;
+        );
     }
 
     pub fn set_blob_rasterizer(&mut self, rasterizer: Box<AsyncBlobImageRasterizer>) {

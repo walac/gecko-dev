@@ -17,16 +17,18 @@ JSAPITest* JSAPITest::list;
 bool JSAPITest::init()
 {
     cx = createContext();
-    if (!cx)
+    if (!cx) {
         return false;
+    }
     js::UseInternalJobQueues(cx);
-    if (!JS::InitSelfHostedCode(cx))
+    if (!JS::InitSelfHostedCode(cx)) {
         return false;
-    JS_BeginRequest(cx);
+    }
     global.init(cx);
     createGlobal();
-    if (!global)
+    if (!global) {
         return false;
+    }
     JS::EnterRealm(cx, global);
     return true;
 }
@@ -38,7 +40,6 @@ void JSAPITest::uninit()
         global = nullptr;
     }
     if (cx) {
-        JS_EndRequest(cx);
         destroyContext();
         cx = nullptr;
     }
@@ -86,15 +87,17 @@ JSObject* JSAPITest::createGlobal(JSPrincipals* principals)
 #endif
     newGlobal = JS_NewGlobalObject(cx, getGlobalClass(), principals, JS::FireOnNewGlobalHook,
                                    options);
-    if (!newGlobal)
+    if (!newGlobal) {
         return nullptr;
+    }
 
     JSAutoRealm ar(cx, newGlobal);
 
     // Populate the global object with the standard globals like Object and
     // Array.
-    if (!JS::InitRealmStandardClasses(cx))
+    if (!JS::InitRealmStandardClasses(cx)) {
         return nullptr;
+    }
 
     global = newGlobal;
     return newGlobal;
@@ -113,8 +116,9 @@ int main(int argc, char* argv[])
 
     for (JSAPITest* test = JSAPITest::list; test; test = test->next) {
         const char* name = test->name();
-        if (filter && strstr(name, filter) == nullptr)
+        if (filter && strstr(name, filter) == nullptr) {
             continue;
+        }
 
         total += 1;
 
@@ -133,8 +137,9 @@ int main(int argc, char* argv[])
             printf("%s | %s | %.*s\n",
                    (test->knownFail ? "TEST-KNOWN-FAIL" : "TEST-UNEXPECTED-FAIL"),
                    name, (int) messages.length(), messages.begin());
-            if (!test->knownFail)
+            if (!test->knownFail) {
                 failures++;
+            }
         }
         test->uninit();
     }

@@ -935,35 +935,25 @@ Inspector.prototype = {
       INSPECTOR_L10N.getStr("inspector.sidebar.computedViewTitle"),
       defaultTab == "computedview");
 
+    const animationId = "animationinspector";
     const animationTitle =
       INSPECTOR_L10N.getStr("inspector.sidebar.animationInspectorTitle");
-
-    if (Services.prefs.getBoolPref("devtools.new-animationinspector.enabled")) {
-      const animationId = "newanimationinspector";
-
-      this.sidebar.queueTab(
-        animationId,
-        animationTitle,
-        {
-          props: {
-            id: animationId,
-            title: animationTitle
-          },
-          panel: () => {
-            const AnimationInspector =
-              this.browserRequire("devtools/client/inspector/animation/animation");
-            this.animationinspector = new AnimationInspector(this, this.panelWin);
-            return this.animationinspector.provider;
-          }
+    this.sidebar.queueTab(
+      animationId,
+      animationTitle,
+      {
+        props: {
+          id: animationId,
+          title: animationTitle
         },
-        defaultTab == animationId);
-    } else {
-      this.sidebar.queueFrameTab(
-        "animationinspector",
-        animationTitle,
-        "chrome://devtools/content/inspector/animation-old/animation-inspector.xhtml",
-        defaultTab == "animationinspector");
-    }
+        panel: () => {
+          const AnimationInspector =
+            this.browserRequire("devtools/client/inspector/animation/animation");
+          this.animationinspector = new AnimationInspector(this, this.panelWin);
+          return this.animationinspector.provider;
+        }
+      },
+      defaultTab == animationId);
 
     // Inject a lazy loaded react tab by exposing a fake React object
     // with a lazy defined Tab thanks to `panel` being a function
@@ -2322,7 +2312,7 @@ Inspector.prototype = {
   },
 
   /**
-   * Initiate gcli screenshot command on selected node.
+   * Initiate screenshot command on selected node.
    */
   async screenshotNode() {
     // Bug 1332936 - it's possible to call `screenshotNode` while the BoxModel highlighter

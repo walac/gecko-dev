@@ -370,7 +370,7 @@ def get_compiler_info(compiler, language):
     # in Xcode have a completely different versioning scheme despite exposing
     # the version with the same defines.
     # So instead, we make things such that the version is missing when the
-    # clang used is below the minimum supported version (currently clang 3.6).
+    # clang used is below the minimum supported version (currently clang 3.9).
     # We then only include the version information when the C++ compiler
     # matches the feature check, so that an unsupported version of clang would
     # have no version number.
@@ -385,7 +385,7 @@ def get_compiler_info(compiler, language):
         #endif
         #elif defined(__clang__)
         %COMPILER "clang"
-        #  if !__cplusplus || __has_feature(cxx_alignof)
+        #  if !__cplusplus || __has_builtin(__builtin_bitreverse8)
         %VERSION __clang_major__.__clang_minor__.__clang_patchlevel__
         #  endif
         #elif defined(__GNUC__)
@@ -923,10 +923,10 @@ def compiler(language, host_or_target, c_compiler=None, other_compiler=None,
                     % info.version)
 
         # If you want to bump the version check here search for
-        # cxx_alignof above, and see the associated comment.
+        # builtin_bitreverse8 above, and see the associated comment.
         if info.type == 'clang' and not info.version:
             raise FatalCheckError(
-                'Only clang/llvm 3.6 or newer is supported.')
+                'Only clang/llvm 3.9 or newer is supported.')
 
         if info.type == 'msvc':
             if info.version < '19.13.26128':
@@ -1407,6 +1407,8 @@ set_config('MOZ_LTO', lto.enabled)
 set_define('MOZ_LTO', lto.enabled)
 set_config('MOZ_LTO_CFLAGS', lto.cflags)
 set_config('MOZ_LTO_LDFLAGS', lto.ldflags)
+add_old_configure_assignment('MOZ_LTO_CFLAGS', lto.cflags)
+add_old_configure_assignment('MOZ_LTO_LDFLAGS', lto.ldflags)
 
 # ASAN
 # ==============================================================
@@ -1414,8 +1416,8 @@ set_config('MOZ_LTO_LDFLAGS', lto.ldflags)
 js_option('--enable-address-sanitizer', help='Enable Address Sanitizer')
 
 
-@depends_if('--enable-address-sanitizer')
-def asan(value):
+@depends_if('--enable-address-sanitizer', '--help')
+def asan(value, _):
     return True
 
 
@@ -1477,7 +1479,6 @@ def security_hardening_cflags(hardening_flag, asan, optimize, c_compiler, target
 
 add_old_configure_assignment('MOZ_HARDENING_CFLAGS', security_hardening_cflags.flags)
 add_old_configure_assignment('MOZ_HARDENING_CFLAGS_JS', security_hardening_cflags.js_flags)
-imply_option('--enable-pie', depends_if('--enable-hardening')(lambda v: v))
 
 # Code Coverage
 # ==============================================================
@@ -1627,20 +1628,15 @@ js_option('--enable-linker', nargs=1,
 
 
 @depends('--enable-linker', c_compiler, developer_options, '--enable-gold',
-         extra_toolchain_flags, target, lto.enabled,
-         when=is_linker_option_enabled)
+         extra_toolchain_flags, target, when=is_linker_option_enabled)
 @checking('for linker', lambda x: x.KIND)
 @imports('os')
 @imports('shutil')
 def select_linker(linker, c_compiler, developer_options, enable_gold,
-                  toolchain_flags, target, lto):
+                  toolchain_flags, target):
 
     if linker:
         linker = linker[0]
-    elif lto and c_compiler.type == 'clang' and target.kernel != 'Darwin':
-        # If no linker was explicitly given, and building with clang for non-macOS,
-        # prefer lld. For macOS, we prefer ld64, or whatever the default linker is.
-        linker = 'lld'
     else:
         linker = None
 

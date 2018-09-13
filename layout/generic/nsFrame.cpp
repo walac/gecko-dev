@@ -257,7 +257,6 @@ nsIFrame::DestroyAnonymousContent(nsPresContext* aPresContext,
 
 // Formerly the nsIFrameDebug interface
 
-#ifdef DEBUG
 std::ostream& operator<<(std::ostream& aStream,
                          const nsReflowStatus& aStatus)
 {
@@ -285,16 +284,7 @@ std::ostream& operator<<(std::ostream& aStream,
   return aStream;
 }
 
-nsCString
-nsReflowStatus::ToString() const
-{
-  nsCString result;
-  std::stringstream ss;
-  ss << *this;
-  result.Append(ss.str().c_str());
-  return result;
-}
-
+#ifdef DEBUG
 static bool gShowFrameBorders = false;
 
 void nsFrame::ShowFrameBorders(bool aEnable)
@@ -815,7 +805,7 @@ nsFrame::DestroyFrom(nsIFrame* aDestructRoot, PostDestroyData& aPostDestroyData)
     // aPostDestroyData to unbind it after frame destruction is done.
     if (HasAnyStateBits(NS_FRAME_GENERATED_CONTENT) &&
         mContent->IsRootOfNativeAnonymousSubtree()) {
-      aPostDestroyData.AddGeneratedContent(mContent.forget());
+      aPostDestroyData.AddAnonymousContent(mContent.forget());
     }
   }
 
@@ -1201,6 +1191,18 @@ nsFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle)
       imageLoader->AssociateRequestToFrame(newShapeImage, this,
         ImageLoader::REQUEST_REQUIRES_REFLOW);
     }
+  }
+
+  // SVGObserverUtils::GetEffectProperties() asserts that we only invoke it with
+  // the first continuation so we need to check that in advance. Continuing text
+  // frame doesn't initialize its continuation pointer before reaching here for
+  // the first time, so we have to exclude text frames. This doesn't affect
+  // correctness because text nodes themselves shouldn't have effects applied.
+  if (!IsTextFrame() && !GetPrevContinuation()) {
+    // Kick off loading of external SVG resources referenced from properties if
+    // any. This currently includes filter, clip-path, and mask. We don't care
+    // about the return value. We only want its side effect.
+    Unused << SVGObserverUtils::GetEffectProperties(this);
   }
 
   // If the page contains markup that overrides text direction, and
@@ -5247,7 +5249,7 @@ nsFrame::MarkIntrinsicISizesDirty()
 nsFrame::GetMinISize(gfxContext *aRenderingContext)
 {
   nscoord result = 0;
-  DISPLAY_MIN_WIDTH(this, result);
+  DISPLAY_MIN_INLINE_SIZE(this, result);
   return result;
 }
 
@@ -5255,7 +5257,7 @@ nsFrame::GetMinISize(gfxContext *aRenderingContext)
 nsFrame::GetPrefISize(gfxContext *aRenderingContext)
 {
   nscoord result = 0;
-  DISPLAY_PREF_WIDTH(this, result);
+  DISPLAY_PREF_INLINE_SIZE(this, result);
   return result;
 }
 
@@ -11562,7 +11564,7 @@ DR_layout_cookie::~DR_layout_cookie()
   nsFrame::DisplayLayoutExit(mFrame, mValue);
 }
 
-DR_intrinsic_width_cookie::DR_intrinsic_width_cookie(
+DR_intrinsic_inline_size_cookie::DR_intrinsic_inline_size_cookie(
                      nsIFrame*                aFrame,
                      const char*              aType,
                      nscoord&                 aResult)
@@ -11570,13 +11572,13 @@ DR_intrinsic_width_cookie::DR_intrinsic_width_cookie(
   , mType(aType)
   , mResult(aResult)
 {
-  MOZ_COUNT_CTOR(DR_intrinsic_width_cookie);
+  MOZ_COUNT_CTOR(DR_intrinsic_inline_size_cookie);
   mValue = nsFrame::DisplayIntrinsicISizeEnter(mFrame, mType);
 }
 
-DR_intrinsic_width_cookie::~DR_intrinsic_width_cookie()
+DR_intrinsic_inline_size_cookie::~DR_intrinsic_inline_size_cookie()
 {
-  MOZ_COUNT_DTOR(DR_intrinsic_width_cookie);
+  MOZ_COUNT_DTOR(DR_intrinsic_inline_size_cookie);
   nsFrame::DisplayIntrinsicISizeExit(mFrame, mType, mResult, mValue);
 }
 
@@ -12321,11 +12323,11 @@ static void DisplayReflowEnterPrint(nsPresContext*          aPresContext,
     else
       printf("cnt=%d \n", DR_state->mCount);
     if (DR_state->mDisplayPixelErrors) {
-      int32_t p2t = aPresContext->AppUnitsPerDevPixel();
-      CheckPixelError(aReflowInput.AvailableWidth(), p2t);
-      CheckPixelError(aReflowInput.AvailableHeight(), p2t);
-      CheckPixelError(aReflowInput.ComputedWidth(), p2t);
-      CheckPixelError(aReflowInput.ComputedHeight(), p2t);
+      int32_t d2a = aPresContext->AppUnitsPerDevPixel();
+      CheckPixelError(aReflowInput.AvailableWidth(), d2a);
+      CheckPixelError(aReflowInput.AvailableHeight(), d2a);
+      CheckPixelError(aReflowInput.ComputedWidth(), d2a);
+      CheckPixelError(aReflowInput.ComputedHeight(), d2a);
     }
   }
 }
@@ -12372,7 +12374,7 @@ void* nsFrame::DisplayIntrinsicISizeEnter(nsIFrame* aFrame,
   DR_FrameTreeNode* treeNode = DR_state->CreateTreeNode(aFrame, nullptr);
   if (treeNode && treeNode->mDisplay) {
     DR_state->DisplayFrameTypeInfo(aFrame, treeNode->mIndent);
-    printf("Get%sWidth\n", aType);
+    printf("Get%sISize\n", aType);
   }
   return treeNode;
 }
@@ -12448,9 +12450,9 @@ void nsFrame::DisplayReflowExit(nsPresContext* aPresContext,
     }
     printf("\n");
     if (DR_state->mDisplayPixelErrors) {
-      int32_t p2t = aPresContext->AppUnitsPerDevPixel();
-      CheckPixelError(aMetrics.Width(), p2t);
-      CheckPixelError(aMetrics.Height(), p2t);
+      int32_t d2a = aPresContext->AppUnitsPerDevPixel();
+      CheckPixelError(aMetrics.Width(), d2a);
+      CheckPixelError(aMetrics.Height(), d2a);
     }
   }
   DR_state->DeleteTreeNode(*treeNode);
@@ -12486,9 +12488,9 @@ void nsFrame::DisplayIntrinsicISizeExit(nsIFrame*            aFrame,
   DR_FrameTreeNode* treeNode = (DR_FrameTreeNode*)aFrameTreeNode;
   if (treeNode->mDisplay) {
     DR_state->DisplayFrameTypeInfo(aFrame, treeNode->mIndent);
-    char width[16];
-    DR_state->PrettyUC(aResult, width, 16);
-    printf("Get%sWidth=%s\n", aType, width);
+    char iSize[16];
+    DR_state->PrettyUC(aResult, iSize, 16);
+    printf("Get%sISize=%s\n", aType, iSize);
   }
   DR_state->DeleteTreeNode(*treeNode);
 }

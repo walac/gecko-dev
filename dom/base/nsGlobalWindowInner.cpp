@@ -69,7 +69,7 @@
 
 // Helper Classes
 #include "nsJSUtils.h"
-#include "jsapi.h"              // for JSAutoRequest
+#include "jsapi.h"
 #include "js/Wrapper.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsReadableUtils.h"
@@ -101,6 +101,7 @@
 #include "PostMessageEvent.h"
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/TabGroup.h"
+#include "mozilla/StaticPrefs.h"
 
 // Interfaces Needed
 #include "nsIFrame.h"
@@ -535,7 +536,7 @@ NS_INTERFACE_MAP_END
 NS_IMETHODIMP
 IdleRequestExecutor::GetName(nsACString& aName)
 {
-    aName.AssignASCII("IdleRequestExecutor");
+    aName.AssignLiteral("IdleRequestExecutor");
     return NS_OK;
 }
 
@@ -3637,15 +3638,15 @@ nsGlobalWindowInner::GetNearestWidget() const
 }
 
 void
-nsGlobalWindowInner::SetFullScreen(bool aFullScreen, mozilla::ErrorResult& aError)
+nsGlobalWindowInner::SetFullScreen(bool aFullscreen, mozilla::ErrorResult& aError)
 {
-  FORWARD_TO_OUTER_OR_THROW(SetFullScreenOuter, (aFullScreen, aError), aError, /* void */);
+  FORWARD_TO_OUTER_OR_THROW(SetFullscreenOuter, (aFullscreen, aError), aError, /* void */);
 }
 
 bool
 nsGlobalWindowInner::GetFullScreen(ErrorResult& aError)
 {
-  FORWARD_TO_OUTER_OR_THROW(GetFullScreenOuter, (), aError, false);
+  FORWARD_TO_OUTER_OR_THROW(GetFullscreenOuter, (), aError, false);
 }
 
 bool
@@ -7725,7 +7726,7 @@ nsGlobalWindowInner::CreateImageBitmap(JSContext* aCx,
                                        const Sequence<ChannelPixelLayout>& aLayout,
                                        ErrorResult& aRv)
 {
-  if (!DOMPrefs::ImageBitmapExtensionsEnabled()) {
+  if (!StaticPrefs::canvas_imagebitmap_extensions_enabled()) {
     aRv.Throw(NS_ERROR_TYPE_ERR);
     return nullptr;
   }

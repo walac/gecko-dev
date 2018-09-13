@@ -263,8 +263,7 @@ const QUERYINDEX_ORIGIN_FRECENCY = 3;
 // `WITH` clause for the autofill queries.  autofill_frecency_threshold.value is
 // the mean of all moz_origins.frecency values + stddevMultiplier * one standard
 // deviation.  This is inlined directly in the SQL (as opposed to being a custom
-// Sqlite function for example) in order to be as efficient as possible.  The
-// MAX() is to make sure that places with <= 0 frecency are never autofilled.
+// Sqlite function for example) in order to be as efficient as possible.
 const SQL_AUTOFILL_WITH = `
   WITH
   frecency_stats(count, sum, squares) AS (
@@ -274,13 +273,13 @@ const SQL_AUTOFILL_WITH = `
       CAST((SELECT IFNULL(value, 0.0) FROM moz_meta WHERE key = "origin_frecency_sum_of_squares") AS REAL)
   ),
   autofill_frecency_threshold(value) AS (
-    SELECT MAX(1,
+    SELECT
       CASE count
       WHEN 0 THEN 0.0
       WHEN 1 THEN sum
       ELSE (sum / count) + (:stddevMultiplier * sqrt((squares - ((sum * sum) / count)) / count))
       END
-    ) FROM frecency_stats
+    FROM frecency_stats
   )
 `;
 
@@ -357,7 +356,8 @@ function urlQuery(conditions1, conditions2) {
                  id
           FROM moz_places
           WHERE rev_host = :revHost
-                AND frecency >= ${SQL_AUTOFILL_FRECENCY_THRESHOLD}
+                AND MAX(frecency, 0) >= ${SQL_AUTOFILL_FRECENCY_THRESHOLD}
+                AND hidden = 0
                 ${conditions1}
           UNION ALL
           SELECT :query_type,
@@ -368,7 +368,8 @@ function urlQuery(conditions1, conditions2) {
                  id
           FROM moz_places
           WHERE rev_host = :revHost || 'www.'
-                AND frecency >= ${SQL_AUTOFILL_FRECENCY_THRESHOLD}
+                AND MAX(frecency, 0) >= ${SQL_AUTOFILL_FRECENCY_THRESHOLD}
+                AND hidden = 0
                 ${conditions2}
           ORDER BY frecency DESC, id DESC
           LIMIT 1 `;
@@ -2593,35 +2594,22 @@ UnifiedComplete.prototype = {
   getDatabaseHandle() {
     if (Prefs.get("autocomplete.enabled") && !this._promiseDatabase) {
       this._promiseDatabase = (async () => {
-        let conn = await Sqlite.cloneStorageConnection({
-          connection: PlacesUtils.history.DBConnection,
-          readOnly: true,
-        });
+        let conn = await PlacesUtils.promiseLargeCacheDBConnection();
 
         try {
-           Sqlite.shutdown.addBlocker("Places UnifiedComplete.js clone closing",
-                                      async () => {
+           Sqlite.shutdown.addBlocker("Places UnifiedComplete.js closing",
+                                      () => {
                                         // Break a possible cycle through the
                                         // previous result, the controller and
                                         // ourselves.
                                         this._currentSearch = null;
                                         SwitchToTabStorage.shutdown();
-                                        await conn.close();
                                       });
         } catch (ex) {
-          // It's too late to block shutdown, just close the connection.
-          await conn.close();
+          // It's too late to block shutdown.
           throw ex;
         }
-
-        // Autocomplete often fallbacks to a table scan due to lack of text
-        // indices.  A larger cache helps reducing IO and improving performance.
-        // The value used here is larger than the default Storage value defined
-        // as MAX_CACHE_SIZE_BYTES in storage/mozStorageConnection.cpp.
-        await conn.execute("PRAGMA cache_size = -6144"); // 6MiB
-
         await SwitchToTabStorage.initDatabase(conn);
-
         return conn;
       })().catch(ex => {
         dump("Couldn't get database handle: " + ex + "\n");

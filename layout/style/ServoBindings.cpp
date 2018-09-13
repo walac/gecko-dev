@@ -1231,7 +1231,7 @@ Gecko_AppendFeatureValueHashEntry(gfxFontFeatureValueSet* aFontFeatureValues,
   static_assert(sizeof(unsigned int) == sizeof(uint32_t),
                 "sizeof unsigned int and uint32_t must be the same");
   return aFontFeatureValues->AppendFeatureValueHashEntry(
-    nsDependentAtomString(aFamily),
+    nsAtomCString(aFamily),
     nsDependentAtomString(aName),
     aAlternate
   );
@@ -1436,10 +1436,9 @@ CreateStyleImageRequest(nsStyleImageRequest::Mode aModeFlags,
 }
 
 mozilla::css::ImageValue*
-Gecko_ImageValue_Create(ServoBundledURI aURI)
+Gecko_ImageValue_Create(ServoBundledURI aURI, mozilla::CORSMode aCORSMode)
 {
-  // Bug 1434963: Change this to accept a CORS mode from the caller.
-  return aURI.IntoCssImage(mozilla::CORSMode::CORS_NONE).take();
+  return aURI.IntoCssImage(aCORSMode).take();
 }
 
 MOZ_DEFINE_MALLOC_SIZE_OF(GeckoImageValueMallocSizeOf)

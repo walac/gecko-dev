@@ -230,10 +230,10 @@ class BrowserManager(object):
             self.init_timer.cancel()
 
     def check_for_crashes(self):
-        self.browser.check_for_crashes()
+        return self.browser.check_for_crashes()
 
     def log_crash(self, test_id):
-        self.browser.log_crash(process=self.browser_pid, test=test_id)
+        return self.browser.log_crash(process=self.browser_pid, test=test_id)
 
     def is_alive(self):
         return self.browser.is_alive()
@@ -570,9 +570,8 @@ class TestRunnerManager(threading.Thread):
         expected = test.expected()
         status = status_subns.get(file_result.status, file_result.status)
 
-        if file_result.status in ("TIMEOUT", "EXTERNAL-TIMEOUT", "INTERNAL-ERROR"):
-            if self.browser.check_for_crashes():
-                status = "CRASH"
+        if self.browser.check_for_crashes():
+            status = "CRASH"
 
         self.test_count += 1
         is_unexpected = expected != status
@@ -589,6 +588,8 @@ class TestRunnerManager(threading.Thread):
                                             int(assertion_count),
                                             test.min_assertion_count,
                                             test.max_assertion_count)
+
+        file_result.extra["test_timeout"] = test.timeout * self.executor_kwargs['timeout_multiplier']
 
         self.logger.test_end(test.id,
                              status,

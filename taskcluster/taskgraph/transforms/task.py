@@ -381,6 +381,9 @@ task_description_schema = Schema({
         # os user groups for test task workers
         Optional('os-groups'): [basestring],
 
+        # feature for test task to run as administarotr
+        Optional('run-as-administrator'): bool,
+
         # optional features
         Required('chain-of-trust'): bool,
         Optional('taskcluster-proxy'): bool,
@@ -544,8 +547,8 @@ task_description_schema = Schema({
         Optional('require-mirrors'): bool,
         Optional('publish-rules'): optionally_keyed_by('project', [int]),
         Optional('rules-to-update'): optionally_keyed_by('project', [basestring]),
-        Optional('archive-domain'): optionally_keyed_by('project', basestring),
-        Optional('download-domain'): optionally_keyed_by('project', basestring),
+        Optional('archive-domain'): optionally_keyed_by('release-level', basestring),
+        Optional('download-domain'): optionally_keyed_by('release-level', basestring),
         Optional('blob-suffix'): basestring,
         Optional('complete-mar-filename-pattern'): basestring,
         Optional('complete-mar-bouncer-product-pattern'): basestring,
@@ -564,6 +567,9 @@ task_description_schema = Schema({
     }, {
         Required('implementation'): 'bouncer-aliases',
         Required('entries'): object,
+    }, {
+        Required('implementation'): 'bouncer-locations',
+        Required('bouncer-products'): [basestring],
     }, {
         Required('implementation'): 'bouncer-submission',
         Required('locales'): [basestring],
@@ -588,7 +594,7 @@ task_description_schema = Schema({
         }],
 
         # "Invalid" is a noop for try and other non-supported branches
-        Required('google-play-track'): Any('production', 'beta', 'alpha', 'rollout', 'invalid'),
+        Required('google-play-track'): Any('production', 'beta', 'alpha', 'rollout', 'internal'),
         Required('commit'): bool,
         Optional('rollout-percentage'): Any(int, None),
     }, {
@@ -1035,6 +1041,9 @@ def build_generic_worker_payload(config, task, task_def):
     if worker.get('taskcluster-proxy'):
         features['taskclusterProxy'] = True
 
+    if worker.get('run-as-administrator', False):
+        features['runAsAdministrator'] = True
+
     if features:
         task_def['payload']['features'] = features
 
@@ -1149,7 +1158,10 @@ def build_balrog_payload(config, task, task_def):
             if prop in worker:
                 resolve_keyed_by(
                     worker, prop, task['description'],
-                    **config.params
+                    **{
+                        'project': config.params['project'],
+                        'release-level': config.params.release_level(),
+                    }
                 )
         task_def['payload'] = {
             'build_number': release_config['build_number'],
@@ -1184,6 +1196,17 @@ def build_bouncer_aliases_payload(config, task, task_def):
 
     task_def['payload'] = {
         'aliases_entries': worker['entries']
+    }
+
+
+@payload_builder('bouncer-locations')
+def build_bouncer_locations_payload(config, task, task_def):
+    worker = task['worker']
+    release_config = get_release_config(config)
+
+    task_def['payload'] = {
+        'bouncer_products': worker['bouncer-products'],
+        'version': release_config['version'],
     }
 
 

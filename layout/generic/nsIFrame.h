@@ -356,10 +356,6 @@ public:
   bool FirstLetterComplete() const { return mFirstLetterComplete; }
   void SetFirstLetterComplete() { mFirstLetterComplete = true; }
 
-#ifdef DEBUG
-  nsCString ToString() const;
-#endif
-
 private:
   StyleClear mBreakType;
   InlineBreak mInlineBreak;
@@ -658,9 +654,6 @@ public:
     ~AutoPostDestroyData() {
       for (auto& content : mozilla::Reversed(mData.mAnonymousContent)) {
         nsIFrame::DestroyAnonymousContent(mPresContext, content.forget());
-      }
-      for (auto& content : mozilla::Reversed(mData.mGeneratedContent)) {
-        content->UnbindFromTree();
       }
     }
     nsPresContext* mPresContext;

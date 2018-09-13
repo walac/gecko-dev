@@ -2,17 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use api::{ExternalScrollId, LayoutPoint, LayoutRect, LayoutVector2D, LayoutVector3D};
+use api::{ExternalScrollId, LayoutPoint, LayoutRect, LayoutVector2D};
 use api::{PipelineId, ScrollClamping, ScrollNodeState, ScrollLocation};
 use api::{LayoutSize, LayoutTransform, PropertyBinding, ScrollSensitivity, WorldPoint};
-use clip::{ClipStore};
 use gpu_types::TransformPalette;
 use internal_types::{FastHashMap, FastHashSet};
 use print_tree::{PrintTree, PrintTreePrinter};
 use scene::SceneProperties;
 use smallvec::SmallVec;
 use spatial_node::{ScrollFrameInfo, SpatialNode, SpatialNodeType, StickyFrameInfo};
-use util::LayoutToWorldFastTransform;
+use util::{LayoutToWorldFastTransform, ScaleOffset};
 
 pub type ScrollStates = FastHashMap<ExternalScrollId, ScrollFrameInfo>;
 
@@ -29,7 +28,6 @@ pub struct CoordinateSystemId(pub u32);
 /// transforms.
 #[derive(Debug)]
 pub struct CoordinateSystem {
-    pub offset: LayoutVector3D,
     pub transform: LayoutTransform,
     pub parent: Option<CoordinateSystemId>,
 }
@@ -37,19 +35,18 @@ pub struct CoordinateSystem {
 impl CoordinateSystem {
     fn root() -> Self {
         CoordinateSystem {
-            offset: LayoutVector3D::zero(),
             transform: LayoutTransform::identity(),
             parent: None,
         }
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct SpatialNodeIndex(pub usize);
 
-const ROOT_REFERENCE_FRAME_INDEX: SpatialNodeIndex = SpatialNodeIndex(0);
+pub const ROOT_SPATIAL_NODE_INDEX: SpatialNodeIndex = SpatialNodeIndex(0);
 const TOPMOST_SCROLL_NODE_INDEX: SpatialNodeIndex = SpatialNodeIndex(1);
 
 impl CoordinateSystemId {
@@ -88,8 +85,8 @@ pub struct TransformUpdateState {
     /// coordinate systems which are relatively axis aligned.
     pub current_coordinate_system_id: CoordinateSystemId,
 
-    /// Offset from the coordinate system that started this compatible coordinate system.
-    pub coordinate_system_relative_offset: LayoutVector2D,
+    /// Scale and offset from the coordinate system that started this compatible coordinate system.
+    pub coordinate_system_relative_scale_offset: ScaleOffset,
 
     /// True if this node is transformed by an invertible transform.  If not, display items
     /// transformed by this node will not be displayed and display items not transformed by this
@@ -136,24 +133,17 @@ impl ClipScrollTree {
 
         nodes.reverse();
 
-        let mut transform = LayoutTransform::create_translation(
-            -parent.coordinate_system_relative_offset.x,
-            -parent.coordinate_system_relative_offset.y,
-            0.0,
-        );
+        let mut transform = parent.coordinate_system_relative_scale_offset
+                                  .inverse()
+                                  .to_transform();
 
         for node in nodes {
             let coord_system = &self.coord_systems[node.0 as usize];
-            transform = transform.pre_translate(coord_system.offset)
-                                 .pre_mul(&coord_system.transform);
+            transform = transform.pre_mul(&coord_system.transform);
         }
 
-        let transform = transform.post_translate(
-            LayoutVector3D::new(
-                child.coordinate_system_relative_offset.x,
-                child.coordinate_system_relative_offset.y,
-                0.0,
-            )
+        let transform = transform.pre_mul(
+            &child.coordinate_system_relative_scale_offset.to_transform(),
         );
 
         if inverse {
@@ -168,7 +158,7 @@ impl ClipScrollTree {
     pub fn root_reference_frame_index(&self) -> SpatialNodeIndex {
         // TODO(mrobinson): We should eventually make this impossible to misuse.
         debug_assert!(!self.spatial_nodes.is_empty());
-        ROOT_REFERENCE_FRAME_INDEX
+        ROOT_SPATIAL_NODE_INDEX
     }
 
     /// The root scroll node which is the first child of the root reference frame.
@@ -275,7 +265,7 @@ impl ClipScrollTree {
             nearest_scrolling_ancestor_offset: LayoutVector2D::zero(),
             nearest_scrolling_ancestor_viewport: LayoutRect::zero(),
             current_coordinate_system_id: CoordinateSystemId::root(),
-            coordinate_system_relative_offset: LayoutVector2D::zero(),
+            coordinate_system_relative_scale_offset: ScaleOffset::identity(),
             invertible: true,
         };
 
@@ -415,7 +405,6 @@ impl ClipScrollTree {
         &self,
         index: SpatialNodeIndex,
         pt: &mut T,
-        clip_store: &ClipStore
     ) {
         let node = &self.spatial_nodes[index.0];
         match node.node_type {
@@ -442,23 +431,23 @@ impl ClipScrollTree {
         pt.add_item(format!("coordinate_system_id: {:?}", node.coordinate_system_id));
 
         for child_index in &node.children {
-            self.print_node(*child_index, pt, clip_store);
+            self.print_node(*child_index, pt);
         }
 
         pt.end_level();
     }
 
     #[allow(dead_code)]
-    pub fn print(&self, clip_store: &ClipStore) {
+    pub fn print(&self) {
         if !self.spatial_nodes.is_empty() {
             let mut pt = PrintTree::new("clip_scroll tree");
-            self.print_with(clip_store, &mut pt);
+            self.print_with(&mut pt);
         }
     }
 
-    pub fn print_with<T: PrintTreePrinter>(&self, clip_store: &ClipStore, pt: &mut T) {
+    pub fn print_with<T: PrintTreePrinter>(&self, pt: &mut T) {
         if !self.spatial_nodes.is_empty() {
-            self.print_node(self.root_reference_frame_index(), pt, clip_store);
+            self.print_node(self.root_reference_frame_index(), pt);
         }
     }
 }
@@ -649,8 +638,8 @@ fn test_cst_scale_translation() {
     test_pt(100.0, 100.0, &cst, child2, child1, 200.0, 400.0);
     test_pt(200.0, 400.0, &cst, child1, child2, 100.0, 100.0);
 
-    test_pt(100.0, 100.0, &cst, child3, child1, 400.0, 300.0);
-    test_pt(400.0, 300.0, &cst, child1, child3, 100.0, 100.0);
+    test_pt(100.0, 100.0, &cst, child3, child1, 600.0, 0.0);
+    test_pt(400.0, 300.0, &cst, child1, child3, 0.0, 175.0);
 }
 
 #[test]

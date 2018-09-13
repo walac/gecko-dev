@@ -19,7 +19,7 @@
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
 #include "nsIChannel.h"
-#include "nsICookiePermission.h"
+#include "nsCookiePermission.h"
 #include "nsIEffectiveTLDService.h"
 #include "nsIURI.h"
 #include "nsIPrefService.h"
@@ -375,7 +375,8 @@ CookieServiceChild::GetCookieStringFromCookieHashTable(nsIURI                 *a
   int64_t currentTimeInUsec = PR_Now();
   int64_t currentTime = currentTimeInUsec / PR_USEC_PER_SEC;
 
-  nsCOMPtr<nsICookiePermission> permissionService = do_GetService(NS_COOKIEPERMISSION_CONTRACTID);
+  nsCOMPtr<nsICookiePermission> permissionService =
+    nsCookiePermission::GetOrCreate();
   CookieStatus cookieStatus =
     nsCookieService::CheckPrefs(permissionService, mCookieBehavior,
                                 mThirdPartySession,
@@ -665,17 +666,19 @@ CookieServiceChild::SetCookieStringInternal(nsIURI *aHostURI,
   URIParams hostURIParams;
   SerializeURI(aHostURI, hostURIParams);
 
-  nsCOMPtr<nsIURI> channelURI;
-  aChannel->GetURI(getter_AddRefs(channelURI));
-  URIParams channelURIParams;
-  SerializeURI(channelURI, channelURIParams);
-
+  OptionalURIParams channelURIParams;
   mozilla::OriginAttributes attrs;
   if (aChannel) {
+    nsCOMPtr<nsIURI> channelURI;
+    aChannel->GetURI(getter_AddRefs(channelURI));
+    SerializeURI(channelURI, channelURIParams);
+
     nsCOMPtr<nsILoadInfo> loadInfo = aChannel->GetLoadInfo();
     if (loadInfo) {
       attrs = loadInfo->GetOriginAttributes();
     }
+  } else {
+    SerializeURI(nullptr, channelURIParams);
   }
 
   // Asynchronously call the parent.
@@ -695,7 +698,8 @@ CookieServiceChild::SetCookieStringInternal(nsIURI *aHostURI,
   nsCookieService::
     GetBaseDomain(mTLDService, aHostURI, baseDomain, requireHostMatch);
 
-  nsCOMPtr<nsICookiePermission> permissionService = do_GetService(NS_COOKIEPERMISSION_CONTRACTID);
+  nsCOMPtr<nsICookiePermission> permissionService =
+    nsCookiePermission::GetOrCreate();
 
   CookieStatus cookieStatus =
     nsCookieService::CheckPrefs(permissionService, mCookieBehavior,

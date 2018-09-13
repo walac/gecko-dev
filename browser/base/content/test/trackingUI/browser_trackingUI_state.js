@@ -20,6 +20,7 @@ const TP_PREF = "privacy.trackingprotection.enabled";
 const TP_PB_PREF = "privacy.trackingprotection.pbmode.enabled";
 const FB_PREF = "browser.fastblock.enabled";
 const FB_TIMEOUT_PREF = "browser.fastblock.timeout";
+const FB_LIMIT_PREF = "browser.fastblock.limit";
 const TPC_PREF = "network.cookie.cookieBehavior";
 const BENIGN_PAGE = "http://tracking.example.org/browser/browser/base/content/test/trackingUI/benignPage.html";
 const TRACKING_PAGE = "http://tracking.example.org/browser/browser/base/content/test/trackingUI/trackingPage.html";
@@ -40,6 +41,7 @@ registerCleanupFunction(function() {
   Services.prefs.clearUserPref(CB_PREF);
   Services.prefs.clearUserPref(FB_PREF);
   Services.prefs.clearUserPref(FB_TIMEOUT_PREF);
+  Services.prefs.clearUserPref(FB_LIMIT_PREF);
   Services.prefs.clearUserPref(TPC_PREF);
 });
 
@@ -141,21 +143,24 @@ function testTrackingPage(window) {
 
   ok(hidden("#tracking-action-block"), "blockButton is hidden");
 
-  let cbEnabled = Services.prefs.getBoolPref(CB_PREF);
-  if (PrivateBrowsingUtils.isWindowPrivate(window)) {
+  let isWindowPrivate = PrivateBrowsingUtils.isWindowPrivate(window);
+  let cbUIEnabled = Services.prefs.getBoolPref(CB_UI_PREF);
+  let tpEnabled = isWindowPrivate ? Services.prefs.getBoolPref(TP_PB_PREF) : Services.prefs.getBoolPref(TP_PREF);
+  let blockingEnabled = cbUIEnabled ? Services.prefs.getBoolPref(CB_PREF) : tpEnabled;
+  if (isWindowPrivate) {
     ok(hidden("#tracking-action-unblock"), "unblockButton is hidden");
-    is(hidden("#tracking-action-unblock-private"), !cbEnabled,
-       "unblockButtonPrivate is" + (cbEnabled ? "" : " not") + " visible");
+    is(!hidden("#tracking-action-unblock-private"), blockingEnabled,
+       "unblockButtonPrivate is" + (blockingEnabled ? "" : " not") + " visible");
   } else {
-    ok(!hidden("#tracking-action-unblock"), "unblockButton is visible");
-    is(hidden("#tracking-action-unblock-private"), cbEnabled,
-       "unblockButtonPrivate is" + (cbEnabled ? "" : " not") + " hidden");
+    ok(hidden("#tracking-action-unblock-private"), "unblockButtonPrivate is hidden");
+    is(!hidden("#tracking-action-unblock"), blockingEnabled,
+       "unblockButton is" + (blockingEnabled ? "" : " not") + " hidden");
   }
 
   ok(hidden("#identity-popup-content-blocking-not-detected"), "blocking not detected label is hidden");
   ok(!hidden("#identity-popup-content-blocking-detected"), "blocking detected label is visible");
 
-  if (Services.prefs.getBoolPref(CB_UI_PREF)) {
+  if (cbUIEnabled) {
     ok(!hidden("#identity-popup-content-blocking-category-list"), "category list is visible");
     let category;
     if (Services.prefs.getBoolPref(FB_PREF)) {
@@ -172,22 +177,25 @@ function testTrackingPage(window) {
   }
 }
 
-function testTrackingPageUnblocked(blockedByTP) {
+function testTrackingPageUnblocked(blockedByTP, window) {
   info("Tracking content must be white-listed and not blocked");
   ok(ContentBlocking.content.hasAttribute("detected"), "trackers are detected");
   ok(ContentBlocking.content.hasAttribute("hasException"), "content shows exception");
 
-  let cbEnabled = Services.prefs.getBoolPref(CB_PREF);
+  let isWindowPrivate = PrivateBrowsingUtils.isWindowPrivate(window);
+  let cbUIEnabled = Services.prefs.getBoolPref(CB_UI_PREF);
+  let tpEnabled = isWindowPrivate ? Services.prefs.getBoolPref(TP_PB_PREF) : Services.prefs.getBoolPref(TP_PREF);
+  let blockingEnabled = cbUIEnabled ? Services.prefs.getBoolPref(CB_PREF) : tpEnabled;
   ok(!ContentBlocking.iconBox.hasAttribute("active"), "shield is active");
-  is(ContentBlocking.iconBox.hasAttribute("hasException"), cbEnabled,
-     "shield" + (cbEnabled ? " shows" : " doesn't show") + " exception");
+  is(ContentBlocking.iconBox.hasAttribute("hasException"), blockingEnabled,
+     "shield" + (blockingEnabled ? " shows" : " doesn't show") + " exception");
   is(ContentBlocking.iconBox.getAttribute("tooltiptext"),
      gNavigatorBundle.getString("trackingProtection.icon.disabledTooltip"), "correct tooltip");
 
-  is(BrowserTestUtils.is_visible(ContentBlocking.iconBox), cbEnabled,
-     "icon box is" + (cbEnabled ? "" : " not") + " visible");
-  is(hidden("#tracking-action-block"), !cbEnabled,
-     "blockButton is" + (cbEnabled ? " not" : "") + " visible");
+  is(BrowserTestUtils.is_visible(ContentBlocking.iconBox), blockingEnabled,
+     "icon box is" + (blockingEnabled ? "" : " not") + " visible");
+  is(hidden("#tracking-action-block"), !blockingEnabled,
+     "blockButton is" + (blockingEnabled ? " not" : "") + " visible");
   ok(hidden("#tracking-action-unblock"), "unblockButton is hidden");
   ok(!hidden("#identity-popup-content-blocking-disabled-label"), "disabled label is visible");
 
@@ -272,7 +280,7 @@ async function testContentBlockingEnabled(tab) {
   clickButton("#tracking-action-unblock");
   await tabReloadPromise;
   let blockedByTP = areTrackersBlocked(isPrivateBrowsing);
-  testTrackingPageUnblocked(blockedByTP);
+  testTrackingPageUnblocked(blockedByTP, tab.ownerGlobal);
 
   info("Re-enable TP for the page (which reloads the page)");
   tabReloadPromise = promiseTabLoadEvent(tab);
@@ -383,7 +391,7 @@ add_task(async function testPrivateBrowsing() {
     Services.prefs.setBoolPref(CB_PREF, false);
     ok(!ContentBlocking.enabled, "CB is disabled after setting the pref");
   } else {
-    Services.prefs.setBoolPref(TP_PREF, false);
+    Services.prefs.setBoolPref(TP_PB_PREF, false);
     ok(!TrackingProtection.enabled, "TP is disabled after setting the pref");
   }
 
@@ -443,6 +451,7 @@ add_task(async function testFastBlock() {
 
   Services.prefs.setBoolPref(FB_PREF, true);
   Services.prefs.setIntPref(FB_TIMEOUT_PREF, 0);
+  Services.prefs.setIntPref(FB_LIMIT_PREF, 0);
   ok(FastBlock.enabled, "FB is enabled after setting the pref");
   Services.prefs.setBoolPref(CB_PREF, true);
   ok(ContentBlocking.enabled, "CB is enabled after setting the pref");
@@ -457,6 +466,7 @@ add_task(async function testFastBlock() {
 
   Services.prefs.clearUserPref(FB_PREF);
   Services.prefs.clearUserPref(FB_TIMEOUT_PREF);
+  Services.prefs.clearUserPref(FB_LIMIT_PREF);
   gBrowser.removeCurrentTab();
 });
 

@@ -481,6 +481,15 @@ ProxyMessenger = {
       return {messageManager: browser.messageManager, xulBrowser: browser};
     }
 
+    // port.postMessage / port.disconnect to non-tab contexts.
+    if (recipient.envType === "content_child") {
+      let childId = `${recipient.extensionId}.${recipient.contextId}`;
+      let context = ParentAPIManager.proxyContexts.get(childId);
+      if (context) {
+        return {messageManager: context.parentMessageManager, xulBrowser: context.xulBrowser};
+      }
+    }
+
     // runtime.sendMessage / runtime.connect
     let extension = GlobalManager.extensionMap.get(recipient.extensionId);
     if (extension) {
@@ -890,12 +899,13 @@ ParentAPIManager = {
     if (!this._timingEnabled) {
       return callable();
     }
-    let webExtId = data.childId.split(".")[0];
-    let start = Cu.now();
+    let childId = data.childId;
+    let webExtId = childId.slice(0, childId.lastIndexOf("."));
+    let start = Cu.now() * 1000;
     try {
       return callable();
     } finally {
-      let end = Cu.now();
+      let end = Cu.now() * 1000;
       this.storeExecutionTime(webExtId, data.path, end - start);
     }
   },

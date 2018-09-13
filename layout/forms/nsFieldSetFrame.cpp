@@ -79,7 +79,8 @@ nsFieldSetFrame::GetLegend() const
   return mFrames.FirstChild();
 }
 
-class nsDisplayFieldSetBorder : public nsDisplayItem {
+class nsDisplayFieldSetBorder final : public nsDisplayItem
+{
 public:
   nsDisplayFieldSetBorder(nsDisplayListBuilder* aBuilder,
                           nsFieldSetFrame* aFrame)
@@ -349,7 +350,7 @@ nscoord
 nsFieldSetFrame::GetMinISize(gfxContext* aRenderingContext)
 {
   nscoord result = 0;
-  DISPLAY_MIN_WIDTH(this, result);
+  DISPLAY_MIN_INLINE_SIZE(this, result);
 
   result = GetIntrinsicISize(aRenderingContext, nsLayoutUtils::MIN_ISIZE);
   return result;
@@ -359,7 +360,7 @@ nscoord
 nsFieldSetFrame::GetPrefISize(gfxContext* aRenderingContext)
 {
   nscoord result = 0;
-  DISPLAY_PREF_WIDTH(this, result);
+  DISPLAY_PREF_INLINE_SIZE(this, result);
 
   result = GetIntrinsicISize(aRenderingContext, nsLayoutUtils::PREF_ISIZE);
   return result;
@@ -407,7 +408,7 @@ nsFieldSetFrame::Reflow(nsPresContext*           aPresContext,
   WritingMode innerWM = inner ? inner->GetWritingMode() : wm;
   WritingMode legendWM = legend ? legend->GetWritingMode() : wm;
   LogicalSize innerAvailSize = aReflowInput.ComputedSizeWithPadding(innerWM);
-  LogicalSize legendAvailSize = aReflowInput.ComputedSizeWithPadding(legendWM);
+  LogicalSize legendAvailSize = aReflowInput.ComputedSize(legendWM);
   innerAvailSize.BSize(innerWM) = legendAvailSize.BSize(legendWM) =
     NS_UNCONSTRAINEDSIZE;
 

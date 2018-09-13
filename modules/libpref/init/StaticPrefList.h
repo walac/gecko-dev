@@ -202,6 +202,179 @@ VARCACHE_PREF(
   uint32_t, 5000
 )
 
+// Disable the ImageBitmap-extensions for now.
+VARCACHE_PREF(
+  "canvas.imagebitmap_extensions.enabled",
+   canvas_imagebitmap_extensions_enabled,
+  RelaxedAtomicBool, false
+)
+
+// SW Cache API
+VARCACHE_PREF(
+  "dom.caches.enabled",
+   dom_caches_enabled,
+  RelaxedAtomicBool, true
+)
+
+VARCACHE_PREF(
+  "dom.caches.testing.enabled",
+   dom_caches_testing_enabled,
+  RelaxedAtomicBool, false
+)
+
+// Enable printing performance marks/measures to log
+VARCACHE_PREF(
+  "dom.performance.enable_user_timing_logging",
+   dom_performance_enable_user_timing_logging,
+  RelaxedAtomicBool, false
+)
+
+VARCACHE_PREF(
+  "dom.webnotifications.enabled",
+   dom_webnotifications_enabled,
+  RelaxedAtomicBool, true
+)
+
+VARCACHE_PREF(
+  "dom.webnotifications.serviceworker.enabled",
+   dom_webnotifications_serviceworker_enabled,
+  RelaxedAtomicBool, true
+)
+
+#ifdef NIGHTLY_BUILD
+# define PREF_VALUE  true
+#else
+# define PREF_VALUE  false
+#endif
+VARCACHE_PREF(
+  "dom.webnotifications.requireinteraction.enabled",
+   dom_webnotifications_requireinteraction_enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+VARCACHE_PREF(
+  "dom.serviceWorkers.enabled",
+   dom_serviceWorkers_enabled,
+  RelaxedAtomicBool, false
+)
+
+VARCACHE_PREF(
+  "dom.serviceWorkers.testing.enabled",
+   dom_serviceWorkers_testing_enabled,
+  RelaxedAtomicBool, false
+)
+
+// Enable Storage API for all platforms except Android.
+#if !defined(MOZ_WIDGET_ANDROID)
+# define PREF_VALUE true
+#else
+# define PREF_VALUE false
+#endif
+VARCACHE_PREF(
+  "dom.storageManager.enabled",
+   dom_storageManager_enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+// WHATWG promise rejection events. See
+// https://html.spec.whatwg.org/multipage/webappapis.html#promiserejectionevent
+// TODO: Enable the event interface once actually firing it (bug 1362272).
+VARCACHE_PREF(
+  "dom.promise_rejection_events.enabled",
+   dom_promise_rejection_events_enabled,
+  RelaxedAtomicBool, false
+)
+
+// Push
+VARCACHE_PREF(
+  "dom.push.enabled",
+   dom_push_enabled,
+  RelaxedAtomicBool, false
+)
+
+// Streams API
+VARCACHE_PREF(
+  "dom.streams.enabled",
+   dom_streams_enabled,
+  RelaxedAtomicBool, false
+)
+
+#if !defined(MOZ_WIDGET_ANDROID)
+# define PREF_VALUE true
+#else
+# define PREF_VALUE false
+#endif
+VARCACHE_PREF(
+  "dom.webkitBlink.dirPicker.enabled",
+   dom_webkitBlink_dirPicker_enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+// Network Information API
+#if defined(MOZ_WIDGET_ANDROID)
+# define PREF_VALUE true
+#else
+# define PREF_VALUE false
+#endif
+VARCACHE_PREF(
+  "dom.netinfo.enabled",
+   dom_netinfo_enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+VARCACHE_PREF(
+  "dom.fetchObserver.enabled",
+   dom_fetchObserver_enabled,
+  RelaxedAtomicBool, false
+)
+
+// Enable Performance Observer API
+VARCACHE_PREF(
+  "dom.enable_performance_observer",
+   dom_enable_performance_observer,
+  RelaxedAtomicBool, true
+)
+
+// Enable passing the "storage" option to indexedDB.open.
+VARCACHE_PREF(
+  "dom.indexedDB.storageOption.enabled",
+   dom_indexedDB_storageOption_enabled,
+  RelaxedAtomicBool, false
+)
+
+#ifdef JS_BUILD_BINAST
+VARCACHE_PREF(
+  "dom.script_loader.binast_encoding.enabled",
+   dom_script_loader_binast_encoding_enabled,
+  RelaxedAtomicBool, false
+)
+#endif
+
+// IMPORTANT: Keep this in condition in sync with all.js. The value
+// of MOZILLA_OFFICIAL is different between full and artifact builds, so without
+// it being specified there, dump is disabled in artifact builds (see Bug 1490412).
+#ifdef MOZILLA_OFFICIAL
+# define PREF_VALUE false
+#else
+# define PREF_VALUE true
+#endif
+VARCACHE_PREF(
+  "browser.dom.window.dump.enabled",
+   browser_dom_window_dump_enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+VARCACHE_PREF(
+  "dom.worker.canceling.timeoutMilliseconds",
+   dom_worker_canceling_timeoutMilliseconds,
+  RelaxedAtomicUint32, 30000 /* 30 seconds */
+)
+
 //---------------------------------------------------------------------------
 // Clear-Site-Data prefs
 //---------------------------------------------------------------------------
@@ -236,6 +409,12 @@ VARCACHE_PREF(
   "gfx.font_rendering.opentype_svg.enabled",
    gfx_font_rendering_opentype_svg_enabled,
   bool, true
+)
+
+VARCACHE_PREF(
+  "gfx.offscreencanvas.enabled",
+   gfx_offscreencanvas_enabled,
+  RelaxedAtomicBool, false
 )
 
 //---------------------------------------------------------------------------
@@ -474,6 +653,13 @@ VARCACHE_PREF(
 VARCACHE_PREF(
   "layout.css.unknown-webkit-pseudo-element",
    layout_css_unknown_webkit_pseudo_element,
+  bool, true
+)
+
+// Is path() supported in clip-path?
+VARCACHE_PREF(
+  "layout.css.clip-path-path.enabled",
+   layout_css_clip_path_path_enabled,
   bool, false
 )
 
@@ -1299,6 +1485,19 @@ VARCACHE_PREF(
   uint32_t, 2592000 // 30 days (in seconds)
 )
 
+// Anti-fingerprinting, disabled by default
+VARCACHE_PREF(
+  "privacy.resistFingerprinting",
+   privacy_resistFingerprinting,
+  RelaxedAtomicBool, false
+)
+
+VARCACHE_PREF(
+  "privacy.resistFingerprinting.autoDeclineNoUserInputCanvasPrompts",
+   privacy_resistFingerprinting_autoDeclineNoUserInputCanvasPrompts,
+  RelaxedAtomicBool, false
+)
+
 //---------------------------------------------------------------------------
 // Security prefs
 //---------------------------------------------------------------------------
@@ -1322,12 +1521,6 @@ VARCACHE_PREF(
 )
 
 VARCACHE_PREF(
-  "security.csp.enable_violation_events",
-   security_csp_enable_violation_events,
-  bool, true
-)
-
-VARCACHE_PREF(
   "security.csp.reporting.script-sample.max-length",
    security_csp_reporting_script_sample_max_length,
   int32_t, 40
@@ -1341,6 +1534,16 @@ VARCACHE_PREF(
   "view_source.editor.external",
    view_source_editor_external,
   bool, false
+)
+
+//---------------------------------------------------------------------------
+// DevTools prefs
+//---------------------------------------------------------------------------
+
+VARCACHE_PREF(
+  "devtools.enabled",
+   devtools_enabled,
+  RelaxedAtomicBool, false
 )
 
 //---------------------------------------------------------------------------

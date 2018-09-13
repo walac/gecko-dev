@@ -428,7 +428,7 @@ pref("browser.link.open_newwindow.disabled_in_fullscreen", false);
 #endif
 
 // Tabbed browser
-#if defined(NIGHTLY_BUILD)
+#ifdef EARLY_BETA_OR_EARLIER
 pref("browser.tabs.multiselect", true);
 #else
 pref("browser.tabs.multiselect", false);
@@ -690,9 +690,6 @@ pref("plugins.testmode", false);
 
 // Should plugins that are hidden show the infobar UI?
 pref("plugins.show_infobar", false);
-
-// Should dismissing the hidden plugin infobar suppress it permanently?
-pref("plugins.remember_infobar_dismissal", true);
 
 pref("plugin.default.state", 1);
 
@@ -1415,7 +1412,7 @@ pref("identity.fxaccounts.migrateToDevEdition", false);
 #endif
 
 // If activated, send tab will use the new FxA commands backend.
-pref("identity.fxaccounts.commands.enabled", false);
+pref("identity.fxaccounts.commands.enabled", true);
 
 // On GTK, we now default to showing the menubar only when alt is pressed:
 #ifdef MOZ_WIDGET_GTK
@@ -1762,9 +1759,19 @@ pref("app.shield.optoutstudies.enabled", false);
 pref("intl.multilingual.enabled", false);
 
 // Prio preferences
+// Only enable by default on Nightly.
+// On platforms that do not build libprio, do not set these prefs at all, which gives us a way to detect support.
+
 // Curve25519 public keys for Prio servers
+#ifdef MOZ_LIBPRIO
 pref("prio.publicKeyA", "35AC1C7576C7C6EDD7FED6BCFC337B34D48CB4EE45C86BEEFB40BD8875707733");
 pref("prio.publicKeyB", "26E6674E65425B823F1F1D5F96E3BB3EF9E406EC7FBA7DEF8B08A35DD135AF50");
+#endif
+
+// Whether or not Prio-encoded Telemetry will be sent along with the main ping.
+#if defined(NIGHTLY_BUILD) && defined(MOZ_LIBPRIO)
+pref("prio.enabled", true);
+#endif
 
 #ifdef NIGHTLY_BUILD
 pref("browser.fastblock.enabled", true);

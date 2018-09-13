@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* Generated with cbindgen:0.6.2 */
+/* Generated with cbindgen:0.6.3 */
 
 /* DO NOT MODIFY THIS MANUALLY! This file was generated using cbindgen.
  * To generate this file:
@@ -237,12 +237,7 @@ struct Renderer;
 // Offset in number of tiles.
 struct Tiles;
 
-// A Transaction is a group of commands to apply atomically to a document.
-//
-// This mechanism ensures that:
-// - no other message can be interleaved between two commands that need to be applied together.
-// - no redundant work is performed if two commands in the same transaction cause the scene or
-// the frame to be rebuilt.
+// Represents the work associated to a transaction before scene building.
 struct Transaction;
 
 // The default unit.
@@ -277,6 +272,18 @@ struct IdNamespace {
   }
 };
 
+struct FontInstanceKey {
+  IdNamespace mNamespace;
+  uint32_t mHandle;
+
+  bool operator==(const FontInstanceKey& aOther) const {
+    return mNamespace == aOther.mNamespace &&
+           mHandle == aOther.mHandle;
+  }
+};
+
+using WrFontInstanceKey = FontInstanceKey;
+
 struct FontKey {
   IdNamespace mNamespace;
   uint32_t mHandle;
@@ -288,6 +295,92 @@ struct FontKey {
 };
 
 using WrFontKey = FontKey;
+
+// Represents RGBA screen colors with one byte per channel.
+//
+// If the alpha value `a` is 255 the color is opaque.
+struct ColorU {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+  uint8_t a;
+
+  bool operator==(const ColorU& aOther) const {
+    return r == aOther.r &&
+           g == aOther.g &&
+           b == aOther.b &&
+           a == aOther.a;
+  }
+};
+
+struct SyntheticItalics {
+  int16_t angle;
+
+  bool operator==(const SyntheticItalics& aOther) const {
+    return angle == aOther.angle;
+  }
+};
+
+struct FontInstanceOptions {
+  FontRenderMode render_mode;
+  FontInstanceFlags flags;
+  // When bg_color.a is != 0 and render_mode is FontRenderMode::Subpixel,
+  // the text will be rendered with bg_color.r/g/b as an opaque estimated
+  // background color.
+  ColorU bg_color;
+  SyntheticItalics synthetic_italics;
+
+  bool operator==(const FontInstanceOptions& aOther) const {
+    return render_mode == aOther.render_mode &&
+           flags == aOther.flags &&
+           bg_color == aOther.bg_color &&
+           synthetic_italics == aOther.synthetic_italics;
+  }
+};
+
+#if defined(XP_WIN)
+struct FontInstancePlatformOptions {
+  uint16_t gamma;
+  uint16_t contrast;
+
+  bool operator==(const FontInstancePlatformOptions& aOther) const {
+    return gamma == aOther.gamma &&
+           contrast == aOther.contrast;
+  }
+};
+#endif
+
+#if defined(XP_MACOSX)
+struct FontInstancePlatformOptions {
+  uint32_t unused;
+
+  bool operator==(const FontInstancePlatformOptions& aOther) const {
+    return unused == aOther.unused;
+  }
+};
+#endif
+
+#if !(defined(XP_MACOSX) || defined(XP_WIN))
+struct FontInstancePlatformOptions {
+  FontLCDFilter lcd_filter;
+  FontHinting hinting;
+
+  bool operator==(const FontInstancePlatformOptions& aOther) const {
+    return lcd_filter == aOther.lcd_filter &&
+           hinting == aOther.hinting;
+  }
+};
+#endif
+
+struct FontVariation {
+  uint32_t tag;
+  float value;
+
+  bool operator==(const FontVariation& aOther) const {
+    return tag == aOther.tag &&
+           value == aOther.value;
+  }
+};
 
 using VecU8 = Vec<uint8_t>;
 
@@ -756,18 +849,6 @@ union GlyphRasterSpace {
   }
 };
 
-struct FontInstanceKey {
-  IdNamespace mNamespace;
-  uint32_t mHandle;
-
-  bool operator==(const FontInstanceKey& aOther) const {
-    return mNamespace == aOther.mNamespace &&
-           mHandle == aOther.mHandle;
-  }
-};
-
-using WrFontInstanceKey = FontInstanceKey;
-
 using GlyphIndex = uint32_t;
 
 struct GlyphInstance {
@@ -854,7 +935,7 @@ struct WrExternalImageId {
   }
 };
 
-using LockExternalImageCallback = WrExternalImage(*)(void*, WrExternalImageId, uint8_t);
+using LockExternalImageCallback = WrExternalImage(*)(void*, WrExternalImageId, uint8_t, ImageRendering);
 
 using UnlockExternalImageCallback = void(*)(void*, WrExternalImageId, uint8_t);
 
@@ -886,82 +967,6 @@ struct WrImageDescriptor {
   }
 };
 
-// Represents RGBA screen colors with one byte per channel.
-//
-// If the alpha value `a` is 255 the color is opaque.
-struct ColorU {
-  uint8_t r;
-  uint8_t g;
-  uint8_t b;
-  uint8_t a;
-
-  bool operator==(const ColorU& aOther) const {
-    return r == aOther.r &&
-           g == aOther.g &&
-           b == aOther.b &&
-           a == aOther.a;
-  }
-};
-
-struct SyntheticItalics {
-  int16_t angle;
-
-  bool operator==(const SyntheticItalics& aOther) const {
-    return angle == aOther.angle;
-  }
-};
-
-struct FontInstanceOptions {
-  FontRenderMode render_mode;
-  FontInstanceFlags flags;
-  // When bg_color.a is != 0 and render_mode is FontRenderMode::Subpixel,
-  // the text will be rendered with bg_color.r/g/b as an opaque estimated
-  // background color.
-  ColorU bg_color;
-  SyntheticItalics synthetic_italics;
-
-  bool operator==(const FontInstanceOptions& aOther) const {
-    return render_mode == aOther.render_mode &&
-           flags == aOther.flags &&
-           bg_color == aOther.bg_color &&
-           synthetic_italics == aOther.synthetic_italics;
-  }
-};
-
-#if defined(XP_WIN)
-struct FontInstancePlatformOptions {
-  uint16_t gamma;
-  uint16_t contrast;
-
-  bool operator==(const FontInstancePlatformOptions& aOther) const {
-    return gamma == aOther.gamma &&
-           contrast == aOther.contrast;
-  }
-};
-#endif
-
-#if defined(XP_MACOSX)
-struct FontInstancePlatformOptions {
-  uint32_t unused;
-
-  bool operator==(const FontInstancePlatformOptions& aOther) const {
-    return unused == aOther.unused;
-  }
-};
-#endif
-
-#if !(defined(XP_MACOSX) || defined(XP_WIN))
-struct FontInstancePlatformOptions {
-  FontLCDFilter lcd_filter;
-  FontHinting hinting;
-
-  bool operator==(const FontInstancePlatformOptions& aOther) const {
-    return lcd_filter == aOther.lcd_filter &&
-           hinting == aOther.hinting;
-  }
-};
-#endif
-
 using NormalizedRect = TypedRect<float, NormalizedCoordinates>;
 
 struct WrTransformProperty {
@@ -981,6 +986,14 @@ struct WrOpacityProperty {
 
 extern "C" {
 
+extern void AddBlobFont(WrFontInstanceKey aInstanceKey,
+                        WrFontKey aFontKey,
+                        float aSize,
+                        const FontInstanceOptions *aOptions,
+                        const FontInstancePlatformOptions *aPlatformOptions,
+                        const FontVariation *aVariations,
+                        uintptr_t aNumVariations);
+
 extern void AddFontData(WrFontKey aKey,
                         const uint8_t *aData,
                         uintptr_t aSize,
@@ -992,6 +1005,8 @@ extern void AddNativeFontHandle(WrFontKey aKey,
                                 uint32_t aIndex);
 
 extern void ClearBlobImageResources(WrIdNamespace aNamespace);
+
+extern void DeleteBlobFont(WrFontInstanceKey aKey);
 
 extern void DeleteFontData(WrFontKey aKey);
 
@@ -1713,6 +1728,11 @@ void wr_transaction_set_display_list(Transaction *aTxn,
 WR_FUNC;
 
 WR_INLINE
+void wr_transaction_set_low_priority(Transaction *aTxn,
+                                     bool aLowPriority)
+WR_FUNC;
+
+WR_INLINE
 void wr_transaction_set_root_pipeline(Transaction *aTxn,
                                       WrPipelineId aPipelineId)
 WR_FUNC;
@@ -1754,6 +1774,7 @@ WR_INLINE
 bool wr_window_new(WrWindowId aWindowId,
                    uint32_t aWindowWidth,
                    uint32_t aWindowHeight,
+                   bool aSupportLowPriorityTransactions,
                    void *aGlContext,
                    WrThreadPool *aThreadPool,
                    DocumentHandle **aOutHandle,

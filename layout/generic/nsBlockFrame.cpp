@@ -16,6 +16,7 @@
 #include "mozilla/ComputedStyle.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/ToString.h"
 #include "mozilla/UniquePtr.h"
 
 #include "nsCOMPtr.h"
@@ -752,7 +753,7 @@ nsBlockFrame::GetMinISize(gfxContext *aRenderingContext)
   if (firstInFlow != this)
     return firstInFlow->GetMinISize(aRenderingContext);
 
-  DISPLAY_MIN_WIDTH(this, mMinWidth);
+  DISPLAY_MIN_INLINE_SIZE(this, mMinWidth);
 
   CheckIntrinsicCacheAgainstShrinkWrapState();
 
@@ -845,7 +846,7 @@ nsBlockFrame::GetPrefISize(gfxContext *aRenderingContext)
   if (firstInFlow != this)
     return firstInFlow->GetPrefISize(aRenderingContext);
 
-  DISPLAY_PREF_WIDTH(this, mPrefWidth);
+  DISPLAY_PREF_INLINE_SIZE(this, mPrefWidth);
 
   CheckIntrinsicCacheAgainstShrinkWrapState();
 
@@ -4274,7 +4275,7 @@ nsBlockFrame::ReflowInlineFrame(BlockReflowInput& aState,
 
 #ifdef REALLY_NOISY_REFLOW
   nsFrame::ListTag(stdout, aFrame);
-  printf(": status=%s\n", frameReflowStatus.ToString().get());
+  printf(": status=%s\n", ToString(frameReflowStatus).c_str());
 #endif
 
 #if defined(REFLOW_STATUS_COVERAGE)
@@ -6812,8 +6813,7 @@ nsBlockFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   aBuilder->MarkFramesForDisplayList(this, mFloats);
 
   // Prepare for text-overflow processing.
-  UniquePtr<TextOverflow> textOverflow =
-    TextOverflow::WillProcessLines(aBuilder, this);
+  Maybe<TextOverflow> textOverflow = TextOverflow::WillProcessLines(aBuilder, this);
 
   // We'll collect our lines' display items here, & then append this to aLists.
   nsDisplayListCollection linesDisplayListCollection(aBuilder);
@@ -6828,7 +6828,7 @@ nsBlockFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   // Also skip the cursor if we're creating text overflow markers,
   // since we need to know what line number we're up to in order
   // to generate unique display item keys.
-  nsLineBox* cursor = (aBuilder->ShouldDescendIntoFrame(this, true) || textOverflow) ?
+  nsLineBox* cursor = (aBuilder->ShouldDescendIntoFrame(this, true) || textOverflow.isSome()) ?
     nullptr : GetFirstLineContaining(aBuilder->GetDirtyRect().y);
   LineIterator line_end = LinesEnd();
 
@@ -6843,7 +6843,7 @@ nsBlockFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
         if (lineArea.y >= aBuilder->GetDirtyRect().YMost()) {
           break;
         }
-        MOZ_ASSERT(!textOverflow);
+        MOZ_ASSERT(textOverflow.isNothing());
         DisplayLine(aBuilder, lineArea, line, depth, drawnLines,
                     linesDisplayListCollection, this, nullptr, 0);
       }
@@ -6858,7 +6858,7 @@ nsBlockFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
          ++line) {
       nsRect lineArea = line->GetVisualOverflowArea();
       DisplayLine(aBuilder, lineArea, line, depth, drawnLines,
-                  linesDisplayListCollection, this, textOverflow.get(), lineCount);
+                  linesDisplayListCollection, this, textOverflow.ptrOr(nullptr), lineCount);
       if (!lineArea.IsEmpty()) {
         if (lineArea.y < lastY
             || lineArea.YMost() < lastYMost) {
@@ -6879,7 +6879,7 @@ nsBlockFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   // PositionedDescendants just before we append the lines' display items,
   // so that our text-overflow markers will appear on top of this block's
   // normal content but below any of its its' positioned children.
-  if (textOverflow) {
+  if (textOverflow.isSome()) {
     aLists.PositionedDescendants()->AppendToTop(&textOverflow->GetMarkers());
   }
   linesDisplayListCollection.MoveTo(aLists);

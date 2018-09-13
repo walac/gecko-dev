@@ -108,6 +108,7 @@
 #include "nsIComponentManager.h"
 #include "nsIComponentRegistrar.h"
 #include "nsISupportsPrimitives.h"
+#include "nsISimpleEnumerator.h"
 #include "nsMemory.h"
 #include "nsIXPConnect.h"
 #include "nsIXPCScriptable.h"
@@ -229,18 +230,6 @@ public:
 
     // non-interface implementation
 public:
-    // These get non-addref'd pointers
-    static nsXPConnect* XPConnect()
-    {
-        // Do a release-mode assert that we're not doing anything significant in
-        // XPConnect off the main thread. If you're an extension developer hitting
-        // this, you need to change your code. See bug 716167.
-        if (!MOZ_LIKELY(NS_IsMainThread()))
-            MOZ_CRASH();
-
-        return gSelf;
-    }
-
     static XPCJSRuntime* GetRuntimeInstance();
 
     static bool IsISupportsDescendant(const nsXPTInterfaceInfo* info);
@@ -259,14 +248,10 @@ public:
         return gSystemPrincipal;
     }
 
-    static already_AddRefed<nsXPConnect> GetSingleton();
-
     // Called by module code in dll startup
     static void InitStatics();
     // Called by module code on dll shutdown.
     static void ReleaseXPConnectSingleton();
-
-    bool IsShuttingDown() const {return mShuttingDown;}
 
     void RecordTraversal(void* p, nsISupports* s);
 
@@ -283,10 +268,13 @@ private:
     XPCJSRuntime*                   mRuntime;
     bool                            mShuttingDown;
 
+    friend class nsIXPConnect;
+
 public:
     static nsIScriptSecurityManager* gScriptSecurityManager;
     static nsIPrincipal* gSystemPrincipal;
 };
+
 
 /***************************************************************************/
 
@@ -772,10 +760,9 @@ inline void CHECK_STATE(int s) const {MOZ_ASSERT(mState >= s, "bad state");}
 #endif
 
 private:
-    JSAutoRequest                   mAr;
     State                           mState;
 
-    RefPtr<nsXPConnect>           mXPC;
+    nsCOMPtr<nsIXPConnect>          mXPC;
 
     XPCJSContext*                   mXPCJSContext;
     JSContext*                      mJSContext;
@@ -893,10 +880,12 @@ public:
     }
 
     void TraceInside(JSTracer* trc) {
-        if (mContentXBLScope)
+        if (mContentXBLScope) {
             mContentXBLScope.trace(trc, "XPCWrappedNativeScope::mXBLScope");
-        if (mXrayExpandos.initialized())
+        }
+        if (mXrayExpandos.initialized()) {
             mXrayExpandos.trace(trc);
+        }
     }
 
     static void
@@ -1329,8 +1318,9 @@ public:
     void DebugDump(int16_t depth);
 
     void TraceSelf(JSTracer* trc) {
-        if (mJSProtoObject)
+        if (mJSProtoObject) {
             mJSProtoObject.trace(trc, "XPCWrappedNativeProto::mJSProtoObject");
+        }
     }
 
     void TraceInside(JSTracer* trc) {
@@ -1344,8 +1334,9 @@ public:
 
     void WriteBarrierPre(JSContext* cx)
     {
-        if (JS::IsIncrementalBarrierNeeded(cx) && mJSProtoObject)
+        if (JS::IsIncrementalBarrierNeeded(cx) && mJSProtoObject) {
             mJSProtoObject.writeBarrierPre(cx);
+        }
     }
 
     // NOP. This is just here to make the AutoMarkingPtr code compile.
@@ -1589,10 +1580,11 @@ public:
     void Mark() const {}
 
     inline void TraceInside(JSTracer* trc) {
-        if (HasProto())
+        if (HasProto()) {
             GetProto()->TraceSelf(trc);
-        else
+        } else {
             GetScope()->TraceSelf(trc);
+        }
 
         JSObject* obj = mFlatJSObject.unbarrieredGetPtr();
         if (obj && JS_IsGlobalObject(obj)) {
@@ -1861,8 +1853,9 @@ public:
     nsXPCWrappedJS* FindInherited(REFNSIID aIID);
     nsXPCWrappedJS* FindOrFindInherited(REFNSIID aIID) {
         nsXPCWrappedJS* wrapper = Find(aIID);
-        if (wrapper)
+        if (wrapper) {
             return wrapper;
+        }
         return FindInherited(aIID);
     }
 
@@ -1957,6 +1950,31 @@ private:
     nsString             mName;
     nsCOMPtr<nsIVariant> mValue;
 };
+
+namespace xpc {
+
+// A wrapper around JS iterators which presents an equivalent
+// nsISimpleEnumerator interface for their contents.
+class XPCWrappedJSIterator final : public nsISimpleEnumerator
+{
+public:
+    NS_DECL_CYCLE_COLLECTION_CLASS(XPCWrappedJSIterator)
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+    NS_DECL_NSISIMPLEENUMERATOR
+    NS_DECL_NSISIMPLEENUMERATORBASE
+
+    explicit XPCWrappedJSIterator(nsIJSEnumerator* aEnum);
+
+private:
+    ~XPCWrappedJSIterator() = default;
+
+    nsCOMPtr<nsIJSEnumerator> mEnum;
+    nsCOMPtr<nsIGlobalObject> mGlobal;
+    nsCOMPtr<nsISupports> mNext;
+    mozilla::Maybe<bool> mHasNext;
+};
+
+} // namespace xpc
 
 /***************************************************************************/
 // class here just for static methods
@@ -2374,13 +2392,15 @@ class AutoMarkingPtr
     }
 
     void TraceJSAll(JSTracer* trc) {
-        for (AutoMarkingPtr* cur = this; cur; cur = cur->mNext)
+        for (AutoMarkingPtr* cur = this; cur; cur = cur->mNext) {
             cur->TraceJS(trc);
+        }
     }
 
     void MarkAfterJSFinalizeAll() {
-        for (AutoMarkingPtr* cur = this; cur; cur = cur->mNext)
+        for (AutoMarkingPtr* cur = this; cur; cur = cur->mNext) {
             cur->MarkAfterJSFinalize();
+        }
     }
 
   protected:
@@ -2416,8 +2436,9 @@ class TypedAutoMarkingPtr : public AutoMarkingPtr
 
     virtual void MarkAfterJSFinalize() override
     {
-        if (mPtr)
+        if (mPtr) {
             mPtr->Mark();
+        }
     }
 
   private:
@@ -2746,14 +2767,16 @@ public:
 
     JSObject* ToJSObject(JSContext* cx) {
         JS::RootedObject obj(cx, JS_NewObjectWithGivenProto(cx, nullptr, nullptr));
-        if (!obj)
+        if (!obj) {
             return nullptr;
+        }
 
         JS::RootedValue val(cx);
         unsigned attrs = JSPROP_READONLY | JSPROP_PERMANENT;
         val = JS::BooleanValue(allowCrossOriginArguments);
-        if (!JS_DefineProperty(cx, obj, "allowCrossOriginArguments", val, attrs))
+        if (!JS_DefineProperty(cx, obj, "allowCrossOriginArguments", val, attrs)) {
             return nullptr;
+        }
 
         return obj;
     }
@@ -3079,17 +3102,21 @@ public:
     }
 
     void SetLocation(const nsACString& aLocation) {
-        if (aLocation.IsEmpty())
+        if (aLocation.IsEmpty()) {
             return;
-        if (!location.IsEmpty() || locationURI)
+        }
+        if (!location.IsEmpty() || locationURI) {
             return;
+        }
         location = aLocation;
     }
     void SetLocationURI(nsIURI* aLocationURI) {
-        if (!aLocationURI)
+        if (!aLocationURI) {
             return;
-        if (locationURI)
+        }
+        if (locationURI) {
             return;
+        }
         locationURI = aLocationURI;
     }
 

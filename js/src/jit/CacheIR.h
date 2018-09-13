@@ -217,6 +217,7 @@ extern const char* const CacheKindNames[];
     _(GuardNoUnboxedExpando)              \
     _(GuardAndLoadUnboxedExpando)         \
     _(GuardAndGetIndexFromString)         \
+    _(GuardAndGetNumberFromString)        \
     _(GuardAndGetIterator)                \
     _(GuardHasGetterSetter)               \
     _(GuardGroupHasUnanalyzedNewScript)   \
@@ -381,8 +382,9 @@ class StubField
         return type >= Type::First64BitType;
     }
     static size_t sizeInBytes(Type type) {
-        if (sizeIsWord(type))
+        if (sizeIsWord(type)) {
             return sizeof(uintptr_t);
+        }
         MOZ_ASSERT(sizeIsInt64(type));
         return sizeof(int64_t);
     }
@@ -479,8 +481,9 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter
         }
         if (opId.id() >= operandLastUsed_.length()) {
             buffer_.propagateOOM(operandLastUsed_.resize(opId.id() + 1));
-            if (buffer_.oom())
+            if (buffer_.oom()) {
                 return;
+            }
         }
         MOZ_ASSERT(nextInstructionId_ > 0);
         operandLastUsed_[opId.id()] = nextInstructionId_ - 1;
@@ -557,8 +560,9 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter
     bool stubDataEqualsMaybeUpdate(uint8_t* stubData, bool* updated) const;
 
     bool operandIsDead(uint32_t operandId, uint32_t currentInstruction) const {
-        if (operandId >= operandLastUsed_.length())
+        if (operandId >= operandLastUsed_.length()) {
             return false;
+        }
         return currentInstruction > operandLastUsed_[operandId];
     }
     const uint8_t* codeStart() const {
@@ -767,6 +771,12 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter
     Int32OperandId guardAndGetIndexFromString(StringOperandId str) {
         Int32OperandId res(nextOperandId_++);
         writeOpWithOperandId(CacheOp::GuardAndGetIndexFromString, str);
+        writeOperandId(res);
+        return res;
+    }
+    ValOperandId guardAndGetNumberFromString(StringOperandId str) {
+        ValOperandId res(nextOperandId_++);
+        writeOpWithOperandId(CacheOp::GuardAndGetNumberFromString, str);
         writeOperandId(res);
         return res;
     }
@@ -1406,23 +1416,26 @@ class MOZ_RAII CacheIRReader
 
     bool matchOp(CacheOp op) {
         const uint8_t* pos = buffer_.currentPosition();
-        if (readOp() == op)
+        if (readOp() == op) {
             return true;
+        }
         buffer_.seek(pos, 0);
         return false;
     }
     bool matchOp(CacheOp op, OperandId id) {
         const uint8_t* pos = buffer_.currentPosition();
-        if (readOp() == op && buffer_.readByte() == id.id())
+        if (readOp() == op && buffer_.readByte() == id.id()) {
             return true;
+        }
         buffer_.seek(pos, 0);
         return false;
     }
     bool matchOpEither(CacheOp op1, CacheOp op2) {
         const uint8_t* pos = buffer_.currentPosition();
         CacheOp op = readOp();
-        if (op == op1 || op == op2)
+        if (op == op1 || op == op2) {
             return true;
+        }
         buffer_.seek(pos, 0);
         return false;
     }
@@ -1552,8 +1565,9 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator
     }
 
     ValOperandId getSuperReceiverValueId() const {
-        if (cacheKind_ == CacheKind::GetPropSuper)
+        if (cacheKind_ == CacheKind::GetPropSuper) {
             return ValOperandId(1);
+        }
 
         MOZ_ASSERT(cacheKind_ == CacheKind::GetElemSuper);
         return ValOperandId(2);
@@ -1678,8 +1692,9 @@ class MOZ_RAII SetPropIRGenerator : public IRGenerator
         return ValOperandId(1);
     }
     ValOperandId rhsValueId() const {
-        if (cacheKind_ == CacheKind::SetProp)
+        if (cacheKind_ == CacheKind::SetProp) {
             return ValOperandId(1);
+        }
         MOZ_ASSERT(cacheKind_ == CacheKind::SetElem);
         return ValOperandId(2);
     }
@@ -1884,6 +1899,7 @@ class MOZ_RAII CompareIRGenerator : public IRGenerator
     bool tryAttachPrimitiveUndefined(ValOperandId lhsId, ValOperandId rhsId);
     bool tryAttachObjectUndefined(ValOperandId lhsId, ValOperandId rhsId);
     bool tryAttachNullUndefined(ValOperandId lhsId, ValOperandId rhsId);
+    bool tryAttachStringNumber(ValOperandId lhsId, ValOperandId rhsId);
 
     void trackAttached(const char* name);
 
@@ -1956,8 +1972,7 @@ class MOZ_RAII BinaryArithIRGenerator : public IRGenerator
 
     bool tryAttachInt32();
     bool tryAttachDouble();
-    bool tryAttachDoubleWithInt32();
-    bool tryAttachBooleanWithInt32();
+    bool tryAttachBitwise();
     bool tryAttachStringConcat();
     bool tryAttachStringObjectConcat();
 
@@ -1988,8 +2003,9 @@ class MOZ_RAII NewObjectIRGenerator : public IRGenerator
 static inline uint32_t
 SimpleTypeDescrKey(SimpleTypeDescr* descr)
 {
-    if (descr->is<ScalarTypeDescr>())
+    if (descr->is<ScalarTypeDescr>()) {
         return uint32_t(descr->as<ScalarTypeDescr>().type()) << 1;
+    }
     return (uint32_t(descr->as<ReferenceTypeDescr>().type()) << 1) | 1;
 }
 
