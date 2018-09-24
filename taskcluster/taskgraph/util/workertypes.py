@@ -5,6 +5,7 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 WORKER_TYPES = {
+    'aws-provisioner-v1/ami-test': ('docker-worker', 'linux'),
     'aws-provisioner-v1/gecko-1-b-android': ('docker-worker', 'linux'),
     'aws-provisioner-v1/gecko-1-b-linux': ('docker-worker', 'linux'),
     'aws-provisioner-v1/gecko-1-b-linux-large': ('docker-worker', 'linux'),

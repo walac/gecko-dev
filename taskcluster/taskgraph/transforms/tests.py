@@ -45,9 +45,9 @@ import logging
 
 # default worker types keyed by instance-size
 LINUX_WORKER_TYPES = {
-    'large': 'aws-provisioner-v1/gecko-t-linux-large',
-    'xlarge': 'aws-provisioner-v1/gecko-t-linux-xlarge',
-    'default': 'aws-provisioner-v1/gecko-t-linux-large',
+    'large': 'aws-provisioner-v1/ami-test',
+    'xlarge': 'aws-provisioner-v1/ami-test',
+    'default': 'aws-provisioner-v1/ami-test',
 }
 
 # windows worker types keyed by test-platform and virtualization
