@@ -16,6 +16,7 @@
 #include "nsScreen.h"
 #include "nsHistory.h"
 #include "nsDOMNavigationTiming.h"
+#include "nsICookieService.h"
 #include "nsIDOMStorageManager.h"
 #include "nsISecureBrowserUI.h"
 #include "nsIWebProgressListener.h"
@@ -91,6 +92,7 @@
 #include "mozilla/EventStates.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/ProcessHangMonitor.h"
+#include "mozilla/StaticPrefs.h"
 #include "mozilla/ThrottledEventQueue.h"
 #include "AudioChannelService.h"
 #include "nsAboutProtocolUtils.h"
@@ -217,6 +219,7 @@
 #include "prrng.h"
 #include "nsSandboxFlags.h"
 #include "nsBaseCommandController.h"
+#include "nsXULControllers.h"
 #include "mozilla/dom/AudioContext.h"
 #include "mozilla/dom/BrowserElementDictionariesBinding.h"
 #include "mozilla/dom/cache/CacheStorage.h"
@@ -313,9 +316,6 @@ static LazyLogModule gDOMLeakPRLogOuter("DOMLeakOuter");
 static int32_t              gOpenPopupSpamCount               = 0;
 
 nsGlobalWindowOuter::OuterWindowByIdTable *nsGlobalWindowOuter::sOuterWindowsById = nullptr;
-
-// CIDs
-static NS_DEFINE_CID(kXULControllersCID, NS_XULCONTROLLERS_CID);
 
 /* static */
 nsPIDOMWindowOuter*
@@ -831,6 +831,7 @@ nsGlobalWindowOuter::nsGlobalWindowOuter()
     mIsChrome(false),
     mAllowScriptsToClose(false),
     mTopLevelOuterContentWindow(false),
+    mHasStorageAccess(false),
     mSerial(0),
 #ifdef DEBUG
     mSetOpenerWindowCalled(false),
@@ -2017,6 +2018,25 @@ nsGlobalWindowOuter::SetNewDocument(nsIDocument* aDocument,
   ReportLargeAllocStatus();
   mLargeAllocStatus = LargeAllocStatus::NONE;
 
+  mHasStorageAccess = false;
+  nsIURI* uri = aDocument->GetDocumentURI();
+  if (newInnerWindow) {
+    if (AntiTrackingCommon::ShouldHonorContentBlockingCookieRestrictions() &&
+        StaticPrefs::network_cookie_cookieBehavior() ==
+          nsICookieService::BEHAVIOR_REJECT_TRACKER &&
+        nsContentUtils::IsThirdPartyWindowOrChannel(newInnerWindow, nullptr,
+                                                    uri) &&
+        nsContentUtils::IsTrackingResourceWindow(newInnerWindow)) {
+      // Grant storage access by default if the first-party storage access
+      // permission has been granted already.
+      // Don't notify in this case, since we would be notifying the user needlessly.
+      mHasStorageAccess =
+        AntiTrackingCommon::IsFirstPartyStorageAccessGrantedFor(newInnerWindow,
+                                                                uri,
+                                                                nullptr);
+    }
+  }
+
   return NS_OK;
 }
 
@@ -2926,10 +2946,9 @@ nsIControllers*
 nsGlobalWindowOuter::GetControllersOuter(ErrorResult& aError)
 {
   if (!mControllers) {
-    nsresult rv;
-    mControllers = do_CreateInstance(kXULControllersCID, &rv);
-    if (NS_FAILED(rv)) {
-      aError.Throw(rv);
+    mControllers = new nsXULControllers();
+    if (!mControllers) {
+      aError.Throw(NS_ERROR_FAILURE);
       return nullptr;
     }
 
@@ -5262,7 +5281,9 @@ nsGlobalWindowOuter::FirePopupBlockedEvent(nsIDocument* aDoc,
 
 void
 nsGlobalWindowOuter::NotifyContentBlockingState(unsigned aState,
-                                                nsIChannel* aChannel)
+                                                nsIChannel* aChannel,
+                                                bool aBlocked,
+                                                nsIURI* aURIHint)
 {
   nsCOMPtr<nsIDocShell> docShell = GetDocShell();
   if (!docShell) {
@@ -5275,7 +5296,8 @@ nsGlobalWindowOuter::NotifyContentBlockingState(unsigned aState,
   // To prevent showing the TrackingProtection UI on the wrong page, we need to
   // check that the loading URI for the channel is the same as the URI currently
   // loaded in the document.
-  if (!SameLoadingURI(doc, aChannel)) {
+  if (!SameLoadingURI(doc, aChannel) &&
+      aState == nsIWebProgressListener::STATE_BLOCKED_TRACKING_CONTENT) {
     return;
   }
 
@@ -5291,24 +5313,53 @@ nsGlobalWindowOuter::NotifyContentBlockingState(unsigned aState,
     return;
   }
   securityUI->GetState(&state);
+  nsAutoString origin;
+  origin.SetIsVoid(true);
+  if (aURIHint) {
+    nsContentUtils::GetUTFOrigin(aURIHint, origin);
+  }
+  bool unblocked = false;
   if (aState == nsIWebProgressListener::STATE_BLOCKED_TRACKING_CONTENT) {
-    doc->SetHasTrackingContentBlocked(true);
+    doc->SetHasTrackingContentBlocked(aBlocked, origin);
+    if (!aBlocked) {
+      unblocked = !doc->GetHasTrackingContentBlocked();
+    }
   } else if (aState == nsIWebProgressListener::STATE_BLOCKED_SLOW_TRACKING_CONTENT) {
-    doc->SetHasSlowTrackingContentBlocked(true);
+    doc->SetHasSlowTrackingContentBlocked(aBlocked, origin);
+    if (!aBlocked) {
+      unblocked = !doc->GetHasSlowTrackingContentBlocked();
+    }
   } else if (aState == nsIWebProgressListener::STATE_COOKIES_BLOCKED_BY_PERMISSION) {
-    doc->SetHasCookiesBlockedByPermission(true);
+    doc->SetHasCookiesBlockedByPermission(aBlocked, origin);
+    if (!aBlocked) {
+      unblocked = !doc->GetHasCookiesBlockedByPermission();
+    }
   } else if (aState == nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER) {
-    doc->SetHasTrackingCookiesBlocked(true);
+    doc->SetHasTrackingCookiesBlocked(aBlocked, origin);
+    if (!aBlocked) {
+      unblocked = !doc->GetHasTrackingCookiesBlocked();
+    }
   } else if (aState == nsIWebProgressListener::STATE_COOKIES_BLOCKED_ALL) {
-    doc->SetHasAllCookiesBlocked(true);
+    doc->SetHasAllCookiesBlocked(aBlocked, origin);
+    if (!aBlocked) {
+      unblocked = !doc->GetHasAllCookiesBlocked();
+    }
   } else if (aState == nsIWebProgressListener::STATE_COOKIES_BLOCKED_FOREIGN) {
-    doc->SetHasForeignCookiesBlocked(true);
+    doc->SetHasForeignCookiesBlocked(aBlocked, origin);
+    if (!aBlocked) {
+      unblocked = !doc->GetHasForeignCookiesBlocked();
+    }
   } else {
     // Ignore nsIWebProgressListener::STATE_BLOCKED_UNSAFE_CONTENT;
   }
-  state |= aState;
+  const uint32_t oldState = state;
+  if (aBlocked) {
+    state |= aState;
+  } else if (unblocked) {
+    state &= ~aState;
+  }
 
-  eventSink->OnSecurityChange(aChannel, state);
+  eventSink->OnSecurityChange(aChannel, oldState, state, doc->GetContentBlockingLog());
 }
 
 //static

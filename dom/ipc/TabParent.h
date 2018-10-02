@@ -25,7 +25,6 @@
 #include "nsIBrowserDOMWindow.h"
 #include "nsIDOMEventListener.h"
 #include "nsIKeyEventInPluginCallback.h"
-#include "nsISecureBrowserUI.h"
 #include "nsITabParent.h"
 #include "nsIXULBrowserWindow.h"
 #include "nsRefreshDriver.h"
@@ -83,7 +82,6 @@ class TabParent final : public PBrowserParent
                       , public nsIDOMEventListener
                       , public nsITabParent
                       , public nsIAuthPromptProvider
-                      , public nsISecureBrowserUI
                       , public nsIKeyEventInPluginCallback
                       , public nsSupportsWeakReference
                       , public TabContext
@@ -417,6 +415,11 @@ public:
   virtual mozilla::ipc::IPCResult
   RecvClearNativeTouchSequence(const uint64_t& aObserverId) override;
 
+  virtual mozilla::ipc::IPCResult
+  RecvSetPrefersReducedMotionOverrideForTest(const bool& aValue) override;
+  virtual mozilla::ipc::IPCResult
+  RecvResetPrefersReducedMotionOverrideForTest() override;
+
   void SendMouseEvent(const nsAString& aType, float aX, float aY,
                       int32_t aButton, int32_t aClickCount,
                       int32_t aModifiers, bool aIgnoreRootScrollFrame);
@@ -482,7 +485,6 @@ public:
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIAUTHPROMPTPROVIDER
-  NS_DECL_NSISECUREBROWSERUI
 
   void StartPersistence(uint64_t aOuterWindowID,
                         nsIWebBrowserPersistDocumentReceiver* aRecv,

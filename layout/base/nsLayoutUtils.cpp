@@ -480,6 +480,14 @@ nsLayoutUtils::AreRetainedDisplayListsEnabled()
 }
 
 bool
+nsLayoutUtils::DisplayRootHasRetainedDisplayListBuilder(nsIFrame* aFrame)
+{
+  const nsIFrame* displayRoot = nsLayoutUtils::GetDisplayRootFrame(aFrame);
+  MOZ_ASSERT(displayRoot);
+  return displayRoot->HasProperty(RetainedDisplayListBuilder::Cached());
+}
+
+bool
 nsLayoutUtils::GPUImageScalingEnabled()
 {
   static bool sGPUImageScalingEnabled;
@@ -1188,15 +1196,8 @@ nsLayoutUtils::InvalidateForDisplayPortChange(nsIContent* aContent,
     // rect properties on so we can find the frame later to remove the properties.
     frame->SchedulePaint();
 
-    if (!nsLayoutUtils::AreRetainedDisplayListsEnabled()) {
-      return;
-    }
-
-    nsIFrame* displayRoot = nsLayoutUtils::GetDisplayRootFrame(frame);
-    RetainedDisplayListBuilder* retainedBuilder =
-      displayRoot->GetProperty(RetainedDisplayListBuilder::Cached());
-
-    if (!retainedBuilder) {
+    if (!nsLayoutUtils::AreRetainedDisplayListsEnabled() ||
+        !nsLayoutUtils::DisplayRootHasRetainedDisplayListBuilder(frame)) {
       return;
     }
 
@@ -1208,18 +1209,12 @@ nsLayoutUtils::InvalidateForDisplayPortChange(nsIContent* aContent,
       frame->SetProperty(nsDisplayListBuilder::DisplayListBuildingDisplayPortRect(), rect);
       frame->SetHasOverrideDirtyRegion(true);
 
-      nsIFrame* rootFrame = frame->PresContext()->PresShell()->GetRootFrame();
+      nsIFrame* rootFrame = frame->PresShell()->GetRootFrame();
       MOZ_ASSERT(rootFrame);
 
-      nsTArray<nsIFrame*>* frames =
-        rootFrame->GetProperty(nsIFrame::OverriddenDirtyRectFrameList());
-
-      if (!frames) {
-        frames = new nsTArray<nsIFrame*>();
-        rootFrame->SetProperty(nsIFrame::OverriddenDirtyRectFrameList(), frames);
-      }
-
-      frames->AppendElement(frame);
+      RetainedDisplayListData* data =
+        GetOrSetRetainedDisplayListData(rootFrame);
+      data->Flags(frame) |= RetainedDisplayListData::FrameFlags::HasProps;
     }
 
     if (aHadDisplayPort) {
@@ -1369,11 +1364,14 @@ nsContainerFrame*
 nsLayoutUtils::LastContinuationWithChild(nsContainerFrame* aFrame)
 {
   MOZ_ASSERT(aFrame, "NULL frame pointer");
-  nsIFrame* f = aFrame->LastContinuation();
-  while (!f->PrincipalChildList().FirstChild() && f->GetPrevContinuation()) {
-    f = f->GetPrevContinuation();
+  for (auto f = aFrame->LastContinuation(); f; f = f->GetPrevContinuation()) {
+    for (nsIFrame::ChildListIterator lists(f); !lists.IsDone(); lists.Next()) {
+      if (MOZ_LIKELY(!lists.CurrentList().IsEmpty())) {
+        return static_cast<nsContainerFrame*>(f);
+      }
+    }
   }
-  return static_cast<nsContainerFrame*>(f);
+  return aFrame;
 }
 
 //static
@@ -3702,11 +3700,15 @@ nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext, nsIFrame* aFrame,
 
       if (updateState == PartialUpdateResult::Failed) {
         list.DeleteAll(&builder);
+
+        builder.ClearRetainedWindowRegions();
+        builder.ClearWillChangeBudget();
+
         builder.EnterPresShell(aFrame);
         builder.SetDirtyRect(visibleRect);
-        builder.ClearRetainedWindowRegions();
         aFrame->BuildDisplayListForStackingContext(&builder, &list);
-        AddExtraBackgroundItems(builder, list, aFrame, canvasArea, visibleRegion, aBackstop);
+        AddExtraBackgroundItems(
+          builder, list, aFrame, canvasArea, visibleRegion, aBackstop);
 
         builder.LeavePresShell(aFrame, &list);
         updateState = PartialUpdateResult::Updated;
@@ -7855,6 +7857,7 @@ nsLayoutUtils::AssertTreeOnlyEmptyNextInFlows(nsIFrame *aSubtreeRoot)
 
 static void
 GetFontFacesForFramesInner(nsIFrame* aFrame,
+                           nsLayoutUtils::UsedFontFaceList& aResult,
                            nsLayoutUtils::UsedFontFaceTable& aFontFaces,
                            uint32_t aMaxRanges,
                            bool aSkipCollapsedWhitespace)
@@ -7864,7 +7867,7 @@ GetFontFacesForFramesInner(nsIFrame* aFrame,
   if (aFrame->IsTextFrame()) {
     if (!aFrame->GetPrevContinuation()) {
       nsLayoutUtils::GetFontFacesForText(aFrame, 0, INT32_MAX, true,
-                                         aFontFaces, aMaxRanges,
+                                         aResult, aFontFaces, aMaxRanges,
                                          aSkipCollapsedWhitespace);
     }
     return;
@@ -7877,7 +7880,7 @@ GetFontFacesForFramesInner(nsIFrame* aFrame,
     for (nsFrameList::Enumerator e(children); !e.AtEnd(); e.Next()) {
       nsIFrame* child = e.get();
       child = nsPlaceholderFrame::GetRealFrameFor(child);
-      GetFontFacesForFramesInner(child, aFontFaces, aMaxRanges,
+      GetFontFacesForFramesInner(child, aResult, aFontFaces, aMaxRanges,
                                  aSkipCollapsedWhitespace);
     }
   }
@@ -7885,6 +7888,7 @@ GetFontFacesForFramesInner(nsIFrame* aFrame,
 
 /* static */ nsresult
 nsLayoutUtils::GetFontFacesForFrames(nsIFrame* aFrame,
+                                     UsedFontFaceList& aResult,
                                      UsedFontFaceTable& aFontFaces,
                                      uint32_t aMaxRanges,
                                      bool aSkipCollapsedWhitespace)
@@ -7892,7 +7896,7 @@ nsLayoutUtils::GetFontFacesForFrames(nsIFrame* aFrame,
   MOZ_ASSERT(aFrame, "NULL frame pointer");
 
   while (aFrame) {
-    GetFontFacesForFramesInner(aFrame, aFontFaces, aMaxRanges,
+    GetFontFacesForFramesInner(aFrame, aResult, aFontFaces, aMaxRanges,
                                aSkipCollapsedWhitespace);
     aFrame = GetNextContinuationOrIBSplitSibling(aFrame);
   }
@@ -7905,6 +7909,7 @@ AddFontsFromTextRun(gfxTextRun* aTextRun,
                     nsTextFrame* aFrame,
                     gfxSkipCharsIterator& aSkipIter,
                     const gfxTextRun::Range& aRange,
+                    nsLayoutUtils::UsedFontFaceList& aResult,
                     nsLayoutUtils::UsedFontFaceTable& aFontFaces,
                     uint32_t aMaxRanges)
 {
@@ -7924,6 +7929,7 @@ AddFontsFromTextRun(gfxTextRun* aTextRun,
       fontFace = new InspectorFontFace(fe, aTextRun->GetFontGroup(),
                                        glyphRuns.GetGlyphRun()->mMatchType);
       aFontFaces.Put(fe, fontFace);
+      aResult.AppendElement(fontFace);
     }
 
     // Add this glyph run to the fontFace's list of ranges, unless we have
@@ -7963,6 +7969,7 @@ nsLayoutUtils::GetFontFacesForText(nsIFrame* aFrame,
                                    int32_t aStartOffset,
                                    int32_t aEndOffset,
                                    bool aFollowContinuations,
+                                   UsedFontFaceList& aResult,
                                    UsedFontFaceTable& aFontFaces,
                                    uint32_t aMaxRanges,
                                    bool aSkipCollapsedWhitespace)
@@ -8010,7 +8017,8 @@ nsLayoutUtils::GetFontFacesForText(nsIFrame* aFrame,
          curr->HasNonSuppressedText())) {
       gfxTextRun::Range range(iter.ConvertOriginalToSkipped(fstart),
                               iter.ConvertOriginalToSkipped(fend));
-      AddFontsFromTextRun(textRun, curr, iter, range, aFontFaces, aMaxRanges);
+      AddFontsFromTextRun(textRun, curr, iter, range, aResult, aFontFaces,
+                          aMaxRanges);
     }
 
     curr = next;
@@ -10079,7 +10087,8 @@ nsLayoutUtils::ComputeSystemFont(nsFont* aSystemFont, LookAndFeel::FontID aFontI
   nsAutoString systemFontName;
   if (LookAndFeel::GetFont(aFontID, systemFontName, fontStyle, devPerCSS)) {
     systemFontName.Trim("\"'");
-    aSystemFont->fontlist = FontFamilyList(systemFontName, eUnquotedName);
+    aSystemFont->fontlist =
+      FontFamilyList(NS_ConvertUTF16toUTF8(systemFontName), eUnquotedName);
     aSystemFont->fontlist.SetDefaultFontType(eFamily_none);
     aSystemFont->style = fontStyle.style;
     aSystemFont->systemFont = fontStyle.systemFont;

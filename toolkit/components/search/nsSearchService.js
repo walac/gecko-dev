@@ -800,7 +800,7 @@ function getDir(aKey, aIFace) {
  * exists in nsHttpHandler.cpp when building the UA string.
  */
 function getLocale() {
-  return Services.locale.getRequestedLocale();
+  return Services.locale.requestedLocale;
 }
 
 /**
@@ -2675,7 +2675,6 @@ SearchService.prototype = {
 
     Services.obs.notifyObservers(null, SEARCH_SERVICE_TOPIC, "init-complete");
     Services.telemetry.getHistogramById("SEARCH_SERVICE_INIT_SYNC").add(true);
-    this._recordEngineTelemetry();
 
     LOG("_syncInit end");
   },
@@ -2718,7 +2717,6 @@ SearchService.prototype = {
     this._initObservers.resolve(this._initRV);
     Services.obs.notifyObservers(null, SEARCH_SERVICE_TOPIC, "init-complete");
     Services.telemetry.getHistogramById("SEARCH_SERVICE_INIT_SYNC").add(false);
-    this._recordEngineTelemetry();
 
     LOG("_asyncInit: Completed _asyncInit");
   },
@@ -3021,7 +3019,6 @@ SearchService.prototype = {
         // so signal to 'callers' that we're done.
         gInitialized = true;
         Services.obs.notifyObservers(null, SEARCH_SERVICE_TOPIC, "init-complete");
-        this._recordEngineTelemetry();
       } catch (err) {
         LOG("Reinit failed: " + err);
         Services.obs.notifyObservers(null, SEARCH_SERVICE_TOPIC, "reinit-failed");
@@ -3127,6 +3124,10 @@ SearchService.prototype = {
     "clid=2308146",
     "fr=mcafee",
     "PC=MC0",
+    "secure.webofsearch.com",
+    "secure.startpageweb.com",
+    "secure.webstartsearch.com",
+    "secure.startwebsearch.com",
   ],
 
   _addEngineToStore: function SRCH_SVC_addEngineToStore(aEngine) {
@@ -3441,7 +3442,7 @@ SearchService.prototype = {
     }
 
     let searchSettings;
-    let locale = Services.locale.getAppLocaleAsBCP47();
+    let locale = Services.locale.appLocaleAsBCP47;
     if ("locales" in json &&
         locale in json.locales) {
       searchSettings = json.locales[locale];
@@ -4257,11 +4258,6 @@ SearchService.prototype = {
     return result;
   },
 
-  _recordEngineTelemetry() {
-    Services.telemetry.getHistogramById("SEARCH_SERVICE_ENGINE_COUNT")
-            .add(Object.keys(this._engines).length);
-  },
-
   /**
    * This map is built lazily after the available search engines change.  It
    * allows quick parsing of an URL representing a search submission into the
@@ -4495,7 +4491,7 @@ SearchService.prototype = {
         let secondaryCode = queries.get("form");
         // This code is used for all Bing follow-on searches.
         if (secondaryCode == "QBRE") {
-          for (let cookie of Services.cookies.getCookiesFromHost("www.bing.com")) {
+          for (let cookie of Services.cookies.getCookiesFromHost("www.bing.com", {})) {
             if (cookie.name == "SRCHS") {
               // If this cookie is present, it's probably an SAP follow-on.
               // This might be an organic follow-on in the same session,

@@ -13,6 +13,7 @@
 #include "mozilla/AutoplayPermissionManager.h"
 #include "mozilla/dom/HTMLMediaElement.h"
 #include "mozilla/dom/HTMLMediaElementBinding.h"
+#include "nsGlobalWindowInner.h"
 #include "nsIAutoplay.h"
 #include "nsContentUtils.h"
 #include "nsIDocument.h"
@@ -25,21 +26,6 @@ mozilla::LazyLogModule gAutoplayPermissionLog("Autoplay");
 
 #define AUTOPLAY_LOG(msg, ...)                                             \
   MOZ_LOG(gAutoplayPermissionLog, LogLevel::Debug, (msg, ##__VA_ARGS__))
-
-static const char*
-AllowAutoplayToStr(const uint32_t state)
-{
-  switch (state) {
-    case nsIAutoplay::ALLOWED:
-      return "allowed";
-    case nsIAutoplay::BLOCKED:
-      return "blocked";
-    case nsIAutoplay::PROMPT:
-      return "prompt";
-    default:
-      return "unknown";
-  }
-}
 
 namespace mozilla {
 namespace dom {
@@ -62,17 +48,30 @@ ApproverDocOf(const nsIDocument& aDocument)
 }
 
 static bool
+IsActivelyCapturingOrHasAPermission(nsPIDOMWindowInner* aWindow)
+{
+  // Pages which have been granted permission to capture WebRTC camera or
+  // microphone or screen are assumed to be trusted, and are allowed to autoplay.
+  if (MediaManager::GetIfExists()) {
+    return MediaManager::GetIfExists()->IsActivelyCapturingOrHasAPermission(aWindow->WindowID());
+  }
+
+  auto principal = nsGlobalWindowInner::Cast(aWindow)->GetPrincipal();
+  return (nsContentUtils::IsExactSitePermAllow(principal, "camera") ||
+          nsContentUtils::IsExactSitePermAllow(principal, "microphone") ||
+          nsContentUtils::IsExactSitePermAllow(principal, "screen"));
+}
+
+static bool
 IsWindowAllowedToPlay(nsPIDOMWindowInner* aWindow)
 {
   if (!aWindow) {
     return false;
   }
 
-  // Pages which have been granted permission to capture WebRTC camera or
-  // microphone are assumed to be trusted, and are allowed to autoplay.
-  MediaManager* manager = MediaManager::GetIfExists();
-  if (manager &&
-      manager->IsActivelyCapturingOrHasAPermission(aWindow->WindowID())) {
+  if (IsActivelyCapturingOrHasAPermission(aWindow)) {
+    AUTOPLAY_LOG("Allow autoplay as document has camera or microphone or screen"
+                 " permission.");
     return true;
   }
 
@@ -189,13 +188,13 @@ AutoplayPolicy::IsAllowedToPlay(const HTMLMediaElement& aElement)
     autoplayDefault == nsIAutoplay::ALLOWED;
 
   AUTOPLAY_LOG("IsAllowedToPlay, mediaElement=%p, isAllowToPlay=%s",
-                &aElement, AllowAutoplayToStr(result));
+                &aElement, result ? "allowed" : "blocked");
 
   return result;
 }
 
 /* static */ bool
-AutoplayPolicy::IsAudioContextAllowedToPlay(NotNull<AudioContext*> aContext)
+AutoplayPolicy::IsAllowedToPlay(const AudioContext& aContext)
 {
   if (!Preferences::GetBool("media.autoplay.block-webaudio", false)) {
     return true;
@@ -210,11 +209,11 @@ AutoplayPolicy::IsAudioContextAllowedToPlay(NotNull<AudioContext*> aContext)
   }
 
   // Offline context won't directly output sound to audio devices.
-  if (aContext->IsOffline()) {
+  if (aContext.IsOffline()) {
     return true;
   }
 
-  if (IsWindowAllowedToPlay(aContext->GetOwner())) {
+  if (IsWindowAllowedToPlay(aContext.GetParentObject())) {
     return true;
   }
 

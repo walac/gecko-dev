@@ -92,6 +92,8 @@ SurfaceFormatToDXGIFormat(gfx::SurfaceFormat aFormat)
       return DXGI_FORMAT_R8G8B8A8_UNORM;
     case SurfaceFormat::A8:
       return DXGI_FORMAT_R8_UNORM;
+    case SurfaceFormat::A16:
+      return DXGI_FORMAT_R16_UNORM;
     default:
       MOZ_ASSERT(false, "unsupported format");
       return DXGI_FORMAT_UNKNOWN;
@@ -624,6 +626,7 @@ DXGIYCbCrTextureData::Create(IDirect3DTexture9* aTextureY,
                              const gfx::IntSize& aSize,
                              const gfx::IntSize& aSizeY,
                              const gfx::IntSize& aSizeCbCr,
+                             gfx::ColorDepth aColorDepth,
                              YUVColorSpace aYUVColorSpace)
 {
   if (!aHandleY || !aHandleCb || !aHandleCr ||
@@ -641,6 +644,7 @@ DXGIYCbCrTextureData::Create(IDirect3DTexture9* aTextureY,
   texture->mSize = aSize;
   texture->mSizeY = aSizeY;
   texture->mSizeCbCr = aSizeCbCr;
+  texture->mColorDepth = aColorDepth;
   texture->mYUVColorSpace = aYUVColorSpace;
 
   return texture;
@@ -653,6 +657,7 @@ DXGIYCbCrTextureData::Create(ID3D11Texture2D* aTextureY,
                              const gfx::IntSize& aSize,
                              const gfx::IntSize& aSizeY,
                              const gfx::IntSize& aSizeCbCr,
+                             gfx::ColorDepth aColorDepth,
                              YUVColorSpace aYUVColorSpace)
 {
   if (!aTextureY || !aTextureCb || !aTextureCr) {
@@ -701,6 +706,7 @@ DXGIYCbCrTextureData::Create(ID3D11Texture2D* aTextureY,
   texture->mSize = aSize;
   texture->mSizeY = aSizeY;
   texture->mSizeCbCr = aSizeCbCr;
+  texture->mColorDepth = aColorDepth;
   texture->mYUVColorSpace = aYUVColorSpace;
 
   return texture;
@@ -719,10 +725,14 @@ DXGIYCbCrTextureData::FillInfo(TextureData::Info& aInfo) const
 void
 DXGIYCbCrTextureData::SerializeSpecific(SurfaceDescriptorDXGIYCbCr* const aOutDesc)
 {
-  *aOutDesc = SurfaceDescriptorDXGIYCbCr(
-    (WindowsHandle)mHandles[0], (WindowsHandle)mHandles[1], (WindowsHandle)mHandles[2],
-    mSize, mSizeY, mSizeCbCr, mYUVColorSpace
-  );
+  *aOutDesc = SurfaceDescriptorDXGIYCbCr((WindowsHandle)mHandles[0],
+                                         (WindowsHandle)mHandles[1],
+                                         (WindowsHandle)mHandles[2],
+                                         mSize,
+                                         mSizeY,
+                                         mSizeCbCr,
+                                         mColorDepth,
+                                         mYUVColorSpace);
 }
 
 bool
@@ -1116,6 +1126,8 @@ DXGITextureHostD3D11::PushResourceUpdates(wr::TransactionBuilder& aResources,
       MOZ_ASSERT(mSize.width % 2 == 0);
       MOZ_ASSERT(mSize.height % 2 == 0);
 
+      // For now, no software decoder can output 10/12 bits NV12 images
+      // So forcing A8 is okay.
       wr::ImageDescriptor descriptor0(mSize, gfx::SurfaceFormat::A8);
       wr::ImageDescriptor descriptor1(mSize / 2, gfx::SurfaceFormat::R8G8);
       auto bufferType = wr::WrExternalImageBufferType::TextureExternalHandle;
@@ -1152,6 +1164,7 @@ DXGITextureHostD3D11::PushDisplayItems(wr::DisplayListBuilder& aBuilder,
                              true,
                              aImageKeys[0],
                              aImageKeys[1],
+                             wr::ColorDepth::Color8,
                              wr::ToWrYuvColorSpace(YUVColorSpace::BT601),
                              aFilter);
       break;
@@ -1168,6 +1181,7 @@ DXGIYCbCrTextureHostD3D11::DXGIYCbCrTextureHostD3D11(TextureFlags aFlags,
   , mSize(aDescriptor.size())
   , mSizeCbCr(aDescriptor.sizeCbCr())
   , mIsLocked(false)
+  , mColorDepth(aDescriptor.colorDepth())
   , mYUVColorSpace(aDescriptor.yUVColorSpace())
 {
   mHandles[0] = aDescriptor.handleY();
@@ -1383,6 +1397,7 @@ DXGIYCbCrTextureHostD3D11::PushDisplayItems(wr::DisplayListBuilder& aBuilder,
                                 aImageKeys[0],
                                 aImageKeys[1],
                                 aImageKeys[2],
+                                wr::ToWrColorDepth(mColorDepth),
                                 wr::ToWrYuvColorSpace(mYUVColorSpace),
                                 aFilter);
 }

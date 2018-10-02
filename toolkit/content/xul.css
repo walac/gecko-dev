@@ -100,10 +100,6 @@ vbox {
 
 /********** label **********/
 
-description {
-  -moz-binding: url("chrome://global/content/bindings/text.xml#text-base");
-}
-
 label {
   -moz-binding: url("chrome://global/content/bindings/text.xml#text-label");
 }
@@ -183,10 +179,6 @@ iframe {
 
 browser {
   -moz-binding: url("chrome://global/content/bindings/browser.xml#browser");
-}
-
-browser[remote=true]:not(.lightweight) {
-  -moz-binding: url("chrome://global/content/bindings/remote-browser.xml#remote-browser");
 }
 
 /********** notifications **********/
@@ -822,12 +814,7 @@ richlistitem {
 
 /*********** findbar ************/
 findbar {
-  -moz-binding: url('chrome://global/content/bindings/findbar.xml#findbar');
   overflow-x: hidden;
-}
-
-.findbar-textbox {
-  -moz-binding: url("chrome://global/content/bindings/findbar.xml#findbar-textbox");
 }
 
 /*********** tabmodalprompt ************/

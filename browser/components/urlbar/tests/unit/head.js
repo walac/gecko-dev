@@ -14,10 +14,27 @@ if (commonFile) {
 // Put any other stuff relative to this test folder below.
 
 ChromeUtils.import("resource:///modules/UrlbarController.jsm");
-ChromeUtils.defineModuleGetter(this, "UrlbarTokenizer",
-                               "resource:///modules/UrlbarTokenizer.jsm");
-ChromeUtils.defineModuleGetter(this, "PlacesTestUtils",
-                               "resource://testing-common/PlacesTestUtils.jsm");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  PlacesTestUtils: "resource://testing-common/PlacesTestUtils.jsm",
+  PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
+  UrlbarController: "resource:///modules/UrlbarController.jsm",
+  UrlbarInput: "resource:///modules/UrlbarInput.jsm",
+  UrlbarMatch: "resource:///modules/UrlbarMatch.jsm",
+  UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
+  UrlbarProviderOpenTabs: "resource:///modules/UrlbarProviderOpenTabs.jsm",
+  UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.jsm",
+  UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.jsm",
+  UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
+});
+
+// ================================================
+// Load mocking/stubbing library, sinon
+// docs: http://sinonjs.org/releases/v2.3.2/
+// Sinon needs Timer.jsm for setTimeout etc.
+ChromeUtils.import("resource://gre/modules/Timer.jsm");
+Services.scriptloader.loadSubScript("resource://testing-common/sinon-2.3.2.js", this);
+/* globals sinon */
+// ================================================
 
 /**
  * @param {string} searchString The search string to insert into the context.
@@ -27,7 +44,7 @@ function createContext(searchString = "foo") {
   return new QueryContext({
     searchString,
     lastKey: searchString ? searchString[searchString.length - 1] : "",
-    maxResults: 1,
+    maxResults: Services.prefs.getIntPref("browser.urlbar.maxRichResults"),
     isPrivate: true,
   });
 }

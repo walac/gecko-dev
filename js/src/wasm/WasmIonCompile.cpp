@@ -3558,10 +3558,13 @@ EmitBodyExprs(FunctionCompiler& f)
           case uint16_t(Op::F64ReinterpretI64):
             CHECK(EmitReinterpret(f, ValType::F64, ValType::I64, MIRType::Double));
 
-          // GC types are NYI in Ion.
+#ifdef ENABLE_WASM_GC
+          case uint16_t(Op::RefEq):
           case uint16_t(Op::RefNull):
           case uint16_t(Op::RefIsNull):
+            // Not yet supported
             return f.iter().unrecognizedOpcode(&op);
+#endif
 
           // Sign extensions
           case uint16_t(Op::I32Extend8S):
@@ -3611,6 +3614,14 @@ EmitBodyExprs(FunctionCompiler& f)
                 CHECK(EmitMemOrTableDrop(f, /*isMem=*/false));
               case uint16_t(MiscOp::TableInit):
                 CHECK(EmitMemOrTableInit(f, /*isMem=*/false));
+#endif
+#ifdef ENABLE_WASM_GC
+              case uint16_t(MiscOp::StructNew):
+              case uint16_t(MiscOp::StructGet):
+              case uint16_t(MiscOp::StructSet):
+              case uint16_t(MiscOp::StructNarrow):
+                // Not yet supported
+                return f.iter().unrecognizedOpcode(&op);
 #endif
               default:
                 return f.iter().unrecognizedOpcode(&op);
@@ -3862,7 +3873,8 @@ wasm::IonCompileFunctions(const ModuleEnvironment& env, LifoAlloc& lifo,
                           ExclusiveDeferredValidationState& dvs,
                           UniqueChars* error)
 {
-    MOZ_ASSERT(env.tier() == Tier::Ion);
+    MOZ_ASSERT(env.tier() == Tier::Optimized);
+    MOZ_ASSERT(env.optimizedBackend() == OptimizedBackend::Ion);
 
     TempAllocator alloc(&lifo);
     JitContext jitContext(&alloc);

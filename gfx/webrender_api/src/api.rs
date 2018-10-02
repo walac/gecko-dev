@@ -9,6 +9,7 @@ use channel::{self, MsgSender, Payload, PayloadSender, PayloadSenderHelperMethod
 use std::cell::Cell;
 use std::fmt;
 use std::marker::PhantomData;
+use std::os::raw::c_void;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::u32;
@@ -16,7 +17,7 @@ use {BuiltDisplayList, BuiltDisplayListDescriptor, ColorF, DeviceIntPoint, Devic
 use {DeviceUintSize, ExternalScrollId, FontInstanceKey, FontInstanceOptions};
 use {FontInstancePlatformOptions, FontKey, FontVariation, GlyphDimensions, GlyphIndex, ImageData};
 use {ImageDescriptor, ImageKey, ItemTag, LayoutPoint, LayoutSize, LayoutTransform, LayoutVector2D};
-use {NativeFontHandle, WorldPoint, NormalizedRect};
+use {NativeFontHandle, WorldPoint};
 
 pub type TileSize = u16;
 /// Documents are rendered in the ascending order of their associated layer values.
@@ -27,7 +28,7 @@ pub enum ResourceUpdate {
     AddImage(AddImage),
     UpdateImage(UpdateImage),
     DeleteImage(ImageKey),
-    SetImageVisibleArea(ImageKey, NormalizedRect),
+    SetImageVisibleArea(ImageKey, DeviceUintRect),
     AddFont(AddFont),
     DeleteFont(FontKey),
     AddFontInstance(AddFontInstance),
@@ -320,7 +321,7 @@ impl Transaction {
         self.resource_updates.push(ResourceUpdate::DeleteImage(key));
     }
 
-    pub fn set_image_visible_area(&mut self, key: ImageKey, area: NormalizedRect) {
+    pub fn set_image_visible_area(&mut self, key: ImageKey, area: DeviceUintRect) {
         self.resource_updates.push(ResourceUpdate::SetImageVisibleArea(key, area))
     }
 
@@ -607,6 +608,8 @@ pub enum DebugCommand {
     EnableTextureCacheDebug(bool),
     /// Display intermediate render targets on screen.
     EnableRenderTargetDebug(bool),
+    /// Display the contents of GPU cache.
+    EnableGpuCacheDebug(bool),
     /// Display GPU timing results.
     EnableGpuTimeQueries(bool),
     /// Display GPU overdraw results
@@ -637,6 +640,12 @@ pub enum DebugCommand {
     ClearCaches(ClearCache),
     /// Invalidate GPU cache, forcing the update from the CPU mirror.
     InvalidateGpuCache,
+    /// Causes the scene builder to pause for a given amount of miliseconds each time it
+    /// processes a transaction.
+    SimulateLongSceneBuild(u32),
+    /// Causes the low priority scene builder to pause for a given amount of miliseconds
+    /// each time it processes a transaction.
+    SimulateLongLowPrioritySceneBuild(u32),
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -653,6 +662,8 @@ pub enum ApiMsg {
     GetGlyphIndices(FontKey, String, MsgSender<Vec<Option<u32>>>),
     /// Adds a new document namespace.
     CloneApi(MsgSender<IdNamespace>),
+    /// Adds a new document namespace.
+    CloneApiByClient(IdNamespace),
     /// Adds a new document with given initial size.
     AddDocument(DocumentId, DeviceUintSize, DocumentLayer),
     /// A message targeted at a particular document.
@@ -667,6 +678,8 @@ pub enum ApiMsg {
     ClearNamespace(IdNamespace),
     /// Flush from the caches anything that isn't necessary, to free some memory.
     MemoryPressure,
+    /// Collects a memory report.
+    ReportMemory(MsgSender<MemoryReport>),
     /// Change debugging options.
     DebugCommand(DebugCommand),
     /// Wakes the render backend's event loop up. Needed when an event is communicated
@@ -684,12 +697,14 @@ impl fmt::Debug for ApiMsg {
             ApiMsg::GetGlyphDimensions(..) => "ApiMsg::GetGlyphDimensions",
             ApiMsg::GetGlyphIndices(..) => "ApiMsg::GetGlyphIndices",
             ApiMsg::CloneApi(..) => "ApiMsg::CloneApi",
+            ApiMsg::CloneApiByClient(..) => "ApiMsg::CloneApiByClient",
             ApiMsg::AddDocument(..) => "ApiMsg::AddDocument",
             ApiMsg::UpdateDocument(..) => "ApiMsg::UpdateDocument",
             ApiMsg::DeleteDocument(..) => "ApiMsg::DeleteDocument",
             ApiMsg::ExternalEvent(..) => "ApiMsg::ExternalEvent",
             ApiMsg::ClearNamespace(..) => "ApiMsg::ClearNamespace",
             ApiMsg::MemoryPressure => "ApiMsg::MemoryPressure",
+            ApiMsg::ReportMemory(..) => "ApiMsg::ReportMemory",
             ApiMsg::DebugCommand(..) => "ApiMsg::DebugCommand",
             ApiMsg::ShutDown => "ApiMsg::ShutDown",
             ApiMsg::WakeUp => "ApiMsg::WakeUp",
@@ -735,6 +750,54 @@ impl PipelineId {
     }
 }
 
+/// Collection of heap sizes, in bytes.
+#[repr(C)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct MemoryReport {
+    //
+    // CPU Memory.
+    //
+    pub primitive_stores: usize,
+    pub clip_stores: usize,
+    pub gpu_cache_metadata: usize,
+    pub gpu_cache_cpu_mirror: usize,
+    pub render_tasks: usize,
+    pub hit_testers: usize,
+    pub fonts: usize,
+    pub images: usize,
+    pub rasterized_blobs: usize,
+    //
+    // GPU memory.
+    //
+    pub gpu_cache_textures: usize,
+    pub vertex_data_textures: usize,
+    pub render_target_textures: usize,
+    pub texture_cache_textures: usize,
+}
+
+impl ::std::ops::AddAssign for MemoryReport {
+    fn add_assign(&mut self, other: MemoryReport) {
+        self.primitive_stores += other.primitive_stores;
+        self.clip_stores += other.clip_stores;
+        self.gpu_cache_metadata += other.gpu_cache_metadata;
+        self.gpu_cache_cpu_mirror += other.gpu_cache_cpu_mirror;
+        self.render_tasks += other.render_tasks;
+        self.hit_testers += other.hit_testers;
+        self.fonts += other.fonts;
+        self.images += other.images;
+        self.rasterized_blobs += other.rasterized_blobs;
+        self.gpu_cache_textures += other.gpu_cache_textures;
+        self.vertex_data_textures += other.vertex_data_textures;
+        self.render_target_textures += other.render_target_textures;
+        self.texture_cache_textures += other.texture_cache_textures;
+    }
+}
+
+/// A C function that takes a pointer to a heap allocation and returns its size.
+///
+/// This is borrowed from the malloc_size_of crate, upon which we want to avoid
+/// a dependency from WebRender.
+pub type VoidPtrToSizeFn = unsafe extern "C" fn(ptr: *const c_void) -> usize;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -804,6 +867,23 @@ impl RenderApiSender {
             next_id: Cell::new(ResourceId(0)),
         }
     }
+
+    /// Creates a new resource API object with a dedicated namespace.
+    /// Namespace id is allocated by client.
+    ///
+    /// The function could be used only when RendererOptions::namespace_alloc_by_client is true.
+    /// When the option is true, create_api() could not be used to prevent namespace id conflict.
+    pub fn create_api_by_client(&self, namespace_id: IdNamespace) -> RenderApi {
+        let msg = ApiMsg::CloneApiByClient(namespace_id);
+        self.api_sender.send(msg).expect("Failed to send CloneApiByClient message");
+        RenderApi {
+            api_sender: self.api_sender.clone(),
+            payload_sender: self.payload_sender.clone(),
+            namespace_id,
+            next_id: Cell::new(ResourceId(0)),
+        }
+    }
+
 }
 
 pub struct RenderApi {
@@ -895,6 +975,12 @@ impl RenderApi {
 
     pub fn notify_memory_pressure(&self) {
         self.api_sender.send(ApiMsg::MemoryPressure).unwrap();
+    }
+
+    pub fn report_memory(&self) -> MemoryReport {
+        let (tx, rx) = channel::msg_channel().unwrap();
+        self.api_sender.send(ApiMsg::ReportMemory(tx)).unwrap();
+        rx.recv().unwrap()
     }
 
     pub fn shut_down(&self) {
@@ -1168,10 +1254,12 @@ pub trait RenderNotifier: Send {
     fn shut_down(&self) {}
 }
 
+#[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Checkpoint {
     SceneBuilt,
     FrameBuilt,
+    FrameRendered,
     /// NotificationRequests get notified with this if they get dropped without having been
     /// notified. This provides the guarantee that if a request is created it will get notified.
     TransactionDropped,

@@ -405,7 +405,7 @@ Http2Session::RegisterStreamID(Http2Stream *stream, uint32_t aNewID)
     }
   }
 
-  if (stream->StreamID() & 1) {
+  if (aNewID & 1) {
     // don't count push streams here
     MOZ_ASSERT(stream->Transaction(), "no transation for the stream!");
     RefPtr<nsHttpConnectionInfo> ci(stream->Transaction()->ConnectionInfo());
@@ -1058,6 +1058,7 @@ Http2Session::CreatePriorityFrame(uint32_t streamID,
                                   uint32_t dependsOn,
                                   uint8_t weight)
 {
+  MOZ_ASSERT(streamID, "Priority on stream 0");
   char *packet = EnsureOutputBuffer(kFrameHeaderBytes + 5);
   CreateFrameHeader(packet, 5, FRAME_TYPE_PRIORITY, 0, streamID);
   mOutputQueueUsed += kFrameHeaderBytes + 5;

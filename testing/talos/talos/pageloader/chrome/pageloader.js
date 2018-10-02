@@ -8,6 +8,10 @@
 ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 ChromeUtils.import("resource://gre/modules/E10SUtils.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+
+XPCOMUtils.defineLazyScriptGetter(this, "TalosParentProfiler",
+                                  "resource://talos-powers/TalosParentProfiler.js");
 
 var NUM_CYCLES = 5;
 var numPageCycles = 1;
@@ -232,7 +236,7 @@ function plInit() {
 
         }
         content.selectedBrowser.messageManager.loadFrameScript("chrome://pageloader/content/talos-content.js", false);
-        content.selectedBrowser.messageManager.loadFrameScript("chrome://talos-powers-content/content/TalosContentProfiler.js", false, true);
+        content.selectedBrowser.messageManager.loadFrameScript("resource://talos-powers/TalosContentProfiler.js", false, true);
         content.selectedBrowser.messageManager.loadFrameScript("chrome://pageloader/content/tscroll.js", false, true);
         content.selectedBrowser.messageManager.loadFrameScript("chrome://pageloader/content/Profiler.js", false, true);
 
@@ -326,10 +330,13 @@ function startAndLoadURI(pageName) {
   start_time = Date.now();
   if (loadNoCache) {
     content.loadURI(pageName, {
+      triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
       flags: Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CACHE
     });
   } else {
-    content.loadURI(pageName);
+    content.loadURI(pageName, {
+      triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+    });
   }
 }
 

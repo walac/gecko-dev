@@ -60,6 +60,7 @@ ReflowInput::ReflowInput(nsPresContext*       aPresContext,
                                      const LogicalSize&   aAvailableSpace,
                                      uint32_t             aFlags)
   : SizeComputationInput(aFrame, aRenderingContext)
+  , mCBReflowInput(nullptr) // will be setup properly later in InitCBReflowInput
   , mBlockDelta(0)
   , mOrthogonalLimit(NS_UNCONSTRAINEDSIZE)
   , mAvailableWidth(0)
@@ -182,6 +183,7 @@ ReflowInput::ReflowInput(
                      const LogicalSize*       aContainingBlockSize,
                      uint32_t                 aFlags)
   : SizeComputationInput(aFrame, aParentReflowInput.mRenderingContext)
+  , mCBReflowInput(nullptr) // will be setup properly later in InitCBReflowInput
   , mBlockDelta(0)
   , mOrthogonalLimit(NS_UNCONSTRAINEDSIZE)
   , mAvailableWidth(0)
@@ -399,6 +401,8 @@ ReflowInput::Init(nsPresContext*     aPresContext,
   mStylePadding = mFrame->StylePadding();
   mStyleText = mFrame->StyleText();
 
+  InitCBReflowInput();
+
   LayoutFrameType type = mFrame->Type();
   if (type == mozilla::LayoutFrameType::Placeholder) {
     // Placeholders have a no-op Reflow method that doesn't need the rest of
@@ -408,7 +412,6 @@ ReflowInput::Init(nsPresContext*     aPresContext,
   }
 
   InitFrameType(type);
-  InitCBReflowInput();
 
   LogicalSize cbSize(mWritingMode, -1, -1);
   if (aContainingBlockSize) {
@@ -683,7 +686,7 @@ ReflowInput::InitResizeFlags(nsPresContext* aPresContext,
 
   // XXX Should we really need to null check mCBReflowInput?  (We do for
   // at least nsBoxFrame).
-  if (IS_TABLE_CELL(aFrameType) &&
+  if (IsTableCell(aFrameType) &&
       (mFlags.mSpecialBSizeReflow ||
        (mFrame->FirstInFlow()->GetStateBits() &
          NS_TABLE_CELL_HAD_SPECIAL_REFLOW)) &&
@@ -763,7 +766,7 @@ ReflowInput::InitResizeFlags(nsPresContext* aPresContext,
   // the special bsize reflow, since in that case it will already be
   // set correctly above if we need it set.
   if (!IsBResize() && mCBReflowInput &&
-      (IS_TABLE_CELL(mCBReflowInput->mFrame->Type()) ||
+      (IsTableCell(mCBReflowInput->mFrame->Type()) ||
        mCBReflowInput->mFlags.mHeightDependsOnAncestorCell) &&
       !mCBReflowInput->mFlags.mSpecialBSizeReflow &&
       dependsOnCBBSize) {
@@ -2247,14 +2250,12 @@ ReflowInput::InitConstraints(nsPresContext* aPresContext,
 
     // See if the containing block height is based on the size of its
     // content
-    LayoutFrameType fType;
     if (NS_AUTOHEIGHT == cbSize.BSize(wm)) {
       // See if the containing block is a cell frame which needs
       // to use the mComputedHeight of the cell instead of what the cell block passed in.
       // XXX It seems like this could lead to bugs with min-height and friends
       if (cbri->mParentReflowInput) {
-        fType = cbri->mFrame->Type();
-        if (IS_TABLE_CELL(fType)) {
+        if (IsTableCell(cbri->mFrame->Type())) {
           // use the cell's computed block size
           cbSize.BSize(wm) = cbri->ComputedSize(wm).BSize(wm);
         }
@@ -2291,7 +2292,7 @@ ReflowInput::InitConstraints(nsPresContext* aPresContext,
           // in quirks mode, get the cb height using the special quirk method
           if (!wm.IsVertical() &&
               eCompatibility_NavQuirks == aPresContext->CompatibilityMode()) {
-            if (!IS_TABLE_CELL(fType)) {
+            if (!IsTableCell(cbri->mFrame->Type())) {
               cbSize.BSize(wm) = CalcQuirkContainingBlockHeight(cbri);
               if (cbSize.BSize(wm) == NS_AUTOHEIGHT) {
                 blockSizeUnit = eStyleUnit_Auto;

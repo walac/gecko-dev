@@ -224,6 +224,9 @@ namespace js {
 JS_FRIEND_API(bool)
 GetBuiltinClass(JSContext* cx, JS::HandleObject obj, ESClass* cls);
 
+JS_FRIEND_API(bool)
+IsArgumentsObject(JS::HandleObject obj);
+
 JS_FRIEND_API(const char*)
 ObjectClassName(JSContext* cx, JS::HandleObject obj);
 
@@ -461,7 +464,7 @@ extern JS_FRIEND_API(JS::Zone*)
 GetRealmZone(JS::Realm* realm);
 
 typedef bool
-(* PreserveWrapperCallback)(JSContext* cx, JSObject* obj);
+(* PreserveWrapperCallback)(JSContext* cx, JS::HandleObject obj);
 
 typedef enum  {
     CollectNurseryBeforeDump,

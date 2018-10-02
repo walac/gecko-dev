@@ -5,14 +5,17 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "VRThread.h"
+#include "nsDebug.h"
+#include "nsThreadManager.h"
 #include "nsThreadUtils.h"
+#include "VRManager.h"
 
 namespace mozilla {
 
 namespace gfx {
 
 static StaticRefPtr<VRListenerThreadHolder> sVRListenerThreadHolder;
-static bool sFinishedVRListenerShutDown = false;
+static bool sFinishedVRListenerShutDown = true;
 static const uint32_t kDefaultThreadLifeTime = 60; // in 60 seconds.
 static const uint32_t kDelayPostTaskTime = 20000; // in 20000 ms.
 
@@ -93,7 +96,7 @@ VRListenerThreadHolder::Start()
 {
   MOZ_ASSERT(NS_IsMainThread(), "Should be on the main thread!");
   MOZ_ASSERT(!sVRListenerThreadHolder, "The VR listener thread has already been started!");
-
+  sFinishedVRListenerShutDown = false;
   sVRListenerThreadHolder = new VRListenerThreadHolder();
 }
 
@@ -102,7 +105,7 @@ VRListenerThreadHolder::Shutdown()
 {
   MOZ_ASSERT(NS_IsMainThread(), "Should be on the main thread!");
   MOZ_ASSERT(sVRListenerThreadHolder, "The VR listener thread has already been shut down!");
-
+  VRManager::StopVRListenerThreadTasks();
   sVRListenerThreadHolder = nullptr;
 
   SpinEventLoopUntil([&]() { return sFinishedVRListenerShutDown; });
@@ -160,7 +163,16 @@ void
 VRThread::Shutdown()
 {
   if (mThread) {
-    mThread->Shutdown();
+    if (nsThreadManager::get().IsNSThread()) {
+      mThread->Shutdown();
+    } else {
+      NS_WARNING("VRThread::Shutdown() may only be called from an XPCOM thread");
+      NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "VRThread::Shutdown",
+        [thread = mThread]() {
+          thread->Shutdown();
+        }));
+    }
     mThread = nullptr;
   }
   mStarted = false;

@@ -10,6 +10,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/dom/nsBrowserElement.h"
+#include "mozilla/dom/FeaturePolicy.h"
 
 #include "nsFrameLoader.h"
 #include "nsGenericHTMLElement.h"
@@ -36,9 +37,9 @@ class nsGenericHTMLFrameElement : public nsGenericHTMLElement,
                                   public nsIMozBrowserFrame
 {
 public:
-  nsGenericHTMLFrameElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
+  nsGenericHTMLFrameElement(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
                             mozilla::dom::FromParser aFromParser)
-    : nsGenericHTMLElement(aNodeInfo)
+    : nsGenericHTMLElement(std::move(aNodeInfo))
     , nsBrowserElement()
     , mSrcLoadHappened(false)
     , mNetworkCreated(aFromParser == mozilla::dom::FROM_PARSER_NETWORK)
@@ -126,6 +127,9 @@ protected:
   nsCOMPtr<nsPIDOMWindowOuter> mOpenerWindow;
 
   nsCOMPtr<nsIPrincipal> mSrcTriggeringPrincipal;
+
+  // Used by <iframe> only.
+  RefPtr<mozilla::dom::FeaturePolicy> mFeaturePolicy;
 
   /**
    * True if we have already loaded the frame's original src

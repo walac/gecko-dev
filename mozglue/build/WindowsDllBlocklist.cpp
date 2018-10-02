@@ -652,7 +652,7 @@ continue_loading:
 #endif
 
   NTSTATUS ret = stub_LdrLoadDll(filePath, flags, moduleFileName, handle);
-  CallDllLoadHook(true, ret, handle ? *handle : 0, moduleFileName);
+  CallDllLoadHook(NT_SUCCESS(ret), ret, handle ? *handle : 0, moduleFileName);
   return ret;
 }
 
@@ -796,22 +796,22 @@ DllBlocklist_Initialize(uint32_t aInitFlags)
 
     pProc = (void*)GetProcAddress(hKernel, "LoadLibraryA");
     if (pProc) {
-      gStartAddressesToBlock->append(pProc);
+      Unused << gStartAddressesToBlock->append(pProc);
     }
 
     pProc = (void*)GetProcAddress(hKernel, "LoadLibraryW");
     if (pProc) {
-      gStartAddressesToBlock->append(pProc);
+      Unused << gStartAddressesToBlock->append(pProc);
     }
 
     pProc = (void*)GetProcAddress(hKernel, "LoadLibraryExA");
     if (pProc) {
-      gStartAddressesToBlock->append(pProc);
+      Unused << gStartAddressesToBlock->append(pProc);
     }
 
     pProc = (void*)GetProcAddress(hKernel, "LoadLibraryExW");
     if (pProc) {
-      gStartAddressesToBlock->append(pProc);
+      Unused << gStartAddressesToBlock->append(pProc);
     }
   }
 #endif

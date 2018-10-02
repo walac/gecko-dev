@@ -7,7 +7,7 @@ use api::{DeviceIntPoint, DeviceIntRect, DeviceIntSize, DeviceSize, DeviceIntSid
 use api::FontRenderMode;
 use border::BorderCacheKey;
 use box_shadow::{BoxShadowCacheKey};
-use clip::{ClipItem, ClipStore, ClipNodeRange};
+use clip::{ClipDataStore, ClipItem, ClipStore, ClipNodeRange};
 use clip_scroll_tree::SpatialNodeIndex;
 use device::TextureFilter;
 #[cfg(feature = "pathfinder")]
@@ -230,6 +230,15 @@ impl BlurTask {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub struct ScalingTask {
+    pub target_kind: RenderTargetKind,
+    pub uv_rect_handle: GpuCacheHandle,
+    uv_rect_kind: UvRectKind,
+}
+
+#[derive(Debug)]
 #[cfg(feature = "pathfinder")]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
@@ -295,7 +304,7 @@ pub enum RenderTaskKind {
     #[allow(dead_code)]
     Glyph(GlyphTask),
     Readback(DeviceIntRect),
-    Scaling(RenderTargetKind),
+    Scaling(ScalingTask),
     Blit(BlitTask),
     Border(BorderTask),
 }
@@ -432,6 +441,7 @@ impl RenderTask {
         gpu_cache: &mut GpuCache,
         resource_cache: &mut ResourceCache,
         render_tasks: &mut RenderTaskTree,
+        clip_data_store: &mut ClipDataStore,
     ) -> Self {
         let mut children = Vec::new();
 
@@ -445,7 +455,8 @@ impl RenderTask {
         //           whether a ClipSources contains any box-shadows and skip
         //           this iteration for the majority of cases.
         for i in 0 .. clip_node_range.count {
-            let (clip_node, _) = clip_store.get_node_from_range_mut(&clip_node_range, i);
+            let clip_instance = clip_store.get_instance_from_range(&clip_node_range, i);
+            let clip_node = &mut clip_data_store[clip_instance.handle];
             match clip_node.item {
                 ClipItem::BoxShadow(ref mut info) => {
                     let (cache_size, cache_key) = info.cache_key
@@ -567,8 +578,9 @@ impl RenderTask {
             scale_factor *= 2.0;
             adjusted_blur_target_size = (blur_target_size.to_f32() / scale_factor).to_i32();
             let downscaling_task = RenderTask::new_scaling(
-                target_kind,
                 downscaling_src_task_id,
+                render_tasks,
+                target_kind,
                 adjusted_blur_target_size,
             );
             downscaling_src_task_id = render_tasks.add(downscaling_task);
@@ -616,14 +628,21 @@ impl RenderTask {
     }
 
     pub fn new_scaling(
-        target_kind: RenderTargetKind,
         src_task_id: RenderTaskId,
+        render_tasks: &mut RenderTaskTree,
+        target_kind: RenderTargetKind,
         target_size: DeviceIntSize,
     ) -> Self {
+        let uv_rect_kind = render_tasks[src_task_id].uv_rect_kind();
+
         RenderTask::with_dynamic_location(
             target_size,
             vec![src_task_id],
-            RenderTaskKind::Scaling(target_kind),
+            RenderTaskKind::Scaling(ScalingTask {
+                target_kind,
+                uv_rect_handle: GpuCacheHandle::new(),
+                uv_rect_kind,
+            }),
             match target_kind {
                 RenderTargetKind::Color => ClearMode::Transparent,
                 RenderTargetKind::Alpha => ClearMode::One,
@@ -657,8 +676,7 @@ impl RenderTask {
     fn uv_rect_kind(&self) -> UvRectKind {
         match self.kind {
             RenderTaskKind::CacheMask(..) |
-            RenderTaskKind::Readback(..) |
-            RenderTaskKind::Scaling(..) => {
+            RenderTaskKind::Readback(..) => {
                 unreachable!("bug: unexpected render task");
             }
 
@@ -668,6 +686,10 @@ impl RenderTask {
 
             RenderTaskKind::VerticalBlur(ref task) |
             RenderTaskKind::HorizontalBlur(ref task) => {
+                task.uv_rect_kind
+            }
+
+            RenderTaskKind::Scaling(ref task) => {
                 task.uv_rect_kind
             }
 
@@ -740,7 +762,7 @@ impl RenderTask {
         // so the shader doesn't need to shift by the origin.
         if let RenderTaskLocation::Fixed(_) = self.location {
             target_rect.origin = DeviceIntPoint::origin();
-        };
+        }
 
         RenderTaskData {
             data: [
@@ -834,8 +856,8 @@ impl RenderTask {
                 RenderTargetKind::Color
             }
 
-            RenderTaskKind::Scaling(target_kind) => {
-                target_kind
+            RenderTaskKind::Scaling(ref task_info) => {
+                task_info.target_kind
             }
 
             RenderTaskKind::Border(..) |

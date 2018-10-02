@@ -7,6 +7,7 @@
 #define nsIDocument_h___
 
 #include "mozilla/FlushType.h"           // for enum
+#include "mozilla/Pair.h"                // for Pair
 #include "nsAutoPtr.h"                   // for member
 #include "nsCOMArray.h"                  // for member
 #include "nsCompatibility.h"             // for member
@@ -29,6 +30,7 @@
 #include "nsIServiceManager.h"
 #include "nsIURI.h"                      // for use in inline functions
 #include "nsIUUIDGenerator.h"
+#include "nsIWebProgressListener.h"      // for nsIWebProgressListener
 #include "nsPIDOMWindow.h"               // for use in inline functions
 #include "nsPropertyTable.h"             // for member
 #include "nsStringFwd.h"
@@ -43,8 +45,10 @@
 #include "nsExpirationTracker.h"
 #include "nsClassHashtable.h"
 #include "mozilla/CORSMode.h"
+#include "mozilla/dom/ContentBlockingLog.h"
 #include "mozilla/dom/DispatcherTrait.h"
 #include "mozilla/dom/DocumentOrShadowRoot.h"
+#include "mozilla/EnumSet.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/NotNull.h"
 #include "mozilla/SegmentedVector.h"
@@ -125,6 +129,8 @@ class Encoding;
 class ErrorResult;
 class EventStates;
 class EventListenerManager;
+class FullscreenExit;
+class FullscreenRequest;
 class PendingAnimationTracker;
 class ServoStyleSet;
 template<typename> class OwningNonNull;
@@ -158,9 +164,9 @@ class Element;
 struct ElementCreationOptions;
 class Event;
 class EventTarget;
+class FeaturePolicy;
 class FontFaceSet;
 class FrameRequestCallback;
-struct FullscreenRequest;
 class ImageTracker;
 class HTMLBodyElement;
 class HTMLSharedElement;
@@ -282,6 +288,8 @@ public:
    * nsIDocument::RequestExternalResource is documented to do.
    */
   nsIDocument* RequestResource(nsIURI* aURI,
+                               nsIURI* aReferrer,
+                               uint32_t aReferrerPolicy,
                                nsINode* aRequestingNode,
                                nsIDocument* aDisplayDocument,
                                ExternalResourceLoad** aPendingLoad);
@@ -347,8 +355,10 @@ protected:
      * Start aURI loading.  This will perform the necessary security checks and
      * so forth.
      */
-    nsresult StartLoad(nsIURI* aURI, nsINode* aRequestingNode);
-
+    nsresult StartLoad(nsIURI* aURI,
+                       nsIURI* aReferrer,
+                       uint32_t aReferrerPolicy,
+                       nsINode* aRequestingNode);
     /**
      * Set up an nsIContentViewer based on aRequest.  This is guaranteed to
      * put null in *aViewer and *aLoadGroup on all failures.
@@ -446,9 +456,9 @@ protected:
 
 public:
   typedef nsExternalResourceMap::ExternalResourceLoad ExternalResourceLoad;
+  typedef mozilla::FullscreenRequest FullscreenRequest;
   typedef mozilla::net::ReferrerPolicy ReferrerPolicyEnum;
   typedef mozilla::dom::Element Element;
-  typedef mozilla::dom::FullscreenRequest FullscreenRequest;
 
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_IDOCUMENT_IID)
 
@@ -971,11 +981,20 @@ public:
   }
 
   /**
+   * Get the content blocking log.
+   */
+  mozilla::dom::ContentBlockingLog* GetContentBlockingLog()
+  {
+    return &mContentBlockingLog;
+  }
+
+  /**
    * Get tracking content blocked flag for this document.
    */
   bool GetHasTrackingContentBlocked()
   {
-    return mHasTrackingContentBlocked;
+    return mContentBlockingLog.HasBlockedAnyOfType(
+        nsIWebProgressListener::STATE_BLOCKED_TRACKING_CONTENT);
   }
 
   /**
@@ -983,7 +1002,8 @@ public:
    */
   bool GetHasSlowTrackingContentBlocked()
   {
-    return mHasSlowTrackingContentBlocked;
+    return mContentBlockingLog.HasBlockedAnyOfType(
+        nsIWebProgressListener::STATE_BLOCKED_SLOW_TRACKING_CONTENT);
   }
 
   /**
@@ -991,7 +1011,8 @@ public:
    */
   bool GetHasAllCookiesBlocked()
   {
-    return mHasAllCookiesBlocked;
+    return mContentBlockingLog.HasBlockedAnyOfType(
+        nsIWebProgressListener::STATE_COOKIES_BLOCKED_ALL);
   }
 
   /**
@@ -999,7 +1020,8 @@ public:
    */
   bool GetHasTrackingCookiesBlocked()
   {
-    return mHasTrackingCookiesBlocked;
+    return mContentBlockingLog.HasBlockedAnyOfType(
+        nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER);
   }
 
   /**
@@ -1007,7 +1029,8 @@ public:
    */
   bool GetHasForeignCookiesBlocked()
   {
-    return mHasForeignCookiesBlocked;
+    return mContentBlockingLog.HasBlockedAnyOfType(
+        nsIWebProgressListener::STATE_COOKIES_BLOCKED_FOREIGN);
   }
 
   /**
@@ -1015,55 +1038,74 @@ public:
    */
   bool GetHasCookiesBlockedByPermission()
   {
-    return mHasCookiesBlockedByPermission;
+    return mContentBlockingLog.HasBlockedAnyOfType(
+        nsIWebProgressListener::STATE_COOKIES_BLOCKED_BY_PERMISSION);
   }
 
   /**
    * Set the tracking content blocked flag for this document.
    */
-  void SetHasTrackingContentBlocked(bool aHasTrackingContentBlocked)
+  void SetHasTrackingContentBlocked(bool aHasTrackingContentBlocked,
+                                    const nsAString& aOriginBlocked)
   {
-    mHasTrackingContentBlocked = aHasTrackingContentBlocked;
+    RecordContentBlockingLog(aOriginBlocked,
+                             nsIWebProgressListener::STATE_BLOCKED_TRACKING_CONTENT,
+                             aHasTrackingContentBlocked);
   }
 
   /**
    * Set the slow tracking content blocked flag for this document.
    */
-  void SetHasSlowTrackingContentBlocked(bool aHasSlowTrackingContentBlocked)
+  void SetHasSlowTrackingContentBlocked(bool aHasSlowTrackingContentBlocked,
+                                        const nsAString& aOriginBlocked)
   {
-    mHasSlowTrackingContentBlocked = aHasSlowTrackingContentBlocked;
+    RecordContentBlockingLog(aOriginBlocked,
+                             nsIWebProgressListener::STATE_BLOCKED_SLOW_TRACKING_CONTENT,
+                             aHasSlowTrackingContentBlocked);
   }
 
   /**
    * Set the all cookies blocked flag for this document.
    */
-  void SetHasAllCookiesBlocked(bool aHasAllCookiesBlocked)
+  void SetHasAllCookiesBlocked(bool aHasAllCookiesBlocked,
+                               const nsAString& aOriginBlocked)
   {
-    mHasAllCookiesBlocked = aHasAllCookiesBlocked;
+    RecordContentBlockingLog(aOriginBlocked,
+                             nsIWebProgressListener::STATE_COOKIES_BLOCKED_ALL,
+                             aHasAllCookiesBlocked);
   }
 
   /**
    * Set the tracking cookies blocked flag for this document.
    */
-  void SetHasTrackingCookiesBlocked(bool aHasTrackingCookiesBlocked)
+  void SetHasTrackingCookiesBlocked(bool aHasTrackingCookiesBlocked,
+                                    const nsAString& aOriginBlocked)
   {
-    mHasTrackingCookiesBlocked = aHasTrackingCookiesBlocked;
+    RecordContentBlockingLog(aOriginBlocked,
+                             nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER,
+                             aHasTrackingCookiesBlocked);
   }
 
   /**
    * Set the third-party cookies blocked flag for this document.
    */
-  void SetHasForeignCookiesBlocked(bool aHasForeignCookiesBlocked)
+  void SetHasForeignCookiesBlocked(bool aHasForeignCookiesBlocked,
+                                   const nsAString& aOriginBlocked)
   {
-    mHasForeignCookiesBlocked = aHasForeignCookiesBlocked;
+    RecordContentBlockingLog(aOriginBlocked,
+                             nsIWebProgressListener::STATE_COOKIES_BLOCKED_FOREIGN,
+                             aHasForeignCookiesBlocked);
   }
 
   /**
    * Set the cookies blocked by site permission flag for this document.
    */
-  void SetHasCookiesBlockedByPermission(bool aHasCookiesBlockedByPermission)
+  void SetHasCookiesBlockedByPermission(bool aHasCookiesBlockedByPermission,
+                                        const nsAString& aOriginBlocked)
   {
-    mHasCookiesBlockedByPermission = aHasCookiesBlockedByPermission;
+    RecordContentBlockingLog(aOriginBlocked,
+                             nsIWebProgressListener::STATE_COOKIES_BLOCKED_BY_PERMISSION,
+                             aHasCookiesBlockedByPermission);
   }
 
   /**
@@ -1233,6 +1275,11 @@ public:
 
   mozilla::dom::Selection* GetSelection(mozilla::ErrorResult& aRv);
 
+  already_AddRefed<mozilla::dom::Promise>
+    HasStorageAccess(mozilla::ErrorResult& aRv);
+  already_AddRefed<mozilla::dom::Promise>
+    RequestStorageAccess(mozilla::ErrorResult& aRv);
+
   /**
    * Gets the event target to dispatch key events to if there is no focused
    * content in the document.
@@ -1393,6 +1440,8 @@ protected:
   friend class nsUnblockOnloadEvent;
 
   nsresult InitCSP(nsIChannel* aChannel);
+
+  nsresult InitFeaturePolicy(nsIChannel* aChannel);
 
   void PostUnblockOnloadEvent();
 
@@ -1756,8 +1805,8 @@ public:
 
   // Do the "fullscreen element ready check" from the fullscreen spec.
   // It returns true if the given element is allowed to go into fullscreen.
-  bool FullscreenElementReadyCheck(Element* aElement,
-                                   mozilla::dom::CallerType aCallerType);
+  // It is responsive to dispatch "fullscreenerror" event when necessary.
+  bool FullscreenElementReadyCheck(const FullscreenRequest&);
 
   // This is called asynchronously by nsIDocument::AsyncRequestFullscreen()
   // to move this document into fullscreen mode if allowed.
@@ -1801,7 +1850,8 @@ public:
    * is no former fullscreen element, this exits fullscreen, moving the
    * top-level browser window out of fullscreen mode.
    */
-  void RestorePreviousFullscreenState();
+  void RestorePreviousFullscreenState(
+    mozilla::UniquePtr<mozilla::FullscreenExit>);
 
   /**
    * Returns true if this document is a fullscreen leaf document, i.e. it
@@ -1853,12 +1903,6 @@ public:
    * Returns whether there is any fullscreen request handled.
    */
   static bool HandlePendingFullscreenRequests(nsIDocument* aDocument);
-
-  /**
-   * Dispatch fullscreenerror event and report the failure message to
-   * the console.
-   */
-  void DispatchFullscreenError(const char* aMessage);
 
   void RequestPointerLock(Element* aElement, mozilla::dom::CallerType);
   bool SetPointerLock(Element* aElement, int aCursorStyle);
@@ -2546,10 +2590,14 @@ public:
    * one in the future.
    *
    * @param aURI the URI to get
+   * @param aReferrer the referrer of the request
+   * @param aReferrerPolicy the referrer policy of the request
    * @param aRequestingNode the node making the request
    * @param aPendingLoad the pending load for this request, if any
    */
   nsIDocument* RequestExternalResource(nsIURI* aURI,
+                                       nsIURI* aReferrer,
+                                       uint32_t aReferrerPolicy,
                                        nsINode* aRequestingNode,
                                        ExternalResourceLoad** aPendingLoad);
 
@@ -3285,7 +3333,7 @@ public:
   {
     return !!GetFullscreenElement();
   }
-  void ExitFullscreen();
+  already_AddRefed<mozilla::dom::Promise> ExitFullscreen(ErrorResult&);
   void ExitPointerLock()
   {
     UnlockPointer(this);
@@ -3490,11 +3538,12 @@ public:
 
   // Called to track whether this document has had any interaction.
   // This is used to track whether we should permit "beforeunload".
-  void SetUserHasInteracted(bool aUserHasInteracted);
+  void SetUserHasInteracted();
   bool UserHasInteracted()
   {
     return mUserHasInteracted;
   }
+  void ResetUserInteractionTimer();
 
   // This should be called when this document receives events which are likely
   // to be user interaction with the document, rather than the byproduct of
@@ -3696,6 +3745,13 @@ public:
     ++mNumTrackersBlocked;
   }
 
+  void NoteTrackerBlockedReason(
+    mozilla::Telemetry::LABELS_DOCUMENT_ANALYTICS_TRACKER_FASTBLOCKED aLabel)
+  {
+    MOZ_ASSERT(!GetSameTypeParentDocument());
+    mTrackerBlockedReasons += aLabel;
+  }
+
   uint32_t NumTrackersFound()
   {
     MOZ_ASSERT(!GetSameTypeParentDocument() || mNumTrackersFound == 0);
@@ -3719,6 +3775,9 @@ public:
   {
     mAllowPaymentRequest = aAllowPaymentRequest;
   }
+
+  mozilla::dom::FeaturePolicy*
+  Policy() const;
 
   bool IsShadowDOMEnabled() const
   {
@@ -3793,7 +3852,7 @@ protected:
   // Apply the fullscreen state to the document, and trigger related
   // events. It returns false if the fullscreen element ready check
   // fails and nothing gets changed.
-  bool ApplyFullscreen(const FullscreenRequest& aRequest);
+  bool ApplyFullscreen(mozilla::UniquePtr<FullscreenRequest> aRequest);
 
   bool GetUseCounter(mozilla::UseCounter aUseCounter)
   {
@@ -3832,6 +3891,12 @@ protected:
                                        bool aUpdateCSSLoader);
 
 private:
+  void RecordContentBlockingLog(const nsAString& aOrigin,
+                                uint32_t aType, bool aBlocked)
+  {
+    mContentBlockingLog.RecordLog(aOrigin, aType, aBlocked);
+  }
+
   mutable std::bitset<eDeprecatedOperationCount> mDeprecationWarnedAbout;
   mutable std::bitset<eDocumentWarningCount> mDocWarningWarnedAbout;
 
@@ -3903,6 +3968,8 @@ protected:
   nsIDocument* GetSameTypeParentDocument();
 
   void MaybeAllowStorageForOpener();
+
+  void MaybeStoreUserInteractionAsPermission();
 
   // Helpers for GetElementsByName.
   static bool MatchNameAttribute(mozilla::dom::Element* aElement,
@@ -4025,6 +4092,8 @@ protected:
 
   RefPtr<mozilla::dom::Promise> mReadyForIdle;
 
+  RefPtr<mozilla::dom::FeaturePolicy> mFeaturePolicy;
+
   // True if BIDI is enabled.
   bool mBidiEnabled : 1;
   // True if a MathML element has ever been owned by this document.
@@ -4128,24 +4197,6 @@ protected:
 
   // True if a document load has a CSP with unsafe-inline attached.
   bool mHasUnsafeInlineCSP : 1;
-
-  // True if a document has blocked Tracking Content
-  bool mHasTrackingContentBlocked : 1;
-
-  // True if a document has blocked Slow Tracking Content
-  bool mHasSlowTrackingContentBlocked : 1;
-
-  // True if a document has blocked All Cookies
-  bool mHasAllCookiesBlocked : 1;
-
-  // True if a document has blocked Tracking Cookies
-  bool mHasTrackingCookiesBlocked : 1;
-
-  // True if a document has blocked Foreign Cookies
-  bool mHasForeignCookiesBlocked : 1;
-
-  // True if a document has blocked Cookies By Site Permission
-  bool mHasCookiesBlockedByPermission : 1;
 
   // True if a document has loaded Tracking Content
   bool mHasTrackingContentLoaded : 1;
@@ -4478,6 +4529,11 @@ protected:
   // Whether the user has interacted with the document or not:
   bool mUserHasInteracted;
 
+  // We constantly update the user-interaction anti-tracking permission at any
+  // user-interaction using a timer. This boolean value is set to true when this
+  // timer is scheduled.
+  bool mHasUserInteractionTimerScheduled;
+
   // Whether the user has interacted with the document via a restricted
   // set of gestures which are likely to be interaction with the document,
   // and not events that are fired as a byproduct of the user interacting
@@ -4493,6 +4549,11 @@ protected:
   // calling NoteScriptTrackingStatus().  Currently we assume that a URL not
   // existing in the set means the corresponding script isn't a tracking script.
   nsTHashtable<nsCStringHashKey> mTrackingScripts;
+
+  // The log of all content blocking actions taken on this document.  This is only
+  // stored on top-level documents and includes the activity log for all of the
+  // nested subdocuments as well.
+  mozilla::dom::ContentBlockingLog mContentBlockingLog;
 
   // List of ancestor principals.  This is set at the point a document
   // is connected to a docshell and not mutated thereafter.
@@ -4683,6 +4744,9 @@ protected:
   // these two values here and those are shared by TP and FB.
   uint32_t mNumTrackersFound;
   uint32_t mNumTrackersBlocked;
+
+  mozilla::EnumSet<mozilla::Telemetry::LABELS_DOCUMENT_ANALYTICS_TRACKER_FASTBLOCKED>
+    mTrackerBlockedReasons;
 
   // document lightweight theme for use with :-moz-lwtheme, :-moz-lwtheme-brighttext
   // and :-moz-lwtheme-darktext

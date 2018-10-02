@@ -5,6 +5,7 @@
 
 #include "nsNativeThemeWin.h"
 
+#include "mozilla/ClearOnShutdown.h"
 #include "mozilla/EventStates.h"
 #include "mozilla/Logging.h"
 #include "mozilla/RelativeLuminanceUtils.h"
@@ -28,7 +29,7 @@
 #include "nsGkAtoms.h"
 #include <malloc.h>
 #include "nsWindow.h"
-#include "nsIComboboxControlFrame.h"
+#include "nsComboboxControlFrame.h"
 #include "prinrval.h"
 #include "WinUtils.h"
 
@@ -1330,7 +1331,7 @@ nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame, WidgetType aWidgetType,
       }
 
       if (isHTML) {
-        nsIComboboxControlFrame* ccf = do_QueryFrame(aFrame);
+        nsComboboxControlFrame* ccf = do_QueryFrame(aFrame);
         isOpen = (ccf && ccf->IsDroppedDownOrHasParentPopup());
       }
       else
@@ -2167,9 +2168,20 @@ nsNativeThemeWin::GetWidgetPadding(nsDeviceContext* aContext,
     // XXX Maximized windows have an offscreen offset equal to
     // the border padding. This should be addressed in nsWindow,
     // but currently can't be, see UpdateNonClientMargins.
-    if (aWidgetType == StyleAppearance::MozWindowTitlebarMaximized)
-      aResult->top = GetSystemMetrics(SM_CXFRAME)
-                   + GetSystemMetrics(SM_CXPADDEDBORDER);
+    if (aWidgetType == StyleAppearance::MozWindowTitlebarMaximized) {
+      nsIWidget* rootWidget = nullptr;
+      if (WinUtils::HasSystemMetricsForDpi()) {
+        rootWidget = aFrame->PresContext()->GetRootWidget();
+      }
+      if (rootWidget) {
+        double dpi = rootWidget->GetDPI();
+        aResult->top = WinUtils::GetSystemMetricsForDpi(SM_CXFRAME, dpi)
+                     + WinUtils::GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+      } else {
+        aResult->top = GetSystemMetrics(SM_CXFRAME)
+                     + GetSystemMetrics(SM_CXPADDEDBORDER);
+      }
+    }
     return ok;
   }
 
@@ -3388,7 +3400,7 @@ nsresult nsNativeThemeWin::ClassicGetThemePartAndState(nsIFrame* aFrame, WidgetT
       }
 
       if (isHTML) {
-        nsIComboboxControlFrame* ccf = do_QueryFrame(aFrame);
+        nsComboboxControlFrame* ccf = do_QueryFrame(aFrame);
         isOpen = (ccf && ccf->IsDroppedDownOrHasParentPopup());
       }
       else
@@ -4446,16 +4458,18 @@ nsNativeThemeWin::DrawCustomScrollbarPart(gfxContext* aContext,
 // from nsWindow.cpp
 extern bool gDisableNativeTheme;
 
-nsresult NS_NewNativeTheme(nsISupports *aOuter, REFNSIID aIID, void **aResult)
+already_AddRefed<nsITheme>
+do_GetNativeTheme()
 {
   if (gDisableNativeTheme)
-    return NS_ERROR_NO_INTERFACE;
+    return nullptr;
 
-  if (aOuter)
-    return NS_ERROR_NO_AGGREGATION;
+  static nsCOMPtr<nsITheme> inst;
 
-  nsNativeThemeWin* theme = new nsNativeThemeWin();
-  if (!theme)
-    return NS_ERROR_OUT_OF_MEMORY;
-  return theme->QueryInterface(aIID, aResult);
+  if (!inst) {
+    inst = new nsNativeThemeWin();
+    ClearOnShutdown(&inst);
+  }
+
+  return do_AddRef(inst);
 }

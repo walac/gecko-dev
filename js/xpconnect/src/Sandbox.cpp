@@ -48,6 +48,7 @@
 #include "mozilla/dom/NodeBinding.h"
 #include "mozilla/dom/NodeFilterBinding.h"
 #include "mozilla/dom/PromiseBinding.h"
+#include "mozilla/dom/PromiseDebuggingBinding.h"
 #include "mozilla/dom/RequestBinding.h"
 #include "mozilla/dom/ResponseBinding.h"
 #ifdef MOZ_WEBRTC
@@ -906,6 +907,8 @@ xpc::GlobalProperties::Parse(JSContext* cx, JS::HandleObject obj)
             Node = true;
         } else if (JS_FlatStringEqualsAscii(nameStr, "NodeFilter")) {
             NodeFilter = true;
+        } else if (JS_FlatStringEqualsAscii(nameStr, "PromiseDebugging")) {
+            PromiseDebugging = true;
         } else if (JS_FlatStringEqualsAscii(nameStr, "TextDecoder")) {
             TextDecoder = true;
         } else if (JS_FlatStringEqualsAscii(nameStr, "TextEncoder")) {
@@ -1018,6 +1021,11 @@ xpc::GlobalProperties::Define(JSContext* cx, JS::HandleObject obj)
         return false;
     }
 
+    if (PromiseDebugging &&
+        !dom::PromiseDebugging_Binding::GetConstructorObject(cx)) {
+        return false;
+    }
+
     if (TextDecoder &&
         !dom::TextDecoder_Binding::GetConstructorObject(cx))
         return false;
@@ -1124,10 +1132,7 @@ xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp, nsISupports* prin
         creationOptions.setClampAndJitterTime(false);
     }
 
-    if (xpc::SharedMemoryEnabled()) {
-        creationOptions.setSharedMemoryAndAtomicsEnabled(true);
-    }
-
+    xpc::SetPrefableRealmOptions(realmOptions);
     if (options.sameZoneAs) {
         creationOptions.setNewCompartmentInExistingZone(js::UncheckedUnwrap(options.sameZoneAs));
     } else if (options.freshZone) {
@@ -1868,13 +1873,6 @@ nsXPCComponents_utils_Sandbox::CallOrConstruct(nsIXPConnectWrappedNative* wrappe
 
     if (NS_FAILED(rv)) {
         return ThrowAndFail(rv, cx, _retval);
-    }
-
-    // We have this crazy behavior where wantXrays=false also implies that the
-    // returned sandbox is implicitly waived. We've stopped advertising it, but
-    // keep supporting it for now.
-    if (!options.wantXrays && !xpc::WrapperFactory::WaiveXrayAndWrap(cx, args.rval())) {
-        return NS_ERROR_UNEXPECTED;
     }
 
     *_retval = true;

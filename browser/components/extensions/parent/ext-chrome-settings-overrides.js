@@ -43,7 +43,7 @@ XPCOMUtils.defineLazyGetter(this, "homepagePopup", () => {
       Services.prefs.addObserver(HOMEPAGE_PREF, async function prefObserver() {
         Services.prefs.removeObserver(HOMEPAGE_PREF, prefObserver);
         let loaded = waitForTabLoaded(tab);
-        win.BrowserGoHome();
+        win.BrowserHome();
         await loaded;
         // Manually trigger an event in case this is controlled again.
         popup.open();
@@ -287,6 +287,10 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
         suggestURL: searchProvider.suggest_url,
         queryCharset: "UTF-8",
       };
+      if (searchProvider.search_url_post_params) {
+        params.method = "POST";
+        params.postData = searchProvider.search_url_post_params;
+      }
       Services.search.addEngineWithDetails(searchProvider.name.trim(), params);
       await ExtensionSettingsStore.addSetting(
         extension.id, DEFAULT_SEARCH_STORE_TYPE, ENGINE_ADDED_SETTING_NAME,

@@ -503,8 +503,7 @@ class JS_PUBLIC_API(ContextOptions) {
         dumpStackOnDebuggeeWouldRun_(false),
         werror_(false),
         strictMode_(false),
-        extraWarnings_(false),
-        streams_(false)
+        extraWarnings_(false)
 #ifdef FUZZING
         , fuzzing_(false)
 #endif
@@ -548,16 +547,6 @@ class JS_PUBLIC_API(ContextOptions) {
     }
     ContextOptions& toggleWasm() {
         wasm_ = !wasm_;
-        return *this;
-    }
-
-    bool streams() const { return streams_; }
-    ContextOptions& setStreams(bool flag) {
-        streams_ = flag;
-        return *this;
-    }
-    ContextOptions& toggleStreams() {
-        streams_ = !streams_;
         return *this;
     }
 
@@ -718,7 +707,6 @@ class JS_PUBLIC_API(ContextOptions) {
     bool werror_ : 1;
     bool strictMode_ : 1;
     bool extraWarnings_ : 1;
-    bool streams_: 1;
 #ifdef FUZZING
     bool fuzzing_ : 1;
 #endif
@@ -904,6 +892,13 @@ extern JS_PUBLIC_API(void)
 IterateRealms(JSContext* cx, void* data, IterateRealmCallback realmCallback);
 
 /**
+ * Like IterateRealms, but only call the callback for realms using |principals|.
+ */
+extern JS_PUBLIC_API(void)
+IterateRealmsWithPrincipals(JSContext* cx, JSPrincipals* principals, void* data,
+                            IterateRealmCallback realmCallback);
+
+/**
  * Like IterateRealms, but only iterates realms in |compartment|.
  */
 extern JS_PUBLIC_API(void)
@@ -962,9 +957,26 @@ JS_MayResolveStandardClass(const JSAtomState& names, jsid id, JSObject* maybeObj
 extern JS_PUBLIC_API(bool)
 JS_EnumerateStandardClasses(JSContext* cx, JS::HandleObject obj);
 
+/**
+ * Fill "properties" with a list of standard class names that have not yet been
+ * resolved on "obj".  This can be used as (part of) a newEnumerate class hook on a
+ * global.  Already-resolved things are excluded because they might have been deleted
+ * by script after being resolved and enumeration considers already-defined
+ * properties anyway.
+ */
 extern JS_PUBLIC_API(bool)
 JS_NewEnumerateStandardClasses(JSContext* cx, JS::HandleObject obj, JS::AutoIdVector& properties,
                                bool enumerableOnly);
+
+/**
+ * Fill "properties" with a list of standard class names.  This can be used for
+ * proxies that want to define behavior that looks like enumerating a global without
+ * touching the global itself.
+ */
+extern JS_PUBLIC_API(bool)
+JS_NewEnumerateStandardClassesIncludingResolved(JSContext* cx, JS::HandleObject obj,
+                                                JS::AutoIdVector& properties,
+                                                bool enumerableOnly);
 
 extern JS_PUBLIC_API(bool)
 JS_GetClassObject(JSContext* cx, JSProtoKey key, JS::MutableHandle<JSObject*> objp);
@@ -1494,6 +1506,7 @@ class JS_PUBLIC_API(RealmCreationOptions)
         preserveJitCode_(false),
         cloneSingletons_(false),
         sharedMemoryAndAtomics_(false),
+        streams_(false),
         secureContext_(false),
         clampAndJitterTime_(true)
     {}
@@ -1559,6 +1572,12 @@ class JS_PUBLIC_API(RealmCreationOptions)
     bool getSharedMemoryAndAtomicsEnabled() const;
     RealmCreationOptions& setSharedMemoryAndAtomicsEnabled(bool flag);
 
+    bool getStreamsEnabled() const { return streams_; }
+    RealmCreationOptions& setStreamsEnabled(bool flag) {
+        streams_ = flag;
+        return *this;
+    }
+
     // This flag doesn't affect JS engine behavior.  It is used by Gecko to
     // mark whether content windows and workers are "Secure Context"s. See
     // https://w3c.github.io/webappsec-secure-contexts/
@@ -1587,6 +1606,7 @@ class JS_PUBLIC_API(RealmCreationOptions)
     bool preserveJitCode_;
     bool cloneSingletons_;
     bool sharedMemoryAndAtomics_;
+    bool streams_;
     bool secureContext_;
     bool clampAndJitterTime_;
 };
@@ -2176,7 +2196,7 @@ JS_GetOwnPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* nam
                             JS::MutableHandle<JS::PropertyDescriptor> desc);
 
 extern JS_PUBLIC_API(bool)
-JS_GetOwnUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name,
+JS_GetOwnUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen,
                               JS::MutableHandle<JS::PropertyDescriptor> desc);
 
 /**
@@ -2192,6 +2212,10 @@ JS_GetPropertyDescriptorById(JSContext* cx, JS::HandleObject obj, JS::HandleId i
 extern JS_PUBLIC_API(bool)
 JS_GetPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* name,
                          JS::MutableHandle<JS::PropertyDescriptor> desc);
+
+extern JS_PUBLIC_API(bool)
+JS_GetUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen,
+                           JS::MutableHandle<JS::PropertyDescriptor> desc);
 
 /**
  * Define a property on obj.
@@ -3412,6 +3436,10 @@ typedef bool
 extern JS_PUBLIC_API(void)
 InitDispatchToEventLoop(JSContext* cx, DispatchToEventLoopCallback callback, void* closure);
 
+/* Vector of characters used for holding build ids. */
+
+typedef js::Vector<char, 0, js::SystemAllocPolicy> BuildIdCharVector;
+
 /**
  * The ConsumeStreamCallback is called from an active JSContext, passing a
  * StreamConsumer that wishes to consume the given host object as a stream of
@@ -3424,7 +3452,39 @@ InitDispatchToEventLoop(JSContext* cx, DispatchToEventLoopCallback callback, voi
  *
  * Note: consumeChunk() and streamClosed() may be called synchronously by
  * ConsumeStreamCallback.
+ *
+ * When streamClosed() is called, the embedding may optionally pass an
+ * OptimizedEncodingListener*, indicating that there is a cache entry associated
+ * with this stream that can store an optimized encoding of the bytes that were
+ * just streamed at some point in the future by having SpiderMonkey call
+ * storeOptimizedEncoding(). Until the optimized encoding is ready, SpiderMonkey
+ * will hold an outstanding refcount to keep the listener alive.
+ *
+ * After storeOptimizedEncoding() is called, on cache hit, the embedding
+ * may call consumeOptimizedEncoding() instead of consumeChunk()/streamClosed().
+ * The embedding must ensure that the GetOptimizedEncodingBuildId() at the time
+ * when an optimized encoding is created is the same as when it is later
+ * consumed.
  */
+
+class OptimizedEncodingListener
+{
+  protected:
+    virtual ~OptimizedEncodingListener() {}
+
+  public:
+    // SpiderMonkey will hold an outstanding reference count as long as it holds
+    // a pointer to OptimizedEncodingListener.
+    virtual MozExternalRefCountType MOZ_XPCOM_ABI AddRef() = 0;
+    virtual MozExternalRefCountType MOZ_XPCOM_ABI Release() = 0;
+
+    // SpiderMonkey may optionally call storeOptimizedEncoding() after it has
+    // finished processing a streamed resource.
+    virtual void storeOptimizedEncoding(const uint8_t* bytes, size_t length) = 0;
+};
+
+extern JS_PUBLIC_API(bool)
+GetOptimizedEncodingBuildId(BuildIdCharVector* buildId);
 
 class JS_PUBLIC_API(StreamConsumer)
 {
@@ -3442,11 +3502,17 @@ class JS_PUBLIC_API(StreamConsumer)
     // Called by the embedding when the stream is closed according to the
     // contract described above.
     enum CloseReason { EndOfFile, Error };
-    virtual void streamClosed(CloseReason reason) = 0;
+    virtual void streamClosed(CloseReason reason,
+                              OptimizedEncodingListener* listener = nullptr) = 0;
+
+    // Called by the embedding *instead of* consumeChunk()/streamClosed() if an
+    // optimized encoding is available from a previous streaming of the same
+    // contents with the same optimized build id.
+    virtual void consumeOptimizedEncoding(const uint8_t* begin, size_t length) = 0;
 
     // Provides optional stream attributes such as base or source mapping URLs.
-    // Necessarily called before consumeChunk() or streamClosed(). The caller
-    // retains ownership of the given strings.
+    // Necessarily called before consumeChunk(), streamClosed() or
+    // consumeOptimizedEncoding(). The caller retains ownership of the strings.
     virtual void noteResponseURLs(const char* maybeUrl, const char* maybeSourceMapUrl) = 0;
 };
 
@@ -4377,6 +4443,9 @@ extern JS_PUBLIC_API(void)
 JS_SetGCZeal(JSContext* cx, uint8_t zeal, uint32_t frequency);
 
 extern JS_PUBLIC_API(void)
+JS_UnsetGCZeal(JSContext* cx, uint8_t zeal);
+
+extern JS_PUBLIC_API(void)
 JS_ScheduleGC(JSContext* cx, uint32_t count);
 #endif
 
@@ -4625,8 +4694,6 @@ SetAsmJSCacheOps(JSContext* cx, const AsmJSCacheOps* callbacks);
  * engine, it is critical that the buildId shall change for each new build of
  * the JS engine.
  */
-
-typedef js::Vector<char, 0, js::SystemAllocPolicy> BuildIdCharVector;
 
 typedef bool
 (* BuildIdOp)(BuildIdCharVector* buildId);

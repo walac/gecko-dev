@@ -46,30 +46,33 @@ void JSAPITest::uninit()
     msgs.clear();
 }
 
-bool JSAPITest::exec(const char* bytes, const char* filename, int lineno)
+bool JSAPITest::exec(const char* utf8, const char* filename, int lineno)
 {
-    JS::RootedValue v(cx);
     JS::CompileOptions opts(cx);
     opts.setFileAndLine(filename, lineno);
-    return JS::Evaluate(cx, opts, bytes, strlen(bytes), &v) ||
-        fail(JSAPITestString(bytes), filename, lineno);
+
+    JS::RootedValue v(cx);
+    return JS::EvaluateUtf8(cx, opts, utf8, strlen(utf8), &v) ||
+           fail(JSAPITestString(utf8), filename, lineno);
 }
 
-bool JSAPITest::execDontReport(const char* bytes, const char* filename, int lineno)
+bool JSAPITest::execDontReport(const char* utf8, const char* filename, int lineno)
 {
-    JS::RootedValue v(cx);
     JS::CompileOptions opts(cx);
     opts.setFileAndLine(filename, lineno);
-    return JS::Evaluate(cx, opts, bytes, strlen(bytes), &v);
+
+    JS::RootedValue v(cx);
+    return JS::EvaluateUtf8(cx, opts, utf8, strlen(utf8), &v);
 }
 
-bool JSAPITest::evaluate(const char* bytes, const char* filename, int lineno,
+bool JSAPITest::evaluate(const char* utf8, const char* filename, int lineno,
                          JS::MutableHandleValue vp)
 {
     JS::CompileOptions opts(cx);
     opts.setFileAndLine(filename, lineno);
-    return JS::Evaluate(cx, opts, bytes, strlen(bytes), vp) ||
-        fail(JSAPITestString(bytes), filename, lineno);
+
+    return JS::EvaluateUtf8(cx, opts, utf8, strlen(utf8), vp) ||
+           fail(JSAPITestString(utf8), filename, lineno);
 }
 
 bool JSAPITest::definePrint()
@@ -82,9 +85,7 @@ JSObject* JSAPITest::createGlobal(JSPrincipals* principals)
     /* Create the global object. */
     JS::RootedObject newGlobal(cx);
     JS::RealmOptions options;
-#ifdef ENABLE_STREAMS
     options.creationOptions().setStreamsEnabled(true);
-#endif
     newGlobal = JS_NewGlobalObject(cx, getGlobalClass(), principals, JS::FireOnNewGlobalHook,
                                    options);
     if (!newGlobal) {

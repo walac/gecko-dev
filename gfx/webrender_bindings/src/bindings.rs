@@ -29,6 +29,14 @@ use core_foundation::string::CFString;
 #[cfg(target_os = "macos")]
 use core_graphics::font::CGFont;
 
+/// Whether a border should be antialiased.
+#[repr(C)]
+#[derive(Eq, PartialEq, Copy, Clone)]
+pub enum AntialiasBorder {
+    No = 0,
+    Yes,
+}
+
 #[repr(C)]
 pub enum WrExternalImageBufferType {
     TextureHandle = 0,
@@ -36,6 +44,14 @@ pub enum WrExternalImageBufferType {
     TextureArrayHandle = 2,
     TextureExternalHandle = 3,
     ExternalBuffer = 4,
+}
+
+/// Used to indicate if an image is opaque, or has an alpha channel.
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum OpacityType {
+    Opaque = 0,
+    HasAlphaChannel = 1,
 }
 
 impl WrExternalImageBufferType {
@@ -76,6 +92,8 @@ pub type WrFontKey = FontKey;
 pub type WrFontInstanceKey = FontInstanceKey;
 /// cbindgen:field-names=[mNamespace, mHandle]
 type WrYuvColorSpace = YuvColorSpace;
+/// cbindgen:field-names=[mNamespace, mHandle]
+type WrColorDepth = ColorDepth;
 
 fn make_slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
     if ptr.is_null() {
@@ -283,7 +301,7 @@ pub struct WrImageDescriptor {
     pub width: u32,
     pub height: u32,
     pub stride: u32,
-    pub is_opaque: bool,
+    pub opacity: OpacityType,
 }
 
 impl<'a> Into<ImageDescriptor> for &'a WrImageDescriptor {
@@ -296,7 +314,7 @@ impl<'a> Into<ImageDescriptor> for &'a WrImageDescriptor {
                 None
             },
             format: self.format,
-            is_opaque: self.is_opaque,
+            is_opaque: self.opacity == OpacityType::Opaque,
             offset: 0,
             allow_mipmaps: false,
         }
@@ -504,6 +522,8 @@ extern "C" {
     fn wr_notifier_external_event(window_id: WrWindowId,
                                   raw_event: usize);
     fn wr_schedule_render(window_id: WrWindowId);
+
+    fn wr_transaction_notification_notified(handler: usize, when: Checkpoint);
 }
 
 impl RenderNotifier for CppNotifier {
@@ -636,6 +656,12 @@ pub unsafe extern "C" fn wr_renderer_delete(renderer: *mut Renderer) {
     let renderer = Box::from_raw(renderer);
     renderer.deinit();
     // let renderer go out of scope and get dropped
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn wr_renderer_accumulate_memory_report(renderer: &mut Renderer,
+                                                              report: &mut MemoryReport) {
+    *report += renderer.report_memory();
 }
 
 // cbindgen doesn't support tuples, so we have a little struct instead, with
@@ -897,6 +923,7 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
                                 support_low_priority_transactions: bool,
                                 gl_context: *mut c_void,
                                 thread_pool: *mut WrThreadPool,
+                                size_of_op: VoidPtrToSizeFn,
                                 out_handle: &mut *mut DocumentHandle,
                                 out_renderer: &mut *mut Renderer,
                                 out_max_texture_size: *mut u32)
@@ -940,6 +967,7 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
         blob_image_handler: Some(Box::new(Moz2dBlobImageHandler::new(workers.clone()))),
         workers: Some(workers.clone()),
         thread_listener: Some(Box::new(GeckoProfilerThreadListener::new())),
+        size_of_op: Some(size_of_op),
         resource_override_path: unsafe {
             let override_charptr = gfx_wr_resource_path_override();
             if override_charptr.is_null() {
@@ -1041,6 +1069,14 @@ pub unsafe extern "C" fn wr_api_notify_memory_pressure(dh: &mut DocumentHandle) 
     dh.api.notify_memory_pressure();
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn wr_api_accumulate_memory_report(
+    dh: &mut DocumentHandle,
+    report: &mut MemoryReport
+) {
+    *report += dh.api.report_memory();
+}
+
 /// cbindgen:postfix=WR_DESTRUCTOR_SAFE_FUNC
 #[no_mangle]
 pub unsafe extern "C" fn wr_api_clear_all_caches(dh: &mut DocumentHandle) {
@@ -1079,6 +1115,21 @@ pub extern "C" fn wr_transaction_set_low_priority(txn: &mut Transaction, low_pri
 #[no_mangle]
 pub extern "C" fn wr_transaction_is_empty(txn: &Transaction) -> bool {
     txn.is_empty()
+}
+
+#[no_mangle]
+pub extern "C" fn wr_transaction_notify(txn: &mut Transaction, when: Checkpoint, event: usize) {
+    struct GeckoNotification(usize);
+    impl NotificationHandler for GeckoNotification {
+        fn notify(&self, when: Checkpoint) {
+            unsafe {
+                wr_transaction_notification_notified(self.0, when);
+            }
+        }
+    }
+
+    let handler = Arc::new(GeckoNotification(event));
+    txn.notify(NotificationRequest::new(when, handler));
 }
 
 #[no_mangle]
@@ -1308,7 +1359,7 @@ pub extern "C" fn wr_resource_updates_update_image(
 pub extern "C" fn wr_resource_updates_set_image_visible_area(
     txn: &mut Transaction,
     key: WrImageKey,
-    area: &NormalizedRect,
+    area: &DeviceUintRect,
 ) {
     txn.set_image_visible_area(key, *area);
 }
@@ -1663,7 +1714,7 @@ pub extern "C" fn wr_dp_push_stacking_context(state: &mut WrState,
                                               filters: *const WrFilterOp,
                                               filter_count: usize,
                                               is_backface_visible: bool,
-                                              glyph_raster_space: GlyphRasterSpace,
+                                              glyph_raster_space: RasterSpace,
                                               out_is_reference_frame: &mut bool,
                                               out_reference_frame_id: &mut usize) {
     debug_assert!(unsafe { !is_in_render_thread() });
@@ -1928,12 +1979,13 @@ pub extern "C" fn wr_dp_pop_clip_and_scroll_info(state: &mut WrState) {
 #[no_mangle]
 pub extern "C" fn wr_dp_push_iframe(state: &mut WrState,
                                     rect: LayoutRect,
+                                    clip: LayoutRect,
                                     is_backface_visible: bool,
                                     pipeline_id: WrPipelineId,
                                     ignore_missing_pipeline: bool) {
     debug_assert!(unsafe { is_in_main_thread() });
 
-    let mut prim_info = LayoutPrimitiveInfo::new(rect);
+    let mut prim_info = LayoutPrimitiveInfo::with_clip_rect(rect, clip.into());
     prim_info.is_backface_visible = is_backface_visible;
     prim_info.tag = state.current_tag;
     state.frame_builder.dl_builder.push_iframe(&prim_info, pipeline_id, ignore_missing_pipeline);
@@ -1956,10 +2008,11 @@ pub extern "C" fn wr_dp_push_rect(state: &mut WrState,
 
 #[no_mangle]
 pub extern "C" fn wr_dp_push_clear_rect(state: &mut WrState,
-                                        rect: LayoutRect) {
+                                        rect: LayoutRect,
+                                        clip: LayoutRect) {
     debug_assert!(unsafe { !is_in_render_thread() });
 
-    let prim_info = LayoutPrimitiveInfo::new(rect);
+    let prim_info = LayoutPrimitiveInfo::with_clip_rect(rect, clip.into());
     state.frame_builder.dl_builder.push_clear_rect(&prim_info);
 }
 
@@ -2004,6 +2057,7 @@ pub extern "C" fn wr_dp_push_yuv_planar_image(state: &mut WrState,
                                               image_key_0: WrImageKey,
                                               image_key_1: WrImageKey,
                                               image_key_2: WrImageKey,
+                                              color_depth: WrColorDepth,
                                               color_space: WrYuvColorSpace,
                                               image_rendering: ImageRendering) {
     debug_assert!(unsafe { is_in_main_thread() || is_in_compositor_thread() });
@@ -2015,6 +2069,7 @@ pub extern "C" fn wr_dp_push_yuv_planar_image(state: &mut WrState,
          .dl_builder
          .push_yuv_image(&prim_info,
                          YuvData::PlanarYCbCr(image_key_0, image_key_1, image_key_2),
+                         color_depth,
                          color_space,
                          image_rendering);
 }
@@ -2027,6 +2082,7 @@ pub extern "C" fn wr_dp_push_yuv_NV12_image(state: &mut WrState,
                                             is_backface_visible: bool,
                                             image_key_0: WrImageKey,
                                             image_key_1: WrImageKey,
+                                            color_depth: WrColorDepth,
                                             color_space: WrYuvColorSpace,
                                             image_rendering: ImageRendering) {
     debug_assert!(unsafe { is_in_main_thread() || is_in_compositor_thread() });
@@ -2038,6 +2094,7 @@ pub extern "C" fn wr_dp_push_yuv_NV12_image(state: &mut WrState,
          .dl_builder
          .push_yuv_image(&prim_info,
                          YuvData::NV12(image_key_0, image_key_1),
+                         color_depth,
                          color_space,
                          image_rendering);
 }
@@ -2049,6 +2106,7 @@ pub extern "C" fn wr_dp_push_yuv_interleaved_image(state: &mut WrState,
                                                    clip: LayoutRect,
                                                    is_backface_visible: bool,
                                                    image_key_0: WrImageKey,
+                                                   color_depth: WrColorDepth,
                                                    color_space: WrYuvColorSpace,
                                                    image_rendering: ImageRendering) {
     debug_assert!(unsafe { is_in_main_thread() || is_in_compositor_thread() });
@@ -2060,6 +2118,7 @@ pub extern "C" fn wr_dp_push_yuv_interleaved_image(state: &mut WrState,
          .dl_builder
          .push_yuv_image(&prim_info,
                          YuvData::InterleavedYCbCr(image_key_0),
+                         color_depth,
                          color_space,
                          image_rendering);
 }
@@ -2140,7 +2199,8 @@ pub extern "C" fn wr_dp_push_border(state: &mut WrState,
                                     rect: LayoutRect,
                                     clip: LayoutRect,
                                     is_backface_visible: bool,
-                                    widths: BorderWidths,
+                                    do_aa: AntialiasBorder,
+                                    widths: LayoutSideOffsets,
                                     top: BorderSide,
                                     right: BorderSide,
                                     bottom: BorderSide,
@@ -2149,12 +2209,14 @@ pub extern "C" fn wr_dp_push_border(state: &mut WrState,
     debug_assert!(unsafe { is_in_main_thread() });
 
     let border_details = BorderDetails::Normal(NormalBorder {
-                                                   left: left.into(),
-                                                   right: right.into(),
-                                                   top: top.into(),
-                                                   bottom: bottom.into(),
-                                                   radius: radius.into(),
-                                               });
+        left: left.into(),
+        right: right.into(),
+        top: top.into(),
+        bottom: bottom.into(),
+        radius: radius.into(),
+        do_aa: do_aa == AntialiasBorder::Yes,
+    });
+
     let mut prim_info = LayoutPrimitiveInfo::with_clip_rect(rect, clip.into());
     prim_info.is_backface_visible = is_backface_visible;
     prim_info.tag = state.current_tag;
@@ -2170,7 +2232,7 @@ pub extern "C" fn wr_dp_push_border_image(state: &mut WrState,
                                           rect: LayoutRect,
                                           clip: LayoutRect,
                                           is_backface_visible: bool,
-                                          widths: BorderWidths,
+                                          widths: LayoutSideOffsets,
                                           image: WrImageKey,
                                           width: u32,
                                           height: u32,
@@ -2201,7 +2263,7 @@ pub extern "C" fn wr_dp_push_border_gradient(state: &mut WrState,
                                              rect: LayoutRect,
                                              clip: LayoutRect,
                                              is_backface_visible: bool,
-                                             widths: BorderWidths,
+                                             widths: LayoutSideOffsets,
                                              width: u32,
                                              height: u32,
                                              slice: SideOffsets2D<u32>,
@@ -2247,7 +2309,7 @@ pub extern "C" fn wr_dp_push_border_radial_gradient(state: &mut WrState,
                                                     rect: LayoutRect,
                                                     clip: LayoutRect,
                                                     is_backface_visible: bool,
-                                                    widths: BorderWidths,
+                                                    widths: LayoutSideOffsets,
                                                     center: LayoutPoint,
                                                     radius: LayoutSize,
                                                     stops: *const GradientStop,
@@ -2436,8 +2498,8 @@ pub extern "C" fn wr_api_hit_test(dh: &mut DocumentHandle,
     let result = dh.api.hit_test(dh.document_id, None, point, HitTestFlags::empty());
     for item in &result.items {
         // For now we should never be getting results back for which the tag is
-        // 0 (== CompositorHitTestInfo::eInvisibleToHitTest). In the future if
-        // we allow this, we'll want to |continue| on the loop in this scenario.
+        // 0 (== CompositorHitTestInvisibleToHit). In the future if we allow this,
+        // we'll want to |continue| on the loop in this scenario.
         debug_assert!(item.tag.1 != 0);
         *out_pipeline_id = item.pipeline;
         *out_scroll_id = item.tag.0;

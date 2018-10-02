@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use api::{DebugCommand, DeviceUintRect, DocumentId, ExternalImageData, ExternalImageId};
-use api::ImageFormat;
+use api::{ImageFormat, NotificationRequest};
 use device::TextureFilter;
 use renderer::PipelineInfo;
 use gpu_cache::GpuCacheUpdateList;
@@ -66,8 +66,8 @@ pub enum SourceTexture {
     RenderTaskCache(SavedTargetIndex),
 }
 
-pub const ORTHO_NEAR_PLANE: f32 = -1000000.0;
-pub const ORTHO_FAR_PLANE: f32 = 1000000.0;
+pub const ORTHO_NEAR_PLANE: f32 = -100000.0;
+pub const ORTHO_FAR_PLANE: f32 = 100000.0;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
@@ -151,7 +151,7 @@ pub enum ResultMsg {
     UpdateGpuCache(GpuCacheUpdateList),
     UpdateResources {
         updates: TextureUpdateList,
-        cancel_rendering: bool,
+        memory_pressure: bool,
     },
     PublishPipelineInfo(PipelineInfo),
     PublishDocument(
@@ -160,6 +160,7 @@ pub enum ResultMsg {
         TextureUpdateList,
         BackendProfileCounters,
     ),
+    AppendNotificationRequests(Vec<NotificationRequest>),
 }
 
 #[derive(Clone, Debug)]

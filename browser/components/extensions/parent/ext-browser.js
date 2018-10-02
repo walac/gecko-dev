@@ -124,6 +124,7 @@ global.replaceUrlInTab = (gBrowser, tab, url) => {
   let loaded = waitForTabLoaded(tab, url);
   gBrowser.loadURI(url, {
     flags: Ci.nsIWebNavigation.LOAD_FLAGS_REPLACE_HISTORY,
+    triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(), // This is safe from this functions usage however it would be preferred not to dot his.
   });
   return loaded;
 };
@@ -326,6 +327,9 @@ class TabTracker extends TabTrackerBase {
   }
 
   setId(nativeTab, id) {
+    if (!nativeTab.parentNode) {
+      throw new Error("Cannot attach ID to a destroyed tab.");
+    }
     this._tabs.set(nativeTab, id);
     if (nativeTab.linkedBrowser) {
       this._browsers.set(nativeTab.linkedBrowser, id);

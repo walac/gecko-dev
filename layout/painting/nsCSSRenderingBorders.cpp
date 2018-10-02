@@ -83,7 +83,6 @@ ComputeBorderCornerDimensions(const Float* aBorderWidths,
 // color into a color for the given border pattern style
 static Color
 MakeBorderColor(nscolor aColor,
-                nscolor aBackgroundColor,
                 BorderColorStyle aBorderColorStyle);
 
 // Given a line index (an index starting from the outside of the
@@ -93,8 +92,7 @@ static Color
 ComputeColorForLine(uint32_t aLineIndex,
                     const BorderColorStyle* aBorderColorStyle,
                     uint32_t aBorderColorStyleCount,
-                    nscolor aBorderColor,
-                    nscolor aBackgroundColor);
+                    nscolor aBorderColor);
 
 // little helper function to check if the array of 4 floats given are
 // equal to the given value
@@ -180,7 +178,6 @@ nsCSSBorderRenderer::nsCSSBorderRenderer(nsPresContext* aPresContext,
                                          const Float* aBorderWidths,
                                          RectCornerRadii& aBorderRadii,
                                          const nscolor* aBorderColors,
-                                         nscolor aBackgroundColor,
                                          bool aBackfaceIsVisible,
                                          const Maybe<Rect>& aClipRect)
   : mPresContext(aPresContext)
@@ -189,7 +186,6 @@ nsCSSBorderRenderer::nsCSSBorderRenderer(nsPresContext* aPresContext,
   , mDirtyRect(aDirtyRect)
   , mOuterRect(aOuterRect)
   , mBorderRadii(aBorderRadii)
-  , mBackgroundColor(aBackgroundColor)
   , mBackfaceIsVisible(aBackfaceIsVisible)
   , mLocalClip(aClipRect)
 {
@@ -1253,9 +1249,7 @@ nsCSSBorderRenderer::FillSolidBorder(const Rect& aOuterRect,
 }
 
 Color
-MakeBorderColor(nscolor aColor,
-                nscolor aBackgroundColor,
-                BorderColorStyle aBorderColorStyle)
+MakeBorderColor(nscolor aColor, BorderColorStyle aBorderColorStyle)
 {
   nscolor colors[2];
   int k = 0;
@@ -1268,7 +1262,7 @@ MakeBorderColor(nscolor aColor,
       k = 1;
       MOZ_FALLTHROUGH;
     case BorderColorStyleDark:
-      NS_GetSpecial3DColors(colors, aBackgroundColor, aColor);
+      NS_GetSpecial3DColors(colors, aColor);
       return Color::FromABGR(colors[k]);
 
     case BorderColorStyleSolid:
@@ -1281,13 +1275,11 @@ Color
 ComputeColorForLine(uint32_t aLineIndex,
                     const BorderColorStyle* aBorderColorStyle,
                     uint32_t aBorderColorStyleCount,
-                    nscolor aBorderColor,
-                    nscolor aBackgroundColor)
+                    nscolor aBorderColor)
 {
   NS_ASSERTION(aLineIndex < aBorderColorStyleCount, "Invalid lineIndex given");
 
-  return MakeBorderColor(
-    aBorderColor, aBackgroundColor, aBorderColorStyle[aLineIndex]);
+  return MakeBorderColor(aBorderColor, aBorderColorStyle[aLineIndex]);
 }
 
 void
@@ -1568,8 +1560,7 @@ nsCSSBorderRenderer::DrawBorderSides(int aSides)
       Color c = ComputeColorForLine(i,
                                     borderColorStyle,
                                     borderColorStyleCount,
-                                    borderRenderColor,
-                                    mBackgroundColor);
+                                    borderRenderColor);
       ColorPattern color(ToDeviceColor(c));
 
       FillSolidBorder(soRect, siRect, radii, borderWidths[i], aSides, color);
@@ -3412,7 +3403,6 @@ nsCSSBorderRenderer::DrawBorders()
           IsSolidCornerStyle(mBorderStyles[sides[0]], corner)) {
         Color color = MakeBorderColor(
           mBorderColors[sides[0]],
-          mBackgroundColor,
           BorderColorStyleForSolidCorner(mBorderStyles[sides[0]], corner));
         mDrawTarget->FillRect(GetCornerRect(corner),
                               ColorPattern(ToDeviceColor(color)));
@@ -3801,7 +3791,7 @@ nsCSSBorderImageRenderer::DrawBorderImage(nsPresContext* aPresContext,
   return result;
 }
 
-void
+ImgDrawResult
 nsCSSBorderImageRenderer::CreateWebRenderCommands(
   nsDisplayItem* aItem,
   nsIFrame* aForFrame,
@@ -3812,7 +3802,7 @@ nsCSSBorderImageRenderer::CreateWebRenderCommands(
   nsDisplayListBuilder* aDisplayListBuilder)
 {
   if (!mImageRenderer.IsReady()) {
-    return;
+    return ImgDrawResult::NOT_READY;
   }
 
   float widths[4];
@@ -3838,6 +3828,7 @@ nsCSSBorderImageRenderer::CreateWebRenderCommands(
     clip = wr::ToRoundedLayoutRect(clipRect);
   }
 
+  ImgDrawResult drawResult = ImgDrawResult::SUCCESS;
   switch (mImageRenderer.GetType()) {
     case eStyleImageType_Image: {
       uint32_t flags = imgIContainer::FLAG_ASYNC_NOTIFY;
@@ -3853,10 +3844,12 @@ nsCSSBorderImageRenderer::CreateWebRenderCommands(
       gfx::IntSize decodeSize =
         nsLayoutUtils::ComputeImageContainerDrawingParameters(
           img, aForFrame, destRect, aSc, flags, svgContext);
-      RefPtr<layers::ImageContainer> container =
-        img->GetImageContainerAtSize(aManager, decodeSize, svgContext, flags);
+
+      RefPtr<layers::ImageContainer> container;
+      drawResult = img->GetImageContainerAtSize(aManager, decodeSize, svgContext,
+                                                flags, getter_AddRefs(container));
       if (!container) {
-        return;
+        break;
       }
 
       mozilla::wr::ImageRendering rendering = wr::ToImageRendering(
@@ -3872,7 +3865,7 @@ nsCSSBorderImageRenderer::CreateWebRenderCommands(
                                                   size,
                                                   Nothing());
       if (key.isNothing()) {
-        return;
+        break;
       }
 
       aBuilder.PushBorderImage(
@@ -3937,7 +3930,10 @@ nsCSSBorderImageRenderer::CreateWebRenderCommands(
     }
     default:
       MOZ_ASSERT_UNREACHABLE("Unsupport border image type");
+      drawResult = ImgDrawResult::NOT_SUPPORTED;
   }
+
+  return drawResult;
 }
 
 nsCSSBorderImageRenderer::nsCSSBorderImageRenderer(

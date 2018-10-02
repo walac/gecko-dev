@@ -543,10 +543,11 @@ task_description_schema = Schema({
         Optional('product'): basestring,
         Optional('platforms'): [basestring],
         Optional('release-eta'): basestring,
-        Optional('channel-names'): optionally_keyed_by('project', [basestring]),
+        Optional('channel-names'): optionally_keyed_by('release-type', [basestring]),
         Optional('require-mirrors'): bool,
-        Optional('publish-rules'): optionally_keyed_by('project', [int]),
-        Optional('rules-to-update'): optionally_keyed_by('project', [basestring]),
+        Optional('publish-rules'): optionally_keyed_by('release-type', 'release-level', [int]),
+        Optional('rules-to-update'): optionally_keyed_by(
+            'release-type', 'release-level', [basestring]),
         Optional('archive-domain'): optionally_keyed_by('release-level', basestring),
         Optional('download-domain'): optionally_keyed_by('release-level', basestring),
         Optional('blob-suffix'): basestring,
@@ -690,10 +691,8 @@ SUPERSEDER_URL = 'https://coalesce.mozilla-releng.net/v1/list/{age}/{size}/{key}
 DEFAULT_BRANCH_PRIORITY = 'low'
 BRANCH_PRIORITIES = {
     'mozilla-release': 'highest',
-    'comm-esr45': 'highest',
-    'comm-esr52': 'highest',
-    'mozilla-esr45': 'very-high',
-    'mozilla-esr52': 'very-high',
+    'comm-esr60': 'highest',
+    'mozilla-esr60': 'very-high',
     'mozilla-beta': 'high',
     'comm-beta': 'high',
     'mozilla-central': 'medium',
@@ -1159,7 +1158,7 @@ def build_balrog_payload(config, task, task_def):
                 resolve_keyed_by(
                     worker, prop, task['description'],
                     **{
-                        'project': config.params['project'],
+                        'release-type': config.params['release_type'],
                         'release-level': config.params.release_level(),
                     }
                 )

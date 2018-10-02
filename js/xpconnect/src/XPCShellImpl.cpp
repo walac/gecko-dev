@@ -381,12 +381,11 @@ Load(JSContext* cx, unsigned argc, Value* vp)
             return false;
         }
         JS::CompileOptions options(cx);
-        options.setUTF8(true)
-               .setFileAndLine(filename.get(), 1)
+        options.setFileAndLine(filename.get(), 1)
                .setIsRunOnce(true);
         JS::Rooted<JSScript*> script(cx);
         JS::Rooted<JSObject*> global(cx, JS::CurrentGlobalOrNull(cx));
-        JS::Compile(cx, options, file, &script);
+        JS::CompileUtf8File(cx, options, file, &script);
         fclose(file);
         if (!script) {
             return false;
@@ -730,20 +729,22 @@ my_GetErrorMessage(void* userRef, const unsigned errorNumber)
 }
 
 static bool
-ProcessLine(AutoJSAPI& jsapi, const char* buffer, int startline)
+ProcessUtf8Line(AutoJSAPI& jsapi, const char* buffer, int startline)
 {
     JSContext* cx = jsapi.cx();
-    JS::RootedScript script(cx);
-    JS::RootedValue result(cx);
     JS::CompileOptions options(cx);
     options.setFileAndLine("typein", startline)
            .setIsRunOnce(true);
-    if (!JS_CompileScript(cx, buffer, strlen(buffer), options, &script)) {
+
+    JS::RootedScript script(cx);
+    if (!JS::CompileUtf8(cx, options, buffer, strlen(buffer), &script)) {
         return false;
     }
     if (compileOnly) {
         return true;
     }
+
+    JS::RootedValue result(cx);
     if (!JS_ExecuteScript(cx, script, &result)) {
         return false;
     }
@@ -751,10 +752,12 @@ ProcessLine(AutoJSAPI& jsapi, const char* buffer, int startline)
     if (result.isUndefined()) {
         return true;
     }
-    RootedString str(cx);
-    if (!(str = ToString(cx, result))) {
+
+    RootedString str(cx, JS::ToString(cx, result));
+    if (!str) {
         return false;
     }
+
     JS::UniqueChars bytes = JS_EncodeStringToLatin1(cx, str);
     if (!bytes) {
         return false;
@@ -795,11 +798,10 @@ ProcessFile(AutoJSAPI& jsapi, const char* filename, FILE* file, bool forceTTY)
         JS::RootedScript script(cx);
         JS::RootedValue unused(cx);
         JS::CompileOptions options(cx);
-        options.setUTF8(true)
-               .setFileAndLine(filename, 1)
+        options.setFileAndLine(filename, 1)
                .setIsRunOnce(true)
                .setNoScriptRval(true);
-        if (!JS::Compile(cx, options, file, &script)) {
+        if (!JS::CompileUtf8File(cx, options, file, &script)) {
             return false;
         }
         return compileOnly || JS_ExecuteScript(cx, script, &unused);
@@ -827,9 +829,9 @@ ProcessFile(AutoJSAPI& jsapi, const char* filename, FILE* file, bool forceTTY)
             }
             bufp += strlen(bufp);
             lineno++;
-        } while (!JS_BufferIsCompilableUnit(cx, global, buffer, strlen(buffer)));
+        } while (!JS_Utf8BufferIsCompilableUnit(cx, global, buffer, strlen(buffer)));
 
-        if (!ProcessLine(jsapi, buffer, startline)) {
+        if (!ProcessUtf8Line(jsapi, buffer, startline)) {
             jsapi.ReportException();
         }
     } while (!hitEOF && !gQuitting);
@@ -1027,9 +1029,9 @@ ProcessArgs(AutoJSAPI& jsapi, char** argv, int argc, XPCShellDirProvider* aDirPr
             }
 
             JS::CompileOptions opts(cx);
-            opts.setUTF8(true)
-                .setFileAndLine("-e", 1);
-            JS::Evaluate(cx, opts, argv[i], strlen(argv[i]), &rval);
+            opts.setFileAndLine("-e", 1);
+
+            JS::EvaluateUtf8(cx, opts, argv[i], strlen(argv[i]), &rval);
 
             isInteractive = false;
             break;
@@ -1343,9 +1345,8 @@ XRE_XPCShellMain(int argc, char** argv, char** envp,
         // System Zone) to improve cross-zone test coverage.
         JS::RealmOptions options;
         options.creationOptions().setNewCompartmentAndZone();
-        if (xpc::SharedMemoryEnabled()) {
-            options.creationOptions().setSharedMemoryAndAtomicsEnabled(true);
-        }
+        xpc::SetPrefableRealmOptions(options);
+
         JS::Rooted<JSObject*> glob(cx);
         rv = xpc::InitClassesWithNewWrappedGlobal(cx,
                                                   static_cast<nsIGlobalObject*>(backstagePass),

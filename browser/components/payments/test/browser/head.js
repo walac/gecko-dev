@@ -18,6 +18,7 @@ const paymentSrv = Cc["@mozilla.org/dom/payments/payment-request-service;1"]
                      .getService(Ci.nsIPaymentRequestService);
 const paymentUISrv = Cc["@mozilla.org/dom/payments/payment-ui-service;1"]
                      .getService().wrappedJSObject;
+const {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm", {});
 const {formAutofillStorage} = ChromeUtils.import(
   "resource://formautofill/FormAutofillStorage.jsm", {});
 const {PaymentTestUtils: PTU} = ChromeUtils.import(
@@ -344,6 +345,13 @@ add_task(async function setup_head() {
       // Bug 1478142 - Console spam from the Find Toolbar.
       return;
     }
+    if (msg.message && msg.message.match(/PrioEncoder is not defined/)) {
+      // Bug 1492638 - Console spam from TelemetrySession.
+      return;
+    }
+    if (msg.message && msg.message.match(/devicePixelRatio.*FaviconLoader.jsm/)) {
+      return;
+    }
     if (msg.errorMessage == "AbortError: The operation was aborted. " &&
         msg.sourceName == "" && msg.lineNumber == 0) {
       return;
@@ -383,7 +391,7 @@ async function navigateToAddAddressPage(frame, aOptions = {
       PaymentTestUtils,
     } = ChromeUtils.import("resource://testing-common/PaymentTestUtils.jsm", {});
 
-    info("navigateToAddAddressPage: check were on the expected page first");
+    info("navigateToAddAddressPage: check we're on the expected page first");
     await PaymentTestUtils.DialogContentUtils.waitForState(content, (state) => {
       info("current page state: " + state.page.id + " waiting for: " + options.initialPageId);
       return state.page.id == options.initialPageId;
@@ -404,14 +412,19 @@ async function navigateToAddAddressPage(frame, aOptions = {
 async function fillInBillingAddressForm(frame, aAddress) {
   // For now billing and shipping address forms have the same fields but that may
   // change so use separarate helpers.
-  return fillInShippingAddressForm(frame, aAddress);
+  return fillInShippingAddressForm(frame, aAddress, {
+    expectedSelectedStateKey: ["basic-card-page", "billingAddressGUID"],
+  });
 }
 
 async function fillInShippingAddressForm(frame, aAddress, aOptions) {
   let address = Object.assign({}, aAddress);
   // Email isn't used on address forms, only payer/contact ones.
   delete address.email;
-  return fillInAddressForm(frame, address, aOptions);
+  return fillInAddressForm(frame, address, {
+    expectedSelectedStateKey: ["selectedShippingAddress"],
+    ...aOptions,
+  });
 }
 
 async function fillInPayerAddressForm(frame, aAddress) {
@@ -423,12 +436,29 @@ async function fillInPayerAddressForm(frame, aAddress) {
     }
     delete address[fieldName];
   }
-  return fillInAddressForm(frame, address);
+  return fillInAddressForm(frame, address, {
+    expectedSelectedStateKey: ["selectedPayerAddress"],
+  });
 }
 
+/**
+ * @param {HTMLElement} frame
+ * @param {object} aAddress
+ * @param {object} [aOptions = {}]
+ * @param {boolean} [aOptions.setPersistCheckedValue = undefined] How to set the persist checkbox.
+ * @param {string[]} [expectedSelectedStateKey = undefined] The expected selectedStateKey for
+                                                            address-page.
+ */
 async function fillInAddressForm(frame, aAddress, aOptions = {}) {
   await spawnPaymentDialogTask(frame, async (args) => {
     let {address, options = {}} = args;
+
+    if (options.expectedSelectedStateKey) {
+      let store = Cu.waiveXrays(content.document.querySelector("address-form")).requestStore;
+      Assert.deepEqual(store.getState()["address-page"].selectedStateKey,
+                       options.expectedSelectedStateKey,
+                       "Check address page selectedStateKey");
+    }
 
     if (typeof(address.country) != "undefined") {
       // Set the country first so that the appropriate fields are visible.
@@ -584,12 +614,22 @@ async function fillInCardForm(frame, aCard, aOptions = {}) {
         ok(false, `${key} field not found`);
       }
       ok(!field.disabled, `Field #${key} shouldn't be disabled`);
+      // Reset the value first so that we properly handle typing the value
+      // already selected which may select another option with the same prefix.
       field.value = "";
+      ok(!field.value, "Field value should be reset before typing");
+      field.blur();
       field.focus();
+      // Using waitForEvent here causes the test to hang, but
+      // waitForCondition and checking activeElement does the trick. The root cause
+      // of this should be investigated further.
+      await ContentTaskUtils.waitForCondition(() => field == content.document.activeElement,
+                                              `Waiting for field #${key} to get focus`);
       // cc-exp-* fields are numbers so convert to strings and pad left with 0
       let fillValue = val.toString().padStart(2, "0");
-      EventUtils.synthesizeKey(fillValue, {}, content.window);
-      ok(field.value, fillValue, `${key} value is correct after synthesizeKey`);
+      EventUtils.synthesizeKey(fillValue, {}, Cu.waiveXrays(content.window));
+      // cc-exp-* field values are not padded, so compare with unpadded string.
+      is(field.value, val.toString(), `${key} value is correct after sendString`);
     }
 
     info([...content.document.getElementById("cc-exp-year").options].map(op => op.label).join(","));

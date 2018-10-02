@@ -63,16 +63,18 @@ pref("devtools.inspector.shapesHighlighter.enabled", true);
 pref("devtools.inspector.fonteditor.enabled", true);
 // Enable the font highlight-on-hover feature
 pref("devtools.inspector.fonthighlighter.enabled", true);
+// Enable tracking of style changes and the Changes panel in the Inspector
+pref("devtools.inspector.changes.enabled", false);
 
 // Flexbox preferences
-// Enable the Flexbox highlighter in Nightly
+// Enable the Flexbox highlighter and inspector panel in Nightly
 #if defined(NIGHTLY_BUILD)
 pref("devtools.inspector.flexboxHighlighter.enabled", true);
+pref("devtools.flexboxinspector.enabled", true);
 #else
 pref("devtools.inspector.flexboxHighlighter.enabled", false);
-#endif
-// Enable the Flexbox Inspector panel
 pref("devtools.flexboxinspector.enabled", false);
+#endif
 
 // Grid highlighter preferences
 pref("devtools.gridinspector.gridOutlineMaxColumns", 50);
@@ -263,7 +265,7 @@ pref("devtools.webconsole.ui.filterbar", false);
 pref("devtools.browserconsole.ui.filterbar", false);
 
 // Max number of inputs to store in web console history.
-pref("devtools.webconsole.inputHistoryCount", 50);
+pref("devtools.webconsole.inputHistoryCount", 300);
 
 // Persistent logging: |true| if you want the relevant tool to keep all of the
 // logged messages after reloading the page, |false| if you want the output to
@@ -283,12 +285,8 @@ pref("devtools.webconsole.sidebarToggle", true);
 pref("devtools.webconsole.sidebarToggle", false);
 #endif
 
-// Enable CodeMirror in the JsTerm in Nightly builds
-#if defined(NIGHTLY_BUILD)
+// Enable CodeMirror in the JsTerm
 pref("devtools.webconsole.jsterm.codeMirror", true);
-#else
-pref("devtools.webconsole.jsterm.codeMirror", false);
-#endif
 
 // Enable console input reverse-search in Nightly builds
 #if defined(NIGHTLY_BUILD)

@@ -922,6 +922,51 @@ const Class NonSyntacticVariablesObject::class_ = {
     JSCLASS_IS_ANONYMOUS
 };
 
+bool
+js::CreateNonSyntacticEnvironmentChain(JSContext* cx, AutoObjectVector& envChain,
+                                       MutableHandleObject env, MutableHandleScope scope)
+{
+    RootedObject globalLexical(cx, &cx->global()->lexicalEnvironment());
+    if (!CreateObjectsForEnvironmentChain(cx, envChain, globalLexical, env)) {
+        return false;
+    }
+
+    if (!envChain.empty()) {
+        scope.set(GlobalScope::createEmpty(cx, ScopeKind::NonSyntactic));
+        if (!scope) {
+            return false;
+        }
+
+        // The XPConnect subscript loader, which may pass in its own
+        // environments to load scripts in, expects the environment chain to
+        // be the holder of "var" declarations. In SpiderMonkey, such objects
+        // are called "qualified varobjs", the "qualified" part meaning the
+        // declaration was qualified by "var". There is only sadness.
+        //
+        // See JSObject::isQualifiedVarObj.
+        if (!JSObject::setQualifiedVarObj(cx, env)) {
+            return false;
+        }
+
+        // Also get a non-syntactic lexical environment to capture 'let' and
+        // 'const' bindings. To persist lexical bindings, we have a 1-1
+        // mapping with the final unwrapped environment object (the
+        // environment that stores the 'var' bindings) and the lexical
+        // environment.
+        //
+        // TODOshu: disallow the subscript loader from using non-distinguished
+        // objects as dynamic scopes.
+        env.set(ObjectRealm::get(env).getOrCreateNonSyntacticLexicalEnvironment(cx, env));
+        if (!env) {
+            return false;
+        }
+    } else {
+        scope.set(&cx->global()->emptyGlobalScope());
+    }
+
+    return true;
+}
+
 /*****************************************************************************/
 
 /* static */ LexicalEnvironmentObject*
@@ -3810,7 +3855,6 @@ js::GetFrameEnvironmentAndScope(JSContext* cx, AbstractFramePtr frame, jsbytecod
     return true;
 }
 
-
 #ifdef DEBUG
 
 typedef HashSet<PropertyName*> PropertyNameSet;
@@ -3868,11 +3912,9 @@ RemoveReferencedNames(JSContext* cx, HandleScript script, PropertyNameSet& remai
     }
 
     if (script->hasObjects()) {
-        ObjectArray* objects = script->objects();
         RootedFunction fun(cx);
         RootedScript innerScript(cx);
-        for (size_t i = 0; i < objects->length; i++) {
-            JSObject* obj = objects->vector[i];
+        for (JSObject* obj : script->objects()) {
             if (obj->is<JSFunction>() && obj->as<JSFunction>().isInterpreted()) {
                 fun = &obj->as<JSFunction>();
                 innerScript = JSFunction::getOrCreateScript(cx, fun);
@@ -3940,11 +3982,9 @@ AnalyzeEntrainedVariablesInScript(JSContext* cx, HandleScript script, HandleScri
     }
 
     if (innerScript->hasObjects()) {
-        ObjectArray* objects = innerScript->objects();
         RootedFunction fun(cx);
         RootedScript innerInnerScript(cx);
-        for (size_t i = 0; i < objects->length; i++) {
-            JSObject* obj = objects->vector[i];
+        for (JSObject* obj : script->objects()) {
             if (obj->is<JSFunction>() && obj->as<JSFunction>().isInterpreted()) {
                 fun = &obj->as<JSFunction>();
                 innerInnerScript = JSFunction::getOrCreateScript(cx, fun);
@@ -3978,11 +4018,9 @@ js::AnalyzeEntrainedVariables(JSContext* cx, HandleScript script)
         return true;
     }
 
-    ObjectArray* objects = script->objects();
     RootedFunction fun(cx);
     RootedScript innerScript(cx);
-    for (size_t i = 0; i < objects->length; i++) {
-        JSObject* obj = objects->vector[i];
+    for (JSObject* obj : script->objects()) {
         if (obj->is<JSFunction>() && obj->as<JSFunction>().isInterpreted()) {
             fun = &obj->as<JSFunction>();
             innerScript = JSFunction::getOrCreateScript(cx, fun);

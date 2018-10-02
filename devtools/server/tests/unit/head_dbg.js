@@ -31,6 +31,7 @@ Services.prefs.setBoolPref("devtools.debugger.log", true);
 Services.prefs.setBoolPref("devtools.debugger.remote-enabled", true);
 
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
+const { ActorRegistry } = require("devtools/server/actors/utils/actor-registry");
 const { DebuggerServer } = require("devtools/server/main");
 const { DebuggerServer: WorkerDebuggerServer } = worker.require("devtools/server/main");
 const { DebuggerClient } = require("devtools/shared/client/debugger-client");
@@ -76,7 +77,7 @@ function makeMemoryActorTest(testGeneratorFunction) {
   return function run_test() {
     do_test_pending();
     startTestDebuggerServer(TEST_GLOBAL_NAME).then(client => {
-      DebuggerServer.registerModule("devtools/server/actors/heap-snapshot-file", {
+      ActorRegistry.registerModule("devtools/server/actors/heap-snapshot-file", {
         prefix: "heapSnapshotFile",
         constructor: "HeapSnapshotFileActor",
         type: { global: true }
@@ -114,7 +115,7 @@ function makeFullRuntimeMemoryActorTest(testGeneratorFunction) {
   return function run_test() {
     do_test_pending();
     startTestDebuggerServer("test_MemoryActor").then(client => {
-      DebuggerServer.registerModule("devtools/server/actors/heap-snapshot-file", {
+      ActorRegistry.registerModule("devtools/server/actors/heap-snapshot-file", {
         prefix: "heapSnapshotFile",
         constructor: "HeapSnapshotFileActor",
         type: { global: true }
@@ -177,9 +178,9 @@ function findTab(tabs, title) {
   return null;
 }
 
-function attachTab(client, tab) {
+function attachTarget(client, tab) {
   dump("Attaching to tab with title '" + tab.title + "'.\n");
-  return client.attachTab(tab.actor);
+  return client.attachTarget(tab.actor);
 }
 
 function waitForNewSource(threadClient, url) {
@@ -357,7 +358,7 @@ function getTestTab(client, title, callback) {
 // response packet and a TabClient instance referring to that tab.
 function attachTestTab(client, title, callback) {
   getTestTab(client, title, function(tab) {
-    client.attachTab(tab.actor).then(([response, tabClient]) => {
+    client.attachTarget(tab.actor).then(([response, tabClient]) => {
       callback(response, tabClient);
     });
   });
@@ -806,15 +807,13 @@ function getSource(threadClient, url) {
 }
 
 /**
- * Do a fake reload which clears the thread debugger
+ * Do a reload which clears the thread debugger
  *
- * @param TabClient tabClient
+ * @param TabFront tabFront
  * @returns Promise<response>
  */
-function reload(tabClient) {
-  const deferred = defer();
-  tabClient._reload({}, deferred.resolve);
-  return deferred.promise;
+function reload(tabFront) {
+  return tabFront.reload({});
 }
 
 /**

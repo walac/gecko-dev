@@ -22,8 +22,6 @@
 #include <ostream>
 #include <type_traits>
 
-class nsCycleCollectionTraversalCallback;
-
 namespace mozilla {
 
 struct Nothing { };
@@ -184,12 +182,12 @@ class MOZ_NON_PARAM MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS Maybe
 public:
   using ValueType = T;
 
-  Maybe() : mIsSome(false)
+  MOZ_ALLOW_TEMPORARY Maybe() : mIsSome(false)
   {
   }
   ~Maybe() { reset(); }
 
-  MOZ_IMPLICIT Maybe(Nothing) : mIsSome(false)
+  MOZ_ALLOW_TEMPORARY MOZ_IMPLICIT Maybe(Nothing) : mIsSome(false)
   {
   }
 
@@ -713,28 +711,6 @@ template<typename T> bool
 operator>=(const Maybe<T>& aLHS, const Maybe<T>& aRHS)
 {
   return !(aLHS < aRHS);
-}
-
-
-template<typename T>
-void
-ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
-                            Maybe<T>& aMaybe,
-                            const char* aName,
-                            uint32_t aFlags = 0)
-{
-  if (aMaybe.isSome()) {
-    ImplCycleCollectionTraverse(aCallback, aMaybe.ref(), aName, aFlags);
-  }
-}
-
-template<typename T>
-void
-ImplCycleCollectionUnlink(Maybe<T>& aMaybe)
-{
-  if (aMaybe.isSome()) {
-    ImplCycleCollectionUnlink(aMaybe.ref());
-  }
 }
 
 } // namespace mozilla

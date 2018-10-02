@@ -26,6 +26,7 @@
 #include "jit/JitFrames-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "vm/BytecodeUtil-inl.h"
+#include "vm/GeckoProfiler-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/Stack-inl.h"
@@ -252,6 +253,7 @@ jit::BaselineCompile(JSContext* cx, JSScript* script, bool forceDebugInstrumenta
     MOZ_ASSERT(!script->hasBaselineScript());
     MOZ_ASSERT(script->canBaselineCompile());
     MOZ_ASSERT(IsBaselineEnabled(cx));
+    AutoGeckoProfilerEntry pseudoFrame(cx, "Baseline script compilation");
 
     script->ensureNonLazyCanonicalFunction();
 
@@ -740,15 +742,14 @@ BaselineScript::callVMEntryFromPCOffset(uint32_t pcOffset)
 }
 
 ICEntry&
-BaselineScript::stackCheckICEntry(bool earlyCheck)
+BaselineScript::stackCheckICEntry()
 {
     // The stack check will always be at offset 0, so just do a linear search
     // from the beginning. This is only needed for debug mode OSR, when
     // patching a frame that has invoked a Debugger hook via the interrupt
     // handler via the stack check, which is part of the prologue.
-    ICEntry::Kind kind = earlyCheck ? ICEntry::Kind_EarlyStackCheck : ICEntry::Kind_StackCheck;
     for (size_t i = 0; i < numICEntries() && icEntry(i).pcOffset() == 0; i++) {
-        if (icEntry(i).kind() == kind) {
+        if (icEntry(i).kind() == ICEntry::Kind_StackCheck) {
             return icEntry(i);
         }
     }

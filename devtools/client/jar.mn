@@ -89,7 +89,6 @@ devtools.jar:
     content/aboutdebugging/aboutdebugging.css (aboutdebugging/aboutdebugging.css)
     content/aboutdebugging-new/index.html (aboutdebugging-new/index.html)
     content/aboutdebugging-new/aboutdebugging.css (aboutdebugging-new/aboutdebugging.css)
-    content/aboutdebugging-new/aboutdebugging.js (aboutdebugging-new/aboutdebugging.js)
     # The following line is temporary until the strings for the new
     # about:debugging feature stabilize.
     content/aboutdebugging-new/tmp-locale/en-US/aboutdebugging.ftl (aboutdebugging-new/tmp-locale/en-US/aboutdebugging.notftl)
@@ -107,6 +106,7 @@ devtools.jar:
     skin/tooltips.css (themes/tooltips.css)
     skin/images/accessibility.svg (themes/images/accessibility.svg)
     skin/images/add.svg (themes/images/add.svg)
+    skin/images/arrowhead-left.svg (themes/images/arrowhead-left.svg)
     skin/images/arrowhead-down.svg (themes/images/arrowhead-down.svg)
     skin/images/arrowhead-up.svg (themes/images/arrowhead-up.svg)
     skin/images/breadcrumbs-divider.svg (themes/images/breadcrumbs-divider.svg)
@@ -242,6 +242,7 @@ devtools.jar:
     skin/images/cubic-bezier-swatch.png (themes/images/cubic-bezier-swatch.png)
     skin/images/cubic-bezier-swatch@2x.png (themes/images/cubic-bezier-swatch@2x.png)
     skin/fonts.css (themes/fonts.css)
+    skin/changes.css (themes/changes.css)
     skin/computed.css (themes/computed.css)
     skin/layout.css (themes/layout.css)
     skin/images/arrow-e.png (themes/images/arrow-e.png)

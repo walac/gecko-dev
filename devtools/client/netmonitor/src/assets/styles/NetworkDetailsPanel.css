@@ -162,6 +162,13 @@
   overflow-x: auto;
 }
 
+/* If there is a source editor shows up in the last row of TreeView,
+ * its height should not collapse into zero
+ */
+.network-monitor .tree-container .treeTable tr:last-child.editor-row-container {
+  overflow: visible;
+}
+
 .network-monitor .source-editor-mount {
   width: 100%;
   height: 100%;
@@ -237,6 +244,7 @@
 
 .network-monitor .headers-summary .status-text {
     width: auto!important;
+    margin-left: 4px;
 }
 
 /* Response tabpanel */
@@ -430,4 +438,8 @@
 .network-monitor .custom-url-value {
   flex-grow: 1;
   margin-inline-start: 6px;
+}
+
+#timings-panel .learn-more-link{
+  width: -moz-max-content;
 }

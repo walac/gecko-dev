@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsNativeThemeGTK.h"
+#include "HeadlessThemeGTK.h"
 #include "nsStyleConsts.h"
 #include "gtkdrawing.h"
 #include "ScreenHelperGTK.h"
@@ -25,6 +26,7 @@
 #include "nsAttrValueInlines.h"
 
 #include "mozilla/dom/HTMLInputElement.h"
+#include "mozilla/ClearOnShutdown.h"
 #include "mozilla/EventStates.h"
 #include "mozilla/Services.h"
 
@@ -64,6 +66,9 @@ NS_IMPL_ISUPPORTS_INHERITED(nsNativeThemeGTK, nsNativeTheme, nsITheme,
                                                              nsIObserver)
 
 static int gLastGdkError;
+
+// from nsWindow.cpp
+extern bool gDisableNativeTheme;
 
 // Return scale factor of the monitor where the window is located
 // by the most part or layout.css.devPixelsPerPx pref if set to > 0.
@@ -453,6 +458,20 @@ nsNativeThemeGTK::GetGtkWidgetAndState(StyleAppearance aWidgetType, nsIFrame* aF
         aWidgetType == StyleAppearance::MozWindowButtonMaximize ||
         aWidgetType == StyleAppearance::MozWindowButtonRestore) {
       aState->backdrop = !nsWindow::GetTopLevelWindowActiveState(aFrame);
+    }
+
+    if (aWidgetType ==  StyleAppearance::ScrollbarbuttonUp ||
+        aWidgetType ==  StyleAppearance::ScrollbarbuttonDown ||
+        aWidgetType ==  StyleAppearance::ScrollbarbuttonLeft ||
+        aWidgetType ==  StyleAppearance::ScrollbarbuttonRight ||
+        aWidgetType == StyleAppearance::ScrollbarVertical ||
+        aWidgetType == StyleAppearance::ScrollbarHorizontal ||
+        aWidgetType == StyleAppearance::ScrollbartrackHorizontal ||
+        aWidgetType == StyleAppearance::ScrollbartrackVertical ||
+        aWidgetType == StyleAppearance::ScrollbarthumbVertical||
+        aWidgetType == StyleAppearance::ScrollbarthumbHorizontal) {
+      EventStates docState = aFrame->GetContent()->OwnerDoc()->GetDocumentState();
+      aState->backdrop = docState.HasState(NS_DOCUMENT_STATE_WINDOW_INACTIVE);
     }
   }
 
@@ -2114,8 +2133,39 @@ nsNativeThemeGTK::WidgetAppearanceDependsOnWindowFocus(StyleAppearance aWidgetTy
     case StyleAppearance::MozWindowButtonMinimize:
     case StyleAppearance::MozWindowButtonMaximize:
     case StyleAppearance::MozWindowButtonRestore:
+    case StyleAppearance::ScrollbarbuttonUp:
+    case StyleAppearance::ScrollbarbuttonDown:
+    case StyleAppearance::ScrollbarbuttonLeft:
+    case StyleAppearance::ScrollbarbuttonRight:
+    case StyleAppearance::ScrollbarVertical:
+    case StyleAppearance::ScrollbarHorizontal:
+    case StyleAppearance::ScrollbartrackHorizontal:
+    case StyleAppearance::ScrollbartrackVertical:
+    case StyleAppearance::ScrollbarthumbVertical:
+    case StyleAppearance::ScrollbarthumbHorizontal:
       return true;
     default:
       return false;
   }
+}
+
+already_AddRefed<nsITheme>
+do_GetNativeTheme()
+{
+  if (gDisableNativeTheme) {
+    return nullptr;
+  }
+
+  static nsCOMPtr<nsITheme> inst;
+
+  if (!inst) {
+    if (gfxPlatform::IsHeadless()) {
+      inst = new HeadlessThemeGTK();
+    } else {
+      inst = new nsNativeThemeGTK();
+    }
+    ClearOnShutdown(&inst);
+  }
+
+  return do_AddRef(inst);
 }

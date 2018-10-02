@@ -328,7 +328,7 @@ win32-nightly/opt:
             TOOLTOOL_MANIFEST: "browser/config/tooltool-manifests/win32/releng.manifest"
     run:
         using: mozharness
-        actions: [build, check-test, update]
+        actions: [build, check-test]
         options: [append-env-variables-from-configs]
         script: mozharness/scripts/fx_desktop_build.py
         config:
@@ -367,7 +367,7 @@ win64-nightly/opt:
             TOOLTOOL_MANIFEST: "browser/config/tooltool-manifests/win64/releng.manifest"
     run:
         using: mozharness
-        actions: [build, check-test, update]
+        actions: [build, check-test]
         options: [append-env-variables-from-configs]
         script: mozharness/scripts/fx_desktop_build.py
         config:
@@ -1074,7 +1074,7 @@ win64-mingwclang/opt:
         - linux64-sccache
         - linux64-cbindgen
         - linux64-node
-        - linux64-clang-7-mingw
+        - linux64-clang-7-mingw-x64
         - linux64-mingw32-nsis
         - linux64-mingw32-fxc2
 
@@ -1110,6 +1110,6 @@ win64-mingwclang/debug:
         - linux64-sccache
         - linux64-cbindgen
         - linux64-node
-        - linux64-clang-7-mingw
+        - linux64-clang-7-mingw-x64
         - linux64-mingw32-nsis
         - linux64-mingw32-fxc2

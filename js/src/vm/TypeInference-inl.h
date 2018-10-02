@@ -18,9 +18,14 @@
 #include "builtin/Symbol.h"
 #include "gc/GC.h"
 #include "jit/BaselineJIT.h"
+#include "js/HeapAPI.h"
 #include "vm/ArrayObject.h"
 #include "vm/BooleanObject.h"
+#include "vm/JSFunction.h"
+#include "vm/NativeObject.h"
 #include "vm/NumberObject.h"
+#include "vm/ObjectGroup.h"
+#include "vm/Shape.h"
 #include "vm/SharedArrayObject.h"
 #include "vm/StringObject.h"
 #include "vm/TypedArrayObject.h"
@@ -134,7 +139,7 @@ TypeSet::ObjectKey::maybeCompartment()
 }
 
 /* static */ inline TypeSet::Type
-TypeSet::ObjectType(JSObject* obj)
+TypeSet::ObjectType(const JSObject* obj)
 {
     if (obj->isSingleton()) {
         return Type(uintptr_t(obj) | 1);
@@ -143,7 +148,7 @@ TypeSet::ObjectType(JSObject* obj)
 }
 
 /* static */ inline TypeSet::Type
-TypeSet::ObjectType(ObjectGroup* group)
+TypeSet::ObjectType(const ObjectGroup* group)
 {
     if (group->singleton()) {
         return Type(uintptr_t(group->singleton()) | 1);
@@ -152,7 +157,7 @@ TypeSet::ObjectType(ObjectGroup* group)
 }
 
 /* static */ inline TypeSet::Type
-TypeSet::ObjectType(ObjectKey* obj)
+TypeSet::ObjectType(const ObjectKey* obj)
 {
     return Type(uintptr_t(obj));
 }
@@ -268,6 +273,161 @@ TypeIdString(jsid id)
 #endif
 }
 
+// New script properties analyses overview.
+//
+// When constructing objects using 'new' on a script, we attempt to determine
+// the properties which that object will eventually have. This is done via two
+// analyses. One of these, the definite properties analysis, is static, and the
+// other, the acquired properties analysis, is dynamic. As objects are
+// constructed using 'new' on some script to create objects of group G, our
+// analysis strategy is as follows:
+//
+// - When the first objects are created, no analysis is immediately performed.
+//   Instead, all objects of group G are accumulated in an array.
+//
+// - After a certain number of such objects have been created, the definite
+//   properties analysis is performed. This analyzes the body of the
+//   constructor script and any other functions it calls to look for properties
+//   which will definitely be added by the constructor in a particular order,
+//   creating an object with shape S.
+//
+// - The properties in S are compared with the greatest common prefix P of the
+//   shapes of the objects that have been created. If P has more properties
+//   than S, the acquired properties analysis is performed.
+//
+// - The acquired properties analysis marks all properties in P as definite
+//   in G, and creates a new group IG for objects which are partially
+//   initialized. Objects of group IG are initially created with shape S, and if
+//   they are later given shape P, their group can be changed to G.
+//
+// For objects which are rarely created, the definite properties analysis can
+// be triggered after only one or a few objects have been allocated, when code
+// being Ion compiled might access them. In this case type information in the
+// constructor might not be good enough for the definite properties analysis to
+// compute useful information, but the acquired properties analysis will still
+// be able to identify definite properties in this case.
+//
+// This layered approach is designed to maximize performance on easily
+// analyzable code, while still allowing us to determine definite properties
+// robustly when code consistently adds the same properties to objects, but in
+// complex ways which can't be understood statically.
+class TypeNewScript
+{
+  private:
+    // Scripted function which this information was computed for.
+    HeapPtr<JSFunction*> function_ = {};
+
+    // Any preliminary objects with the type. The analyses are not performed
+    // until this array is cleared.
+    PreliminaryObjectArray* preliminaryObjects = nullptr;
+
+    // After the new script properties analyses have been performed, a template
+    // object to use for newly constructed objects. The shape of this object
+    // reflects all definite properties the object will have, and the
+    // allocation kind to use. This is null if the new objects have an unboxed
+    // layout, in which case the UnboxedLayout provides the initial structure
+    // of the object.
+    HeapPtr<PlainObject*> templateObject_ = {};
+
+    // Order in which definite properties become initialized. We need this in
+    // case the definite properties are invalidated (such as by adding a setter
+    // to an object on the prototype chain) while an object is in the middle of
+    // being initialized, so we can walk the stack and fixup any objects which
+    // look for in-progress objects which were prematurely set with an incorrect
+    // shape. Property assignments in inner frames are preceded by a series of
+    // SETPROP_FRAME entries specifying the stack down to the frame containing
+    // the write.
+    TypeNewScriptInitializer* initializerList = nullptr;
+
+    // If there are additional properties found by the acquired properties
+    // analysis which were not found by the definite properties analysis, this
+    // shape contains all such additional properties (plus the definite
+    // properties). When an object of this group acquires this shape, it is
+    // fully initialized and its group can be changed to initializedGroup.
+    HeapPtr<Shape*> initializedShape_ = {};
+
+    // Group with definite properties set for all properties found by
+    // both the definite and acquired properties analyses.
+    HeapPtr<ObjectGroup*> initializedGroup_ = {};
+
+  public:
+    TypeNewScript() = default;
+
+    ~TypeNewScript() {
+        js_delete(preliminaryObjects);
+        js_free(initializerList);
+    }
+
+    void clear() {
+        function_ = nullptr;
+        templateObject_ = nullptr;
+        initializedShape_ = nullptr;
+        initializedGroup_ = nullptr;
+    }
+
+    static void writeBarrierPre(TypeNewScript* newScript);
+
+    bool analyzed() const {
+        return preliminaryObjects == nullptr;
+    }
+
+    PlainObject* templateObject() const {
+        return templateObject_;
+    }
+
+    Shape* initializedShape() const {
+        return initializedShape_;
+    }
+
+    ObjectGroup* initializedGroup() const {
+        return initializedGroup_;
+    }
+
+    JSFunction* function() const {
+        return function_;
+    }
+
+    void trace(JSTracer* trc);
+    void sweep();
+
+    void registerNewObject(PlainObject* res);
+    bool maybeAnalyze(JSContext* cx, ObjectGroup* group, bool* regenerate, bool force = false);
+
+    bool rollbackPartiallyInitializedObjects(JSContext* cx, ObjectGroup* group);
+
+    static bool make(JSContext* cx, ObjectGroup* group, JSFunction* fun);
+    static TypeNewScript* makeNativeVersion(JSContext* cx, TypeNewScript* newScript,
+                                            PlainObject* templateObject);
+
+    size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
+
+    static size_t offsetOfPreliminaryObjects() {
+        return offsetof(TypeNewScript, preliminaryObjects);
+    }
+};
+
+inline
+UnboxedLayout::~UnboxedLayout()
+{
+    if (newScript_) {
+        newScript_->clear();
+    }
+    js_delete(newScript_);
+    js_free(traceList_);
+
+    nativeGroup_.init(nullptr);
+    nativeShape_.init(nullptr);
+    replacementGroup_.init(nullptr);
+    constructorCode_.init(nullptr);
+}
+
+inline bool
+ObjectGroup::hasUnanalyzedPreliminaryObjects()
+{
+    return (newScriptDontCheckGeneration() && !newScriptDontCheckGeneration()->analyzed()) ||
+           maybePreliminaryObjectsDontCheckGeneration();
+}
+
 /*
  * Structure for type inference entry point functions. All functions which can
  * change type information must use this, and functions which depend on
@@ -277,7 +437,7 @@ TypeIdString(jsid id)
  * Ensures that GC cannot occur. Does additional sanity checking that inference
  * is not reentrant and that recompilations occur properly.
  */
-struct AutoEnterAnalysis
+struct MOZ_RAII AutoEnterAnalysis
 {
     // For use when initializing an UnboxedLayout.  The UniquePtr's destructor
     // must run when GC is not suppressed.
@@ -286,7 +446,8 @@ struct AutoEnterAnalysis
     // Prevent GC activity in the middle of analysis.
     gc::AutoSuppressGC suppressGC;
 
-    // Allow clearing inference info on OOM during incremental sweeping.
+    // Allow clearing inference info on OOM during incremental sweeping. This is
+    // constructed for the outermost AutoEnterAnalysis on the stack.
     mozilla::Maybe<AutoClearTypeInferenceStateOnOOM> oom;
 
     // Pending recompilations to perform before execution of JIT code can resume.
@@ -333,7 +494,7 @@ struct AutoEnterAnalysis
         this->zone = zone;
 
         if (!zone->types.activeAnalysis) {
-            MOZ_RELEASE_ASSERT(!zone->types.sweepingTypes);
+            oom.emplace(zone);
             zone->types.activeAnalysis = this;
         }
     }
@@ -1282,14 +1443,13 @@ ObjectGroup::getProperty(const AutoSweepObjectGroup& sweep, unsigned i)
 }
 
 inline
-AutoSweepObjectGroup::AutoSweepObjectGroup(ObjectGroup* group,
-                                           AutoClearTypeInferenceStateOnOOM* oom)
+AutoSweepObjectGroup::AutoSweepObjectGroup(ObjectGroup* group)
 #ifdef DEBUG
   : group_(group)
 #endif
 {
     if (group->needsSweep()) {
-        group->sweep(*this, oom);
+        group->sweep(*this);
     }
 }
 
@@ -1303,14 +1463,13 @@ AutoSweepObjectGroup::~AutoSweepObjectGroup()
 #endif
 
 inline
-AutoSweepTypeScript::AutoSweepTypeScript(JSScript* script,
-                                         AutoClearTypeInferenceStateOnOOM* oom)
+AutoSweepTypeScript::AutoSweepTypeScript(JSScript* script)
 #ifdef DEBUG
   : script_(script)
 #endif
 {
     if (script->typesNeedsSweep()) {
-        script->sweepTypes(*this, oom);
+        script->sweepTypes(*this);
     }
 }
 

@@ -1141,13 +1141,7 @@ Gecko_nsTArray_FontFamilyName_AppendNamed(nsTArray<FontFamilyName>* aNames,
                                           nsAtom* aName,
                                           bool aQuoted)
 {
-  FontFamilyName family;
-  aName->ToString(family.mName);
-  if (aQuoted) {
-    family.mType = eFamily_named_quoted;
-  }
-
-  aNames->AppendElement(family);
+  aNames->AppendElement(FontFamilyName(aName, aQuoted ? eQuotedName : eUnquotedName));
 }
 
 void
@@ -2390,8 +2384,7 @@ Gecko_CSSValue_SetFontWeight(nsCSSValueBorrowedMut aCSSValue,
 void
 Gecko_nsStyleFont_SetLang(nsStyleFont* aFont, nsAtom* aAtom)
 {
-  already_AddRefed<nsAtom> atom = already_AddRefed<nsAtom>(aAtom);
-  aFont->mLanguage = atom;
+  aFont->mLanguage = dont_AddRef(aAtom);
   aFont->mExplicitLanguage = true;
 }
 
@@ -2562,7 +2555,7 @@ Gecko_GetFontMetrics(RawGeckoPresContextBorrowed aPresContext,
   ret.mXSize = fm->XHeight();
   gfxFloat zeroWidth = fm->GetThebesFontGroup()->GetFirstValidFont()->
                            GetMetrics(fm->Orientation()).zeroOrAveCharWidth;
-  ret.mChSize = ceil(aPresContext->AppUnitsPerDevPixel() * zeroWidth);
+  ret.mChSize = NS_round(aPresContext->AppUnitsPerDevPixel() * zeroWidth);
   return ret;
 }
 

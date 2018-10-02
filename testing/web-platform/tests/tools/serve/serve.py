@@ -631,10 +631,22 @@ class WebSocketDaemon(object):
         self.server = None
 
 
+def release_mozlog_lock():
+    try:
+        from mozlog.structuredlog import StructuredLogger
+        try:
+            StructuredLogger._lock.release()
+        except threading.ThreadError:
+            pass
+    except ImportError:
+        pass
+
+
 def start_ws_server(host, port, paths, routes, bind_address, config, **kwargs):
-    # Ensure that when we start this in a new process we don't inherit the
-    # global lock in the logging module
+    # Ensure that when we start this in a new process we have the global lock
+    # in the logging module unlocked
     reload_module(logging)
+    release_mozlog_lock()
     return WebSocketDaemon(host,
                            str(port),
                            repo_root,
@@ -645,9 +657,10 @@ def start_ws_server(host, port, paths, routes, bind_address, config, **kwargs):
 
 
 def start_wss_server(host, port, paths, routes, bind_address, config, **kwargs):
-    # Ensure that when we start this in a new process we don't inherit the
-    # global lock in the logging module
+    # Ensure that when we start this in a new process we have the global lock
+    # in the logging module unlocked
     reload_module(logging)
+    release_mozlog_lock()
     return WebSocketDaemon(host,
                            str(port),
                            repo_root,

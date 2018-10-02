@@ -11,6 +11,7 @@ import {SimpleSnippet} from "./templates/SimpleSnippet/SimpleSnippet";
 
 const INCOMING_MESSAGE_NAME = "ASRouter:parent-to-child";
 const OUTGOING_MESSAGE_NAME = "ASRouter:child-to-parent";
+const ASR_CONTAINER_ID = "asr-newtab-container";
 
 export const ASRouterUtils = {
   addListener(listener) {
@@ -31,7 +32,7 @@ export const ASRouterUtils = {
   executeAction(button_action) {
     ASRouterUtils.sendMessage({
       type: "USER_ACTION",
-      data: button_action
+      data: button_action,
     });
   },
   unblockById(id) {
@@ -40,9 +41,6 @@ export const ASRouterUtils = {
   unblockBundle(bundle) {
     ASRouterUtils.sendMessage({type: "UNBLOCK_BUNDLE", data: {bundle}});
   },
-  getNextMessage() {
-    ASRouterUtils.sendMessage({type: "GET_NEXT_MESSAGE"});
-  },
   overrideMessage(id) {
     ASRouterUtils.sendMessage({type: "OVERRIDE_MESSAGE", data: {id}});
   },
@@ -50,20 +48,20 @@ export const ASRouterUtils = {
     const payload = ac.ASRouterUserEvent(ping);
     global.RPMSendAsyncMessage(AS_GENERAL_OUTGOING_MESSAGE_NAME, payload);
   },
-  getEndpoint() {
+  getPreviewEndpoint() {
     if (window.location.href.includes("endpoint")) {
       const params = new URLSearchParams(window.location.href.slice(window.location.href.indexOf("endpoint")));
       try {
         const endpoint = new URL(params.get("endpoint"));
         return {
           url: endpoint.href,
-          snippetId: params.get("snippetId")
+          snippetId: params.get("snippetId"),
         };
       } catch (e) {}
     }
 
     return null;
-  }
+  },
 };
 
 // Note: nextProps/prevProps refer to props passed to <ImpressionsWrapper />, not <ASRouterUISurface />
@@ -84,7 +82,7 @@ const ALLOWED_TAGS = {
   u: <u />,
   strong: <strong />,
   em: <em />,
-  br: <br />
+  br: <br />,
 };
 
 /**
@@ -133,11 +131,15 @@ export class ASRouterUISurface extends React.PureComponent {
       message_id: message.id || extraProps.message_id,
       source: extraProps.id,
       action: eventType,
-      ...extraProps
+      ...extraProps,
     });
   }
 
   sendImpression(extraProps) {
+    if (this.state.message.provider === "preview") {
+      return;
+    }
+
     ASRouterUtils.sendMessage({type: "IMPRESSION", data: this.state.message});
     this.sendUserActionTelemetry({event: "IMPRESSION", ...extraProps});
   }
@@ -146,13 +148,20 @@ export class ASRouterUISurface extends React.PureComponent {
   // telemetry field which can have arbitrary values.
   // Used for router messages with links as part of the content.
   sendClick(event) {
+    if (this.state.message.provider === "preview") {
+      return;
+    }
+
     const metric = {
       value: event.target.dataset.metric,
       // Used for the `source` of the event. Needed to differentiate
       // from other snippet or onboarding events that may occur.
-      id: "NEWTAB_FOOTER_BAR_CONTENT"
+      id: "NEWTAB_FOOTER_BAR_CONTENT",
     };
     this.sendUserActionTelemetry({event: "CLICK_BUTTON", ...metric});
+    if (!this.state.message.content.do_not_autoblock) {
+      ASRouterUtils.blockById(this.state.message.id);
+    }
   }
 
   onBlockById(id) {
@@ -192,14 +201,14 @@ export class ASRouterUISurface extends React.PureComponent {
   }
 
   componentWillMount() {
-    const endpoint = ASRouterUtils.getEndpoint();
+    const endpoint = ASRouterUtils.getPreviewEndpoint();
     ASRouterUtils.addListener(this.onMessageFromParent);
 
     // If we are loading about:welcome we want to trigger the onboarding messages
     if (this.props.document.location.href === "about:welcome") {
       ASRouterUtils.sendMessage({type: "TRIGGER", data: {trigger: {id: "firstRun"}}});
     } else {
-      ASRouterUtils.sendMessage({type: "CONNECT_UI_REQUEST", data: {endpoint}});
+      ASRouterUtils.sendMessage({type: "SNIPPETS_REQUEST", data: {endpoint}});
     }
   }
 
@@ -223,7 +232,6 @@ export class ASRouterUISurface extends React.PureComponent {
                                   links={this.state.message.content.links}
                                   sendClick={this.sendClick} />}
               UISurface="NEWTAB_FOOTER_BAR"
-              getNextMessage={ASRouterUtils.getNextMessage}
               onBlock={this.onBlockById(this.state.message.id)}
               onAction={ASRouterUtils.executeAction}
               sendUserActionTelemetry={this.sendUserActionTelemetry} />
@@ -238,15 +246,31 @@ export class ASRouterUISurface extends React.PureComponent {
         UISurface="NEWTAB_OVERLAY"
         onAction={ASRouterUtils.executeAction}
         onDoneButton={this.clearBundle(this.state.bundle.bundle)}
-        getNextMessage={ASRouterUtils.getNextMessage}
         sendUserActionTelemetry={this.sendUserActionTelemetry} />);
+  }
+
+  renderPreviewBanner() {
+    if (this.state.message.provider !== "preview") {
+      return null;
+    }
+
+    return (
+      <div className="snippets-preview-banner">
+        <span className="icon icon-small-spacer icon-info" />
+        <span>Preview Purposes Only</span>
+      </div>
+    );
   }
 
   render() {
     const {message, bundle} = this.state;
     if (!message.id && !bundle.template) { return null; }
-    if (bundle.template === "onboarding") { return this.renderOnboarding(); }
-    return this.renderSnippets();
+    return (
+      <React.Fragment>
+        {this.renderPreviewBanner()}
+        {bundle.template === "onboarding" ? this.renderOnboarding() : this.renderSnippets()}
+      </React.Fragment>
+    );
   }
 }
 
@@ -259,7 +283,14 @@ export class ASRouterContent {
   }
 
   _mount() {
-    this.containerElement = global.document.getElementById("snippets-container");
+    this.containerElement = global.document.getElementById(ASR_CONTAINER_ID);
+    if (!this.containerElement) {
+      this.containerElement = global.document.createElement("div");
+      this.containerElement.id = ASR_CONTAINER_ID;
+      this.containerElement.style.zIndex = 1;
+      global.document.body.appendChild(this.containerElement);
+    }
+
     ReactDOM.render(<ASRouterUISurface />, this.containerElement);
   }
 

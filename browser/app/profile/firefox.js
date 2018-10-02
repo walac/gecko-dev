@@ -33,7 +33,6 @@ pref("extensions.strictCompatibility", false);
 // extensions.checkCompatibility=false has been set.
 pref("extensions.checkCompatibility.temporaryThemeOverride_minAppVersion", "29.0a1");
 
-pref("xpinstall.customConfirmationUI", true);
 pref("extensions.webextPermissionPrompts", true);
 pref("extensions.webextOptionalPermissionPrompts", true);
 
@@ -59,7 +58,7 @@ pref("extensions.autoDisableScopes", 15);
 // Scopes to scan for changes at startup.
 pref("extensions.startupScanScopes", 0);
 
-pref("extensions.geckoProfiler.acceptedExtensionIds", "geckoprofiler@mozilla.com,quantum-foxfooding@mozilla.com");
+pref("extensions.geckoProfiler.acceptedExtensionIds", "geckoprofiler@mozilla.com,quantum-foxfooding@mozilla.com,raptor@mozilla.org");
 #if defined(XP_LINUX) || defined (XP_MACOSX)
 pref("extensions.geckoProfiler.getSymbolRules", "localBreakpad,nm");
 #else // defined(XP_WIN)
@@ -334,6 +333,8 @@ pref("browser.urlbar.switchTabs.adoptIntoActiveWindow", false);
 // Whether addresses and search results typed into the address bar
 // should be opened in new tabs by default.
 pref("browser.urlbar.openintab", false);
+
+pref("browser.urlbar.quantumbar", false);
 
 pref("browser.altClickSave", false);
 
@@ -1497,12 +1498,9 @@ pref("browser.ping-centre.production.endpoint", "https://tiles.services.mozilla.
 // Enable GMP support in the addon manager.
 pref("media.gmp-provider.enabled", true);
 
-// Enable the new Content Blocking UI only on Nightly.
-#ifdef NIGHTLY_BUILD
-pref("browser.contentblocking.ui.enabled", true);
-#else
-pref("browser.contentblocking.ui.enabled", false);
-#endif
+pref("browser.contentblocking.allowlist.storage.enabled", true);
+
+pref("browser.contentblocking.global-toggle.enabled", true);
 
 // Define a set of default features for the Content Blocking UI
 pref("browser.contentblocking.fastblock.ui.enabled", true);
@@ -1688,8 +1686,7 @@ pref("extensions.formautofill.section.enabled", true);
 pref("extensions.formautofill.loglevel", "Warn");
 
 #ifdef NIGHTLY_BUILD
-// Comma separated list of countries Form Autofill supports.
-// This affects feature availability and the address edit form country picker.
+// Comma separated list of countries Form Autofill is available in.
 pref("extensions.formautofill.supportedCountries", "US,CA,DE");
 pref("extensions.formautofill.supportRTL", true);
 #else
@@ -1757,6 +1754,13 @@ pref("app.shield.optoutstudies.enabled", false);
 
 // Multi-lingual preferences
 pref("intl.multilingual.enabled", false);
+
+// Simulate conditions that will happen when the browser
+// is running with Fission enabled. This is meant to assist
+// development and testing of Fission.
+// The current simulated conditions are:
+// - Don't propagate events from subframes to JS child actors
+pref("browser.fission.simulate", false);
 
 // Prio preferences
 // Only enable by default on Nightly.

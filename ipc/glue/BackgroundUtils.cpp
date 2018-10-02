@@ -456,7 +456,8 @@ LoadInfoToLoadInfoArgs(nsILoadInfo *aLoadInfo,
       aLoadInfo->GetIsPreflight(),
       aLoadInfo->GetLoadTriggeredFromExternal(),
       aLoadInfo->GetServiceWorkerTaintingSynthesized(),
-      aLoadInfo->GetDocumentHasUserInteracted()
+      aLoadInfo->GetDocumentHasUserInteracted(),
+      aLoadInfo->GetDocumentHasLoaded()
       );
 
   return NS_OK;
@@ -618,7 +619,8 @@ LoadInfoArgsToLoadInfo(const OptionalLoadInfoArgs& aOptionalLoadInfoArgs,
                           loadInfoArgs.isPreflight(),
                           loadInfoArgs.loadTriggeredFromExternal(),
                           loadInfoArgs.serviceWorkerTaintingSynthesized(),
-                          loadInfoArgs.documentHasUserInteracted()
+                          loadInfoArgs.documentHasUserInteracted(),
+                          loadInfoArgs.documentHasLoaded()
                           );
 
    loadInfo.forget(outLoadInfo);
@@ -635,7 +637,9 @@ LoadInfoToParentLoadInfoForwarder(nsILoadInfo* aLoadInfo,
                                                      false, // serviceWorkerTaintingSynthesized
                                                      false, // isTracker
                                                      false, // isTrackerBlocked
-                                                     false  // documentHasUserInteracted
+                                                     mozilla::Telemetry::LABELS_DOCUMENT_ANALYTICS_TRACKER_FASTBLOCKED::all, // trackerBlockedReason
+                                                     false, // documentHasUserInteracted
+                                                     false  // documentHasLoaded
                                                     );
     return;
   }
@@ -649,6 +653,10 @@ LoadInfoToParentLoadInfoForwarder(nsILoadInfo* aLoadInfo,
   uint32_t tainting = nsILoadInfo::TAINTING_BASIC;
   Unused << aLoadInfo->GetTainting(&tainting);
 
+  mozilla::Telemetry::LABELS_DOCUMENT_ANALYTICS_TRACKER_FASTBLOCKED label =
+    mozilla::Telemetry::LABELS_DOCUMENT_ANALYTICS_TRACKER_FASTBLOCKED::all;
+  Unused << aLoadInfo->GetTrackerBlockedReason(&label);
+
   *aForwarderArgsOut = ParentLoadInfoForwarderArgs(
     aLoadInfo->GetAllowInsecureRedirectToDataURI(),
     ipcController,
@@ -656,7 +664,9 @@ LoadInfoToParentLoadInfoForwarder(nsILoadInfo* aLoadInfo,
     aLoadInfo->GetServiceWorkerTaintingSynthesized(),
     aLoadInfo->GetIsTracker(),
     aLoadInfo->GetIsTrackerBlocked(),
-    aLoadInfo->GetDocumentHasUserInteracted()
+    label,
+    aLoadInfo->GetDocumentHasUserInteracted(),
+    aLoadInfo->GetDocumentHasLoaded()
   );
 }
 
@@ -690,7 +700,9 @@ MergeParentLoadInfoForwarder(ParentLoadInfoForwarderArgs const& aForwarderArgs,
 
   MOZ_ALWAYS_SUCCEEDS(aLoadInfo->SetIsTracker(aForwarderArgs.isTracker()));
   MOZ_ALWAYS_SUCCEEDS(aLoadInfo->SetIsTrackerBlocked(aForwarderArgs.isTrackerBlocked()));
+  MOZ_ALWAYS_SUCCEEDS(aLoadInfo->SetTrackerBlockedReason(aForwarderArgs.trackerBlockedReason()));
   MOZ_ALWAYS_SUCCEEDS(aLoadInfo->SetDocumentHasUserInteracted(aForwarderArgs.documentHasUserInteracted()));
+  MOZ_ALWAYS_SUCCEEDS(aLoadInfo->SetDocumentHasLoaded(aForwarderArgs.documentHasLoaded()));
 
   return NS_OK;
 }

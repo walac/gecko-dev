@@ -9,22 +9,8 @@
    xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
    xmlns:html="http://www.w3.org/1999/xhtml">
 
-  <!-- bound to <description>s -->
-  <binding id="text-base">
+  <binding id="text-label">
     <implementation>
-      <property name="disabled" onset="if (val) this.setAttribute('disabled', 'true');
-                                       else this.removeAttribute('disabled');
-                                       return val;"
-                                onget="return this.getAttribute('disabled') == 'true';"/>
-      <property name="value" onget="return this.getAttribute('value');"
-                             onset="this.setAttribute('value', val); return val;"/>
-      <property name="crop" onget="return this.getAttribute('crop');"
-                            onset="this.setAttribute('crop', val); return val;"/>
-    </implementation>
-  </binding>
-
-  <binding id="text-label" extends="chrome://global/content/bindings/text.xml#text-base">
-    <implementation implements="nsIDOMXULLabelElement">
       <property name="accessKey">
         <getter>
           <![CDATA[
@@ -56,7 +42,7 @@
     <content>
       <children/><html:span anonid="accessKeyParens"></html:span>
     </content>
-    <implementation implements="nsIDOMXULLabelElement">
+    <implementation>
       <constructor>
         <![CDATA[
           this.formatAccessKey(true);
@@ -70,12 +56,16 @@
             var control = this.labeledControlElement;
             if (!control) {
               var bindingParent = document.getBindingParent(this);
-              if (bindingParent instanceof Ci.nsIDOMXULLabeledControlElement) {
+              if ("accessKey" in bindingParent) {
                 control = bindingParent; // For controls that make the <label> an anon child
               }
             }
             if (control) {
               control.labelElement = this;
+              var controlAccessKey = control.getAttribute("accesskey");
+              if (controlAccessKey) {
+                this.setAttribute("accesskey", controlAccessKey);
+              }
             }
 
             var accessKey = this.accessKey;
@@ -234,14 +224,7 @@
       <property name="accessKey">
         <getter>
           <![CDATA[
-            var accessKey = null;
-            var labeledEl = this.labeledControlElement;
-            if (labeledEl) {
-              accessKey = labeledEl.getAttribute("accesskey");
-            }
-            if (!accessKey) {
-              accessKey = this.getAttribute("accesskey");
-            }
+            var accessKey = this.getAttribute("accesskey");
             return accessKey ? accessKey[0] : null;
           ]]>
         </getter>
@@ -277,7 +260,6 @@
           ]]>
         </setter>
       </property>
-
     </implementation>
 
     <handlers>

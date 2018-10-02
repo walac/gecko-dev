@@ -96,6 +96,11 @@ payment-dialog > header > .page-error {
   color: #D70022;
 }
 
+.manage-text {
+  margin: 0;
+  padding: 18px 0;
+}
+
 .page > footer {
   align-items: center;
   justify-content: end;
@@ -140,12 +145,17 @@ payment-dialog > header > .page-error {
   flex: 0 1 auto;
 }
 
+payment-dialog[complete-status="processing"] #pay {
+  /* Force opacity to 1 even when disabled in the processing state. */
+  opacity: 1;
+}
+
 payment-dialog #pay::before {
   -moz-context-properties: fill;
   content: url(chrome://browser/skin/connection-secure.svg);
   fill: currentColor;
   height: 16px;
-  margin-right: 0.5em;
+  margin-inline-end: 0.5em;
   vertical-align: text-bottom;
   width: 16px;
 }
@@ -156,7 +166,7 @@ payment-dialog[changes-prevented][complete-status="processing"] #pay,
 payment-dialog[changes-prevented][complete-status="success"] #pay {
   /* Show the pay button above #disabled-overlay */
   position: relative;
-  z-index: 1;
+  z-index: 51;
 }
 
 #disabled-overlay {
@@ -170,6 +180,50 @@ payment-dialog[changes-prevented][complete-status="success"] #pay {
   right: 0;
   bottom: 0;
   left: 0;
+  /* z-index must be greater than some positioned fields and #pay with z-index
+     but less than 99, the z-index of the debugging console. */
+  z-index: 50;
+}
+
+.persist-checkbox {
+  padding: 5px 0;
+}
+
+.persist-checkbox > label {
+  display: flex;
+  align-items: center;
+}
+
+.info-tooltip {
+  display: inline-block;
+  background-image: url(chrome://global/skin/icons/help.svg);
+  width: 16px;
+  height: 16px;
+  padding: 2px 4px;
+  background-repeat: no-repeat;
+  background-position: center;
+  position: relative;
+}
+
+.info-tooltip:focus::after,
+.info-tooltip:hover::after {
+  content: attr(aria-label);
+  display: block;
+  position: absolute;
+  padding: 2px 5px;
+  background-color: #fff;
+  border: 1px solid #bebebf;
+  box-shadow: 1px 1px 3px #bebebf;
+  font-size: smaller;
+  min-width: 188px;
+  left: -86px;
+  bottom: 20px;
+}
+
+.info-tooltip:dir(rtl):focus::after,
+.info-tooltip:dir(rtl):hover::after {
+  left: auto;
+  right: -86px;
 }
 
 .branding {
@@ -182,6 +236,6 @@ payment-dialog[changes-prevented][complete-status="success"] #pay {
   margin-inline-end: auto;
 }
 
-body[dir="rtl"] .branding {
+.branding:dir(rtl) {
   background-position: right center;
 }

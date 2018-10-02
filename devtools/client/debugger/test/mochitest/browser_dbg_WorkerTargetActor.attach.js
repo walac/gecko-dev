@@ -18,7 +18,7 @@ function test() {
 
     let tab = yield addTab(TAB1_URL);
     let { tabs } = yield listTabs(client);
-    let [, tabClient] = yield attachTab(client, findTab(tabs, TAB1_URL));
+    let [, tabClient] = yield attachTarget(client, findTab(tabs, TAB1_URL));
     yield listWorkers(tabClient);
 
     // If a page still has pending network requests, it will not be moved into
@@ -33,7 +33,7 @@ function test() {
     is(workerClient1.isClosed, false, "worker in tab 1 should not be closed");
 
     executeSoon(() => {
-      tab.linkedBrowser.loadURI(TAB2_URL);
+      BrowserTestUtils.loadURI(tab.linkedBrowser, TAB2_URL);
     });
     yield waitForWorkerClose(workerClient1);
     is(workerClient1.isClosed, true, "worker in tab 1 should be closed");

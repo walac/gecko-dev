@@ -540,6 +540,7 @@ public:
 
   void ClearCachedResources();
   void InvalidateLayers();
+  void SchedulePaint();
   void ReinitRendering();
   void ReinitRenderingForDeviceReset();
 
@@ -740,6 +741,8 @@ protected:
   virtual mozilla::ipc::IPCResult RecvAwaitLargeAlloc() override;
 
   virtual mozilla::ipc::IPCResult RecvSetWindowName(const nsString& aName) override;
+
+  virtual mozilla::ipc::IPCResult RecvAllowScriptsToClose() override;
 
   virtual mozilla::ipc::IPCResult RecvSetOriginAttributes(const OriginAttributes& aOriginAttributes) override;
 

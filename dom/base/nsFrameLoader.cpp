@@ -244,6 +244,7 @@ nsFrameLoader::LoadFrame(bool aOriginalSrc)
                   mOwnerContent->HasAttr(kNameSpaceID_None, nsGkAtoms::srcdoc);
   if (isSrcdoc) {
     src.AssignLiteral("about:srcdoc");
+    principal = mOwnerContent->NodePrincipal();
   }
   else {
     GetURL(src, getter_AddRefs(principal));
@@ -260,6 +261,7 @@ nsFrameLoader::LoadFrame(bool aOriginalSrc)
         return;
       }
       src.AssignLiteral("about:blank");
+      principal = mOwnerContent->NodePrincipal();
     }
   }
 
@@ -309,18 +311,13 @@ nsFrameLoader::FireErrorEvent()
 }
 
 nsresult
-nsFrameLoader::LoadURI(nsIURI* aURI, bool aOriginalSrc)
-{
-  return LoadURI(aURI, nullptr, aOriginalSrc);
-}
-
-nsresult
 nsFrameLoader::LoadURI(nsIURI* aURI, nsIPrincipal* aTriggeringPrincipal,
                        bool aOriginalSrc)
 {
   if (!aURI)
     return NS_ERROR_INVALID_POINTER;
   NS_ENSURE_STATE(!mDestroyCalled && mOwnerContent);
+  MOZ_ASSERT(aTriggeringPrincipal, "Must have an explicit triggeringPrincipal to nsFrameLoader::LoadURI.");
 
   mLoadingOriginalSrc = aOriginalSrc;
 
@@ -2109,6 +2106,13 @@ nsFrameLoader::MaybeCreateDocShell()
     }
   }
 
+  // Allow scripts to close the docshell if specified.
+  if (win_private && mOwnerContent->IsXULElement(nsGkAtoms::browser) &&
+      mOwnerContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::allowscriptstoclose,
+                                 nsGkAtoms::_true, eCaseMatters)) {
+    nsGlobalWindowOuter::Cast(win_private)->AllowScriptsToClose();
+  }
+
   // This is kinda whacky, this call doesn't really create anything,
   // but it must be called to make sure things are properly
   // initialized.
@@ -2265,10 +2269,15 @@ nsFrameLoader::GetURL(nsString& aURI, nsIPrincipal** aTriggeringPrincipal)
 
   if (mOwnerContent->IsHTMLElement(nsGkAtoms::object)) {
     mOwnerContent->GetAttr(kNameSpaceID_None, nsGkAtoms::data, aURI);
+    nsCOMPtr<nsIPrincipal> prin = mOwnerContent->NodePrincipal();
+    prin.forget(aTriggeringPrincipal);
   } else {
     mOwnerContent->GetAttr(kNameSpaceID_None, nsGkAtoms::src, aURI);
     if (RefPtr<nsGenericHTMLFrameElement> frame = do_QueryObject(mOwnerContent)) {
       nsCOMPtr<nsIPrincipal> prin = frame->GetSrcTriggeringPrincipal();
+      prin.forget(aTriggeringPrincipal);
+    } else {
+      nsCOMPtr<nsIPrincipal> prin = mOwnerContent->NodePrincipal();
       prin.forget(aTriggeringPrincipal);
     }
   }
@@ -2702,13 +2711,19 @@ nsFrameLoader::TryRemoteBrowser()
     mParentSHistory = new ParentSHistory(this);
   }
 
-  // Send down the name of the browser through mRemoteBrowser if it is set.
-  // Only do this on xul:browsers for now.
+  // For xul:browsers, update some settings based on attributes:
   if (mOwnerContent->IsXULElement()) {
+    // Send down the name of the browser through mRemoteBrowser if it is set.
     nsAutoString frameName;
     mOwnerContent->GetAttr(kNameSpaceID_None, nsGkAtoms::name, frameName);
     if (nsContentUtils::IsOverridingWindowName(frameName)) {
       Unused << mRemoteBrowser->SendSetWindowName(frameName);
+    }
+    // Allow scripts to close the window if the browser specified so:
+    if (mOwnerContent->AttrValueIs(kNameSpaceID_None,
+                                   nsGkAtoms::allowscriptstoclose,
+                                   nsGkAtoms::_true, eCaseMatters)) {
+      Unused << mRemoteBrowser->SendAllowScriptsToClose();
     }
   }
 

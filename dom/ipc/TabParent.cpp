@@ -133,7 +133,6 @@ TabParent::LayerToTabParentTable* TabParent::sLayerToTabParentTable = nullptr;
 NS_IMPL_ISUPPORTS(TabParent,
                   nsITabParent,
                   nsIAuthPromptProvider,
-                  nsISecureBrowserUI,
                   nsISupportsWeakReference)
 
 TabParent::TabParent(nsIContentParent* aManager,
@@ -878,38 +877,6 @@ TabParent::Deactivate()
   }
 }
 
-NS_IMETHODIMP
-TabParent::Init(mozIDOMWindowProxy *window)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-TabParent::GetState(uint32_t *aState)
-{
-  NS_ENSURE_ARG(aState);
-  NS_WARNING("SecurityState not valid here");
-  *aState = 0;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-TabParent::GetSecInfo(nsITransportSecurityInfo** _result)
-{
-  NS_ENSURE_ARG_POINTER(_result);
-  NS_WARNING("TransportSecurityInfo not valid here");
-  *_result = nullptr;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-TabParent::SetDocShell(nsIDocShell *aDocShell)
-{
-  NS_ENSURE_ARG(aDocShell);
-  NS_WARNING("No mDocShell member in TabParent so there is no docShell to set");
-  return NS_OK;
-}
-
   a11y::PDocAccessibleParent*
 TabParent::AllocPDocAccessibleParent(PDocAccessibleParent* aParent,
                                      const uint64_t&, const uint32_t&,
@@ -1563,6 +1530,26 @@ TabParent::RecvClearNativeTouchSequence(const uint64_t& aObserverId)
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (widget) {
     widget->ClearNativeTouchSequence(responder.GetObserver());
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+TabParent::RecvSetPrefersReducedMotionOverrideForTest(const bool& aValue)
+{
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (widget) {
+    widget->SetPrefersReducedMotionOverrideForTest(aValue);
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+TabParent::RecvResetPrefersReducedMotionOverrideForTest()
+{
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (widget) {
+    widget->ResetPrefersReducedMotionOverrideForTest();
   }
   return IPC_OK();
 }

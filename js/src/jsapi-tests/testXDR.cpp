@@ -64,8 +64,9 @@ BEGIN_TEST(testXDR_bug506491)
     // compile
     JS::CompileOptions options(cx);
     options.setFileAndLine(__FILE__, __LINE__);
+
     JS::RootedScript script(cx);
-    CHECK(JS_CompileScript(cx, s, strlen(s), options, &script));
+    CHECK(JS::CompileUtf8(cx, options, s, strlen(s), &script));
     CHECK(script);
 
     script = FreezeThaw(cx, script);
@@ -91,8 +92,9 @@ BEGIN_TEST(testXDR_bug516827)
     // compile an empty script
     JS::CompileOptions options(cx);
     options.setFileAndLine(__FILE__, __LINE__);
+
     JS::RootedScript script(cx);
-    CHECK(JS_CompileScript(cx, "", 0, options, &script));
+    CHECK(JS::CompileUtf8(cx, options, "", 0, &script));
     CHECK(script);
 
     script = FreezeThaw(cx, script);
@@ -115,13 +117,17 @@ BEGIN_TEST(testXDR_source)
     for (const char** s = samples; *s; s++) {
         JS::CompileOptions options(cx);
         options.setFileAndLine(__FILE__, __LINE__);
+
         JS::RootedScript script(cx);
-        CHECK(JS_CompileScript(cx, *s, strlen(*s), options, &script));
+        CHECK(JS::CompileUtf8(cx, options, *s, strlen(*s), &script));
         CHECK(script);
+
         script = FreezeThaw(cx, script);
         CHECK(script);
+
         JSString* out = JS_DecompileScript(cx, script);
         CHECK(out);
+
         bool equal;
         CHECK(JS_StringEqualsAscii(cx, out, *s, &equal));
         CHECK(equal);
@@ -141,7 +147,8 @@ BEGIN_TEST(testXDR_sourceMap)
     for (const char** sm = sourceMaps; *sm; sm++) {
         JS::CompileOptions options(cx);
         options.setFileAndLine(__FILE__, __LINE__);
-        CHECK(JS_CompileScript(cx, "", 0, options, &script));
+
+        CHECK(JS::CompileUtf8(cx, options, "", 0, &script));
         CHECK(script);
 
         size_t len = strlen(*sm);

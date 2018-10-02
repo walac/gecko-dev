@@ -10,6 +10,7 @@
 #define frontend_BytecodeEmitter_h
 
 #include "mozilla/Attributes.h"
+#include "mozilla/Span.h"
 
 #include "ds/InlineTable.h"
 #include "frontend/BCEParserHandle.h"
@@ -34,7 +35,7 @@ class CGNumberList {
         return list.append(v);
     }
     size_t length() const { return list.length(); }
-    void finish(ConstArray* array);
+    void finish(mozilla::Span<GCPtrValue> array);
 };
 
 struct CGObjectList {
@@ -44,7 +45,7 @@ struct CGObjectList {
     CGObjectList() : length(0), lastbox(nullptr) {}
 
     unsigned add(ObjectBox* objbox);
-    void finish(ObjectArray* array);
+    void finish(mozilla::Span<GCPtrObject> array);
 };
 
 struct MOZ_STACK_CLASS CGScopeList {
@@ -56,7 +57,7 @@ struct MOZ_STACK_CLASS CGScopeList {
 
     bool append(Scope* scope) { return vector.append(scope); }
     uint32_t length() const { return vector.length(); }
-    void finish(ScopeArray* array);
+    void finish(mozilla::Span<GCPtrScope> array);
 };
 
 struct CGTryNoteList {
@@ -65,7 +66,7 @@ struct CGTryNoteList {
 
     MOZ_MUST_USE bool append(JSTryNoteKind kind, uint32_t stackDepth, size_t start, size_t end);
     size_t length() const { return list.length(); }
-    void finish(TryNoteArray* array);
+    void finish(mozilla::Span<JSTryNote> array);
 };
 
 struct CGScopeNote : public ScopeNote
@@ -89,7 +90,7 @@ struct CGScopeNoteList {
                              uint32_t parent);
     void recordEnd(uint32_t index, uint32_t offset, bool inPrologue);
     size_t length() const { return list.length(); }
-    void finish(ScopeNoteArray* array, uint32_t prologueLength);
+    void finish(mozilla::Span<ScopeNote> array, uint32_t prologueLength);
 };
 
 struct CGYieldAndAwaitOffsetList {
@@ -100,7 +101,7 @@ struct CGYieldAndAwaitOffsetList {
 
     MOZ_MUST_USE bool append(uint32_t offset) { return list.append(offset); }
     size_t length() const { return list.length(); }
-    void finish(YieldAndAwaitOffsetArray& array, uint32_t prologueLength);
+    void finish(mozilla::Span<uint32_t> array, uint32_t prologueLength);
 };
 
 // Have a few inline elements, so as to avoid heap allocation for tiny
@@ -467,10 +468,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter
     MOZ_MUST_USE bool emitTree(ParseNode* pn, ValueUsage valueUsage = ValueUsage::WantValue,
                                EmitLineNumberNote emitLineNote = EMIT_LINENOTE);
 
-    // Emit code for the tree rooted at pn with its own TDZ cache.
-    MOZ_MUST_USE bool emitTreeInBranch(ParseNode* pn,
-                                       ValueUsage valueUsage = ValueUsage::WantValue);
-
     // Emit global, eval, or module code for tree rooted at body. Always
     // encompasses the entire source.
     MOZ_MUST_USE bool emitScript(ParseNode* body);
@@ -774,7 +771,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter
     MOZ_MUST_USE bool setOrEmitSetFunName(ParseNode* maybeFun, HandleAtom name);
 
     MOZ_MUST_USE bool emitInitializer(ParseNode* initializer, ParseNode* pattern);
-    MOZ_MUST_USE bool emitInitializerInBranch(ParseNode* initializer, ParseNode* pattern);
 
     MOZ_MUST_USE bool emitCallSiteObject(CallSiteNode* callSiteObj);
     MOZ_MUST_USE bool emitTemplateString(ListNode* templateString);

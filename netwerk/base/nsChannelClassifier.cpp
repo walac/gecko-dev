@@ -517,7 +517,11 @@ nsChannelClassifier::ShouldEnableTrackingProtectionInternal(
       NS_ENSURE_SUCCESS(rv, rv);
     }
 
-    rv = AntiTrackingCommon::IsOnContentBlockingAllowList(topWinURI, mIsAllowListed);
+    rv = AntiTrackingCommon::IsOnContentBlockingAllowList(topWinURI,
+                                                          aAnnotationsOnly ?
+                                                            AntiTrackingCommon::eTrackingAnnotations :
+                                                            AntiTrackingCommon::eTrackingProtection,
+                                                          mIsAllowListed);
     if (NS_FAILED(rv)) {
       return rv; // normal for some loads, no need to print a warning
     }
@@ -619,8 +623,9 @@ nsChannelClassifier::NotifyTrackingProtectionDisabled(nsIChannel *aChannel)
     }
     doc->SetHasTrackingContentLoaded(true);
     securityUI->GetState(&state);
+    const uint32_t oldState = state;
     state |= nsIWebProgressListener::STATE_LOADED_TRACKING_CONTENT;
-    eventSink->OnSecurityChange(nullptr, state);
+    eventSink->OnSecurityChange(nullptr, oldState, state, doc->GetContentBlockingLog());
 
     return NS_OK;
 }

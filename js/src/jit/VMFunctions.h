@@ -684,8 +684,7 @@ class InterpreterStubExitFrameLayout;
 bool InvokeFromInterpreterStub(JSContext* cx, InterpreterStubExitFrameLayout* frame);
 
 bool CheckOverRecursed(JSContext* cx);
-bool CheckOverRecursedWithExtra(JSContext* cx, BaselineFrame* frame,
-                                uint32_t extra, uint32_t earlyCheck);
+bool CheckOverRecursedBaseline(JSContext* cx, BaselineFrame* frame);
 
 JSObject* BindVar(JSContext* cx, HandleObject scopeChain);
 MOZ_MUST_USE bool
@@ -751,7 +750,7 @@ GetIntrinsicValue(JSContext* cx, HandlePropertyName name, MutableHandleValue rva
 MOZ_MUST_USE bool
 CreateThis(JSContext* cx, HandleObject callee, HandleObject newTarget, MutableHandleValue rval);
 
-void GetDynamicName(JSContext* cx, JSObject* scopeChain, JSString* str, Value* vp);
+bool GetDynamicNamePure(JSContext* cx, JSObject* scopeChain, JSString* str, Value* vp);
 
 void PostWriteBarrier(JSRuntime* rt, js::gc::Cell* cell);
 void PostGlobalWriteBarrier(JSRuntime* rt, GlobalObject* obj);
@@ -929,11 +928,11 @@ GetNativeDataProperty(JSContext* cx, JSObject* obj, PropertyName* name, Value* v
 
 template <bool HandleMissing>
 bool
-GetNativeDataPropertyByValue(JSContext* cx, JSObject* obj, Value* vp);
+GetNativeDataPropertyByValuePure(JSContext* cx, JSObject* obj, Value* vp);
 
 template <bool HasOwn>
 bool
-HasNativeDataProperty(JSContext* cx, JSObject* obj, Value* vp);
+HasNativeDataPropertyPure(JSContext* cx, JSObject* obj, Value* vp);
 
 bool
 HasNativeElement(JSContext* cx, NativeObject* obj, int32_t index, Value* vp);

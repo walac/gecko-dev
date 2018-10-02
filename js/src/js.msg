@@ -111,6 +111,7 @@ MSG_DEF(JSMSG_UNINITIALIZED_THIS_ARROW, 0, JSEXN_REFERENCEERR, "must call super 
 MSG_DEF(JSMSG_BAD_DERIVED_RETURN,      1, JSEXN_TYPEERR, "derived class constructor returned invalid value {0}")
 MSG_DEF(JSMSG_BAD_HERITAGE,            2, JSEXN_TYPEERR, "class heritage {0} is {1}")
 MSG_DEF(JSMSG_NOT_OBJORNULL,           1, JSEXN_TYPEERR, "{0} is not an object or null")
+MSG_DEF(JSMSG_CONSTRUCTOR_DISABLED,    1, JSEXN_TYPEERR, "{0} is disabled")
 
 // JSON
 MSG_DEF(JSMSG_JSON_BAD_PARSE,          3, JSEXN_SYNTAXERR, "JSON.parse: {0} at line {1} column {2} of the JSON data")
@@ -156,7 +157,7 @@ MSG_DEF(JSMSG_TOO_MANY_ARGUMENTS,      0, JSEXN_RANGEERR, "too many arguments pr
 
 // CSP
 MSG_DEF(JSMSG_CSP_BLOCKED_EVAL,        0, JSEXN_EVALERR, "call to eval() blocked by CSP")
-MSG_DEF(JSMSG_CSP_BLOCKED_FUNCTION,    0, JSEXN_ERR, "call to Function() blocked by CSP")
+MSG_DEF(JSMSG_CSP_BLOCKED_FUNCTION,    0, JSEXN_EVALERR, "call to Function() blocked by CSP")
 
 // Wrappers
 MSG_DEF(JSMSG_ACCESSOR_DEF_DENIED,     1, JSEXN_ERR, "Permission denied to define accessor property {0}")
@@ -393,8 +394,10 @@ MSG_DEF(JSMSG_WASM_UNALIGNED_ACCESS,   0, JSEXN_WASMRUNTIMEERROR, "unaligned mem
 MSG_DEF(JSMSG_WASM_WAKE_OVERFLOW,      0, JSEXN_WASMRUNTIMEERROR, "too many woken agents")
 MSG_DEF(JSMSG_WASM_INVALID_PASSIVE_DATA_SEG, 0, JSEXN_WASMRUNTIMEERROR, "use of invalid passive data segment")
 MSG_DEF(JSMSG_WASM_INVALID_PASSIVE_ELEM_SEG, 0, JSEXN_WASMRUNTIMEERROR, "use of invalid passive element segment")
-MSG_DEF(JSMSG_WASM_BAD_UINT32,         2, JSEXN_RANGEERR,    "bad {0} {1}")
+MSG_DEF(JSMSG_WASM_DEREF_NULL,         0, JSEXN_WASMRUNTIMEERROR, "dereferencing null pointer")
+MSG_DEF(JSMSG_WASM_BAD_RANGE ,         2, JSEXN_RANGEERR,    "bad {0} {1}")
 MSG_DEF(JSMSG_WASM_BAD_GROW,           1, JSEXN_RANGEERR,    "failed to grow {0}")
+MSG_DEF(JSMSG_WASM_BAD_UINT32,         2, JSEXN_TYPEERR,     "bad {0} {1}")
 MSG_DEF(JSMSG_WASM_BAD_BUF_ARG,        0, JSEXN_TYPEERR,     "first argument must be an ArrayBuffer or typed array object")
 MSG_DEF(JSMSG_WASM_BAD_MOD_ARG,        0, JSEXN_TYPEERR,     "first argument must be a WebAssembly.Module")
 MSG_DEF(JSMSG_WASM_BAD_BUF_MOD_ARG,    0, JSEXN_TYPEERR,     "first argument must be a WebAssembly.Module, ArrayBuffer or typed array object")

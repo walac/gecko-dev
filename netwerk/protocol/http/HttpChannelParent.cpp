@@ -26,10 +26,9 @@
 #include "nsNetUtil.h"
 #include "nsISupportsPriority.h"
 #include "nsIAuthPromptProvider.h"
-#include "nsIBackgroundChannelRegistrar.h"
+#include "mozilla/net/BackgroundChannelRegistrar.h"
 #include "nsSerializationHelper.h"
 #include "nsISerializable.h"
-#include "nsIAssociatedContentSecurity.h"
 #include "nsIApplicationCacheService.h"
 #include "mozilla/ipc/InputStreamUtils.h"
 #include "mozilla/ipc/URIUtils.h"
@@ -48,6 +47,7 @@
 #include "mozilla/net/RedirectChannelRegistrar.h"
 #include "nsIWindowWatcher.h"
 #include "nsIDocument.h"
+#include "nsISecureBrowserUI.h"
 #include "nsStreamUtils.h"
 #include "nsStringStream.h"
 #include "nsIStorageStream.h"
@@ -263,7 +263,7 @@ HttpChannelParent::CleanupBackgroundChannel()
     // This HttpChannelParent might still have a reference from
     // BackgroundChannelRegistrar.
     nsCOMPtr<nsIBackgroundChannelRegistrar> registrar =
-      do_GetService(NS_BACKGROUNDCHANNELREGISTRAR_CONTRACTID);
+      BackgroundChannelRegistrar::GetOrCreate();
     MOZ_ASSERT(registrar);
 
     registrar->DeleteChannel(mChannel->ChannelId());
@@ -730,15 +730,15 @@ HttpChannelParent::WaitForBgParent()
 
 
   nsCOMPtr<nsIBackgroundChannelRegistrar> registrar =
-    do_GetService(NS_BACKGROUNDCHANNELREGISTRAR_CONTRACTID);
+    BackgroundChannelRegistrar::GetOrCreate();
   MOZ_ASSERT(registrar);
   registrar->LinkHttpChannel(mChannel->ChannelId(), this);
 
   if (mBgParent) {
-    already_AddRefed<GenericPromise> promise = mPromise.Ensure(__func__);
+    RefPtr<GenericPromise> promise = mPromise.Ensure(__func__);
     // resolve promise immediatedly if bg channel is ready.
     mPromise.Resolve(true, __func__);
-    return promise;
+    return promise.forget();
   }
 
   return mPromise.Ensure(__func__);;
@@ -875,17 +875,6 @@ HttpChannelParent::RecvSetCacheTokenCachedCharset(const nsCString& charset)
 {
   if (mCacheEntry)
     mCacheEntry->SetMetaDataElement("charset", charset.get());
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-HttpChannelParent::RecvUpdateAssociatedContentSecurity(const int32_t& broken,
-                                                       const int32_t& no)
-{
-  if (mAssociatedContentSecurity) {
-    mAssociatedContentSecurity->SetCountSubRequestsBrokenSecurity(broken);
-    mAssociatedContentSecurity->SetCountSubRequestsNoSecurity(no);
-  }
   return IPC_OK();
 }
 
@@ -1071,7 +1060,6 @@ HttpChannelParent::ContinueRedirect2Verify(const nsresult& aResult)
 mozilla::ipc::IPCResult
 HttpChannelParent::RecvDocumentChannelCleanup(const bool& clearCacheEntry)
 {
-  // From now on only using mAssociatedContentSecurity.  Free everything else.
   CleanupBackgroundChannel(); // Background channel can be closed.
   mChannel = nullptr;          // Reclaim some memory sooner.
   if (clearCacheEntry) {
@@ -1668,10 +1656,6 @@ HttpChannelParent::OnDataAvailable(nsIRequest *aRequest,
   uint32_t toRead = std::min<uint32_t>(aCount, kCopyChunkSize);
 
   nsCString data;
-  if (!data.SetCapacity(toRead, fallible)) {
-    LOG(("  out of memory!"));
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
 
   int32_t count = static_cast<int32_t>(aCount);
 
@@ -2398,7 +2382,6 @@ HttpChannelParent::UpdateAndSerializeSecurityInfo(nsACString& aSerializedSecurit
   nsCOMPtr<nsISupports> secInfoSupp;
   mChannel->GetSecurityInfo(getter_AddRefs(secInfoSupp));
   if (secInfoSupp) {
-    mAssociatedContentSecurity = do_QueryInterface(secInfoSupp);
     nsCOMPtr<nsISerializable> secInfoSer = do_QueryInterface(secInfoSupp);
     if (secInfoSer) {
       NS_SerializeToString(secInfoSer, aSerializedSecurityInfoOut);

@@ -347,7 +347,7 @@ class AddonInternal {
      */
     const locales = [].concat(...this.locales.map(loc => loc.locales));
 
-    let requestedLocales = Services.locale.getRequestedLocales();
+    let requestedLocales = Services.locale.requestedLocales;
 
     /**
      * If en-US is not in the list, add it as the last fallback.
@@ -534,13 +534,8 @@ class AddonInternal {
   }
 
   async updateBlocklistState(options = {}) {
-    let {applySoftBlock = true, oldAddon = null, updateDatabase = true} = options;
+    let {applySoftBlock = true, updateDatabase = true} = options;
 
-    if (oldAddon) {
-      this.userDisabled = oldAddon.userDisabled;
-      this.softDisabled = oldAddon.softDisabled;
-      this.blocklistState = oldAddon.blocklistState;
-    }
     let oldState = this.blocklistState;
 
     let entry = await this.findBlocklistEntry();
@@ -684,6 +679,14 @@ class AddonInternal {
     }
 
     return permissions;
+  }
+
+  propagateDisabledState(oldAddon) {
+    if (oldAddon) {
+      this.userDisabled = oldAddon.userDisabled;
+      this.softDisabled = oldAddon.softDisabled;
+      this.blocklistState = oldAddon.blocklistState;
+    }
   }
 }
 
@@ -2737,7 +2740,7 @@ this.XPIDatabaseReconcile = {
       for (let [id, oldAddon] of dbAddons) {
         // Check if the add-on is still installed
         let xpiState = location.get(id);
-        if (xpiState) {
+        if (xpiState && !xpiState.missing) {
           let newAddon = this.updateExistingAddon(oldAddon, xpiState,
                                                   findManifest(location, id),
                                                   aUpdateCompatibility, aSchemaChange);
@@ -2755,7 +2758,7 @@ this.XPIDatabaseReconcile = {
       }
 
       for (let [id, xpiState] of location) {
-        if (locationAddons.has(id))
+        if (locationAddons.has(id) || xpiState.missing)
           continue;
         let newAddon = findManifest(location, id);
         let addon = this.addMetadata(location, id, xpiState, newAddon,

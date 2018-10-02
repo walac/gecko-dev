@@ -48,16 +48,6 @@ bool CanUsePartialPresents(ID3D11Device* aDevice);
 
 const FLOAT sBlendFactor[] = { 0, 0, 0, 0 };
 
-namespace TexSlot {
-  static const int RGB = 0;
-  static const int Y = 1;
-  static const int Cb = 2;
-  static const int Cr = 3;
-  static const int RGBWhite = 4;
-  static const int Mask = 5;
-  static const int Backdrop = 6;
-}
-
 CompositorD3D11::CompositorD3D11(CompositorBridgeParent* aParent, widget::CompositorWidget* aWidget)
   : Compositor(aWidget, aParent)
   , mAttachments(nullptr)
@@ -906,7 +896,11 @@ CompositorD3D11::DrawGeometry(const Geometry& aGeometry,
       const float* yuvToRgb = gfxUtils::YuvToRgbMatrix4x3RowMajor(ycbcrEffect->mYUVColorSpace);
       memcpy(&mPSConstants.yuvColorMatrix, yuvToRgb, sizeof(mPSConstants.yuvColorMatrix));
 
-      TextureSourceD3D11* sourceY  = source->GetSubSource(Y)->AsSourceD3D11();
+      // Adjust range according to the bit depth.
+      mPSConstants.vCoefficient[0] =
+        RescalingFactorForColorDepth(ycbcrEffect->mColorDepth);
+
+      TextureSourceD3D11* sourceY = source->GetSubSource(Y)->AsSourceD3D11();
       TextureSourceD3D11* sourceCb = source->GetSubSource(Cb)->AsSourceD3D11();
       TextureSourceD3D11* sourceCr = source->GetSubSource(Cr)->AsSourceD3D11();
 

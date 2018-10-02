@@ -71,7 +71,6 @@ let ACTORS = {
   ClickHandler: {
     child: {
       module: "resource:///actors/ClickHandlerChild.jsm",
-      group: "browsers",
       events: {
         "click": {capture: true, mozSystemGroup: true},
       },
@@ -307,6 +306,12 @@ let ACTORS = {
 
 (function earlyBlankFirstPaint() {
   if (!Services.prefs.getBoolPref("browser.startup.blankWindow", false))
+    return;
+
+  // Until bug 1450626 and bug 1488384 are fixed, skip the blank window when
+  // using a non-default theme.
+  if (Services.prefs.getCharPref("lightweightThemes.selectedThemeID", "") !=
+        "default-theme@mozilla.org")
     return;
 
   let store = Services.xulStore;
@@ -1046,8 +1051,9 @@ BrowserGlue.prototype = {
       toolbar_field_border: "rgba(249, 249, 250, 0.2)",
       ntp_background: "#2A2A2E",
       ntp_text: "rgb(249, 249, 250)",
-      sidebar: "#19191a",
+      sidebar: "#38383D",
       sidebar_text: "rgb(249, 249, 250)",
+      sidebar_border: "rgba(255, 255, 255, 0.1)",
       author: vendorShortName,
     }, {
       useInDarkMode: true,
@@ -1056,7 +1062,7 @@ BrowserGlue.prototype = {
     Normandy.init();
 
     // Initialize the default l10n resource sources for L10nRegistry.
-    let locales = Services.locale.getPackagedLocales();
+    let locales = Services.locale.packagedLocales;
     const greSource = new FileSource("toolkit", locales, "resource://gre/localization/{locale}/");
     L10nRegistry.registerSource(greSource);
 
@@ -1522,6 +1528,11 @@ BrowserGlue.prototype = {
 
     if (AppConstants.MOZ_CRASHREPORTER) {
       UnsubmittedCrashHandler.scheduleCheckForUnsubmittedCrashReports();
+    }
+
+    if (AppConstants.ASAN_REPORTER) {
+      ChromeUtils.import("resource:///modules/AsanReporter.jsm");
+      AsanReporter.init();
     }
 
     if (AppConstants.platform == "win") {
@@ -2335,13 +2346,13 @@ BrowserGlue.prototype = {
       if (Services.prefs.prefHasUserValue(MATCHOS_LOCALE_PREF) ||
           Services.prefs.prefHasUserValue(SELECTED_LOCALE_PREF)) {
         if (Services.prefs.getBoolPref(MATCHOS_LOCALE_PREF, false)) {
-          Services.locale.setRequestedLocales([]);
+          Services.locale.requestedLocales = [];
         } else {
           let locale = Services.prefs.getComplexValue(SELECTED_LOCALE_PREF,
             Ci.nsIPrefLocalizedString);
           if (locale) {
             try {
-              Services.locale.setRequestedLocales([locale.data]);
+              Services.locale.requestedLocales = [locale.data];
             } catch (e) { /* Don't panic if the value is not a valid locale code. */ }
           }
         }

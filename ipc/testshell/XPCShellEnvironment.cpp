@@ -158,11 +158,12 @@ Load(JSContext *cx,
             JS_ReportErrorUTF8(cx, "cannot open file '%s' for reading", filename.get());
             return false;
         }
+
         JS::CompileOptions options(cx);
-        options.setUTF8(true)
-               .setFileAndLine(filename.get(), 1);
+        options.setFileAndLine(filename.get(), 1);
+
         JS::Rooted<JSScript*> script(cx);
-        bool ok = JS::Compile(cx, options, file, &script);
+        bool ok = JS::CompileUtf8File(cx, options, file, &script);
         fclose(file);
         if (!ok)
             return false;
@@ -301,10 +302,10 @@ XPCShellEnvironment::ProcessFile(JSContext *cx,
         ungetc(ch, file);
 
         JS::CompileOptions options(cx);
-        options.setUTF8(true)
-               .setFileAndLine(filename, 1);
+        options.setFileAndLine(filename, 1);
+
         JS::Rooted<JSScript*> script(cx);
-        if (JS::Compile(cx, options, file, &script))
+        if (JS::CompileUtf8File(cx, options, file, &script))
             (void)JS_ExecuteScript(cx, script, &result);
 
         return;
@@ -331,14 +332,16 @@ XPCShellEnvironment::ProcessFile(JSContext *cx,
             }
             bufp += strlen(bufp);
             lineno++;
-        } while (!JS_BufferIsCompilableUnit(cx, global, buffer, strlen(buffer)));
+        } while (!JS_Utf8BufferIsCompilableUnit(cx, global, buffer, strlen(buffer)));
 
         /* Clear any pending exception from previous failed compiles.  */
         JS_ClearPendingException(cx);
+
         JS::CompileOptions options(cx);
         options.setFileAndLine("typein", startline);
+
         JS::Rooted<JSScript*> script(cx);
-        if (JS_CompileScript(cx, buffer, strlen(buffer), options, &script)) {
+        if (JS::CompileUtf8(cx, options, buffer, strlen(buffer), &script)) {
             JS::WarningReporter older;
 
             ok = JS_ExecuteScript(cx, script, &result);
@@ -433,8 +436,7 @@ XPCShellEnvironment::Init()
 
     JS::RealmOptions options;
     options.creationOptions().setNewCompartmentInSystemZone();
-    if (xpc::SharedMemoryEnabled())
-        options.creationOptions().setSharedMemoryAndAtomicsEnabled(true);
+    xpc::SetPrefableRealmOptions(options);
 
     JS::Rooted<JSObject*> globalObj(cx);
     rv = xpc::InitClassesWithNewWrappedGlobal(cx,
@@ -489,10 +491,11 @@ XPCShellEnvironment::EvaluateString(const nsString& aString,
 
   JS::CompileOptions options(cx);
   options.setFileAndLine("typein", 0);
+
   JS::Rooted<JSScript*> script(cx);
   JS::SourceBufferHolder srcBuf(aString.get(), aString.Length(),
                                 JS::SourceBufferHolder::NoOwnership);
-  if (!JS_CompileUCScript(cx, srcBuf, options, &script))
+  if (!JS::Compile(cx, options, srcBuf, &script))
   {
      return false;
   }

@@ -15,6 +15,7 @@
 #include "ScopedNSSTypes.h"
 #include "SharedSSLState.h"
 #include "keyhi.h"
+#include "mozilla/Base64.h"
 #include "mozilla/Casting.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Logging.h"
@@ -1005,6 +1006,68 @@ nsNSSSocketInfo::CloseSocketAndDestroy()
   popped->dtor(popped);
 
   return PR_SUCCESS;
+}
+
+NS_IMETHODIMP
+nsNSSSocketInfo::GetEsniTxt(nsACString & aEsniTxt)
+{
+  aEsniTxt = mEsniTxt;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNSSSocketInfo::SetEsniTxt(const nsACString & aEsniTxt)
+{
+  mEsniTxt = aEsniTxt;
+
+  if (mEsniTxt.Length()) {
+    nsAutoCString esniBin;
+    if (NS_OK != Base64Decode(mEsniTxt, esniBin)) {
+      MOZ_LOG(gPIPNSSLog, LogLevel::Error,
+              ("[%p] Invalid ESNIKeys record. Couldn't base64 decode\n",
+               (void*) mFd));
+      return NS_OK;
+    }
+
+    if (SECSuccess != SSL_EnableESNI(mFd,
+                                     reinterpret_cast<const PRUint8*>(esniBin.get()),
+                                     esniBin.Length(), nullptr)) {
+      MOZ_LOG(gPIPNSSLog, LogLevel::Error, ("[%p] Invalid ESNIKeys record %s\n",
+                                            (void*) mFd,
+                                            PR_ErrorToName(PR_GetError())));
+      return NS_OK;
+    }
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNSSSocketInfo::GetServerRootCertIsBuiltInRoot(bool *aIsBuiltInRoot)
+{
+  *aIsBuiltInRoot = false;
+
+  if (!HasServerCert()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  nsCOMPtr<nsIX509CertList> certList;
+  nsresult rv = GetSucceededCertChain(getter_AddRefs(certList));
+  if (NS_SUCCEEDED(rv)) {
+    if (!certList) {
+      return NS_ERROR_NOT_AVAILABLE;
+    }
+    RefPtr<nsNSSCertList> nssCertList = certList->GetCertList();
+    nsCOMPtr<nsIX509Cert> cert;
+    rv = nssCertList->GetRootCertificate(cert);
+    if (NS_SUCCEEDED(rv)) {
+      if (!cert) {
+        return NS_ERROR_NOT_AVAILABLE;
+      }
+      rv = cert->GetIsBuiltInRoot(aIsBuiltInRoot);
+    }
+  }
+  return rv;
 }
 
 #if defined(DEBUG_SSL_VERBOSE) && defined(DUMP_BUFFER)

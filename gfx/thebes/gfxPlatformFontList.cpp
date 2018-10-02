@@ -275,7 +275,7 @@ const uint32_t kNumGenerics = 5;
 void
 gfxPlatformFontList::ApplyWhitelist()
 {
-    nsTArray<nsString> list;
+    nsTArray<nsCString> list;
     gfxFontUtils::GetPrefsFontList(kFontSystemWhitelistPref, list);
     uint32_t numFonts = list.Length();
     mFontFamilyWhitelistActive = (numFonts > 0);
@@ -285,7 +285,7 @@ gfxPlatformFontList::ApplyWhitelist()
     nsTHashtable<nsCStringHashKey> familyNamesWhitelist;
     for (uint32_t i = 0; i < numFonts; i++) {
         nsAutoCString key;
-        ToLowerCase(NS_ConvertUTF16toUTF8(list[i]), key);
+        ToLowerCase(list[i], key);
         familyNamesWhitelist.PutEntry(key);
     }
     for (auto iter = mFontFamilies.Iter(); !iter.Done(); iter.Next()) {
@@ -367,13 +367,6 @@ gfxPlatformFontList::InitFontList()
 
     ApplyWhitelist();
     return NS_OK;
-}
-
-void
-gfxPlatformFontList::GenerateFontListKey(const nsAString& aKeyName, nsAString& aResult)
-{
-    aResult = aKeyName;
-    ToLowerCase(aResult);
 }
 
 void
@@ -507,13 +500,13 @@ gfxPlatformFontList::LookupInFaceNameLists(const nsACString& aFaceName)
 void
 gfxPlatformFontList::PreloadNamesList()
 {
-    AutoTArray<nsString, 10> preloadFonts;
+    AutoTArray<nsCString, 10> preloadFonts;
     gfxFontUtils::GetPrefsFontList("font.preload-names-list", preloadFonts);
 
     uint32_t numFonts = preloadFonts.Length();
     for (uint32_t i = 0; i < numFonts; i++) {
         nsAutoCString key;
-        GenerateFontListKey(NS_ConvertUTF16toUTF8(preloadFonts[i]), key);
+        GenerateFontListKey(preloadFonts[i], key);
 
         // only search canonical names!
         gfxFontFamily *familyEntry = mFontFamilies.GetWeak(key);
@@ -527,12 +520,12 @@ gfxPlatformFontList::PreloadNamesList()
 void
 gfxPlatformFontList::LoadBadUnderlineList()
 {
-    AutoTArray<nsString, 10> blacklist;
+    AutoTArray<nsCString, 10> blacklist;
     gfxFontUtils::GetPrefsFontList("font.blacklist.underline_offset", blacklist);
     uint32_t numFonts = blacklist.Length();
     for (uint32_t i = 0; i < numFonts; i++) {
         nsAutoCString key;
-        GenerateFontListKey(NS_ConvertUTF16toUTF8(blacklist[i]), key);
+        GenerateFontListKey(blacklist[i], key);
         mBadUnderlineFamilyNames.PutEntry(key);
     }
 }
@@ -911,12 +904,12 @@ gfxPlatformFontList::GetDefaultFontFamily(const nsACString& aLangGroup,
         return nullptr;
     }
 
-    AutoTArray<nsString,4> names;
+    AutoTArray<nsCString,4> names;
     gfxFontUtils::AppendPrefsFontList(
         NameListPref(aGenericFamily, aLangGroup).get(), names);
 
-    for (nsString& name : names) {
-        gfxFontFamily* fontFamily = FindFamily(NS_ConvertUTF16toUTF8(name));
+    for (const nsCString& name : names) {
+        gfxFontFamily* fontFamily = FindFamily(name);
         if (fontFamily) {
             return fontFamily;
         }
@@ -972,7 +965,7 @@ gfxPlatformFontList::ResolveGenericFontNames(
         return;
     }
 
-    AutoTArray<nsString,4> genericFamilies;
+    AutoTArray<nsCString,4> genericFamilies;
 
     // load family for "font.name.generic.lang"
     gfxFontUtils::AppendPrefsFontList(
@@ -993,7 +986,7 @@ gfxPlatformFontList::ResolveGenericFontNames(
     printf("%s ===> ", prefFontName.get());
     for (uint32_t k = 0; k < aGenericFamilies->Length(); k++) {
         if (k > 0) printf(", ");
-        printf("%s", NS_ConvertUTF16toUTF8(aGenericFamilies[k]->Name()).get());
+        printf("%s", aGenericFamilies[k]->Name().get());
     }
     printf("\n");
 #endif
@@ -1004,7 +997,7 @@ gfxPlatformFontList::ResolveEmojiFontNames(
     nsTArray<RefPtr<gfxFontFamily>>* aGenericFamilies)
 {
     // emoji preference has no lang name
-    AutoTArray<nsString,4> genericFamilies;
+    AutoTArray<nsCString,4> genericFamilies;
 
     nsAutoCString prefFontListName("font.name-list.emoji");
     gfxFontUtils::AppendPrefsFontList(prefFontListName.get(), genericFamilies);
@@ -1016,17 +1009,17 @@ gfxPlatformFontList::ResolveEmojiFontNames(
 
 void
 gfxPlatformFontList::GetFontFamiliesFromGenericFamilies(
-    nsTArray<nsString>& aGenericNameFamilies,
+    nsTArray<nsCString>& aGenericNameFamilies,
     nsAtom* aLangGroup,
     nsTArray<RefPtr<gfxFontFamily>>* aGenericFamilies)
 {
     // lookup and add platform fonts uniquely
-    for (const nsString& genericFamily : aGenericNameFamilies) {
+    for (const nsCString& genericFamily : aGenericNameFamilies) {
         gfxFontStyle style;
         style.language = aLangGroup;
         style.systemFont = false;
         AutoTArray<FamilyAndGeneric,10> families;
-        FindAndAddFamilies(NS_ConvertUTF16toUTF8(genericFamily),
+        FindAndAddFamilies(genericFamily,
                            &families, FindFamiliesFlags(0),
                            &style);
         for (const FamilyAndGeneric& f : families) {
@@ -1292,10 +1285,10 @@ gfxPlatformFontList::AppendCJKPrefLangs(eFontPrefLang aPrefLangs[], uint32_t &aL
 
         AutoTArray<nsCString,16> sysLocales;
         AutoTArray<nsCString,16> negLocales;
-        if (OSPreferences::GetInstance()->GetSystemLocales(sysLocales)) {
+        if (NS_SUCCEEDED(OSPreferences::GetInstance()->GetSystemLocales(sysLocales))) {
             LocaleService::GetInstance()->NegotiateLanguages(
                 sysLocales, prefLocales, NS_LITERAL_CSTRING(""),
-                LocaleService::LangNegStrategy::Filtering, negLocales);
+                LocaleService::kLangNegStrategyFiltering, negLocales);
             for (const auto& localeStr : negLocales) {
                 Locale locale(localeStr);
 

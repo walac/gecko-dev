@@ -750,7 +750,7 @@ def enable_code_coverage(config, tests):
                 continue
             # Skip this transform for android code coverage builds.
             if 'android' in test['build-platform']:
-                test.setdefault('fetches', {}).setdefault('fetch', []).append('grcov-linux-x86_64')
+                test.setdefault('fetches', {}).setdefault('toolchain', []).append('linux64-grcov')
                 test['mozharness'].setdefault('extra-options', []).append('--java-code-coverage')
                 yield test
                 continue
@@ -767,15 +767,16 @@ def enable_code_coverage(config, tests):
             test.pop('when', None)
             test['optimization'] = None
 
-            # Add a fetch task for the grcov binary.
+            # Add a toolchain and a fetch task for the grcov binary.
             if any(p in test['build-platform'] for p in ('linux', 'osx', 'win')):
                 test.setdefault('fetches', {})
                 test['fetches'].setdefault('fetch', [])
+                test['fetches'].setdefault('toolchain', [])
 
             if 'linux' in test['build-platform']:
-                test['fetches']['fetch'].append('grcov-linux-x86_64')
+                test['fetches']['toolchain'].append('linux64-grcov')
             elif 'osx' in test['build-platform']:
-                test['fetches']['fetch'].append('grcov-osx-x86_64')
+                test['fetches']['toolchain'].append('macosx64-grcov')
             elif 'win' in test['build-platform']:
                 test['fetches']['fetch'].append('grcov-win-x86_64')
 
@@ -1008,7 +1009,7 @@ def set_worker_type(config, tests):
         elif test_platform.startswith('linux') or test_platform.startswith('android'):
             if test.get('suite', '') in ['talos', 'raptor'] and \
                  not test['build-platform'].startswith('linux64-ccov'):
-                test['worker-type'] = 'releng-hardware/gecko-t-linux-talos'
+                test['worker-type'] = 'releng-hardware/gecko-t-linux-talos-tw'
             else:
                 test['worker-type'] = LINUX_WORKER_TYPES[test['instance-size']]
         else:

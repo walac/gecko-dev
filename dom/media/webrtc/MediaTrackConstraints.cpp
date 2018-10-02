@@ -214,7 +214,7 @@ NormalizedConstraintSet::StringRange::SetFrom(
       mExact.insert(aOther.mExact.Value().GetAsString());
     } else {
       for (auto& str : aOther.mExact.Value().GetAsStringSequence()) {
-        mIdeal.insert(str);
+        mExact.insert(str);
       }
     }
   }
@@ -481,6 +481,7 @@ MediaConstraintsHelper::SelectSettings(
     bool aIsChrome)
 {
   auto& c = aConstraints;
+  LogConstraints(c);
 
   // First apply top-level constraints.
 

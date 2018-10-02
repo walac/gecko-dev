@@ -11,44 +11,70 @@ const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const FluentReact = require("devtools/client/shared/vendor/fluent-react");
 const Localized = createFactory(FluentReact.Localized);
 
-const { PAGES } = require("../../constants");
+const { PAGES, RUNTIMES } = require("../../constants");
 
+const DeviceSidebarItemAction = createFactory(require("./DeviceSidebarItemAction"));
 const SidebarItem = createFactory(require("./SidebarItem"));
 const FIREFOX_ICON = "chrome://devtools/skin/images/aboutdebugging-firefox-logo.svg";
 const CONNECT_ICON = "chrome://devtools/skin/images/aboutdebugging-connect-icon.svg";
 const GLOBE_ICON = "chrome://devtools/skin/images/aboutdebugging-globe-icon.svg";
+const USB_ICON = "chrome://devtools/skin/images/aboutdebugging-connect-icon.svg";
 
 class Sidebar extends PureComponent {
   static get propTypes() {
     return {
-      networkLocations: PropTypes.array.isRequired,
       dispatch: PropTypes.func.isRequired,
-      selectedPage: PropTypes.string.isRequired,
+      runtimes: PropTypes.object.isRequired,
+      selectedPage: PropTypes.string,
     };
   }
 
   renderDevices() {
-    const { dispatch, networkLocations } = this.props;
-    if (!networkLocations.length) {
+    const { runtimes } = this.props;
+    if (!runtimes.networkRuntimes.length && !runtimes.usbRuntimes.length) {
       return Localized(
         {
           id: "about-debugging-sidebar-no-devices"
         }, dom.span(
           {
-            className: "sidebar__devices__no-devices-message"
+            className: "sidebar__devices__no-devices-message js-sidebar-no-devices"
           },
           "No devices discovered"
         )
       );
     }
-    return networkLocations.map(location => SidebarItem({
-      id: "networklocation-" + location,
-      dispatch,
-      icon: GLOBE_ICON,
-      isSelected: false,
-      name: location,
-      selectable: false,
-    }));
+
+    return [
+      ...this.renderSidebarItems(GLOBE_ICON, runtimes.networkRuntimes),
+      ...this.renderSidebarItems(USB_ICON, runtimes.usbRuntimes),
+    ];
+  }
+
+  renderSidebarItems(icon, runtimes) {
+    const { dispatch, selectedPage } = this.props;
+
+    return runtimes.map(runtime => {
+      const pageId = runtime.type + "-" + runtime.id;
+      const runtimeHasClient = !!runtime.client;
+
+      const connectComponent = DeviceSidebarItemAction({
+        connected: runtimeHasClient,
+        dispatch,
+        runtimeId: runtime.id,
+      });
+
+      return SidebarItem({
+        connectComponent,
+        id: pageId,
+        dispatch,
+        icon,
+        isSelected: selectedPage === pageId,
+        key: pageId,
+        name: runtime.name,
+        runtimeId: runtime.id,
+        selectable: runtimeHasClient,
+      });
+    });
   }
 
   render() {
@@ -68,6 +94,7 @@ class Sidebar extends PureComponent {
             icon: FIREFOX_ICON,
             isSelected: PAGES.THIS_FIREFOX === selectedPage,
             name: "This Firefox",
+            runtimeId: RUNTIMES.THIS_FIREFOX,
             selectable: true,
           })
         ),

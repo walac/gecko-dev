@@ -36,7 +36,13 @@ static bool
 PostCreationSetup(HANDLE aChildProcess, HANDLE aChildMainThread,
                   const bool aIsSafeMode)
 {
+  // The launcher process's DLL blocking code is incompatible with ASAN because
+  // it is able to execute before ASAN itself has even initialized.
+#if defined(MOZ_ASAN)
+  return true;
+#else
   return mozilla::InitializeDllBlocklistOOP(aChildProcess);
+#endif // defiend(MOZ_ASAN)
 }
 
 #if !defined(PROCESS_CREATION_MITIGATION_POLICY_IMAGE_LOAD_PREFER_SYSTEM32_ALWAYS_ON)
@@ -93,7 +99,11 @@ ProcessCmdLine(int& aArgc, wchar_t* aArgv[])
       mozilla::CheckArg(aArgc, aArgv, L"marionette",
                         static_cast<const wchar_t**>(nullptr),
                         mozilla::CheckArgFlag::None) == mozilla::ARG_FOUND ||
-      mozilla::EnvHasValue("MOZ_AUTOMATION")) {
+      mozilla::CheckArg(aArgc, aArgv, L"headless",
+                        static_cast<const wchar_t**>(nullptr),
+                        mozilla::CheckArgFlag::None) == mozilla::ARG_FOUND ||
+      mozilla::EnvHasValue("MOZ_AUTOMATION") ||
+      mozilla::EnvHasValue("MOZ_HEADLESS")) {
     result |= mozilla::LauncherFlags::eWaitForBrowser;
   }
 
@@ -137,9 +147,7 @@ IsSameBinaryAsParentProcess()
     return mozilla::Nothing();
   }
 
-  bool isSame = parentExeLen == ourExeOk &&
-                !_wcsnicmp(ourExe, parentExe, ourExeOk);
-  return mozilla::Some(isSame);
+  return mozilla::DoPathsPointToIdenticalFile(parentExe, ourExe);
 }
 
 #endif // defined(MOZ_LAUNCHER_PROCESS)

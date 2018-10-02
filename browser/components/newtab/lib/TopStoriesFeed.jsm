@@ -15,6 +15,12 @@ const {SectionsManager} = ChromeUtils.import("resource://activity-stream/lib/Sec
 const {UserDomainAffinityProvider} = ChromeUtils.import("resource://activity-stream/lib/UserDomainAffinityProvider.jsm", {});
 const {PersistentCache} = ChromeUtils.import("resource://activity-stream/lib/PersistentCache.jsm", {});
 
+/* Not yet using personalization v2 taggers
+const {NaiveBayesTextTagger} = ChromeUtils.import("resource://activity-stream/lib/NaiveBayesTextTagger.jsm", {});
+const {NmfTextTagger} = ChromeUtils.import("resource://activity-stream/lib/NmfTextTagger.jsm", {});
+const {RecipeExecutor} = ChromeUtils.import("resource://activity-stream/lib/RecipeExecutor.jsm", {});
+*/
+
 ChromeUtils.defineModuleGetter(this, "perfService", "resource://activity-stream/common/PerfService.jsm");
 ChromeUtils.defineModuleGetter(this, "pktApi", "chrome://pocket/content/pktApi.jsm");
 
@@ -53,6 +59,7 @@ this.TopStoriesFeed = class TopStoriesFeed {
       this.storiesLoaded = false;
       this.domainAffinitiesLastUpdated = 0;
       this.dispatchPocketCta(this._prefs.get("pocketCta"), false);
+      Services.obs.addObserver(this, "idle-daily");
 
       // Cache is used for new page loads, which shouldn't have changed data.
       // If we have changed data, cache should be cleared,
@@ -69,8 +76,6 @@ this.TopStoriesFeed = class TopStoriesFeed {
 
       // This is filtered so an update function can return true to retry on the next run
       this.contentUpdateQueue = this.contentUpdateQueue.filter(update => update());
-
-      Services.obs.addObserver(this, "idle-daily");
     } catch (e) {
       Cu.reportError(`Problem initializing top stories feed: ${e.message}`);
     }
@@ -142,8 +147,6 @@ this.TopStoriesFeed = class TopStoriesFeed {
         this.spocCampaignMap = new Map(body.spocs.map(s => [s.id, `${s.campaign_id}`]));
         this.spocs = this.transform(body.spocs).filter(s => s.score >= s.min_score);
         this.cleanUpCampaignImpressionPref();
-        // Spocs won't exist without stories, so no need to worry about last updated.
-        this.cache.set("spocs", this.spocs);
       }
       this.storiesLastUpdated = Date.now();
       body._timestamp = this.storiesLastUpdated;
@@ -157,7 +160,6 @@ this.TopStoriesFeed = class TopStoriesFeed {
     const data = await this.cache.get();
     let stories = data.stories && data.stories.recommendations;
     let topics = data.topics && data.topics.topics;
-    let {spocs} = data;
 
     let affinities = data.domainAffinities;
     if (this.personalized && affinities && affinities.scores) {
@@ -169,8 +171,10 @@ this.TopStoriesFeed = class TopStoriesFeed {
       this.updateSettings(data.stories.settings);
       this.stories = this.rotate(this.transform(stories));
       this.storiesLastUpdated = data.stories._timestamp;
-      if (spocs && spocs.length) {
-        this.spocs = spocs;
+      if (data.stories.spocs && data.stories.spocs.length) {
+        this.spocCampaignMap = new Map(data.stories.spocs.map(s => [s.id, `${s.campaign_id}`]));
+        this.spocs = this.transform(data.stories.spocs).filter(s => s.score >= s.min_score);
+        this.cleanUpCampaignImpressionPref();
       }
     }
     if (topics && topics.length > 0 && this.topicsLastUpdated === 0) {
@@ -199,7 +203,7 @@ this.TopStoriesFeed = class TopStoriesFeed {
         "url": s.url,
         "min_score": s.min_score || 0,
         "score": this.personalized && this.affinityProvider ? this.affinityProvider.calculateItemRelevanceScore(s) : s.item_score || 1,
-        "spoc_meta": this.show_spocs ? {campaign_id: s.campaign_id, caps: s.caps} : {}
+        "spoc_meta": this.show_spocs ? {campaign_id: s.campaign_id, caps: s.caps} : {},
       }))
       .sort(this.personalized ? this.compareScore : (a, b) => 0);
   }
@@ -266,7 +270,7 @@ this.TopStoriesFeed = class TopStoriesFeed {
 
     this.store.dispatch(ac.PerfEvent({
       event: "topstories.domain.affinity.calculation.ms",
-      value: Math.round(perfService.absNow() - start)
+      value: Math.round(perfService.absNow() - start),
     }));
 
     const affinities = this.affinityProvider.getAffinities();

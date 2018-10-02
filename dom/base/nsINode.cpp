@@ -152,8 +152,8 @@ nsINode::nsSlots::Unlink()
 //----------------------------------------------------------------------
 
 #ifdef MOZILLA_INTERNAL_API
-nsINode::nsINode(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
-  : mNodeInfo(aNodeInfo)
+nsINode::nsINode(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo)
+  : mNodeInfo(std::move(aNodeInfo))
   , mParent(nullptr)
 #ifndef BOOL_FLAGS_ON_WRAPPER_CACHE
   , mBoolFlags(0)
@@ -2899,6 +2899,9 @@ nsINode::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aGivenProto)
   if (!OwnerDoc()->GetScriptHandlingObject(hasHadScriptHandlingObject) &&
       !hasHadScriptHandlingObject &&
       !nsContentUtils::IsSystemCaller(aCx)) {
+    if (IsDocument()) {
+      MOZ_CRASH("Looks like bug 1488480/1405521, with a document that lost its script handling object");
+    }
     Throw(aCx, NS_ERROR_UNEXPECTED);
     return nullptr;
   }
@@ -2907,6 +2910,9 @@ nsINode::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aGivenProto)
   MOZ_ASSERT_IF(obj && ChromeOnlyAccess(),
                 xpc::IsInContentXBLScope(obj) ||
                 !xpc::UseContentXBLScope(JS::GetObjectRealmOrNull(obj)));
+  if (!obj && IsDocument()) {
+    MOZ_CRASH("Looks like bug 1488480/1405521, with WrapNode on a document returning null");
+  }
   return obj;
 }
 

@@ -446,13 +446,6 @@ nsChildView::Create(nsIWidget* aParent,
   if (!gChildViewMethodsSwizzled) {
     nsToolkit::SwizzleMethods([NSView class], @selector(mouseDownCanMoveWindow),
                               @selector(nsChildView_NSView_mouseDownCanMoveWindow));
-#ifdef __LP64__
-    nsToolkit::SwizzleMethods([NSEvent class], @selector(addLocalMonitorForEventsMatchingMask:handler:),
-                              @selector(nsChildView_NSEvent_addLocalMonitorForEventsMatchingMask:handler:),
-                              true);
-    nsToolkit::SwizzleMethods([NSEvent class], @selector(removeMonitor:),
-                              @selector(nsChildView_NSEvent_removeMonitor:), true);
-#endif
     gChildViewMethodsSwizzled = true;
   }
 
@@ -3097,6 +3090,50 @@ nsChildView::LookUpDictionary(
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
 
+nsresult
+nsChildView::SetPrefersReducedMotionOverrideForTest(bool aValue)
+{
+  // Tell that the cache value we are going to set isn't cleared via
+  // nsPresContext::ThemeChangedInternal which is called right before
+  // we queue the media feature value change for this prefers-reduced-motion
+  // change.
+  LookAndFeel::SetShouldRetainCacheForTest(true);
+
+  LookAndFeelInt prefersReducedMotion;
+  prefersReducedMotion.id = LookAndFeel::eIntID_PrefersReducedMotion;
+  prefersReducedMotion.value = aValue ? 1 : 0;
+
+  AutoTArray<LookAndFeelInt, 1> lookAndFeelCache;
+  lookAndFeelCache.AppendElement(prefersReducedMotion);
+
+  // If we could have a way to modify
+  // NSWorkspace.accessibilityDisplayShouldReduceMotion, we could use it, but
+  // unfortunately there is no way, so we change the cache value instead as if
+  // it's set in the parent process.
+  LookAndFeel::SetIntCache(lookAndFeelCache);
+
+  if (nsCocoaFeatures::OnMojaveOrLater()) {
+    [[[NSWorkspace sharedWorkspace] notificationCenter]
+         postNotificationName: NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification
+         object:nil];
+  } else if (nsCocoaFeatures::OnYosemiteOrLater()) {
+    [[NSNotificationCenter defaultCenter]
+       postNotificationName: NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification
+       object:nil];
+  } else {
+    return NS_ERROR_FAILURE;
+  }
+
+  return NS_OK;
+}
+
+nsresult
+nsChildView::ResetPrefersReducedMotionOverrideForTest()
+{
+  LookAndFeel::SetShouldRetainCacheForTest(false);
+  return NS_OK;
+}
+
 #ifdef ACCESSIBILITY
 already_AddRefed<a11y::Accessible>
 nsChildView::GetDocumentAccessible()
@@ -3334,6 +3371,20 @@ NSEvent* gLastDragMouseDownEvent = nil;
                                            selector:@selector(systemMetricsChanged)
                                                name:NSSystemColorsDidChangeNotification
                                              object:nil];
+
+  if (nsCocoaFeatures::OnMojaveOrLater()) {
+    [[[NSWorkspace sharedWorkspace] notificationCenter]
+           addObserver:self
+              selector:@selector(systemMetricsChanged)
+                  name:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification
+                object:nil];
+  } else if (nsCocoaFeatures::OnYosemiteOrLater()) {
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(systemMetricsChanged)
+                                                 name:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification
+                                               object:nil];
+  }
+
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(scrollbarSystemMetricChanged)
                                                name:NSPreferredScrollerStyleDidChangeNotification
@@ -7216,48 +7267,3 @@ static const CGEventField kCGWindowNumberField = (const CGEventField) 51;
 }
 
 @end
-
-#ifdef __LP64__
-// When using blocks, at least on OS X 10.7, the OS sometimes calls
-// +[NSEvent removeMonitor:] more than once on a single event monitor, which
-// causes crashes.  See bug 678607.  We hook these methods to work around
-// the problem.
-@interface NSEvent (MethodSwizzling)
-+ (id)nsChildView_NSEvent_addLocalMonitorForEventsMatchingMask:(unsigned long long)mask handler:(id)block;
-+ (void)nsChildView_NSEvent_removeMonitor:(id)eventMonitor;
-@end
-
-// This is a local copy of the AppKit frameworks sEventObservers hashtable.
-// It only stores "local monitors".  We use it to ensure that +[NSEvent
-// removeMonitor:] is never called more than once on the same local monitor.
-static NSHashTable *sLocalEventObservers = nil;
-
-@implementation NSEvent (MethodSwizzling)
-
-+ (id)nsChildView_NSEvent_addLocalMonitorForEventsMatchingMask:(unsigned long long)mask handler:(id)block
-{
-  if (!sLocalEventObservers) {
-    sLocalEventObservers = [[NSHashTable hashTableWithOptions:
-      NSHashTableStrongMemory | NSHashTableObjectPointerPersonality] retain];
-  }
-  id retval =
-    [self nsChildView_NSEvent_addLocalMonitorForEventsMatchingMask:mask handler:block];
-  if (sLocalEventObservers && retval && ![sLocalEventObservers containsObject:retval]) {
-    [sLocalEventObservers addObject:retval];
-  }
-  return retval;
-}
-
-+ (void)nsChildView_NSEvent_removeMonitor:(id)eventMonitor
-{
-  if (sLocalEventObservers && [eventMonitor isKindOfClass: ::NSClassFromString(@"_NSLocalEventObserver")]) {
-    if (![sLocalEventObservers containsObject:eventMonitor]) {
-      return;
-    }
-    [sLocalEventObservers removeObject:eventMonitor];
-  }
-  [self nsChildView_NSEvent_removeMonitor:eventMonitor];
-}
-
-@end
-#endif // #ifdef __LP64__

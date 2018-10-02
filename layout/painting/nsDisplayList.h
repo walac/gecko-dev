@@ -907,7 +907,7 @@ public:
 
   /**
    * Returns true if we're currently building a display list that's
-   * under an nsDisplayFilter.
+   * under an nsDisplayFilters.
    */
   bool IsInFilter() const { return mInFilter; }
 
@@ -1815,7 +1815,9 @@ public:
    */
   bool IsInWillChangeBudget(nsIFrame* aFrame, const nsSize& aSize);
 
-  void ClearWillChangeBudget(nsIFrame* aFrame);
+  void RemoveFromWillChangeBudget(nsIFrame* aFrame);
+
+  void ClearWillChangeBudget();
 
   void EnterSVGEffectsContents(nsDisplayList* aHoistedItemsStorage);
   void ExitSVGEffectsContents();
@@ -2040,13 +2042,19 @@ private:
 
   struct FrameWillChangeBudget
   {
-    FrameWillChangeBudget(nsIFrame* aFrame, uint32_t aUsage)
-      : mFrame(aFrame)
+    FrameWillChangeBudget()
+      : mPresContext(nullptr)
+      , mUsage(0)
+    {
+    }
+
+    FrameWillChangeBudget(nsPresContext* aPresContext, uint32_t aUsage)
+      : mPresContext(aPresContext)
       , mUsage(aUsage)
     {
     }
 
-    nsIFrame* mFrame;
+    nsPresContext* mPresContext;
     uint32_t mUsage;
   };
 
@@ -2084,7 +2092,8 @@ private:
 
   // Any frame listed in this set is already counted in the budget
   // and thus is in-budget.
-  nsDataHashtable<nsPtrHashKey<nsIFrame>, uint32_t> mWillChangeBudgetSet;
+  nsDataHashtable<nsPtrHashKey<nsIFrame>, FrameWillChangeBudget>
+    mWillChangeBudgetSet;
 
   // Area of animated geometry root budget already allocated
   uint32_t mUsedAGRBudget;
@@ -3359,7 +3368,7 @@ public:
   /**
    * Remove all items from the list and call their destructors.
    */
-  void DeleteAll(nsDisplayListBuilder* aBuilder);
+  virtual void DeleteAll(nsDisplayListBuilder* aBuilder);
 
   /**
    * @return the item at the top of the list, or null if the list is empty
@@ -3754,7 +3763,7 @@ public:
     return *this;
   }
 
-  void DeleteAll(nsDisplayListBuilder* aBuilder)
+  void DeleteAll(nsDisplayListBuilder* aBuilder) override
   {
     for (OldItemInfo& i : mOldItems) {
       if (i.mItem) {
@@ -6650,31 +6659,34 @@ private:
   int32_t mAPD, mParentAPD;
 };
 
-class nsDisplaySVGEffects : public nsDisplayWrapList
+/**
+ * A base class for different effects types.
+ */
+class nsDisplayEffectsBase : public nsDisplayWrapList
 {
 public:
-  nsDisplaySVGEffects(nsDisplayListBuilder* aBuilder,
-                      nsIFrame* aFrame,
-                      nsDisplayList* aList,
-                      bool aHandleOpacity,
-                      const ActiveScrolledRoot* aActiveScrolledRoot,
-                      bool aClearClipChain = false);
-  nsDisplaySVGEffects(nsDisplayListBuilder* aBuilder,
-                      nsIFrame* aFrame,
-                      nsDisplayList* aList,
-                      bool aHandleOpacity);
+  nsDisplayEffectsBase(nsDisplayListBuilder* aBuilder,
+                       nsIFrame* aFrame,
+                       nsDisplayList* aList,
+                       bool aHandleOpacity,
+                       const ActiveScrolledRoot* aActiveScrolledRoot,
+                       bool aClearClipChain = false);
+  nsDisplayEffectsBase(nsDisplayListBuilder* aBuilder,
+                       nsIFrame* aFrame,
+                       nsDisplayList* aList,
+                       bool aHandleOpacity);
 
-  nsDisplaySVGEffects(nsDisplayListBuilder* aBuilder,
-                      const nsDisplaySVGEffects& aOther)
+  nsDisplayEffectsBase(nsDisplayListBuilder* aBuilder,
+                       const nsDisplayEffectsBase& aOther)
     : nsDisplayWrapList(aBuilder, aOther)
     , mEffectsBounds(aOther.mEffectsBounds)
     , mHandleOpacity(aOther.mHandleOpacity)
   {
-    MOZ_COUNT_CTOR(nsDisplaySVGEffects);
+    MOZ_COUNT_CTOR(nsDisplayEffectsBase);
   }
 
 #ifdef NS_BUILD_REFCNT_LOGGING
-  ~nsDisplaySVGEffects() override { MOZ_COUNT_DTOR(nsDisplaySVGEffects); }
+  ~nsDisplayEffectsBase() override { MOZ_COUNT_DTOR(nsDisplayEffectsBase); }
 #endif
 
   nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
@@ -6708,35 +6720,44 @@ protected:
 };
 
 /**
- * A display item to paint a stacking context with mask and clip effects
- * set by the stacking context root frame's style.
+ * A display item to paint a stacking context with 'mask' and 'clip-path'
+ * effects set by the stacking context root frame's style.  The 'mask' and
+ * 'clip-path' properties may both contain multiple masks and clip paths,
+ * respectively.
+ *
+ * Note that 'mask' and 'clip-path' may just contain CSS simple-images and CSS
+ * basic shapes, respectively.  That is, they don't necessarily reference
+ * resources such as SVG 'mask' and 'clipPath' elements.
  */
-class nsDisplayMask : public nsDisplaySVGEffects
+class nsDisplayMasksAndClipPaths : public nsDisplayEffectsBase
 {
 public:
   typedef mozilla::layers::ImageLayer ImageLayer;
 
-  nsDisplayMask(nsDisplayListBuilder* aBuilder,
-                nsIFrame* aFrame,
-                nsDisplayList* aList,
-                bool aHandleOpacity,
-                const ActiveScrolledRoot* aActiveScrolledRoot);
-  nsDisplayMask(nsDisplayListBuilder* aBuilder, const nsDisplayMask& aOther)
-    : nsDisplaySVGEffects(aBuilder, aOther)
+  nsDisplayMasksAndClipPaths(nsDisplayListBuilder* aBuilder,
+                             nsIFrame* aFrame,
+                             nsDisplayList* aList,
+                             bool aHandleOpacity,
+                             const ActiveScrolledRoot* aActiveScrolledRoot);
+  nsDisplayMasksAndClipPaths(nsDisplayListBuilder* aBuilder,
+                             const nsDisplayMasksAndClipPaths& aOther)
+    : nsDisplayEffectsBase(aBuilder, aOther)
     , mDestRects(aOther.mDestRects)
   {
   }
 
 #ifdef NS_BUILD_REFCNT_LOGGING
-  ~nsDisplayMask() override { MOZ_COUNT_DTOR(nsDisplayMask); }
+  ~nsDisplayMasksAndClipPaths() override {
+    MOZ_COUNT_DTOR(nsDisplayMasksAndClipPaths);
+  }
 #endif
 
   NS_DISPLAY_DECL_NAME("Mask", TYPE_MASK)
 
   nsDisplayWrapList* Clone(nsDisplayListBuilder* aBuilder) const override
   {
-    MOZ_COUNT_CTOR(nsDisplayMask);
-    return MakeDisplayItem<nsDisplayMask>(aBuilder, *this);
+    MOZ_COUNT_CTOR(nsDisplayMasksAndClipPaths);
+    return MakeDisplayItem<nsDisplayMasksAndClipPaths>(aBuilder, *this);
   }
 
   bool CanMerge(const nsDisplayItem* aItem) const override;
@@ -6745,7 +6766,8 @@ public:
   {
     nsDisplayWrapList::Merge(aItem);
 
-    const nsDisplayMask* other = static_cast<const nsDisplayMask*>(aItem);
+    const nsDisplayMasksAndClipPaths* other =
+      static_cast<const nsDisplayMasksAndClipPaths*>(aItem);
     mEffectsBounds.UnionRect(mEffectsBounds,
                              other->mEffectsBounds +
                                other->mFrame->GetOffsetTo(mFrame));
@@ -6765,7 +6787,7 @@ public:
   nsDisplayItemGeometry* AllocateGeometry(
     nsDisplayListBuilder* aBuilder) override
   {
-    return new nsDisplayMaskGeometry(this, aBuilder);
+    return new nsDisplayMasksAndClipPathsGeometry(this, aBuilder);
   }
 
   void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
@@ -6775,9 +6797,16 @@ public:
   void PrintEffects(nsACString& aTo);
 #endif
 
+  bool IsValidMask();
+
   void PaintAsLayer(nsDisplayListBuilder* aBuilder,
                     gfxContext* aCtx,
                     LayerManager* aManager);
+
+  void PaintWithContentsPaintCallback(nsDisplayListBuilder* aBuilder,
+                                      gfxContext* aCtx,
+                                      const std::function<void()>& aPaintChildren);
+
 
   /*
    * Paint mask onto aMaskContext in mFrame's coordinate space and
@@ -6811,31 +6840,35 @@ private:
 /**
  * A display item to paint a stacking context with filter effects set by the
  * stacking context root frame's style.
+ *
+ * Note that the filters may just be simple CSS filter functions.  That is,
+ * they won't necessarily be references to SVG 'filter' elements.
  */
-class nsDisplayFilter : public nsDisplaySVGEffects
+class nsDisplayFilters : public nsDisplayEffectsBase
 {
 public:
-  nsDisplayFilter(nsDisplayListBuilder* aBuilder,
-                  nsIFrame* aFrame,
-                  nsDisplayList* aList,
-                  bool aHandleOpacity);
+  nsDisplayFilters(nsDisplayListBuilder* aBuilder,
+                   nsIFrame* aFrame,
+                   nsDisplayList* aList,
+                   bool aHandleOpacity);
 
-  nsDisplayFilter(nsDisplayListBuilder* aBuilder, const nsDisplayFilter& aOther)
-    : nsDisplaySVGEffects(aBuilder, aOther)
+  nsDisplayFilters(nsDisplayListBuilder* aBuilder,
+                   const nsDisplayFilters& aOther)
+    : nsDisplayEffectsBase(aBuilder, aOther)
     , mEffectsBounds(aOther.mEffectsBounds)
   {
   }
 
 #ifdef NS_BUILD_REFCNT_LOGGING
-  ~nsDisplayFilter() override { MOZ_COUNT_DTOR(nsDisplayFilter); }
+  ~nsDisplayFilters() override { MOZ_COUNT_DTOR(nsDisplayFilters); }
 #endif
 
   NS_DISPLAY_DECL_NAME("Filter", TYPE_FILTER)
 
   nsDisplayWrapList* Clone(nsDisplayListBuilder* aBuilder) const override
   {
-    MOZ_COUNT_CTOR(nsDisplayFilter);
-    return MakeDisplayItem<nsDisplayFilter>(aBuilder, *this);
+    MOZ_COUNT_CTOR(nsDisplayFilters);
+    return MakeDisplayItem<nsDisplayFilters>(aBuilder, *this);
   }
 
   bool CanMerge(const nsDisplayItem* aItem) const override
@@ -6850,7 +6883,7 @@ public:
   {
     nsDisplayWrapList::Merge(aItem);
 
-    const nsDisplayFilter* other = static_cast<const nsDisplayFilter*>(aItem);
+    const nsDisplayFilters* other = static_cast<const nsDisplayFilters*>(aItem);
     mEffectsBounds.UnionRect(mEffectsBounds,
                              other->mEffectsBounds +
                                other->mFrame->GetOffsetTo(mFrame));
@@ -6877,7 +6910,7 @@ public:
   nsDisplayItemGeometry* AllocateGeometry(
     nsDisplayListBuilder* aBuilder) override
   {
-    return new nsDisplayFilterGeometry(this, aBuilder);
+    return new nsDisplayFiltersGeometry(this, aBuilder);
   }
 
   void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,

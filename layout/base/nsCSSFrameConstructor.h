@@ -716,6 +716,12 @@ private:
    * FCDATA_USE_CHILD_ITEMS is set.
    */
 #define FCDATA_IS_WRAPPER_ANON_BOX 0x400000
+  /**
+   * If FCDATA_MAY_NEED_BULLET is set, then the frame will be checked
+   * whether an nsBulletFrame needs to be created for it or not. Only the
+   * frames inherited from nsBlockFrame should have this bit set.
+   */
+#define FCDATA_MAY_NEED_BULLET 0x800000
 
   /* Structure representing information about how a frame should be
      constructed.  */
@@ -798,7 +804,7 @@ private:
     XBLBindingLoadInfo(nsIContent&, ComputedStyle&);
 
     // For the case we actually load an XBL binding.
-    XBLBindingLoadInfo(already_AddRefed<ComputedStyle> aStyle,
+    XBLBindingLoadInfo(already_AddRefed<ComputedStyle>&& aStyle,
                        mozilla::UniquePtr<PendingBinding> aPendingBinding,
                        nsAtom* aTag);
 
@@ -901,7 +907,7 @@ private:
     {
       FrameConstructionItem* item =
         new (aFCtor) FrameConstructionItem(aFCData, aContent,
-                                           aPendingBinding, aComputedStyle,
+                                           aPendingBinding, std::move(aComputedStyle),
                                            aSuppressWhiteSpaceOptimizations);
       mItems.insertBack(item);
       ++mItemCount;
@@ -919,7 +925,7 @@ private:
     {
       FrameConstructionItem* item =
         new (aFCtor) FrameConstructionItem(aFCData, aContent,
-                                           aPendingBinding, aComputedStyle,
+                                           aPendingBinding, std::move(aComputedStyle),
                                            aSuppressWhiteSpaceOptimizations);
       mItems.insertFront(item);
       ++mItemCount;
@@ -1147,10 +1153,10 @@ private:
     FrameConstructionItem(const FrameConstructionData* aFCData,
                           nsIContent* aContent,
                           PendingBinding* aPendingBinding,
-                          already_AddRefed<ComputedStyle>& aComputedStyle,
+                          already_AddRefed<ComputedStyle>&& aComputedStyle,
                           bool aSuppressWhiteSpaceOptimizations)
     : mFCData(aFCData), mContent(aContent),
-      mPendingBinding(aPendingBinding), mComputedStyle(aComputedStyle),
+      mPendingBinding(aPendingBinding), mComputedStyle(std::move(aComputedStyle)),
       mSuppressWhiteSpaceOptimizations(aSuppressWhiteSpaceOptimizations),
       mIsText(false), mIsGeneratedContent(false),
       mIsAnonymousContentCreatorContent(false),
@@ -1870,6 +1876,8 @@ private:
                       nsFrameItems&            aFrameItems,
                       nsIFrame*                aPositionedFrameForAbsPosContainer,
                       PendingBinding*          aPendingBinding);
+
+  void CreateBulletFrameForListItemIfNeeded(nsBlockFrame* aBlockFrame);
 
   nsIFrame* ConstructInline(nsFrameConstructorState& aState,
                             FrameConstructionItem&   aItem,

@@ -408,8 +408,7 @@ var openToolboxForTab = async function(tab, toolId, hostType) {
   info("Opening the toolbox");
 
   let toolbox;
-  const target = TargetFactory.forTab(tab);
-  await target.makeRemote();
+  const target = await TargetFactory.forTab(tab);
 
   // Check if the toolbox is already loaded.
   toolbox = gDevTools.getToolbox(target);
@@ -451,7 +450,7 @@ var openNewTabAndToolbox = async function(url, toolId, hostType) {
  * closed.
  */
 var closeTabAndToolbox = async function(tab = gBrowser.selectedTab) {
-  const target = TargetFactory.forTab(tab);
+  const target = await TargetFactory.forTab(tab);
   if (target) {
     await gDevTools.closeToolbox(target);
   }
@@ -618,7 +617,7 @@ function lookupPath(obj, path) {
 }
 
 var closeToolbox = async function() {
-  const target = TargetFactory.forTab(gBrowser.selectedTab);
+  const target = await TargetFactory.forTab(gBrowser.selectedTab);
   await gDevTools.closeToolbox(target);
 };
 
@@ -734,7 +733,7 @@ async function enableWebComponents() {
 /*
  * Register an actor in the content process of the current tab.
  *
- * Calling DebuggerServer.registerModule only registers the actor in the current process.
+ * Calling ActorRegistry.registerModule only registers the actor in the current process.
  * As all test scripts are ran in the parent process, it is only registered here.
  * This function helps register them in the content process used for the current tab.
  *
@@ -755,7 +754,7 @@ async function registerActorInContentProcess(url, options) {
   return ContentTask.spawn(gBrowser.selectedBrowser, { url, options }, args => {
     // eslint-disable-next-line no-shadow
     const { require } = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
-    const { DebuggerServer } = require("devtools/server/main");
-    DebuggerServer.registerModule(args.url, args.options);
+    const { ActorRegistry } = require("devtools/server/actors/utils/actor-registry");
+    ActorRegistry.registerModule(args.url, args.options);
   });
 }

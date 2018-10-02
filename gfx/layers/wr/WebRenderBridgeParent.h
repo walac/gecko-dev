@@ -69,7 +69,6 @@ public:
                                               const TextureInfo& aInfo) override;
   mozilla::ipc::IPCResult RecvReleaseCompositable(const CompositableHandle& aHandle) override;
 
-  mozilla::ipc::IPCResult RecvCreate(const gfx::IntSize& aSize) override;
   mozilla::ipc::IPCResult RecvShutdown() override;
   mozilla::ipc::IPCResult RecvShutdownSync() override;
   mozilla::ipc::IPCResult RecvDeleteCompositorAnimations(InfallibleTArray<uint64_t>&& aIds) override;
@@ -89,6 +88,7 @@ public:
                                              nsTArray<RefCountedShmem>&& aSmallShmems,
                                              nsTArray<ipc::Shmem>&& aLargeShmems,
                                              const wr::IdNamespace& aIdNamespace,
+                                             const bool& aContainsSVGGroup,
                                              const TimeStamp& aRefreshStartTime,
                                              const TimeStamp& aTxnStartTime,
                                              const TimeStamp& aFwdTime) override;
@@ -151,6 +151,7 @@ public:
 
   void HoldPendingTransactionId(const wr::Epoch& aWrEpoch,
                                 TransactionId aTransactionId,
+                                bool aContainsSVGGroup,
                                 const TimeStamp& aRefreshStartTime,
                                 const TimeStamp& aTxnStartTime,
                                 const TimeStamp& aFwdTime,
@@ -218,7 +219,8 @@ private:
   void AddPipelineIdForCompositable(const wr::PipelineId& aPipelineIds,
                                     const CompositableHandle& aHandle,
                                     const bool& aAsync,
-                                    wr::TransactionBuilder& aTxn);
+                                    wr::TransactionBuilder& aTxn,
+                                    wr::TransactionBuilder& aTxnForImageBridge);
   void RemovePipelineIdForCompositable(const wr::PipelineId& aPipelineId,
                                        wr::TransactionBuilder& aTxn);
 
@@ -260,6 +262,7 @@ private:
   struct PendingTransactionId {
     PendingTransactionId(const wr::Epoch& aEpoch,
                          TransactionId aId,
+                         bool aContainsSVGGroup,
                          const TimeStamp& aRefreshStartTime,
                          const TimeStamp& aTxnStartTime,
                          const TimeStamp& aFwdTime,
@@ -269,6 +272,7 @@ private:
       , mRefreshStartTime(aRefreshStartTime)
       , mTxnStartTime(aTxnStartTime)
       , mFwdTime(aFwdTime)
+      , mContainsSVGGroup(aContainsSVGGroup)
       , mUseForTelemetry(aUseForTelemetry)
     {}
     wr::Epoch mEpoch;
@@ -276,6 +280,7 @@ private:
     TimeStamp mRefreshStartTime;
     TimeStamp mTxnStartTime;
     TimeStamp mFwdTime;
+    bool mContainsSVGGroup;
     bool mUseForTelemetry;
   };
 

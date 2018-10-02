@@ -27,6 +27,7 @@ XPIDL_SOURCES += [
 XPIDL_MODULE = 'necko_http'
 
 EXPORTS += [
+    'DocumentAnalyticsTrackerFastBlocked.h',
     'nsCORSListenerProxy.h',
     'nsHttp.h',
     'nsHttpAtomList.h',
@@ -38,6 +39,7 @@ EXPORTS += [
 EXPORTS.mozilla.net += [
     'AltDataOutputStreamChild.h',
     'AltDataOutputStreamParent.h',
+    'BackgroundChannelRegistrar.h',
     'HttpAuthUtils.h',
     'HttpBackgroundChannelChild.h',
     'HttpBackgroundChannelParent.h',

@@ -327,9 +327,6 @@ PaymentRequestManager::RequestIPCOver(PaymentRequest* aRequest)
   // This must only be called from ActorDestroy or if we're sure we won't
   // receive any more IPC for aRequest.
   mActivePayments.Remove(aRequest);
-  if (aRequest == mShowingRequest) {
-    mShowingRequest = nullptr;
-  }
 }
 
 already_AddRefed<PaymentRequestManager>
@@ -382,7 +379,7 @@ PaymentRequestManager::CreatePayment(JSContext* aCx,
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
-
+  request->SetOptions(aOptions);
   /*
    *  Set request's |mId| to details.id if details.id exists.
    *  Otherwise, set |mId| to internal id.
@@ -461,9 +458,6 @@ PaymentRequestManager::CanMakePayment(PaymentRequest* aRequest)
 nsresult
 PaymentRequestManager::ShowPayment(PaymentRequest* aRequest)
 {
-  if (mShowingRequest) {
-    return NS_ERROR_ABORT;
-  }
   nsresult rv = NS_OK;
   if (!aRequest->IsUpdating()) {
     nsAutoString requestId;
@@ -471,14 +465,12 @@ PaymentRequestManager::ShowPayment(PaymentRequest* aRequest)
     IPCPaymentShowActionRequest action(requestId);
     rv = SendRequestPayment(aRequest, action);
   }
-  mShowingRequest = aRequest;
   return rv;
 }
 
 nsresult
 PaymentRequestManager::AbortPayment(PaymentRequest* aRequest, bool aDeferredShow)
 {
-  MOZ_ASSERT(aRequest == mShowingRequest);
   nsAutoString requestId;
   aRequest->GetInternalId(requestId);
   IPCPaymentAbortActionRequest action(requestId);
@@ -547,9 +539,6 @@ PaymentRequestManager::ClosePayment(PaymentRequest* aRequest)
   // for the case, the payment request is waiting for response from user.
   if (auto entry = mActivePayments.Lookup(aRequest)) {
     NotifyRequestDone(aRequest);
-  }
-  if (mShowingRequest == aRequest) {
-    mShowingRequest = nullptr;
   }
   nsAutoString requestId;
   aRequest->GetInternalId(requestId);
@@ -634,8 +623,6 @@ PaymentRequestManager::RespondPayment(PaymentRequest* aRequest,
                                    response.payerPhone(),
                                    rejectedReason);
       if (NS_FAILED(rejectedReason)) {
-        MOZ_ASSERT(mShowingRequest == aRequest);
-        mShowingRequest = nullptr;
         NotifyRequestDone(aRequest);
       }
       break;
@@ -643,17 +630,11 @@ PaymentRequestManager::RespondPayment(PaymentRequest* aRequest,
     case IPCPaymentActionResponse::TIPCPaymentAbortActionResponse: {
       const IPCPaymentAbortActionResponse& response = aResponse;
       aRequest->RespondAbortPayment(response.isSucceeded());
-      if (response.isSucceeded()) {
-        MOZ_ASSERT(mShowingRequest == aRequest);
-      }
-      mShowingRequest = nullptr;
       NotifyRequestDone(aRequest);
       break;
     }
     case IPCPaymentActionResponse::TIPCPaymentCompleteActionResponse: {
       aRequest->RespondComplete();
-      MOZ_ASSERT(mShowingRequest == aRequest);
-      mShowingRequest = nullptr;
       NotifyRequestDone(aRequest);
       break;
     }
@@ -685,6 +666,21 @@ PaymentRequestManager::ChangeShippingOption(PaymentRequest* aRequest,
                                             const nsAString& aOption)
 {
   return aRequest->UpdateShippingOption(aOption);
+}
+
+nsresult
+PaymentRequestManager::ChangePayerDetail(PaymentRequest* aRequest,
+                                         const nsAString& aPayerName,
+                                         const nsAString& aPayerEmail,
+                                         const nsAString& aPayerPhone)
+{
+  MOZ_ASSERT(aRequest);
+  RefPtr<PaymentResponse> response = aRequest->GetResponse();
+  // ignoring the case call changePayerDetail during show().
+  if (!response) {
+    return NS_OK;
+  }
+  return response->UpdatePayerDetail(aPayerName, aPayerEmail, aPayerPhone);
 }
 
 } // end of namespace dom

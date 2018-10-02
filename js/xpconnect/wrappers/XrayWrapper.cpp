@@ -20,6 +20,7 @@
 #include "nsJSUtils.h"
 #include "nsPrintfCString.h"
 
+#include "mozilla/FloatingPoint.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/WindowBinding.h"
 #include "mozilla/dom/XrayExpandoClass.h"
@@ -1040,6 +1041,29 @@ JSXrayTraits::createHolder(JSContext* cx, JSObject* wrapper)
     }
     MOZ_ASSERT(key != JSProto_Null);
 
+    // Special case: pretend Arguments objects are arrays for Xrays.
+    //
+    // Arguments objects are strange beasts - they inherit Object.prototype,
+    // and implement iteration by defining an |own| property for
+    // Symbol.iterator. Since this value is callable, Array/Object Xrays will
+    // filter it out, causing the Xray view to be non-iterable, which in turn
+    // breaks consumers.
+    //
+    // We can't trust the iterator value from the content compartment,
+    // but the generic one on Array.prototype works well enough. So we force
+    // the Xray view of Arguments objects to inherit Array.prototype, which
+    // in turn allows iteration via the inherited Array.prototype[Symbol.iterator].
+    // This doesn't emulate any of the weird semantics of Arguments iterators,
+    // but is probably good enough.
+    //
+    // Note that there are various Xray traps that do other special behavior for
+    // JSProto_Array, but they also provide that special behavior for
+    // JSProto_Object, and since Arguments would otherwise get JSProto_Object,
+    // this does not cause any behavior change at those sites.
+    if (key == JSProto_Object && js::IsArgumentsObject(target)) {
+        key = JSProto_Array;
+    }
+
     // Store it on the holder.
     RootedValue v(cx);
     v.setNumber(static_cast<uint32_t>(key));
@@ -1108,9 +1132,15 @@ static inline void
 SetCachedXrayExpando(JSObject* holder, JSObject* expandoWrapper);
 
 static nsIPrincipal*
-ObjectPrincipal(JSObject* obj)
+WrapperPrincipal(JSObject* obj)
 {
-    return GetCompartmentPrincipal(js::GetObjectCompartment(obj));
+    // Use the principal stored in CompartmentOriginInfo. That works because
+    // consumers are only interested in the origin-ignoring-document.domain.
+    // See expandoObjectMatchesConsumer.
+    MOZ_ASSERT(IsXrayWrapper(obj));
+    JS::Compartment* comp = js::GetObjectCompartment(obj);
+    CompartmentPrivate* priv = CompartmentPrivate::Get(comp);
+    return priv->originInfo.GetPrincipalIgnoringDocumentDomain();
 }
 
 static nsIPrincipal*
@@ -1222,7 +1252,7 @@ XrayTraits::getExpandoObject(JSContext* cx, HandleObject target, HandleObject co
 
     bool isExclusive = CompartmentHasExclusiveExpandos(consumer);
     return getExpandoObjectInternal(cx, chain, isExclusive ? consumer : nullptr,
-                                    ObjectPrincipal(consumer), expandoObject);
+                                    WrapperPrincipal(consumer), expandoObject);
 }
 
 // Wrappers which have exclusive access to the expando on their target object
@@ -1345,7 +1375,7 @@ XrayTraits::ensureExpandoObject(JSContext* cx, HandleObject wrapper,
         bool isExclusive = CompartmentHasExclusiveExpandos(wrapper);
         expandoObject = attachExpandoObject(cx, target, isExclusive ? wrapper : nullptr,
                                             wrapperGlobal,
-                                            ObjectPrincipal(wrapper));
+                                            WrapperPrincipal(wrapper));
     }
     return expandoObject;
 }
@@ -1391,7 +1421,7 @@ XrayTraits::cloneExpandoChain(JSContext* cx, HandleObject dst, HandleObject srcC
         } else {
             JSAutoRealm ar(cx, oldHead);
             movingIntoXrayCompartment =
-                expandoObjectMatchesConsumer(cx, oldHead, ObjectPrincipal(dst));
+                expandoObjectMatchesConsumer(cx, oldHead, GetObjectPrincipal(dst));
         }
 
         if (movingIntoXrayCompartment) {
@@ -1574,6 +1604,14 @@ XrayTraits::resolveOwnProperty(JSContext* cx, HandleObject wrapper, HandleObject
             }
             desc.value().set(ObjectValue(*eval));
             found = true;
+        } else if (id == GetJSIDByIndex(cx, XPCJSContext::IDX_INFINITY)) {
+            desc.value().setNaN();
+            desc.setAttributes(JSPROP_PERMANENT | JSPROP_READONLY);
+            found = true;
+        } else if (id == GetJSIDByIndex(cx, XPCJSContext::IDX_NAN)) {
+            desc.value().setDouble(PositiveInfinity<double>());
+            desc.setAttributes(JSPROP_PERMANENT | JSPROP_READONLY);
+            found = true;
         }
     }
 
@@ -1713,6 +1751,15 @@ DOMXrayTraits::enumerateNames(JSContext* cx, HandleObject wrapper, unsigned flag
     }
 
     JS::Rooted<JSObject*> obj(cx, getTargetObject(wrapper));
+    if (JS_IsGlobalObject(obj)) {
+        // We could do this in a shared enumerateNames with JSXrayTraits, but we
+        // don't really have globals we expose via those.
+        JSAutoRealm ar(cx, obj);
+        if (!JS_NewEnumerateStandardClassesIncludingResolved(
+          cx, obj, props, !(flags & JSITER_HIDDEN))) {
+            return false;
+        }
+    }
     return XrayOwnPropertyKeys(cx, wrapper, obj, flags, props);
 }
 

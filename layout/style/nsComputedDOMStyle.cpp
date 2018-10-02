@@ -23,8 +23,6 @@
 #include "nsIContent.h"
 #include "nsStyleConsts.h"
 
-#include "nsDOMCSSRect.h"
-#include "nsDOMCSSRGBColor.h"
 #include "nsDOMCSSValueList.h"
 #include "nsFlexContainerFrame.h"
 #include "nsGridContainerFrame.h"
@@ -84,7 +82,7 @@ NS_NewComputedDOMStyle(dom::Element* aElement,
 static nsDOMCSSValueList*
 GetROCSSValueList(bool aCommaDelimited)
 {
-  return new nsDOMCSSValueList(aCommaDelimited, true);
+  return new nsDOMCSSValueList(aCommaDelimited);
 }
 
 template<typename T>
@@ -578,21 +576,24 @@ nsComputedDOMStyle::DoGetComputedStyleNoFlush(Element* aElement,
   if (inDocWithShell &&
       aStyleType == eAll &&
       !aElement->IsHTMLElement(nsGkAtoms::area)) {
-    nsIFrame* frame = nullptr;
+    Element* element = nullptr;
     if (aPseudo == nsCSSPseudoElements::before()) {
-      frame = nsLayoutUtils::GetBeforeFrame(aElement);
+      element = nsLayoutUtils::GetBeforePseudo(aElement);
     } else if (aPseudo == nsCSSPseudoElements::after()) {
-      frame = nsLayoutUtils::GetAfterFrame(aElement);
+      element = nsLayoutUtils::GetAfterPseudo(aElement);
     } else if (!aPseudo) {
-      frame = nsLayoutUtils::GetStyleFrame(aElement);
+      element = aElement;
     }
-    if (frame) {
-      ComputedStyle* result = frame->Style();
-      // Don't use the style if it was influenced by pseudo-elements, since then
-      // it's not the primary style for this element / pseudo.
-      if (!MustReresolveStyle(result)) {
-        RefPtr<ComputedStyle> ret = result;
-        return ret.forget();
+
+    if (element) {
+      if (nsIFrame* styleFrame = nsLayoutUtils::GetStyleFrame(element)) {
+        ComputedStyle* result = styleFrame->Style();
+        // Don't use the style if it was influenced by pseudo-elements,
+        // since then it's not the primary style for this element / pseudo.
+        if (!MustReresolveStyle(result)) {
+          RefPtr<ComputedStyle> ret = result;
+          return ret.forget();
+        }
       }
     }
   }
@@ -1121,21 +1122,25 @@ void
 nsComputedDOMStyle::SetToRGBAColor(nsROCSSPrimitiveValue* aValue,
                                    nscolor aColor)
 {
-  nsROCSSPrimitiveValue *red   = new nsROCSSPrimitiveValue;
-  nsROCSSPrimitiveValue *green = new nsROCSSPrimitiveValue;
-  nsROCSSPrimitiveValue *blue  = new nsROCSSPrimitiveValue;
-  nsROCSSPrimitiveValue *alpha  = new nsROCSSPrimitiveValue;
-
-  uint8_t a = NS_GET_A(aColor);
-  nsDOMCSSRGBColor *rgbColor =
-    new nsDOMCSSRGBColor(red, green, blue, alpha, a < 255);
-
-  red->SetNumber(NS_GET_R(aColor));
-  green->SetNumber(NS_GET_G(aColor));
-  blue->SetNumber(NS_GET_B(aColor));
-  alpha->SetNumber(nsStyleUtil::ColorComponentToFloat(a));
-
-  aValue->SetColor(rgbColor);
+  nsAutoString string;
+  const bool hasAlpha = NS_GET_A(aColor) != 255;
+  if (hasAlpha) {
+    string.AppendLiteral("rgba(");
+  } else {
+    string.AppendLiteral("rgb(");
+  }
+  string.AppendInt(NS_GET_R(aColor));
+  string.AppendLiteral(", ");
+  string.AppendInt(NS_GET_G(aColor));
+  string.AppendLiteral(", ");
+  string.AppendInt(NS_GET_B(aColor));
+  if (hasAlpha) {
+    string.AppendLiteral(", ");
+    float alpha = nsStyleUtil::ColorComponentToFloat(NS_GET_A(aColor));
+    nsStyleUtil::AppendCSSNumber(alpha, string);
+  }
+  string.AppendLiteral(")");
+  aValue->SetString(string);
 }
 
 void
@@ -2982,21 +2987,19 @@ nsComputedDOMStyle::DoGetScrollSnapCoordinate()
 }
 
 already_AddRefed<CSSValue>
-nsComputedDOMStyle::DoGetScrollbarFaceColor()
+nsComputedDOMStyle::DoGetScrollbarColor()
 {
-  RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-  SetValueForWidgetColor(val, StyleUI()->mScrollbarFaceColor,
-                         StyleAppearance::ScrollbarthumbVertical);
-  return val.forget();
-}
-
-already_AddRefed<CSSValue>
-nsComputedDOMStyle::DoGetScrollbarTrackColor()
-{
-  RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-  SetValueForWidgetColor(val, StyleUI()->mScrollbarTrackColor,
-                         StyleAppearance::ScrollbarVertical);
-  return val.forget();
+  const nsStyleUI* ui = StyleUI();
+  RefPtr<nsDOMCSSValueList> list = GetROCSSValueList(false);
+  auto put = [this, &list](const StyleComplexColor& color,
+                           StyleAppearance type) {
+    RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
+    SetValueForWidgetColor(val, color, type);
+    list->AppendCSSValue(val.forget());
+  };
+  put(ui->mScrollbarFaceColor, StyleAppearance::ScrollbarthumbVertical);
+  put(ui->mScrollbarTrackColor, StyleAppearance::ScrollbarVertical);
+  return list.forget();
 }
 
 already_AddRefed<CSSValue>
@@ -3162,33 +3165,6 @@ nsComputedDOMStyle::DoGetZIndex()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
   SetValueToCoord(val, StylePosition()->mZIndex, false);
-  return val.forget();
-}
-
-already_AddRefed<CSSValue>
-nsComputedDOMStyle::DoGetImageRegion()
-{
-  RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-
-  const nsStyleList* list = StyleList();
-
-  if (list->mImageRegion.width <= 0 || list->mImageRegion.height <= 0) {
-    val->SetIdent(eCSSKeyword_auto);
-  } else {
-    // create the cssvalues for the sides, stick them in the rect object
-    nsROCSSPrimitiveValue *topVal    = new nsROCSSPrimitiveValue;
-    nsROCSSPrimitiveValue *rightVal  = new nsROCSSPrimitiveValue;
-    nsROCSSPrimitiveValue *bottomVal = new nsROCSSPrimitiveValue;
-    nsROCSSPrimitiveValue *leftVal   = new nsROCSSPrimitiveValue;
-    nsDOMCSSRect * domRect = new nsDOMCSSRect(topVal, rightVal,
-                                              bottomVal, leftVal);
-    topVal->SetAppUnits(list->mImageRegion.y);
-    rightVal->SetAppUnits(list->mImageRegion.width + list->mImageRegion.x);
-    bottomVal->SetAppUnits(list->mImageRegion.height + list->mImageRegion.y);
-    leftVal->SetAppUnits(list->mImageRegion.x);
-    val->SetRect(domRect);
-  }
-
   return val.forget();
 }
 
@@ -3785,52 +3761,6 @@ nsComputedDOMStyle::DoGetContain()
 }
 
 already_AddRefed<CSSValue>
-nsComputedDOMStyle::DoGetClip()
-{
-  RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-
-  const nsStyleEffects* effects = StyleEffects();
-
-  if (effects->mClipFlags == NS_STYLE_CLIP_AUTO) {
-    val->SetIdent(eCSSKeyword_auto);
-  } else {
-    // create the cssvalues for the sides, stick them in the rect object
-    nsROCSSPrimitiveValue *topVal    = new nsROCSSPrimitiveValue;
-    nsROCSSPrimitiveValue *rightVal  = new nsROCSSPrimitiveValue;
-    nsROCSSPrimitiveValue *bottomVal = new nsROCSSPrimitiveValue;
-    nsROCSSPrimitiveValue *leftVal   = new nsROCSSPrimitiveValue;
-    nsDOMCSSRect * domRect = new nsDOMCSSRect(topVal, rightVal,
-                                              bottomVal, leftVal);
-    if (effects->mClipFlags & NS_STYLE_CLIP_TOP_AUTO) {
-      topVal->SetIdent(eCSSKeyword_auto);
-    } else {
-      topVal->SetAppUnits(effects->mClip.y);
-    }
-
-    if (effects->mClipFlags & NS_STYLE_CLIP_RIGHT_AUTO) {
-      rightVal->SetIdent(eCSSKeyword_auto);
-    } else {
-      rightVal->SetAppUnits(effects->mClip.width + effects->mClip.x);
-    }
-
-    if (effects->mClipFlags & NS_STYLE_CLIP_BOTTOM_AUTO) {
-      bottomVal->SetIdent(eCSSKeyword_auto);
-    } else {
-      bottomVal->SetAppUnits(effects->mClip.height + effects->mClip.y);
-    }
-
-    if (effects->mClipFlags & NS_STYLE_CLIP_LEFT_AUTO) {
-      leftVal->SetIdent(eCSSKeyword_auto);
-    } else {
-      leftVal->SetAppUnits(effects->mClip.x);
-    }
-    val->SetRect(domRect);
-  }
-
-  return val.forget();
-}
-
-already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetWillChange()
 {
   const nsTArray<RefPtr<nsAtom>>& willChange = StyleDisplay()->mWillChange;
@@ -3856,21 +3786,21 @@ nsComputedDOMStyle::DoGetOverflow()
 {
   const nsStyleDisplay* display = StyleDisplay();
 
-  RefPtr<nsROCSSPrimitiveValue> overflowY = new nsROCSSPrimitiveValue;
-  overflowY->SetIdent(
-    nsCSSProps::ValueToKeywordEnum(display->mOverflowY,
-                                   nsCSSProps::kOverflowKTable));
-  if (display->mOverflowX == display->mOverflowY) {
-    return overflowY.forget();
-  }
-  RefPtr<nsDOMCSSValueList> valueList = GetROCSSValueList(false);
-  valueList->AppendCSSValue(overflowY.forget());
-
   RefPtr<nsROCSSPrimitiveValue> overflowX = new nsROCSSPrimitiveValue;
   overflowX->SetIdent(
     nsCSSProps::ValueToKeywordEnum(display->mOverflowX,
                                    nsCSSProps::kOverflowKTable));
+  if (display->mOverflowX == display->mOverflowY) {
+    return overflowX.forget();
+  }
+  RefPtr<nsDOMCSSValueList> valueList = GetROCSSValueList(false);
   valueList->AppendCSSValue(overflowX.forget());
+
+  RefPtr<nsROCSSPrimitiveValue> overflowY= new nsROCSSPrimitiveValue;
+  overflowY->SetIdent(
+    nsCSSProps::ValueToKeywordEnum(display->mOverflowY,
+                                   nsCSSProps::kOverflowKTable));
+  valueList->AppendCSSValue(overflowY.forget());
   return valueList.forget();
 }
 

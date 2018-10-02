@@ -49,6 +49,8 @@ dictionary PaymentDetailsUpdate : PaymentDetailsBase {
   DOMString error;
   PaymentItem total;
   AddressErrors shippingAddressErrors;
+  PayerErrorFields payerErrors;
+  object paymentMethodErrors;
 };
 
 dictionary PaymentDetailsModifier {
@@ -182,11 +184,13 @@ dictionary PayerErrorFields {
 [Constructor(DOMString type, optional MerchantValidationEventInit eventInitDict),
 SecureContext, Exposed=Window]
 interface MerchantValidationEvent : Event {
+  readonly attribute DOMString methodName;
   readonly attribute USVString validationURL;
   void complete(Promise<any> merchantSessionPromise);
 };
 
 dictionary MerchantValidationEventInit : EventInit {
+  DOMString methodName = "";
   USVString validationURL = "";
 };
 

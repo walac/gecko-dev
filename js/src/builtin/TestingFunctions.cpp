@@ -635,6 +635,22 @@ WasmDebuggingIsSupported(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
+WasmStreamingIsSupported(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setBoolean(wasm::HasStreamingSupport(cx));
+    return true;
+}
+
+static bool
+WasmCachingIsSupported(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setBoolean(wasm::HasCachingSupport(cx));
+    return true;
+}
+
+static bool
 WasmThreadsSupported(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -860,7 +876,7 @@ WasmExtractCode(JSContext* cx, unsigned argc, Value* vp)
     } else if (baselineTier) {
         tier = wasm::Tier::Baseline;
     } else {
-        tier = wasm::Tier::Ion;
+        tier = wasm::Tier::Optimized;
     }
 
     RootedValue result(cx);
@@ -976,6 +992,23 @@ GCPreserveCode(JSContext* cx, unsigned argc, Value* vp)
 #ifdef JS_GC_ZEAL
 
 static bool
+ParseGCZealMode(JSContext* cx, const CallArgs& args, uint8_t* zeal)
+{
+    uint32_t value;
+    if (!ToUint32(cx, args.get(0), &value)) {
+        return false;
+    }
+
+    if (value > uint32_t(gc::ZealMode::Limit)) {
+        JS_ReportErrorASCII(cx, "gczeal argument out of range");
+        return false;
+    }
+
+    *zeal = static_cast<uint8_t>(value);
+    return true;
+}
+
+static bool
 GCZeal(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -986,13 +1019,8 @@ GCZeal(JSContext* cx, unsigned argc, Value* vp)
         return false;
     }
 
-    uint32_t zeal;
-    if (!ToUint32(cx, args.get(0), &zeal)) {
-        return false;
-    }
-
-    if (zeal > uint32_t(gc::ZealMode::Limit)) {
-        JS_ReportErrorASCII(cx, "gczeal argument out of range");
+    uint8_t zeal;
+    if (!ParseGCZealMode(cx, args, &zeal)) {
         return false;
     }
 
@@ -1003,7 +1031,28 @@ GCZeal(JSContext* cx, unsigned argc, Value* vp)
         }
     }
 
-    JS_SetGCZeal(cx, (uint8_t)zeal, frequency);
+    JS_SetGCZeal(cx, zeal, frequency);
+    args.rval().setUndefined();
+    return true;
+}
+
+static bool
+UnsetGCZeal(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+
+    if (args.length() > 1) {
+        RootedObject callee(cx, &args.callee());
+        ReportUsageErrorASCII(cx, callee, "Too many arguments");
+        return false;
+    }
+
+    uint8_t zeal;
+    if (!ParseGCZealMode(cx, args, &zeal)) {
+        return false;
+    }
+
+    JS_UnsetGCZeal(cx, zeal);
     args.rval().setUndefined();
     return true;
 }
@@ -1647,6 +1696,7 @@ NewRope(JSContext* cx, unsigned argc, Value* vp)
 
     Rooted<JSRope*> str(cx, JSRope::new_<NoGC>(cx, left, right, length, heap));
     if (!str) {
+        JS_ReportOutOfMemory(cx);
         return false;
     }
 
@@ -2274,7 +2324,7 @@ static bool
 StreamsAreEnabled(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setBoolean(cx->options().streams());
+    args.rval().setBoolean(cx->realm()->creationOptions().getStreamsEnabled());
     return true;
 }
 
@@ -5016,7 +5066,17 @@ SetTimeZone(JSContext* cx, unsigned argc, Value* vp)
     };
 
     if (args[0].isString() && !args[0].toString()->empty()) {
-        UniqueChars timeZone = JS_EncodeStringToLatin1(cx, args[0].toString());
+        RootedLinearString str(cx, args[0].toString()->ensureLinear(cx));
+        if (!str) {
+            return false;
+        }
+
+        if (!StringIsAscii(str)) {
+            ReportUsageErrorASCII(cx, callee, "First argument contains non-ASCII characters");
+            return false;
+        }
+
+        UniqueChars timeZone = JS_EncodeStringToASCII(cx, str);
         if (!timeZone) {
             return false;
         }
@@ -5081,35 +5141,28 @@ SetDefaultLocale(JSContext* cx, unsigned argc, Value* vp)
     }
 
     if (args[0].isString() && !args[0].toString()->empty()) {
-        auto containsOnlyValidBCP47Characters = [](auto* chars, size_t length) {
-            return mozilla::IsAsciiAlpha(chars[0]) &&
-                   std::all_of(chars, chars + length, [](auto c) {
-                       return mozilla::IsAsciiAlphanumeric(c) || c == '-';
-                   });
-        };
-
         RootedLinearString str(cx, args[0].toString()->ensureLinear(cx));
         if (!str) {
             return false;
         }
 
-        bool hasValidChars;
-        {
-            JS::AutoCheckCannotGC nogc;
-
-            size_t length = str->length();
-            hasValidChars = str->hasLatin1Chars()
-                            ? containsOnlyValidBCP47Characters(str->latin1Chars(nogc), length)
-                            : containsOnlyValidBCP47Characters(str->twoByteChars(nogc), length);
-        }
-
-        if (!hasValidChars) {
-            ReportUsageErrorASCII(cx, callee, "First argument should be BCP47 language tag");
+        if (!StringIsAscii(str)) {
+            ReportUsageErrorASCII(cx, callee, "First argument contains non-ASCII characters");
             return false;
         }
 
-        UniqueChars locale = JS_EncodeStringToLatin1(cx, str);
+        UniqueChars locale = JS_EncodeStringToASCII(cx, str);
         if (!locale) {
+            return false;
+        }
+
+        bool containsOnlyValidBCP47Characters = mozilla::IsAsciiAlpha(locale[0]) &&
+            std::all_of(locale.get(), locale.get() + str->length(), [](auto c) {
+                return mozilla::IsAsciiAlphanumeric(c) || c == '-';
+            });
+
+        if (!containsOnlyValidBCP47Characters) {
+            ReportUsageErrorASCII(cx, callee, "First argument should be a BCP47 language tag");
             return false;
         }
 
@@ -5655,7 +5708,7 @@ JS_FN_HELP("rejectPromise", RejectPromise, 2, 0,
 
 JS_FN_HELP("streamsAreEnabled", StreamsAreEnabled, 0, 0,
 "streamsAreEnabled()",
-"  Returns a boolean indicating whether WHATWG Streams are enabled for the current compartment."),
+"  Returns a boolean indicating whether WHATWG Streams are enabled for the current realm."),
 
     JS_FN_HELP("makeFinalizeObserver", MakeFinalizeObserver, 0, 0,
 "makeFinalizeObserver()",
@@ -5677,8 +5730,13 @@ JS_FN_HELP("streamsAreEnabled", StreamsAreEnabled, 0, 0,
 
 #ifdef JS_GC_ZEAL
     JS_FN_HELP("gczeal", GCZeal, 2, 0,
-"gczeal(level, [N])",
+"gczeal(mode, [frequency])",
 gc::ZealModeHelpText),
+
+    JS_FN_HELP("unsetgczeal", UnsetGCZeal, 2, 0,
+"unsetgczeal(mode)",
+"  Turn off a single zeal mode set with gczeal() and don't finish any ongoing\n"
+"  collection that may be happening."),
 
     JS_FN_HELP("schedulegc", ScheduleGC, 1, 0,
 "schedulegc([num | obj | string])",
@@ -5811,6 +5869,14 @@ gc::ZealModeHelpText),
 "wasmDebuggingIsSupported()",
 "  Returns a boolean indicating whether WebAssembly debugging is supported on the current device;\n"
 "  returns false also if WebAssembly is not supported"),
+
+    JS_FN_HELP("wasmStreamingIsSupported", WasmStreamingIsSupported, 0, 0,
+"wasmStreamingIsSupported()",
+"  Returns a boolean indicating whether WebAssembly caching is supported by the runtime."),
+
+    JS_FN_HELP("wasmCachingIsSupported", WasmCachingIsSupported, 0, 0,
+"wasmCachingIsSupported()",
+"  Returns a boolean indicating whether WebAssembly caching is supported by the runtime."),
 
     JS_FN_HELP("wasmThreadsSupported", WasmThreadsSupported, 0, 0,
 "wasmThreadsSupported()",

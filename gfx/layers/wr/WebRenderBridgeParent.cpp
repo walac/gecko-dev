@@ -151,6 +151,34 @@ namespace layers {
 
 using namespace mozilla::gfx;
 
+class ScheduleObserveLayersUpdate: public wr::NotificationHandler {
+public:
+  ScheduleObserveLayersUpdate(RefPtr<CompositorBridgeParentBase> aBridge,
+                              LayersId aLayersId,
+                              LayersObserverEpoch aEpoch,
+                              bool aIsActive)
+  : mBridge(aBridge)
+  , mLayersId(aLayersId)
+  , mObserverEpoch(aEpoch)
+  , mIsActive(aIsActive)
+  {}
+
+  virtual void Notify(wr::Checkpoint) override {
+    CompositorThreadHolder::Loop()->PostTask(
+      NewRunnableMethod<LayersId, LayersObserverEpoch, int>(
+        "ObserveLayersUpdate",
+        mBridge, &CompositorBridgeParentBase::ObserveLayersUpdate,
+        mLayersId, mObserverEpoch, mIsActive
+      )
+    );
+  }
+protected:
+  RefPtr<CompositorBridgeParentBase> mBridge;
+  LayersId mLayersId;
+  LayersObserverEpoch mObserverEpoch;
+  bool mIsActive;
+};
+
 class MOZ_STACK_CLASS AutoWebRenderBridgeParentAsyncMessageSender
 {
 public:
@@ -235,28 +263,6 @@ WebRenderBridgeParent::~WebRenderBridgeParent()
 }
 
 mozilla::ipc::IPCResult
-WebRenderBridgeParent::RecvCreate(const gfx::IntSize& aSize)
-{
-  if (mDestroyed) {
-    return IPC_OK();
-  }
-
-  MOZ_ASSERT(mApi);
-
-#ifdef MOZ_WIDGET_ANDROID
-  // XXX temporary hack.
-  // XXX Remove it when APZ is supported.
-  // XXX Broken by Dynamic Toolbar v3. See: Bug 1335895
-//  RefPtr<UiCompositorControllerParent> uiController = UiCompositorControllerParent::GetFromRootLayerTreeId(/* Root Layer Tree ID */);
-//  if (uiController) {
-//    uiController->ToolbarAnimatorMessageFromCompositor(/*FIRST_PAINT*/ 5);
-//  }
-#endif
-
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
 WebRenderBridgeParent::RecvShutdown()
 {
   return HandleShutdown();
@@ -337,7 +343,7 @@ WebRenderBridgeParent::UpdateResources(const nsTArray<OpUpdateResource>& aResour
       }
       case OpUpdateResource::TOpSetImageVisibleArea: {
         const auto& op = cmd.get_OpSetImageVisibleArea();
-        wr::NormalizedRect area;
+        wr::DeviceUintRect area;
         area.origin.x = op.area().x;
         area.origin.y = op.area().y;
         area.size.width = op.area().width;
@@ -752,6 +758,7 @@ WebRenderBridgeParent::RecvSetDisplayList(const gfx::IntSize& aSize,
                                           nsTArray<RefCountedShmem>&& aSmallShmems,
                                           nsTArray<ipc::Shmem>&& aLargeShmems,
                                           const wr::IdNamespace& aIdNamespace,
+                                          const bool& aContainsSVGGroup,
                                           const TimeStamp& aRefreshStartTime,
                                           const TimeStamp& aTxnStartTime,
                                           const TimeStamp& aFwdTime)
@@ -806,6 +813,8 @@ WebRenderBridgeParent::RecvSetDisplayList(const gfx::IntSize& aSize,
 
   wr::Vec<uint8_t> dlData(std::move(dl));
 
+  bool observeLayersUpdate = ShouldParentObserveEpoch();
+
   if (validTransaction) {
     if (IsRootWebRenderBridgeParent()) {
       LayoutDeviceIntSize widgetSize = mWidget->GetClientSize();
@@ -817,13 +826,28 @@ WebRenderBridgeParent::RecvSetDisplayList(const gfx::IntSize& aSize,
                        mPipelineId, aContentSize,
                        dlDesc, dlData);
 
+    if (observeLayersUpdate) {
+      txn.Notify(
+        wr::Checkpoint::SceneBuilt,
+        MakeUnique<ScheduleObserveLayersUpdate>(
+          mCompositorBridge,
+          GetLayersId(),
+          mChildLayersObserverEpoch,
+          true
+        )
+      );
+    }
+
     mApi->SendTransaction(txn);
 
     // We will schedule generating a frame after the scene
     // build is done, so we don't need to do it here.
+  } else if (observeLayersUpdate) {
+    mCompositorBridge->ObserveLayersUpdate(GetLayersId(), mChildLayersObserverEpoch, true);
   }
 
-  HoldPendingTransactionId(wrEpoch, aTransactionId, aRefreshStartTime, aTxnStartTime, aFwdTime);
+  HoldPendingTransactionId(wrEpoch, aTransactionId, aContainsSVGGroup,
+                           aRefreshStartTime, aTxnStartTime, aFwdTime);
 
   if (!validTransaction) {
     // Pretend we composited since someone is wating for this event,
@@ -832,10 +856,6 @@ WebRenderBridgeParent::RecvSetDisplayList(const gfx::IntSize& aSize,
       TimeStamp now = TimeStamp::Now();
       cbp->NotifyPipelineRendered(mPipelineId, wrEpoch, now, now);
     }
-  }
-
-  if (ShouldParentObserveEpoch()) {
-    mCompositorBridge->ObserveLayersUpdate(GetLayersId(), mChildLayersObserverEpoch, true);
   }
 
   wr::IpcResourceUpdateQueue::ReleaseShmems(this, aSmallShmems);
@@ -891,6 +911,18 @@ WebRenderBridgeParent::RecvEmptyTransaction(const FocusTarget& aFocusTarget,
     if (!ProcessWebRenderParentCommands(aCommands, txn)) {
       return IPC_FAIL(this, "Invalid parent command found");
     }
+    if (ShouldParentObserveEpoch()) {
+      txn.Notify(
+        wr::Checkpoint::SceneBuilt,
+        MakeUnique<ScheduleObserveLayersUpdate>(
+          mCompositorBridge,
+          GetLayersId(),
+          mChildLayersObserverEpoch,
+          true
+        )
+      );
+    }
+
     mApi->SendTransaction(txn);
     scheduleComposite = true;
   }
@@ -911,6 +943,7 @@ WebRenderBridgeParent::RecvEmptyTransaction(const FocusTarget& aFocusTarget,
   // something. It is for consistency with disabling WebRender.
   HoldPendingTransactionId(mWrEpoch,
                            aTransactionId,
+                           false,
                            aRefreshStartTime,
                            aTxnStartTime,
                            aFwdTime,
@@ -926,10 +959,6 @@ WebRenderBridgeParent::RecvEmptyTransaction(const FocusTarget& aFocusTarget,
       TimeStamp now = TimeStamp::Now();
       cbp->NotifyPipelineRendered(mPipelineId, mWrEpoch, now, now);
     }
-  }
-
-  if (ShouldParentObserveEpoch()) {
-    mCompositorBridge->ObserveLayersUpdate(GetLayersId(), mChildLayersObserverEpoch, true);
   }
 
   return IPC_OK();
@@ -961,6 +990,10 @@ bool
 WebRenderBridgeParent::ProcessWebRenderParentCommands(const InfallibleTArray<WebRenderParentCommand>& aCommands,
                                                       wr::TransactionBuilder& aTxn)
 {
+  // Transaction for async image pipeline that uses ImageBridge always need to be non low priority.
+  wr::TransactionBuilder txnForImageBridge;
+  wr::AutoTransactionSender sender(mApi, &txnForImageBridge);
+
   for (InfallibleTArray<WebRenderParentCommand>::index_type i = 0; i < aCommands.Length(); ++i) {
     const WebRenderParentCommand& cmd = aCommands[i];
     switch (cmd.type()) {
@@ -969,7 +1002,8 @@ WebRenderBridgeParent::ProcessWebRenderParentCommands(const InfallibleTArray<Web
         AddPipelineIdForCompositable(op.pipelineId(),
                                      op.handle(),
                                      op.isAsync(),
-                                     aTxn);
+                                     aTxn,
+                                     txnForImageBridge);
         break;
       }
       case WebRenderParentCommand::TOpRemovePipelineIdForCompositable: {
@@ -995,12 +1029,12 @@ WebRenderBridgeParent::ProcessWebRenderParentCommands(const InfallibleTArray<Web
                                                      op.scaleToSize(),
                                                      op.filter(),
                                                      op.mixBlendMode());
-        mAsyncImageManager->ApplyAsyncImageForPipeline(op.pipelineId(), aTxn);
+        mAsyncImageManager->ApplyAsyncImageForPipeline(op.pipelineId(), aTxn, txnForImageBridge);
         break;
       }
       case WebRenderParentCommand::TOpUpdatedAsyncImagePipeline: {
         const OpUpdatedAsyncImagePipeline& op = cmd.get_OpUpdatedAsyncImagePipeline();
-        mAsyncImageManager->ApplyAsyncImageForPipeline(op.pipelineId(), aTxn);
+        mAsyncImageManager->ApplyAsyncImageForPipeline(op.pipelineId(), aTxn, txnForImageBridge);
         break;
       }
       case WebRenderParentCommand::TCompositableOperation: {
@@ -1145,7 +1179,8 @@ void
 WebRenderBridgeParent::AddPipelineIdForCompositable(const wr::PipelineId& aPipelineId,
                                                     const CompositableHandle& aHandle,
                                                     const bool& aAsync,
-                                                    wr::TransactionBuilder& aTxn)
+                                                    wr::TransactionBuilder& aTxn,
+                                                    wr::TransactionBuilder& aTxnForImageBridge)
 {
   if (mDestroyed) {
     return;
@@ -1188,7 +1223,7 @@ WebRenderBridgeParent::AddPipelineIdForCompositable(const wr::PipelineId& aPipel
   // If we send the display list alone then WR will not yet have the content for
   // the pipelines and so it will emit errors; the SetEmptyDisplayList call
   // below ensure that we provide its content to WR as part of the same transaction.
-  mAsyncImageManager->SetEmptyDisplayList(aPipelineId, aTxn);
+  mAsyncImageManager->SetEmptyDisplayList(aPipelineId, aTxn, aTxnForImageBridge);
   return;
 }
 
@@ -1264,12 +1299,21 @@ WebRenderBridgeParent::RecvClearCachedResources()
   if (mDestroyed) {
     return IPC_OK();
   }
-  mCompositorBridge->ObserveLayersUpdate(GetLayersId(), mChildLayersObserverEpoch, false);
 
   // Clear resources
   wr::TransactionBuilder txn;
   txn.SetLowPriority(true);
   txn.ClearDisplayList(GetNextWrEpoch(), mPipelineId);
+  txn.Notify(
+    wr::Checkpoint::SceneBuilt,
+    MakeUnique<ScheduleObserveLayersUpdate>(
+      mCompositorBridge,
+      GetLayersId(),
+      mChildLayersObserverEpoch,
+      false
+    )
+  );
+
   mApi->SendTransaction(txn);
   // Schedule generate frame to clean up Pipeline
   ScheduleGenerateFrame();
@@ -1538,6 +1582,9 @@ WebRenderBridgeParent::CompositeToTarget(gfx::DrawTarget* aTarget, const gfx::In
 void
 WebRenderBridgeParent::MaybeGenerateFrame(bool aForceGenerateFrame)
 {
+  // This function should only get called in the root WRBP
+  MOZ_ASSERT(IsRootWebRenderBridgeParent());
+
   TimeStamp start = TimeStamp::Now();
   mAsyncImageManager->SetCompositionTime(start);
 
@@ -1549,7 +1596,6 @@ WebRenderBridgeParent::MaybeGenerateFrame(bool aForceGenerateFrame)
 
   // Handle transaction that is related to DisplayList.
   wr::TransactionBuilder sceneBuilderTxn;
-  sceneBuilderTxn.SetLowPriority(!IsRootWebRenderBridgeParent());
   wr::AutoTransactionSender sender(mApi, &sceneBuilderTxn);
 
   // Adding and updating wr::ImageKeys of ImageHosts that uses ImageBridge are
@@ -1599,6 +1645,7 @@ WebRenderBridgeParent::MaybeGenerateFrame(bool aForceGenerateFrame)
 void
 WebRenderBridgeParent::HoldPendingTransactionId(const wr::Epoch& aWrEpoch,
                                                 TransactionId aTransactionId,
+                                                bool aContainsSVGGroup,
                                                 const TimeStamp& aRefreshStartTime,
                                                 const TimeStamp& aTxnStartTime,
                                                 const TimeStamp& aFwdTime,
@@ -1607,6 +1654,7 @@ WebRenderBridgeParent::HoldPendingTransactionId(const wr::Epoch& aWrEpoch,
   MOZ_ASSERT(aTransactionId > LastPendingTransactionId());
   mPendingTransactionIds.push(PendingTransactionId(aWrEpoch,
                                                    aTransactionId,
+                                                   aContainsSVGGroup,
                                                    aRefreshStartTime,
                                                    aTxnStartTime,
                                                    aFwdTime,
@@ -1639,6 +1687,9 @@ WebRenderBridgeParent::FlushTransactionIdsForEpoch(const wr::Epoch& aEpoch, cons
       double latencyNorm = latencyMs / mVsyncRate.ToMilliseconds();
       int32_t fracLatencyNorm = lround(latencyNorm * 100.0);
       Telemetry::Accumulate(Telemetry::CONTENT_FRAME_TIME, fracLatencyNorm);
+      if (transactionId.mContainsSVGGroup) {
+        Telemetry::Accumulate(Telemetry::CONTENT_FRAME_TIME_WITH_SVG, fracLatencyNorm);
+      }
     }
 
 #if defined(ENABLE_FRAME_LATENCY_LOG)

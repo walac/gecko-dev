@@ -258,6 +258,13 @@ pref("dom.script_loader.bytecode_cache.strategy", 0);
 pref("dom.script_loader.binast_encoding.enabled", false);
 #endif
 
+// Whether window.event is enabled
+#ifdef NIGHTLY_BUILD
+pref("dom.window.event.enabled", true);
+#else
+pref("dom.window.event.enabled", false);
+#endif
+
 // Fastback caching - if this pref is negative, then we calculate the number
 // of content viewers to cache based on the amount of available memory.
 pref("browser.sessionhistory.max_total_viewers", -1);
@@ -622,6 +629,11 @@ pref("media.audioipc.stack_size", 262144);
 pref("media.cubeb.sandbox", false);
 #endif
 
+#ifdef XP_LINUX
+// Bug 1481152
+pref("media.cubeb_max_input_streams", 1);
+#endif
+
 #ifdef MOZ_AV1
 pref("media.av1.enabled", false);
 #endif
@@ -906,6 +918,7 @@ pref("gfx.compositor.glcontext.opaque", false);
 pref("gfx.webrender.highlight-painted-layers", false);
 pref("gfx.webrender.blob-images", true);
 pref("gfx.webrender.blob.invalidation", true);
+pref("gfx.webrender.blob.paint-flashing", false);
 
 // WebRender debugging utilities.
 pref("gfx.webrender.debug.texture-cache", false);
@@ -1074,7 +1087,7 @@ pref("toolkit.dump.emit", false);
 
 // Enable recording/replaying executions.
 #if defined(XP_MACOSX) && defined(NIGHTLY_BUILD)
-pref("devtools.recordreplay.enabled", false);
+pref("devtools.recordreplay.enabled", true);
 pref("devtools.recordreplay.enableRewinding", true);
 #endif
 
@@ -1198,15 +1211,10 @@ pref("extensions.spellcheck.inline.max-misspellings", 500);
 // can change some styles with them.  This means that only Firefox users may
 // get unexpected result of some web apps if they assume that users cannot
 // change such styles.
-#ifdef EARLY_BETA_OR_EARLIER
 pref("editor.resizing.enabled_by_default", false);
 pref("editor.inline_table_editing.enabled_by_default", false);
 pref("editor.positioning.enabled_by_default", false);
-#else
-pref("editor.resizing.enabled_by_default", true);
-pref("editor.inline_table_editing.enabled_by_default", true);
-pref("editor.positioning.enabled_by_default", true);
-#endif
+
 // Whether inserting <div> when typing Enter in a block element which can
 // contain <div>.  If false, inserts <br> instead.
 pref("editor.use_div_for_default_newlines",  true);
@@ -1388,7 +1396,7 @@ pref("dom.event.highrestimestamp.enabled",  true);
 pref("dom.event.coalesce_mouse_move",       true);
 
 #if defined(NIGHTLY_BUILD) && !defined(ANDROID)
-pref("dom.ua_widget.enabled", false);
+pref("dom.ua_widget.enabled", true);
 #else
 pref("dom.ua_widget.enabled", false);
 #endif
@@ -1407,6 +1415,9 @@ pref("javascript.options.asmjs",            true);
 pref("javascript.options.wasm",             true);
 pref("javascript.options.wasm_ionjit",      true);
 pref("javascript.options.wasm_baselinejit", true);
+#ifdef ENABLE_WASM_CRANELIFT
+pref("javascript.options.wasm_cranelift",   false);
+#endif
 #ifdef ENABLE_WASM_GC
 pref("javascript.options.wasm_gc",          false);
 #endif
@@ -1875,6 +1886,11 @@ pref("network.sts.max_time_for_pr_close_during_shutdown", 5000);
 // The value is expected in seconds.
 pref("network.sts.pollable_event_timeout", 6);
 
+// Enable/disable sni encryption.
+// Currently this does not work even if the pref is true, the nss part is
+// missing.
+pref("network.security.esni.enabled", false);
+
 // 2147483647 == PR_INT32_MAX == ~2 GB
 pref("network.websocket.max-message-size", 2147483647);
 
@@ -2270,7 +2286,6 @@ pref("network.cookie.thirdparty.sessionOnly", false);
 pref("network.cookie.thirdparty.nonsecureSessionOnly", false);
 pref("network.cookie.leave-secure-alone",   true);
 pref("network.cookie.same-site.enabled",    true); // Honor the SameSite cookie attribute
-pref("network.cookie.ipc.sync",             false);
 
 // Cookie lifetime policy. Possible values:
 // 0 - accept all cookies
@@ -2581,8 +2596,9 @@ pref("security.dialog_enable_delay", 1000);
 pref("security.notification_enable_delay", 500);
 
 #if defined(DEBUG) && !defined(ANDROID)
-// about:welcome has been added until Bug 1448359 is fixed at which time home, newtab, and welcome will all be removed.
-pref("csp.content_privileged_about_uris_without_csp", "blank,home,newtab,printpreview,srcdoc,welcome");
+pref("csp.content_privileged_about_uris_without_csp", "blank,printpreview,srcdoc");
+// the following pref is for testing purposes only.
+pref("csp.overrule_content_privileged_about_uris_without_csp_whitelist", false);
 #endif
 
 // Default Content Security Policy to apply to signed contents.
@@ -2941,11 +2957,11 @@ pref("layout.css.mix-blend-mode.enabled", true);
 // Is support for isolation enabled?
 pref("layout.css.isolation.enabled", true);
 
-// Is support for CSS Scrollbar color properties enabled?
-pref("layout.css.scrollbar-colors.enabled", false);
+// Is support for scrollbar-color property enabled?
+pref("layout.css.scrollbar-color.enabled", true);
 
 // Is support for scrollbar-width property enabled?
-pref("layout.css.scrollbar-width.enabled", false);
+pref("layout.css.scrollbar-width.enabled", true);
 
 // Set the threshold distance in CSS pixels below which scrolling will snap to
 // an edge, when scroll snapping is set to "proximity".
@@ -4608,6 +4624,10 @@ pref("image.animated.decode-on-demand.threshold-kb", 20480);
 // animation's currently displayed frame.
 pref("image.animated.decode-on-demand.batch-size", 6);
 
+// Whether we should generate full frames at decode time or partial frames which
+// are combined at display time (historical behavior and default).
+pref("image.animated.generate-full-frames", false);
+
 // Resume an animated image from the last displayed frame rather than
 // advancing when out of view.
 pref("image.animated.resume-from-last-displayed", true);
@@ -4618,6 +4638,10 @@ pref("image.animated.resume-from-last-displayed", true);
 // images only have 1, but some (i.e. ICOs) may have multiple frames for the
 // same data at different sizes.
 pref("image.cache.factor2.threshold-surfaces", 4);
+
+// Maximum number of pixels in either dimension that we are willing to upscale
+// an SVG to when we are in "factor of 2" mode.
+pref("image.cache.max-rasterized-svg-threshold-kb", 92160);
 
 // The maximum size, in bytes, of the decoded images we cache
 pref("image.cache.size", 5242880);
@@ -4665,6 +4689,9 @@ pref("image.mem.animated.use_heap", true);
 #else
 pref("image.mem.animated.use_heap", false);
 #endif
+
+// Enable extra information for debugging in the image memory reports.
+pref("image.mem.debug-reporting", false);
 
 // Decodes images into shared memory to allow direct use in separate
 // rendering processes. Only applicable with WebRender.
@@ -5006,7 +5033,7 @@ pref("extensions.webextensions.keepStorageOnUninstall", false);
 pref("extensions.webextensions.keepUuidOnUninstall", false);
 // Redirect basedomain used by identity api
 pref("extensions.webextensions.identity.redirectDomain", "extensions.allizom.org");
-pref("extensions.webextensions.restrictedDomains", "accounts-static.cdn.mozilla.net,accounts.firefox.com,addons.cdn.mozilla.net,addons.mozilla.org,api.accounts.firefox.com,content.cdn.mozilla.net,content.cdn.mozilla.net,discovery.addons.mozilla.org,input.mozilla.org,install.mozilla.org,oauth.accounts.firefox.com,profile.accounts.firefox.com,support.mozilla.org,sync.services.mozilla.com,testpilot.firefox.com");
+pref("extensions.webextensions.restrictedDomains", "accounts-static.cdn.mozilla.net,accounts.firefox.com,addons.cdn.mozilla.net,addons.mozilla.org,api.accounts.firefox.com,content.cdn.mozilla.net,discovery.addons.mozilla.org,input.mozilla.org,install.mozilla.org,oauth.accounts.firefox.com,profile.accounts.firefox.com,support.mozilla.org,sync.services.mozilla.com,testpilot.firefox.com");
 // Whether or not webextension icon theming is supported.
 pref("extensions.webextensions.themes.icons.enabled", false);
 pref("extensions.webextensions.remote", false);
@@ -5017,6 +5044,14 @@ pref("extensions.webextensions.protocol.remote", true);
 
 // Enable tab hiding API by default.
 pref("extensions.webextensions.tabhide.enabled", true);
+
+#ifdef NIGHTLY_BUILD
+// Enable userScripts API by default on Nightly.
+pref("extensions.webextensions.userScripts.enabled", true);
+#else
+// Disable userScripts API by default on all other channels.
+pref("extensions.webextensions.userScripts.enabled", false);
+#endif
 
 pref("extensions.webextensions.background-delayed-startup", false);
 
@@ -5029,6 +5064,11 @@ pref("extensions.webextensions.ExtensionStorageIDB.enabled", false);
 
 // if enabled, store execution times for API calls
 pref("extensions.webextensions.enablePerformanceCounters", false);
+
+// Maximum age in milliseconds of performance counters in children
+// When reached, the counters are sent to the main process and
+// reset, so we reduce memory footprint.
+pref("extensions.webextensions.performanceCountersMaxAge", 1000);
 
 // Report Site Issue button
 pref("extensions.webcompat-reporter.newIssueEndpoint", "https://webcompat.com/issues/new");
@@ -5457,7 +5497,7 @@ pref("browser.safebrowsing.id", "Firefox");
 // Download protection
 pref("browser.safebrowsing.downloads.enabled", true);
 pref("browser.safebrowsing.downloads.remote.enabled", true);
-pref("browser.safebrowsing.downloads.remote.timeout_ms", 10000);
+pref("browser.safebrowsing.downloads.remote.timeout_ms", 15000);
 pref("browser.safebrowsing.downloads.remote.url", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
 pref("browser.safebrowsing.downloads.remote.block_dangerous",            true);
 pref("browser.safebrowsing.downloads.remote.block_dangerous_host",       true);
@@ -5523,51 +5563,6 @@ pref("plugins.flashBlock.enabled", false);
 
 // Turn off Spatial navigation by default.
 pref("snav.enabled", false);
-
-// Debug-only pref to force enable the AccessibleCaret. If you want to
-// control AccessibleCaret by mouse, you'll need to set
-// "layout.accessiblecaret.hide_carets_for_mouse_input" to false.
-pref("layout.accessiblecaret.enabled", false);
-
-// Enable the accessible caret on platforms/devices
-// that we detect have touch support. Note that this pref is an
-// additional way to enable the accessible carets, rather than
-// overriding the layout.accessiblecaret.enabled pref.
-pref("layout.accessiblecaret.enabled_on_touch", true);
-
-// CSS attributes of the AccessibleCaret in CSS pixels.
-pref("layout.accessiblecaret.width", "34.0");
-pref("layout.accessiblecaret.height", "36.0");
-pref("layout.accessiblecaret.margin-left", "-18.5");
-
-// Show the caret when long tapping on an empty content.
-pref("layout.accessiblecaret.caret_shown_when_long_tapping_on_empty_content", false);
-
-// Simulate long tap to select words on the platforms where APZ is not enabled
-// or long tap events does not fired by APZ.
-pref("layout.accessiblecaret.use_long_tap_injector", false);
-
-// By default, carets become tilt only when they are overlapping.
-pref("layout.accessiblecaret.always_tilt", false);
-
-// 0 = by default, always hide carets for selection changes due to JS calls.
-// 1 = update any visible carets for selection changes due to JS calls,
-//     but don't show carets if carets are hidden.
-// 2 = always show carets for selection changes due to JS calls.
-pref("layout.accessiblecaret.script_change_update_mode", 0);
-
-// Allow one caret to be dragged across the other caret without any limitation.
-// This matches the built-in convention for all desktop platforms.
-pref("layout.accessiblecaret.allow_dragging_across_other_caret", true);
-
-// Optionally provide haptic feedback on longPress selection events.
-pref("layout.accessiblecaret.hapticfeedback", false);
-
-// Smart phone-number selection on long-press is not enabled by default.
-pref("layout.accessiblecaret.extend_selection_for_phone_number", false);
-
-// Keep the accessible carets hidden when the user is using mouse input.
-pref("layout.accessiblecaret.hide_carets_for_mouse_input", true);
 
 // Wakelock is disabled by default.
 pref("dom.wakelock.enabled", false);
@@ -5821,10 +5816,6 @@ pref("dom.payments.loglevel", "Warn");
 pref("dom.payments.defaults.saveCreditCard", false);
 pref("dom.payments.defaults.saveAddress", true);
 
-#ifdef FUZZING
-pref("fuzzing.enabled", false);
-#endif
-
 #ifdef MOZ_ASAN_REPORTER
 pref("asanreporter.apiurl", "https://anf1.fuzzing.mozilla.org/crashproxy/submit/");
 pref("asanreporter.clientid", "unknown");
@@ -5840,7 +5831,7 @@ pref("layers.mlgpu.enable-on-windows7", true);
 #endif
 
 // Enable lowercased response header name
-pref("dom.xhr.lowercase_header.enabled", false);
+pref("dom.xhr.lowercase_header.enabled", true);
 
 // Control whether clients.openWindow() opens windows in the same process
 // that called the API vs following our normal multi-process selection
@@ -5878,7 +5869,6 @@ pref("general.document_open_conversion_depth_limit", 20);
 // documentElement and document.body are passive by default.
 pref("dom.event.default_to_passive_touch_listeners", true);
 
-pref("browser.fastblock.enabled", false);
 // The amount of time (ms) since navigation start after which all
 // tracker connections will be cancelled.
 pref("browser.fastblock.timeout", 5000);
@@ -5896,11 +5886,6 @@ pref("dom.events.asyncClipboard", true);
 pref("dom.events.asyncClipboard.dataTransfer", false);
 // Should only be enabled in tests
 pref("dom.events.testing.asyncClipboard", false);
-
-// Enable to correctly draw CSD window headerbar
-#if defined(MOZ_WIDGET_GTK)
-pref("mozilla.widget.use-argb-visuals", false);
-#endif
 
 #ifdef NIGHTLY_BUILD
 // Disable moz* APIs in DataTransfer

@@ -556,7 +556,7 @@ Http2Stream::GenerateOpen()
   // Now we need to convert the flat http headers into a set
   // of HTTP/2 headers by writing to mTxInlineFrame{sz}
 
-  nsCString compressedData;
+  nsAutoCStringN<1025> compressedData;
   nsAutoCString authorityHeader;
   nsresult rv = head->GetHeader(nsHttp::Host, authorityHeader);
   if (NS_FAILED(rv)) {
@@ -1368,7 +1368,9 @@ Http2Stream::TopLevelOuterContentWindowIdChanged(uint64_t windowId)
           "depends on stream 0x%X\n", this, mPriorityDependency));
   }
 
-  mSession->SendPriorityFrame(mStreamID, mPriorityDependency, mPriorityWeight);
+  if (mStreamID) {
+    mSession->SendPriorityFrame(mStreamID, mPriorityDependency, mPriorityWeight);
+  }
 }
 
 void

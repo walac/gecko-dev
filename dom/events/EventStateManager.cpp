@@ -44,7 +44,7 @@
 #include "nsIPresShell.h"
 #include "nsGkAtoms.h"
 #include "nsIFormControl.h"
-#include "nsIComboboxControlFrame.h"
+#include "nsComboboxControlFrame.h"
 #include "nsIScrollableFrame.h"
 #include "nsIDOMXULControlElement.h"
 #include "nsNameSpaceManager.h"
@@ -504,8 +504,8 @@ EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
          aEvent->mMessage == eWheel || aEvent->mMessage == eTouchEnd ||
          aEvent->mMessage == ePointerUp)) {
       nsIDocument* doc = node->OwnerDoc();
-      while (doc && !doc->UserHasInteracted()) {
-        doc->SetUserHasInteracted(true);
+      while (doc) {
+        doc->SetUserHasInteracted();
         doc = nsContentUtils::IsChildOfSameType(doc) ?
           doc->GetParentDocument() : nullptr;
       }
@@ -2684,7 +2684,7 @@ EventStateManager::ComputeScrollTargetAndMayAdjustWheelEvent(
     }
 
     // Comboboxes need special care.
-    nsIComboboxControlFrame* comboBox = do_QueryFrame(scrollFrame);
+    nsComboboxControlFrame* comboBox = do_QueryFrame(scrollFrame);
     if (comboBox) {
       if (comboBox->IsDroppedDown()) {
         // Don't propagate to parent when drop down menu is active.

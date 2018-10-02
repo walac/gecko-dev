@@ -6,11 +6,14 @@
 
 DevToolsModules(
     'actor-registry-utils.js',
+    'actor-registry.js',
     'audionodes.json',
     'automation-timeline.js',
     'breakpoint-actor-map.js',
+    'call-watcher.js',
     'css-grid-utils.js',
     'event-loop.js',
+    'function-call.js',
     'make-debugger.js',
     'map-uri-to-addon-id.js',
     'shapes-utils.js',

@@ -183,6 +183,7 @@
 #include "nsIURIWithSpecialOrigin.h"
 #include "nsIURL.h"
 #include "nsIWebNavigation.h"
+#include "nsIWidget.h"
 #include "nsIWindowMediator.h"
 #include "nsIXPConnect.h"
 #include "nsJSUtils.h"
@@ -272,7 +273,7 @@ nsIContentPolicy *nsContentUtils::sContentPolicyService;
 bool nsContentUtils::sTriedToGetContentPolicy = false;
 RefPtr<mozilla::intl::LineBreaker> nsContentUtils::sLineBreaker;
 RefPtr<mozilla::intl::WordBreaker> nsContentUtils::sWordBreaker;
-nsIBidiKeyboard *nsContentUtils::sBidiKeyboard = nullptr;
+StaticRefPtr<nsIBidiKeyboard> nsContentUtils::sBidiKeyboard;
 uint32_t nsContentUtils::sScriptBlockerCount = 0;
 uint32_t nsContentUtils::sDOMNodeRemovedSuppressCount = 0;
 AutoTArray<nsCOMPtr<nsIRunnable>, 8>* nsContentUtils::sBlockedScriptRunners = nullptr;
@@ -1633,10 +1634,7 @@ nsIBidiKeyboard*
 nsContentUtils::GetBidiKeyboard()
 {
   if (!sBidiKeyboard) {
-    nsresult rv = CallGetService("@mozilla.org/widget/bidikeyboard;1", &sBidiKeyboard);
-    if (NS_FAILED(rv)) {
-      sBidiKeyboard = nullptr;
-    }
+    sBidiKeyboard = nsIWidget::CreateBidiKeyboard();
   }
   return sBidiKeyboard;
 }
@@ -1986,7 +1984,7 @@ nsContentUtils::Shutdown()
   NS_IF_RELEASE(sUUIDGenerator);
   sLineBreaker = nullptr;
   sWordBreaker = nullptr;
-  NS_IF_RELEASE(sBidiKeyboard);
+  sBidiKeyboard = nullptr;
 
   delete sAtomEventTable;
   sAtomEventTable = nullptr;
@@ -2212,6 +2210,14 @@ nsContentUtils::IsCallerChrome()
   // If the check failed, look for UniversalXPConnect on the cx compartment.
   return xpc::IsUniversalXPConnectEnabled(GetCurrentJSContext());
 }
+
+#ifdef FUZZING
+bool
+nsContentUtils::IsFuzzingEnabled()
+{
+  return StaticPrefs::fuzzing_enabled();
+}
+#endif
 
 /* static */
 bool
@@ -4371,6 +4377,7 @@ nsresult GetEventAndTarget(nsIDocument* aDoc, nsISupports* aTarget,
                            const nsAString& aEventName,
                            CanBubble aCanBubble,
                            Cancelable aCancelable,
+                           Composed aComposed,
                            Trusted aTrusted,
                            Event** aEvent,
                            EventTarget** aTargetOut)
@@ -4385,7 +4392,7 @@ nsresult GetEventAndTarget(nsIDocument* aDoc, nsISupports* aTarget,
     return err.StealNSResult();
   }
 
-  event->InitEvent(aEventName, aCanBubble, aCancelable);
+  event->InitEvent(aEventName, aCanBubble, aCancelable, aComposed);
   event->SetTrusted(aTrusted == Trusted::eYes);
 
   event->SetTarget(target);
@@ -4401,10 +4408,11 @@ nsContentUtils::DispatchTrustedEvent(nsIDocument* aDoc, nsISupports* aTarget,
                                      const nsAString& aEventName,
                                      CanBubble aCanBubble,
                                      Cancelable aCancelable,
+                                     Composed aComposed,
                                      bool* aDefaultAction)
 {
   return DispatchEvent(aDoc, aTarget, aEventName, aCanBubble, aCancelable,
-                       Trusted::eYes, aDefaultAction);
+                       aComposed, Trusted::eYes, aDefaultAction);
 }
 
 // static
@@ -4416,7 +4424,7 @@ nsContentUtils::DispatchUntrustedEvent(nsIDocument* aDoc, nsISupports* aTarget,
                                        bool* aDefaultAction)
 {
   return DispatchEvent(aDoc, aTarget, aEventName, aCanBubble, aCancelable,
-                       Trusted::eNo, aDefaultAction);
+                       Composed::eDefault, Trusted::eNo, aDefaultAction);
 }
 
 // static
@@ -4425,6 +4433,7 @@ nsContentUtils::DispatchEvent(nsIDocument* aDoc, nsISupports* aTarget,
                               const nsAString& aEventName,
                               CanBubble aCanBubble,
                               Cancelable aCancelable,
+                              Composed aComposed,
                               Trusted aTrusted,
                               bool* aDefaultAction,
                               ChromeOnlyDispatch aOnlyChromeDispatch)
@@ -4432,7 +4441,8 @@ nsContentUtils::DispatchEvent(nsIDocument* aDoc, nsISupports* aTarget,
   RefPtr<Event> event;
   nsCOMPtr<EventTarget> target;
   nsresult rv = GetEventAndTarget(aDoc, aTarget, aEventName, aCanBubble,
-                                  aCancelable, aTrusted, getter_AddRefs(event),
+                                  aCancelable, aComposed, aTrusted,
+                                  getter_AddRefs(event),
                                   getter_AddRefs(target));
   NS_ENSURE_SUCCESS(rv, rv);
   event->WidgetEventPtr()->mFlags.mOnlyChromeDispatch =
@@ -4496,7 +4506,8 @@ nsContentUtils::DispatchChromeEvent(nsIDocument *aDoc,
   RefPtr<Event> event;
   nsCOMPtr<EventTarget> target;
   nsresult rv = GetEventAndTarget(aDoc, aTarget, aEventName, aCanBubble,
-                                  aCancelable, Trusted::eYes,
+                                  aCancelable, Composed::eDefault,
+                                  Trusted::eYes,
                                   getter_AddRefs(event),
                                   getter_AddRefs(target));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -4543,7 +4554,8 @@ nsContentUtils::DispatchEventOnlyToChrome(nsIDocument* aDoc,
                                           bool* aDefaultAction)
 {
   return DispatchEvent(aDoc, aTarget, aEventName, aCanBubble, aCancelable,
-                       Trusted::eYes, aDefaultAction, ChromeOnlyDispatch::eYes);
+                       Composed::eDefault, Trusted::eYes, aDefaultAction,
+                       ChromeOnlyDispatch::eYes);
 }
 
 /* static */
@@ -8670,6 +8682,26 @@ nsContentUtils::GetReferrerPolicyFromHeader(const nsAString& aHeader)
 }
 
 // static
+net::ReferrerPolicy
+nsContentUtils::GetReferrerPolicyFromChannel(nsIChannel* aChannel)
+{
+  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
+  if (!httpChannel) {
+    return net::RP_Unset;
+  }
+
+  nsresult rv;
+  nsAutoCString headerValue;
+  rv = httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("referrer-policy"),
+                                      headerValue);
+  if (NS_FAILED(rv) || headerValue.IsEmpty()) {
+    return net::RP_Unset;
+  }
+
+  return GetReferrerPolicyFromHeader(NS_ConvertUTF8toUTF16(headerValue));
+}
+
+// static
 bool
 nsContentUtils::IsNonSubresourceRequest(nsIChannel* aChannel)
 {
@@ -10160,7 +10192,7 @@ nsContentUtils::NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* a
 }
 
 CustomElementRegistry*
-GetCustomElementRegistry(nsIDocument* aDoc)
+nsContentUtils::GetCustomElementRegistry(nsIDocument* aDoc)
 {
   MOZ_ASSERT(aDoc);
 
@@ -10187,7 +10219,7 @@ nsContentUtils::LookupCustomElementDefinition(nsIDocument* aDoc,
     return nullptr;
   }
 
-  RefPtr<CustomElementRegistry> registry(GetCustomElementRegistry(aDoc));
+  RefPtr<CustomElementRegistry> registry = GetCustomElementRegistry(aDoc);
   if (!registry) {
     return nullptr;
   }

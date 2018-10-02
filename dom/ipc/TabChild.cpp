@@ -1618,12 +1618,8 @@ TabChild::RecvRealMouseMoveEvent(const WidgetMouseEvent& aEvent,
                                  const uint64_t& aInputBlockId)
 {
   if (mCoalesceMouseMoveEvents && mCoalescedMouseEventFlusher) {
-    CoalescedMouseData* data = nullptr;
-    mCoalescedMouseData.Get(aEvent.pointerId, &data);
-    if (!data) {
-      data = new CoalescedMouseData();
-      mCoalescedMouseData.Put(aEvent.pointerId, data);
-    }
+    CoalescedMouseData* data = mCoalescedMouseData.LookupOrAdd(aEvent.pointerId);
+    MOZ_ASSERT(data);
     if (data->CanCoalesce(aEvent, aGuid, aInputBlockId)) {
       data->Coalesce(aEvent, aGuid, aInputBlockId);
       mCoalescedMouseEventFlusher->StartObserver();
@@ -1632,7 +1628,6 @@ TabChild::RecvRealMouseMoveEvent(const WidgetMouseEvent& aEvent,
     // Can't coalesce current mousemove event. Put the coalesced mousemove data
     // with the same pointer id to mToBeDispatchedMouseData, coalesce the
     // current one, and process all pending data in mToBeDispatchedMouseData.
-    MOZ_ASSERT(data);
     UniquePtr<CoalescedMouseData> dispatchData =
       MakeUnique<CoalescedMouseData>();
 
@@ -3211,6 +3206,25 @@ TabChild::InvalidateLayers()
 }
 
 void
+TabChild::SchedulePaint()
+{
+  nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
+  if (!docShell) {
+    return;
+  }
+
+  // We don't use TabChildBase::GetPresShell() here because that would create
+  // a content viewer if one doesn't exist yet. Creating a content viewer can
+  // cause JS to run, which we want to avoid. nsIDocShell::GetPresShell
+  // returns null if no content viewer exists yet.
+  if (nsCOMPtr<nsIPresShell> presShell = docShell->GetPresShell()) {
+    if (nsIFrame* root = presShell->GetRootFrame()) {
+      root->SchedulePaint();
+    }
+  }
+}
+
+void
 TabChild::ReinitRendering()
 {
   MOZ_ASSERT(mLayersId.IsValid());
@@ -3379,6 +3393,16 @@ TabChild::RecvSetWindowName(const nsString& aName)
   nsCOMPtr<nsIDocShellTreeItem> item = do_QueryInterface(WebNavigation());
   if (item) {
     item->SetName(aName);
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+TabChild::RecvAllowScriptsToClose()
+{
+  nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
+  if (window) {
+    nsGlobalWindowOuter::Cast(window)->AllowScriptsToClose();
   }
   return IPC_OK();
 }

@@ -334,9 +334,11 @@ MacOSFontEntry::GetVariationAxes(nsTArray<gfxFontVariationAxis>& aVariationAxes)
                             kCTFontVariationAxisNameKey);
             if (name) {
                 CFIndex len = CFStringGetLength(name);
-                axis.mName.SetLength(len);
+                nsAutoString nameStr;
+                nameStr.SetLength(len);
                 CFStringGetCharacters(name, CFRangeMake(0, len),
-                                      (UniChar*)axis.mName.BeginWriting());
+                                      (UniChar*)nameStr.BeginWriting());
+                AppendUTF16toUTF8(nameStr, axis.mName);
             }
             axis.mTag = (uint32_t)tag;
             axis.mMinValue = minValue;
@@ -1244,12 +1246,12 @@ gfxMacPlatformFontList::InitFontListForPlatform()
 void
 gfxMacPlatformFontList::InitSingleFaceList()
 {
-    AutoTArray<nsString, 10> singleFaceFonts;
+    AutoTArray<nsCString, 10> singleFaceFonts;
     gfxFontUtils::GetPrefsFontList("font.single-face-list", singleFaceFonts);
 
-    for (const auto& singleFaceFamily : singleFaceFonts) {
+    for (auto& familyName : singleFaceFonts) {
         LOG_FONTLIST(("(fontlist-singleface) face name: %s\n",
-                      NS_ConvertUTF16toUTF8(singleFaceFamily).get()));
+                      familyName.get()));
         // Each entry in the "single face families" list is expected to be a
         // colon-separated pair of FaceName:Family,
         // where FaceName is the individual face name (psname) of a font
@@ -1257,7 +1259,6 @@ gfxMacPlatformFontList::InitSingleFaceList()
         // and Family is the standard family to which that face belongs.
         // The only such face listed by default is
         //    Osaka-Mono:Osaka
-        NS_ConvertUTF16toUTF8 familyName(singleFaceFamily);
         auto colon = familyName.FindChar(':');
         if (colon == kNotFound) {
             continue;

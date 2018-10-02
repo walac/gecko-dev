@@ -88,6 +88,20 @@ VARCACHE_PREF(
 )
 
 //---------------------------------------------------------------------------
+// Fuzzing prefs. It's important that these can only be checked in fuzzing
+// builds (when FUZZING is defined), otherwise you could enable the fuzzing
+// stuff on your regular build which would be bad :)
+//---------------------------------------------------------------------------
+
+#ifdef FUZZING
+VARCACHE_PREF(
+  "fuzzing.enabled",
+   fuzzing_enabled,
+  bool, false
+)
+#endif
+
+//---------------------------------------------------------------------------
 // Clipboard prefs
 //---------------------------------------------------------------------------
 
@@ -194,6 +208,13 @@ VARCACHE_PREF(
 // Note, this is not currently safe to use for normal browsing yet.
 PREF("dom.serviceWorkers.parent_intercept", bool, false)
 
+// Whether a user gesture is required to call PaymentRequest.prototype.show().
+VARCACHE_PREF(
+  "dom.payments.request.user_interaction_required",
+  dom_payments_request_user_interaction_required,
+  bool, true
+)
+
 // Time in milliseconds for PaymentResponse to wait for
 // the Web page to call complete().
 VARCACHE_PREF(
@@ -294,13 +315,6 @@ VARCACHE_PREF(
   RelaxedAtomicBool, false
 )
 
-// Streams API
-VARCACHE_PREF(
-  "dom.streams.enabled",
-   dom_streams_enabled,
-  RelaxedAtomicBool, false
-)
-
 #if !defined(MOZ_WIDGET_ANDROID)
 # define PREF_VALUE true
 #else
@@ -375,6 +389,13 @@ VARCACHE_PREF(
   RelaxedAtomicUint32, 30000 /* 30 seconds */
 )
 
+// Enable content type normalization of XHR uploads via MIME Sniffing standard
+VARCACHE_PREF(
+  "dom.xhr.standard_content_type_normalization",
+   dom_xhr_standard_content_type_normalization,
+  RelaxedAtomicBool, true
+)
+
 //---------------------------------------------------------------------------
 // Clear-Site-Data prefs
 //---------------------------------------------------------------------------
@@ -389,17 +410,11 @@ VARCACHE_PREF(
 // Full-screen prefs
 //---------------------------------------------------------------------------
 
-#ifdef RELEASE_OR_BETA
-# define PREF_VALUE false
-#else
-# define PREF_VALUE true
-#endif
 VARCACHE_PREF(
   "full-screen-api.unprefix.enabled",
    full_screen_api_unprefix_enabled,
-  bool, PREF_VALUE
+  bool, true
 )
-#undef PREF_VALUE
 
 //---------------------------------------------------------------------------
 // Graphics prefs
@@ -448,6 +463,110 @@ VARCACHE_PREF(
 //---------------------------------------------------------------------------
 // Layout prefs
 //---------------------------------------------------------------------------
+
+// Debug-only pref to force enable the AccessibleCaret. If you want to
+// control AccessibleCaret by mouse, you'll need to set
+// "layout.accessiblecaret.hide_carets_for_mouse_input" to false.
+VARCACHE_PREF(
+  "layout.accessiblecaret.enabled",
+   layout_accessiblecaret_enabled,
+  bool, false
+)
+
+// Enable the accessible caret on platforms/devices
+// that we detect have touch support. Note that this pref is an
+// additional way to enable the accessible carets, rather than
+// overriding the layout.accessiblecaret.enabled pref.
+VARCACHE_PREF(
+  "layout.accessiblecaret.enabled_on_touch",
+   layout_accessiblecaret_enabled_on_touch,
+  bool, true
+)
+
+// By default, carets become tilt only when they are overlapping.
+VARCACHE_PREF(
+  "layout.accessiblecaret.always_tilt",
+   layout_accessiblecaret_always_tilt,
+  bool, false
+)
+
+// Show caret in cursor mode when long tapping on an empty content. This
+// also changes the default update behavior in cursor mode, which is based
+// on the emptiness of the content, into something more heuristic. See
+// AccessibleCaretManager::UpdateCaretsForCursorMode() for the details.
+VARCACHE_PREF(
+  "layout.accessiblecaret.caret_shown_when_long_tapping_on_empty_content",
+   layout_accessiblecaret_caret_shown_when_long_tapping_on_empty_content,
+  bool, false
+)
+
+// 0 = by default, always hide carets for selection changes due to JS calls.
+// 1 = update any visible carets for selection changes due to JS calls,
+//     but don't show carets if carets are hidden.
+// 2 = always show carets for selection changes due to JS calls.
+VARCACHE_PREF(
+  "layout.accessiblecaret.script_change_update_mode",
+   layout_accessiblecaret_script_change_update_mode,
+  int32_t, 0
+)
+
+// Allow one caret to be dragged across the other caret without any limitation.
+// This matches the built-in convention for all desktop platforms.
+VARCACHE_PREF(
+  "layout.accessiblecaret.allow_dragging_across_other_caret",
+   layout_accessiblecaret_allow_dragging_across_other_caret,
+  bool, true
+)
+
+// Optionally provide haptic feedback on long-press selection events.
+VARCACHE_PREF(
+  "layout.accessiblecaret.hapticfeedback",
+   layout_accessiblecaret_hapticfeedback,
+  bool, false
+)
+
+// Smart phone-number selection on long-press is not enabled by default.
+VARCACHE_PREF(
+  "layout.accessiblecaret.extend_selection_for_phone_number",
+   layout_accessiblecaret_extend_selection_for_phone_number,
+  bool, false
+)
+
+// Keep the accessible carets hidden when the user is using mouse input (as
+// opposed to touch/pen/etc.).
+VARCACHE_PREF(
+  "layout.accessiblecaret.hide_carets_for_mouse_input",
+   layout_accessiblecaret_hide_carets_for_mouse_input,
+  bool, true
+)
+
+// CSS attributes (width, height, margin-left) of the AccessibleCaret in CSS
+// pixels.
+VARCACHE_PREF(
+  "layout.accessiblecaret.width",
+   layout_accessiblecaret_width,
+  float, 34.0f
+)
+
+VARCACHE_PREF(
+  "layout.accessiblecaret.height",
+   layout_accessiblecaret_height,
+  float, 36.0f
+)
+
+VARCACHE_PREF(
+  "layout.accessiblecaret.margin-left",
+   layout_accessiblecaret_margin_left,
+  float, -18.5f
+)
+
+// Simulate long tap events to select words. Mainly used in manual testing
+// with mouse.
+VARCACHE_PREF(
+  "layout.accessiblecaret.use_long_tap_injector",
+   layout_accessiblecaret_use_long_tap_injector,
+  bool, false
+)
 
 // Is parallel CSS parsing enabled?
 VARCACHE_PREF(
@@ -547,17 +666,11 @@ VARCACHE_PREF(
 )
 
 // Is the '-webkit-appearance' alias for '-moz-appearance' enabled?
-#ifdef EARLY_BETA_OR_EARLIER
-#define PREF_VALUE true
-#else
-#define PREF_VALUE false
-#endif
 VARCACHE_PREF(
   "layout.css.webkit-appearance.enabled",
    layout_css_webkit_appearance_enabled,
-  bool, PREF_VALUE
+  bool, true
 )
-#undef PREF_VALUE
 
 // Pref to control whether @-moz-document rules are enabled in content pages.
 VARCACHE_PREF(
@@ -724,6 +837,14 @@ VARCACHE_PREF(
    javascript_options_mem_notify,
   bool, false
 )
+
+// Streams API
+VARCACHE_PREF(
+  "javascript.options.streams",
+   javascript_options_streams,
+  RelaxedAtomicBool, false
+)
+
 
 //---------------------------------------------------------------------------
 // Media prefs
@@ -1469,13 +1590,51 @@ PREF("preferences.allow.omt-write", bool, true)
 //---------------------------------------------------------------------------
 
 // Whether Content Blocking has been enabled.
-// Please note that privacy protections provided by Gecko may depend on this preference.
-// Turning this off may disable some protections.  Please do not turn this pref off without
-// realizing the implications of what you're doing.
 VARCACHE_PREF(
   "browser.contentblocking.enabled",
    browser_contentblocking_enabled,
   bool, true
+)
+
+#ifdef NIGHTLY_BUILD
+# define PREF_VALUE true
+#else
+# define PREF_VALUE false
+#endif
+// Whether Content Blocking UI has been enabled.
+VARCACHE_PREF(
+  "browser.contentblocking.ui.enabled",
+   browser_contentblocking_ui_enabled,
+  bool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+// Whether Content Blocking Third-Party Cookies UI has been enabled.
+VARCACHE_PREF(
+  "browser.contentblocking.allowlist.storage.enabled",
+   browser_contentblocking_allowlist_storage_enabled,
+  bool, false
+)
+
+VARCACHE_PREF(
+  "browser.contentblocking.allowlist.annotations.enabled",
+   browser_contentblocking_allowlist_annotations_enabled,
+  bool, true
+)
+
+// How many recent block/unblock actions per origins we remember in the
+// Content Blocking log for each top-level window.
+VARCACHE_PREF(
+  "browser.contentblocking.originlog.length",
+   browser_contentblocking_originlog_length,
+  uint32_t, 32
+)
+
+// Whether FastBlock has been enabled.
+VARCACHE_PREF(
+  "browser.fastblock.enabled",
+  browser_fastblock_enabled,
+  bool, false
 )
 
 // Anti-tracking permission expiration
@@ -1483,6 +1642,20 @@ VARCACHE_PREF(
   "privacy.restrict3rdpartystorage.expiration",
    privacy_restrict3rdpartystorage_expiration,
   uint32_t, 2592000 // 30 days (in seconds)
+)
+
+// Anti-tracking user-interaction expiration
+VARCACHE_PREF(
+  "privacy.userInteraction.expiration",
+   privacy_userInteraction_expiration,
+  uint32_t, 2592000 // 30 days (in seconds)
+)
+
+// Anti-tracking user-interaction document interval
+VARCACHE_PREF(
+  "privacy.userInteraction.document.interval",
+   privacy_userInteraction_document_interval,
+  uint32_t, 1800 // 30 minutes (in seconds)
 )
 
 // Anti-fingerprinting, disabled by default
@@ -1544,6 +1717,16 @@ VARCACHE_PREF(
   "devtools.enabled",
    devtools_enabled,
   RelaxedAtomicBool, false
+)
+
+//---------------------------------------------------------------------------
+// Feature-Policy prefs
+//---------------------------------------------------------------------------
+
+VARCACHE_PREF(
+  "dom.security.featurePolicy.enabled",
+   dom_security_featurePolicy_enabled,
+  bool, false
 )
 
 //---------------------------------------------------------------------------

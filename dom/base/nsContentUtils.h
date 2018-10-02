@@ -25,6 +25,7 @@
 #include "mozilla/CORSMode.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/GuardObjects.h"
+#include "mozilla/StaticPtr.h"
 #include "mozilla/TaskCategory.h"
 #include "mozilla/TimeStamp.h"
 #include "nsContentListDeclarations.h"
@@ -203,6 +204,7 @@ class nsContentUtils
   typedef mozilla::dom::Element Element;
   typedef mozilla::Cancelable Cancelable;
   typedef mozilla::CanBubble CanBubble;
+  typedef mozilla::Composed Composed;
   typedef mozilla::ChromeOnlyDispatch ChromeOnlyDispatch;
   typedef mozilla::EventMessage EventMessage;
   typedef mozilla::TimeDuration TimeDuration;
@@ -214,9 +216,22 @@ public:
   // Strip off "wyciwyg://n/" part of a URL. aURI must have "wyciwyg" scheme.
   static nsresult RemoveWyciwygScheme(nsIURI* aURI, nsIURI** aReturn);
 
-  static bool     IsCallerChrome();
-  static bool     ThreadsafeIsCallerChrome();
-  static bool     IsCallerContentXBL();
+  static bool IsCallerChrome();
+  static bool ThreadsafeIsCallerChrome();
+  static bool IsCallerContentXBL();
+  static bool IsFuzzingEnabled()
+#ifndef FUZZING
+  {
+    return false;
+  }
+#else
+  ;
+#endif
+
+  static bool IsCallerChromeOrFuzzingEnabled(JSContext* aCx, JSObject*)
+  {
+    return ThreadsafeIsSystemCaller(aCx) || IsFuzzingEnabled();
+  }
 
   // The APIs for checking whether the caller is system (in the sense of system
   // principal) should only be used when the JSContext is known to accurately
@@ -1345,6 +1360,7 @@ public:
    * @param aEventName     The name of the event.
    * @param aCanBubble     Whether the event can bubble.
    * @param aCancelable    Is the event cancelable.
+   * @param aCopmosed      Is the event composed.
    * @param aDefaultAction Set to true if default action should be taken,
    *                       see EventTarget::DispatchEvent.
    */
@@ -1353,7 +1369,20 @@ public:
                                        const nsAString& aEventName,
                                        CanBubble,
                                        Cancelable,
+                                       Composed aComposed = Composed::eDefault,
                                        bool* aDefaultAction = nullptr);
+
+  static nsresult DispatchTrustedEvent(nsIDocument* aDoc,
+                                       nsISupports* aTarget,
+                                       const nsAString& aEventName,
+                                       CanBubble aCanBubble,
+                                       Cancelable aCancelable,
+                                       bool* aDefaultAction)
+  {
+    return DispatchTrustedEvent(aDoc, aTarget, aEventName,
+                                aCanBubble, aCancelable,
+                                Composed::eDefault, aDefaultAction);
+  }
 
   /**
    * This method creates and dispatches a trusted event using an event message.
@@ -2880,6 +2909,16 @@ public:
                                                 mozilla::net::ReferrerPolicy aReferrerPolicy);
 
   /*
+   * If there is a Referrer-Policy response header in |aChannel|, parse a
+   * referrer policy from the header.
+   *
+   * @param the channel from which to get the Referrer-Policy header
+   * @return referrer policy from the response header in aChannel
+   */
+  static mozilla::net::ReferrerPolicy
+    GetReferrerPolicyFromChannel(nsIChannel* aChannel);
+
+  /*
    * Parse a referrer policy from a Referrer-Policy header
    * https://www.w3.org/TR/referrer-policy/#parse-referrer-policy-from-header
    *
@@ -3043,6 +3082,9 @@ public:
   static nsresult NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* aNodeInfo,
                                       mozilla::dom::FromParser aFromParser, nsAtom* aIsAtom,
                                       mozilla::dom::CustomElementDefinition* aDefinition);
+
+  static mozilla::dom::CustomElementRegistry*
+    GetCustomElementRegistry(nsIDocument*);
 
   /**
    * Looking up a custom element definition.
@@ -3339,6 +3381,7 @@ private:
                                 const nsAString& aEventName,
                                 CanBubble,
                                 Cancelable,
+                                Composed,
                                 Trusted,
                                 bool* aDefaultAction = nullptr,
                                 ChromeOnlyDispatch = ChromeOnlyDispatch::eNo);
@@ -3433,7 +3476,7 @@ private:
   static RefPtr<mozilla::intl::LineBreaker> sLineBreaker;
   static RefPtr<mozilla::intl::WordBreaker> sWordBreaker;
 
-  static nsIBidiKeyboard* sBidiKeyboard;
+  static mozilla::StaticRefPtr<nsIBidiKeyboard> sBidiKeyboard;
 
   static bool sInitialized;
   static uint32_t sScriptBlockerCount;

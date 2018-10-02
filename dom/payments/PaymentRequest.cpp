@@ -6,14 +6,18 @@
 
 #include "BasicCardPayment.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/FeaturePolicyUtils.h"
 #include "mozilla/dom/PaymentRequest.h"
 #include "mozilla/dom/PaymentRequestChild.h"
 #include "mozilla/dom/PaymentResponse.h"
 #include "mozilla/EventStateManager.h"
+#include "mozilla/StaticPrefs.h"
 #include "nsContentUtils.h"
+#include "nsIScriptError.h"
 #include "nsIURLParser.h"
 #include "nsNetCID.h"
 #include "PaymentRequestManager.h"
+#include "mozilla/dom/MerchantValidationEvent.h"
 
 namespace mozilla {
 namespace dom {
@@ -557,6 +561,12 @@ PaymentRequest::Constructor(const GlobalObject& aGlobal,
     return nullptr;
   }
 
+  if (!FeaturePolicyUtils::IsFeatureAllowed(doc,
+                                            NS_LITERAL_STRING("payment"))) {
+    aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
+    return nullptr;
+  }
+
   // Check if AllowPaymentRequest on the owner document
   if (!doc->AllowPaymentRequest()) {
     aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
@@ -604,7 +614,6 @@ PaymentRequest::Constructor(const GlobalObject& aGlobal,
     aRv.Throw(NS_ERROR_DOM_TYPE_ERR);
     return nullptr;
   }
-
   return request.forget();
 }
 
@@ -691,15 +700,23 @@ already_AddRefed<Promise>
 PaymentRequest::Show(const Optional<OwningNonNull<Promise>>& aDetailsPromise,
                      ErrorResult& aRv)
 {
-  if (!EventStateManager::IsHandlingUserInput()) {
-    aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
-    return nullptr;
-  }
-
   nsIGlobalObject* global = GetOwnerGlobal();
   nsCOMPtr<nsPIDOMWindowInner> win = do_QueryInterface(global);
   MOZ_ASSERT(win);
   nsIDocument* doc = win->GetExtantDoc();
+
+  if (!EventStateManager::IsHandlingUserInput()) {
+    nsString msg = NS_LITERAL_STRING("User activation is now required to call PaymentRequest.show()");
+    nsContentUtils::ReportToConsoleNonLocalized(msg,
+                                                nsIScriptError::warningFlag,
+                                                NS_LITERAL_CSTRING("Security"),
+                                                doc);
+    if (StaticPrefs::dom_payments_request_user_interaction_required()) {
+      aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
+      return nullptr;
+    }
+  }
+
   if (!doc || !doc->IsCurrentActiveDocument()) {
     aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
     return nullptr;
@@ -964,6 +981,13 @@ PaymentRequest::SetUpdating(bool aUpdating)
   mUpdating = aUpdating;
 }
 
+already_AddRefed<PaymentResponse>
+PaymentRequest::GetResponse() const
+{
+  RefPtr<PaymentResponse> response = mResponse;
+  return response.forget();
+}
+
 nsresult
 PaymentRequest::DispatchUpdateEvent(const nsAString& aType)
 {
@@ -979,6 +1003,29 @@ PaymentRequest::DispatchUpdateEvent(const nsAString& aType)
   event->SetRequest(this);
 
   ErrorResult rv;
+  DispatchEvent(*event, rv);
+  return rv.StealNSResult();
+}
+
+nsresult
+PaymentRequest::DispatchMerchantValidationEvent(const nsAString& aType)
+{
+  MOZ_ASSERT(ReadyForUpdate());
+
+  MerchantValidationEventInit init;
+  init.mBubbles = false;
+  init.mCancelable = false;
+  init.mValidationURL = EmptyString();
+
+  ErrorResult rv;
+  RefPtr<MerchantValidationEvent> event =
+    MerchantValidationEvent::Constructor(this, aType, init, rv);
+  if (rv.Failed()) {
+    return rv.StealNSResult();
+  }
+  event->SetTrusted(true);
+  event->SetRequest(this);
+
   DispatchEvent(*event, rv);
   return rv.StealNSResult();
 }
@@ -1046,6 +1093,16 @@ Nullable<PaymentShippingType>
 PaymentRequest::GetShippingType() const
 {
   return mShippingType;
+}
+
+void PaymentRequest::GetOptions(PaymentOptions& aRetVal) const
+{
+  aRetVal = mOptions;
+}
+
+void PaymentRequest::SetOptions(const PaymentOptions& aOptions)
+{
+  mOptions = aOptions;
 }
 
 void

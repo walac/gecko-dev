@@ -58,8 +58,8 @@ nsSVGElement::StringInfo SVGFilterElement::sStringInfo[2] =
 //----------------------------------------------------------------------
 // Implementation
 
-SVGFilterElement::SVGFilterElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
-  : SVGFilterElementBase(aNodeInfo)
+SVGFilterElement::SVGFilterElement(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo)
+  : SVGFilterElementBase(std::move(aNodeInfo))
 {
 }
 
@@ -135,23 +135,6 @@ SVGFilterElement::IsAttributeMapped(const nsAtom* name) const
   };
   return FindAttributeDependence(name, map) ||
     SVGFilterElementBase::IsAttributeMapped(name);
-}
-
-void
-SVGFilterElement::Invalidate()
-{
-  nsAutoTObserverArray<nsIMutationObserver*, 1> *observers = GetMutationObservers();
-
-  if (observers && !observers->IsEmpty()) {
-    nsAutoTObserverArray<nsIMutationObserver*, 1>::ForwardIterator iter(*observers);
-    while (iter.HasMore()) {
-      nsCOMPtr<nsIMutationObserver> obs(iter.GetNext());
-      RefPtr<SVGFilterObserver> filter = do_QueryObject(obs);
-      if (filter) {
-        filter->Invalidate();
-      }
-    }
-  }
 }
 
 //----------------------------------------------------------------------

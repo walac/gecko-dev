@@ -117,17 +117,16 @@ RenderCompositorANGLE::Initialize()
     return false;
   }
 
-  auto* egl = gl::GLLibraryEGL::Get();
   mDevice = GetDeviceOfEGLDisplay();
 
   if (!mDevice) {
-    gfxCriticalNote << "[D3D11] failed to get compositor device.";
+    gfxCriticalNote << "[WR] failed to get compositor device.";
     return false;
   }
 
   mDevice->GetImmediateContext(getter_AddRefs(mCtx));
   if (!mCtx) {
-    gfxCriticalNote << "[D3D11] failed to get immediate context.";
+    gfxCriticalNote << "[WR] failed to get immediate context.";
     return false;
   }
 

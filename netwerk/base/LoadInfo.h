@@ -136,7 +136,8 @@ private:
            bool aIsPreflight,
            bool aLoadTriggeredFromExternal,
            bool aServiceWorkerTaintingSynthesized,
-           bool aDocumentHasUserInteracted);
+           bool aDocumentHasUserInteracted,
+           bool aDocumentHasLoaded);
   LoadInfo(const LoadInfo& rhs);
 
   NS_IMETHOD GetRedirects(JSContext* aCx, JS::MutableHandle<JS::Value> aRedirects,
@@ -205,6 +206,9 @@ private:
   nsTArray<nsCOMPtr<nsIPrincipal>> mAncestorPrincipals;
   nsTArray<uint64_t>               mAncestorOuterWindowIDs;
   nsTArray<nsCString>              mCorsUnsafeHeaders;
+
+  mozilla::Telemetry::LABELS_DOCUMENT_ANALYTICS_TRACKER_FASTBLOCKED mTrackerBlockedReason;
+
   bool                             mForcePreflight;
   bool                             mIsPreflight;
   bool                             mLoadTriggeredFromExternal;
@@ -213,6 +217,7 @@ private:
   bool                             mIsTracker;
   bool                             mIsTrackerBlocked;
   bool                             mDocumentHasUserInteracted;
+  bool                             mDocumentHasLoaded;
 };
 
 } // namespace net

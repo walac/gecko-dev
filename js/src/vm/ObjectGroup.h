@@ -16,7 +16,7 @@
 #include "js/GCHashTable.h"
 #include "js/TypeDecls.h"
 #include "vm/TaggedProto.h"
-#include "vm/TypeInference.h"
+#include "vm/TypeSet.h"
 
 namespace js {
 
@@ -25,7 +25,6 @@ class UnboxedLayout;
 
 class PreliminaryObjectArrayWithTemplate;
 class TypeNewScript;
-class HeapTypeSet;
 class AutoClearTypeInferenceStateOnOOM;
 class AutoSweepObjectGroup;
 class CompilerConstraintList;
@@ -325,10 +324,7 @@ class ObjectGroup : public gc::TenuredCell
         setAddendum(Addendum_None, nullptr);
     }
 
-    bool hasUnanalyzedPreliminaryObjects() {
-        return (newScriptDontCheckGeneration() && !newScriptDontCheckGeneration()->analyzed()) ||
-               maybePreliminaryObjectsDontCheckGeneration();
-    }
+    inline bool hasUnanalyzedPreliminaryObjects();
 
     inline UnboxedLayout* maybeUnboxedLayout(const AutoSweepObjectGroup& sweep);
     inline UnboxedLayout& unboxedLayout(const AutoSweepObjectGroup& sweep);
@@ -482,7 +478,7 @@ class ObjectGroup : public gc::TenuredCell
     void traceChildren(JSTracer* trc);
 
     inline bool needsSweep();
-    void sweep(const AutoSweepObjectGroup& sweep, AutoClearTypeInferenceStateOnOOM* oom);
+    void sweep(const AutoSweepObjectGroup& sweep);
 
   private:
     uint32_t generation() {
@@ -592,7 +588,7 @@ class ObjectGroup : public gc::TenuredCell
     static ArrayObject* getCopyOnWriteObject(JSScript* script, jsbytecode* pc);
 
     // Returns false if not found.
-    static bool findAllocationSite(JSContext* cx, ObjectGroup* group,
+    static bool findAllocationSite(JSContext* cx, const ObjectGroup* group,
                                    JSScript** script, uint32_t* offset);
 
   private:
@@ -697,7 +693,7 @@ class ObjectGroupRealm
     ObjectGroupRealm(ObjectGroupRealm&) = delete;
     void operator=(ObjectGroupRealm&) = delete;
 
-    static ObjectGroupRealm& get(ObjectGroup* group);
+    static ObjectGroupRealm& get(const ObjectGroup* group);
     static ObjectGroupRealm& getForNewObject(JSContext* cx);
 
     void replaceAllocationSiteGroup(JSScript* script, jsbytecode* pc,

@@ -10,6 +10,7 @@ const TP_PBM_PREF = "privacy.trackingprotection.pbmode.enabled";
 const TP_LIST_PREF = "urlclassifier.trackingTable";
 const FB_PREF = "browser.fastblock.enabled";
 const NCB_PREF = "network.cookie.cookieBehavior";
+const TOGGLE_PREF = "browser.contentblocking.global-toggle.enabled";
 
 requestLongerTimeout(2);
 
@@ -17,6 +18,7 @@ requestLongerTimeout(2);
 add_task(async function testContentBlockingToggle() {
   SpecialPowers.pushPrefEnv({set: [
     [CB_UI_PREF, true],
+    [TOGGLE_PREF, true],
   ]});
 
   await openPreferencesViaOpenPreferencesAPI("privacy", {leaveOpen: true});
@@ -163,14 +165,25 @@ add_task(async function testContentBlockingRestoreDefaults() {
     [CB_UI_PREF, true],
   ]});
 
-  let prefs = [
-    CB_PREF,
-    FB_PREF,
-    TP_LIST_PREF,
-    TP_PREF,
-    TP_PBM_PREF,
-    NCB_PREF,
-  ];
+  let prefs = {
+    CB_PREF: null,
+    FB_PREF: null,
+    TP_LIST_PREF: null,
+    TP_PREF: null,
+    TP_PBM_PREF: null,
+    NCB_PREF: null,
+  };
+
+  for (let pref in prefs) {
+    switch (Services.prefs.getPrefType(pref)) {
+    case Services.prefs.PREF_BOOL:
+      prefs[pref] = Services.prefs.getBoolPref(pref);
+      break;
+    case Services.prefs.PREF_INT:
+      prefs[pref] = Services.prefs.getIntPref(pref);
+      break;
+    }
+  }
 
   Services.prefs.setBoolPref(CB_PREF, false);
   Services.prefs.setBoolPref(FB_PREF, !Services.prefs.getBoolPref(FB_PREF));
@@ -179,8 +192,20 @@ add_task(async function testContentBlockingRestoreDefaults() {
   Services.prefs.setBoolPref(TP_PBM_PREF, false);
   Services.prefs.setIntPref(NCB_PREF, Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER);
 
-  for (let pref of prefs) {
-    ok(Services.prefs.prefHasUserValue(pref), `modified the pref ${pref}`);
+  for (let pref in prefs) {
+    switch (Services.prefs.getPrefType(pref)) {
+    case Services.prefs.PREF_BOOL:
+      // Account for prefs that may have retained their default value
+      if (Services.prefs.getBoolPref(pref) != prefs[pref]) {
+        ok(Services.prefs.prefHasUserValue(pref), `modified the pref ${pref}`);
+      }
+      break;
+    case Services.prefs.PREF_INT:
+      if (Services.prefs.getIntPref(pref) != prefs[pref]) {
+        ok(Services.prefs.prefHasUserValue(pref), `modified the pref ${pref}`);
+      }
+      break;
+    }
   }
 
   await openPreferencesViaOpenPreferencesAPI("privacy", {leaveOpen: true});
@@ -192,7 +217,7 @@ add_task(async function testContentBlockingRestoreDefaults() {
   // TP prefs are reset async to check for extensions controlling them.
   await TestUtils.waitForCondition(() => !Services.prefs.prefHasUserValue(TP_PREF));
 
-  for (let pref of prefs) {
+  for (let pref in prefs) {
     ok(!Services.prefs.prefHasUserValue(pref), `reset the pref ${pref}`);
   }
 
@@ -221,20 +246,43 @@ add_task(async function testContentBlockingRestoreDefaultsSkipExtensionControlle
     background,
   });
 
-  let resettable = [
-    CB_PREF,
-    FB_PREF,
-    TP_LIST_PREF,
-    NCB_PREF,
-  ];
+  let resettable = {
+    CB_PREF: null,
+    FB_PREF: null,
+    TP_LIST_PREF: null,
+    NCB_PREF: null,
+  };
+
+  for (let pref in resettable) {
+    switch (Services.prefs.getPrefType(pref)) {
+    case Services.prefs.PREF_BOOL:
+      resettable[pref] = Services.prefs.getBoolPref(pref);
+      break;
+    case Services.prefs.PREF_INT:
+      resettable[pref] = Services.prefs.getIntPref(pref);
+      break;
+    }
+  }
 
   Services.prefs.setBoolPref(CB_PREF, false);
   Services.prefs.setBoolPref(FB_PREF, !Services.prefs.getBoolPref(FB_PREF));
   Services.prefs.setStringPref(TP_LIST_PREF, "test-track-simple,base-track-digest256,content-track-digest256");
   Services.prefs.setIntPref(NCB_PREF, Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER);
 
-  for (let pref of resettable) {
-    ok(Services.prefs.prefHasUserValue(pref), `modified the pref ${pref}`);
+  for (let pref in resettable) {
+    switch (Services.prefs.getPrefType(pref)) {
+    case Services.prefs.PREF_BOOL:
+      // Account for prefs that may have retained their default value
+      if (Services.prefs.getBoolPref(pref) != resettable[pref]) {
+        ok(Services.prefs.prefHasUserValue(pref), `modified the pref ${pref}`);
+      }
+      break;
+    case Services.prefs.PREF_INT:
+      if (Services.prefs.getIntPref(pref) != resettable[pref]) {
+        ok(Services.prefs.prefHasUserValue(pref), `modified the pref ${pref}`);
+      }
+      break;
+    }
   }
 
   await extension.startup();
@@ -263,7 +311,7 @@ add_task(async function testContentBlockingRestoreDefaultsSkipExtensionControlle
   let contentBlockingRestoreDefaults = doc.getElementById("contentBlockingRestoreDefaults");
   contentBlockingRestoreDefaults.click();
 
-  for (let pref of resettable) {
+  for (let pref in resettable) {
     ok(!Services.prefs.prefHasUserValue(pref), `reset the pref ${pref}`);
   }
 
@@ -295,6 +343,7 @@ function checkControlState(doc, dependentControls) {
 async function doDependentControlChecks(dependentControls,
                                         alwaysDisabledControls = []) {
   Services.prefs.setBoolPref(CB_PREF, true);
+  Services.prefs.setBoolPref(TOGGLE_PREF, true);
 
   await openPreferencesViaOpenPreferencesAPI("privacy", {leaveOpen: true});
   let doc = gBrowser.contentDocument;
@@ -332,6 +381,7 @@ async function doDependentControlChecks(dependentControls,
   checkControlStateWorker(doc, alwaysDisabledControls, false);
 
   Services.prefs.clearUserPref(CB_PREF);
+  Services.prefs.clearUserPref(TOGGLE_PREF);
   gBrowser.removeCurrentTab();
 }
 

@@ -1173,7 +1173,7 @@ fails-if(usesRepeatResampling) fails-if(webrender) == 446100-1e.html about:blank
 fails-if(usesRepeatResampling) fails-if(Android) fails-if(webrender) == 446100-1g.html about:blank
 == 446100-1h.html about:blank
 == 447749-1.html 447749-1-ref.html
-fuzzy(0-127,0-2) fails-if(webrender) == 448193.html 448193-ref.html # bug 1382896 for webrender
+fuzzy(0-127,0-2) == 448193.html 448193-ref.html
 # There isn't a way to load UA Widget in reftest yet.
 test-pref(dom.ua_widget.enabled,false) != 449149-1a.html about:blank
 test-pref(dom.ua_widget.enabled,false) != 449149-1b.html about:blank
@@ -1228,7 +1228,7 @@ fuzzy-if(skiaContent,0-1,0-5) == 459443-1.html 459443-1-ref.html
 == 459613-1.html 459613-1-ref.html
 == 460012-1.html 460012-1-ref.html
 == 461266-1.html 461266-1-ref.html
-fuzzy-if(skiaContent,0-1,0-12000) fails-if(webrender) == 461512-1.html 461512-1-ref.html # bug 1382896 for webrender
+fuzzy-if(skiaContent||webrender,0-1,0-31200) == 461512-1.html 461512-1-ref.html
 == 462844-1.html 462844-ref.html
 == 462844-2.html 462844-ref.html
 == 462844-3.html 462844-ref.html
@@ -1866,7 +1866,7 @@ test-pref(dom.webcomponents.shadowdom.enabled,true) == 1066554-1.html 1066554-1-
 == 1069716-1.html 1069716-1-ref.html
 == 1078262-1.html about:blank
 test-pref(layout.testing.overlay-scrollbars.always-visible,false) == 1081072-1.html 1081072-1-ref.html
-== 1081185-1.html 1081185-1-ref.html
+fuzzy-if(webrender,64-64,485-486) == 1081185-1.html 1081185-1-ref.html
 == 1097437-1.html 1097437-1-ref.html
 == 1103258-1.html 1103258-1-ref.html # assertion crash test with layers culling test
 == 1105137-1.html 1105137-1-ref.html
@@ -2068,7 +2068,7 @@ test-pref(font.size.systemFontScale,200) == 1412743.html 1412743-ref.html
 == 1424177.html 1424177-ref.html
 == 1424680.html 1424680-ref.html
 == 1424798-1.html 1424798-ref.html
-fuzzy(0-74,0-2234) random-if(webrender) == 1425243-1.html 1425243-1-ref.html
+fuzzy-if(!webrender,0-74,0-2234) == 1425243-1.html 1425243-1-ref.html
 fuzzy-if(Android,0-66,0-574) fuzzy-if(d2d,0-89,0-777) fuzzy-if(!Android&&!d2d,0-1,0-31341) == 1425243-2.html 1425243-2-ref.html
 == 1430869.html 1430869-ref.html
 == 1432541.html 1432541-ref.html
@@ -2083,3 +2083,4 @@ fuzzy(0-1,0-625) == 1466638-1.html 1466638-1-ref.html
 == 1483649-1.xul 1483649-1-ref.xul
 test-pref(layout.css.contain.enabled,true) == 1483946.html 1483946-ref.html
 test-pref(layout.css.visited_links_enabled,false) == 1488155.html 1488155-ref.html
+== 1492660-1.html 1492660-1-ref.html

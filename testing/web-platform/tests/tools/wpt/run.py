@@ -50,15 +50,17 @@ def create_parser():
     parser.add_argument("--yes", "-y", dest="prompt", action="store_false", default=True,
                         help="Don't prompt before installing components")
     parser.add_argument("--install-browser", action="store_true",
-                        help="Install the browser")
+                        help="Install the browser from the release channel specified by --channel "
+                        "(or the nightly channel by default).")
     parser.add_argument("--channel", action="store",
                         choices=install.channel_by_name.keys(),
-                        default=None, help='Name of browser release channel.'
-                        '"stable" and "release" are synonyms for the latest browser stable release,'
-                        '"nightly", "dev", "experimental", and "preview" are all synonyms for '
-                        'the latest available development release. For WebDriver installs, '
-                        'we attempt to select an appropriate, compatible, version for the '
-                        'latest browser release on the selected channel.')
+                        default=None, help='Name of browser release channel. '
+                        '"stable" and "release" are synonyms for the latest browser stable '
+                        'release, "nightly", "dev", "experimental", and "preview" are all '
+                        'synonyms for the latest available development release. (For WebDriver '
+                        'installs, we attempt to select an appropriate, compatible version for '
+                        'the latest browser release on the selected channel.) '
+                        'This flag overrides --browser-channel.')
     parser._add_container_actions(wptcommandline.create_parser())
     return parser
 
@@ -178,6 +180,9 @@ class Firefox(BrowserSetup):
 
     def setup_kwargs(self, kwargs):
         if kwargs["binary"] is None:
+            if kwargs["browser_channel"] is None:
+                logger.info("No browser channel specified. Running nightly instead.")
+
             binary = self.browser.find_binary(self.venv.path,
                                               kwargs["browser_channel"])
             if binary is None:
@@ -222,6 +227,13 @@ Consider installing certutil via your OS package manager or directly.""")
                                                     channel=kwargs["browser_channel"])
             kwargs["prefs_root"] = prefs_root
 
+        if kwargs["headless"] is None:
+            kwargs["headless"] = True
+            logger.info("Running in headless mode, pass --no-headless to disable")
+
+        # Allow WebRTC tests to call getUserMedia.
+        kwargs["extra_prefs"].append("media.navigator.streams.fake=true")
+
 
 class Fennec(BrowserSetup):
     name = "fennec"
@@ -252,6 +264,12 @@ class Chrome(BrowserSetup):
                 kwargs["webdriver_binary"] = webdriver_binary
             else:
                 raise WptrunError("Unable to locate or install chromedriver binary")
+        if kwargs["browser_channel"] == "dev":
+            logger.info("Automatically turning on experimental features for Chrome Dev")
+            kwargs["binary_args"].append("--enable-experimental-web-platform-features")
+
+        # Allow WebRTC tests to call getUserMedia.
+        kwargs["binary_args"] += ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"]
 
 
 class ChromeAndroid(BrowserSetup):
@@ -275,6 +293,7 @@ class ChromeAndroid(BrowserSetup):
                 kwargs["webdriver_binary"] = webdriver_binary
             else:
                 raise WptrunError("Unable to locate or install chromedriver binary")
+
 
 class ChromeWebDriver(Chrome):
     name = "chrome_webdriver"
@@ -470,6 +489,7 @@ def setup_wptrunner(venv, prompt=True, install_browser=False, **kwargs):
     setup_cls.install_requirements()
 
     if install_browser and not kwargs["channel"]:
+        logger.info("--install-browser is given but --channel is not set, default to nightly channel")
         kwargs["channel"] = "nightly"
 
     if kwargs["channel"]:
@@ -497,7 +517,7 @@ def setup_wptrunner(venv, prompt=True, install_browser=False, **kwargs):
 
 
 def run(venv, **kwargs):
-    #Remove arguments that aren't passed to wptrunner
+    # Remove arguments that aren't passed to wptrunner
     prompt = kwargs.pop("prompt", True)
     install_browser = kwargs.pop("install_browser", False)
 

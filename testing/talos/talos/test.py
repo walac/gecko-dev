@@ -432,7 +432,9 @@ class damp(PageloaderTest):
     win_counters = w7_counters = linux_counters = mac_counters = None
     filters = filter.ignore_first.prepare(1) + filter.median.prepare()
     preferences = {'devtools.memory.enabled': True,
-                   'addon.test.damp.webserver': '${webserver}'}
+                   'addon.test.damp.webserver': '${webserver}',
+                   'startup.homepage_welcome_url': '',
+                   'startup.homepage_welcome_url.additional': ''}
     unit = 'ms'
     subtest_alerts = True
     perfherder_framework = 'devtools'
@@ -575,7 +577,8 @@ class tp5o_scroll(PageloaderTest):
     tpmozafterpaint = False
     preferences = {'layout.frame_rate': 0,
                    'docshell.event_starvation_delay_hint': 1,
-                   'dom.send_after_paint_to_content': False,
+                   'dom.send_after_paint_to_content': True,
+                   'apz.paint_skipping.enabled': False,
                    'layout.css.scroll-behavior.spring-constant': "'10'",
                    'toolkit.framesRecording.bufferSize': 10000}
     filters = filter.ignore_first.prepare(1) + filter.median.prepare()
@@ -773,7 +776,8 @@ class tscrollx(PageloaderTest):
     """ ASAP mode """
     preferences = {'layout.frame_rate': 0,
                    'docshell.event_starvation_delay_hint': 1,
-                   'dom.send_after_paint_to_content': False,
+                   'dom.send_after_paint_to_content': True,
+                   'apz.paint_skipping.enabled': False,
                    'layout.css.scroll-behavior.spring-constant': "'10'",
                    'toolkit.framesRecording.bufferSize': 10000}
     filters = filter.ignore_first.prepare(5) + filter.median.prepare()

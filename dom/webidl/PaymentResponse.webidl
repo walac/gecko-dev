@@ -5,6 +5,9 @@
  *
  * The origin of this WebIDL file is
  *   https://www.w3.org/TR/payment-request/#paymentresponse-interface
+ *
+ * Copyright © 2018 W3C® (MIT, ERCIM, Keio), All Rights Reserved. W3C
+ * liability, trademark and document use rules apply.
  */
 
 enum PaymentComplete {
@@ -15,7 +18,7 @@ enum PaymentComplete {
 
 [SecureContext,
  Func="mozilla::dom::PaymentRequest::PrefEnabled"]
-interface PaymentResponse {
+interface PaymentResponse : EventTarget {
   [Default] object toJSON();
 
   readonly attribute DOMString       requestId;
@@ -33,4 +36,6 @@ interface PaymentResponse {
   // If the dictionary argument has no required members, it must be optional.
   [NewObject]
   Promise<void> retry(optional PaymentValidationErrors errorFields);
+
+  attribute EventHandler onpayerdetailchange;
 };

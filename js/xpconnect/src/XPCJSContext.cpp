@@ -30,6 +30,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Services.h"
+#include "mozilla/StaticPrefs.h"
 #include "mozilla/dom/ScriptSettings.h"
 
 #include "nsContentUtils.h"
@@ -779,9 +780,14 @@ bool xpc::ExtraWarningsForSystemJS() { return false; }
 #endif
 
 static mozilla::Atomic<bool> sSharedMemoryEnabled(false);
+static mozilla::Atomic<bool> sStreamsEnabled(false);
 
-bool
-xpc::SharedMemoryEnabled() { return sSharedMemoryEnabled; }
+void
+xpc::SetPrefableRealmOptions(JS::RealmOptions &options)
+{
+    options.creationOptions().setSharedMemoryAndAtomicsEnabled(sSharedMemoryEnabled)
+                             .setStreamsEnabled(sStreamsEnabled);
+}
 
 static void
 ReloadPrefsCallback(const char* pref, XPCJSContext* xpccx)
@@ -794,6 +800,9 @@ ReloadPrefsCallback(const char* pref, XPCJSContext* xpccx)
     bool useWasm = Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm");
     bool useWasmIon = Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_ionjit");
     bool useWasmBaseline = Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_baselinejit");
+#ifdef ENABLE_WASM_CRANELIFT
+    bool useWasmCranelift = Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_cranelift");
+#endif
 #ifdef ENABLE_WASM_GC
     bool useWasmGc = Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_gc");
 #endif
@@ -828,8 +837,6 @@ ReloadPrefsCallback(const char* pref, XPCJSContext* xpccx)
 
     bool extraWarnings = Preferences::GetBool(JS_OPTIONS_DOT_STR "strict");
 
-    bool streams = Preferences::GetBool(JS_OPTIONS_DOT_STR "streams");
-
     bool spectreIndexMasking = Preferences::GetBool(JS_OPTIONS_DOT_STR "spectre.index_masking");
     bool spectreObjectMitigationsBarriers =
         Preferences::GetBool(JS_OPTIONS_DOT_STR "spectre.object_mitigations.barriers");
@@ -841,6 +848,7 @@ ReloadPrefsCallback(const char* pref, XPCJSContext* xpccx)
     bool spectreJitToCxxCalls = Preferences::GetBool(JS_OPTIONS_DOT_STR "spectre.jit_to_C++_calls");
 
     sSharedMemoryEnabled = Preferences::GetBool(JS_OPTIONS_DOT_STR "shared_memory");
+    sStreamsEnabled = Preferences::GetBool(JS_OPTIONS_DOT_STR "streams");
 
 #ifdef DEBUG
     sExtraWarningsForSystemJS = Preferences::GetBool(JS_OPTIONS_DOT_STR "strict.debug");
@@ -857,7 +865,7 @@ ReloadPrefsCallback(const char* pref, XPCJSContext* xpccx)
 #endif // JS_GC_ZEAL
 
 #ifdef FUZZING
-    bool fuzzingEnabled = Preferences::GetBool("fuzzing.enabled");
+    bool fuzzingEnabled = StaticPrefs::fuzzing_enabled();
 #endif
 
     JS::ContextOptionsRef(cx).setBaseline(useBaseline)
@@ -866,6 +874,9 @@ ReloadPrefsCallback(const char* pref, XPCJSContext* xpccx)
                              .setWasm(useWasm)
                              .setWasmIon(useWasmIon)
                              .setWasmBaseline(useWasmBaseline)
+#ifdef ENABLE_WASM_CRANELIFT
+                             .setWasmForceCranelift(useWasmCranelift)
+#endif
 #ifdef ENABLE_WASM_GC
                              .setWasmGc(useWasmGc)
 #endif
@@ -878,7 +889,6 @@ ReloadPrefsCallback(const char* pref, XPCJSContext* xpccx)
 #ifdef FUZZING
                              .setFuzzing(fuzzingEnabled)
 #endif
-                             .setStreams(streams)
                              .setExtraWarnings(extraWarnings);
 
     nsCOMPtr<nsIXULRuntime> xr = do_GetService("@mozilla.org/xre/runtime;1");

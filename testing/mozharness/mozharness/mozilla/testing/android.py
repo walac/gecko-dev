@@ -5,108 +5,63 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 # ***** END LICENSE BLOCK *****
 
-import datetime
 import glob
 import os
+import re
 import subprocess
 import tempfile
-import time
 from mozharness.mozilla.automation import TBPL_RETRY, EXIT_STATUS_DICT
 
 
-class AndroidMixin:
+class AndroidMixin(object):
     """
        Mixin class used by Android test scripts.
     """
 
-    def init(self):
+    def __init__(self, **kwargs):
+        self._adb_path = None
+        self._device = None
+        self.device_name = os.environ.get('DEVICE_NAME', None)
+        self.device_serial = os.environ.get('DEVICE_SERIAL', None)
+        self.device_ip = os.environ.get('DEVICE_IP', None)
         self.logcat_proc = None
         self.logcat_file = None
+        super(AndroidMixin, self).__init__(**kwargs)
 
-        self.adb_path = self.query_exe('adb')
-        self.sdk_level = None
-        self.device_name = os.environ['DEVICE_NAME']
-        self.device_serial = os.environ['DEVICE_SERIAL']
-        self.device_ip = os.environ['DEVICE_IP']
+    @property
+    def adb_path(self):
+        '''Get the path to the adb executable.
 
-    def _retry(self, max_attempts, interval, func, description, max_time=0):
+        Defer the use of query_exe() since it is defined by the
+        BaseScript Mixin which hasn't finished initialing by the
+        time the AndroidMixin is first initialized.
         '''
-        Execute func until it returns True, up to max_attempts times, waiting for
-        interval seconds between each attempt. description is logged on each attempt.
-        If max_time is specified, no further attempts will be made once max_time
-        seconds have elapsed; this provides some protection for the case where
-        the run-time for func is long or highly variable.
-        '''
-        status = False
-        attempts = 0
-        if max_time > 0:
-            end_time = datetime.datetime.now() + datetime.timedelta(seconds=max_time)
-        else:
-            end_time = None
-        while attempts < max_attempts and not status:
-            if (end_time is not None) and (datetime.datetime.now() > end_time):
-                self.info("Maximum retry run-time of %d seconds exceeded; "
-                          "remaining attempts abandoned" % max_time)
-                break
-            if attempts != 0:
-                self.info("Sleeping %d seconds" % interval)
-                time.sleep(interval)
-            attempts += 1
-            self.info(">> %s: Attempt #%d of %d" % (description, attempts, max_attempts))
-            status = func()
-        return status
+        if not self._adb_path:
+            try:
+                self._adb_path = self.query_exe('adb')
+            except AttributeError:
+                # Ignore attribute errors since BaseScript will
+                # attempt to access properties before the other Mixins
+                # have completed initialization. We recover afterwards
+                # when additional attemps occur after initialization
+                # is completed.
+                pass
+        return self._adb_path
 
-    def _run_proc(self, cmd, quiet=False):
-        self.info('Running %s' % subprocess.list2cmdline(cmd))
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
-        out, err = p.communicate()
-        if out and not quiet:
-            self.info('%s' % str(out.strip()))
-        if err and not quiet:
-            self.info('stderr: %s' % str(err.strip()))
-        return out, err
-
-    def _run_with_timeout(self, timeout, cmd, quiet=False):
-        timeout_cmd = ['timeout', '%s' % timeout] + cmd
-        return self._run_proc(timeout_cmd, quiet=quiet)
-
-    def _run_adb_with_timeout(self, timeout, cmd, quiet=False):
-        cmd = [self.adb_path, '-s', self.device_serial] + cmd
-        return self._run_with_timeout(timeout, cmd, quiet)
-
-    def _verify_adb(self):
-        self.info('Verifying adb connectivity')
-        self._run_with_timeout(180, [self.adb_path,
-                                     '-s',
-                                     self.device_serial,
-                                     'wait-for-device'])
-        return True
-
-    def _verify_adb_device(self):
-        out, _ = self._run_with_timeout(30, [self.adb_path, 'devices'])
-        if (self.device_serial in out) and ("device" in out):
-            return True
-        return False
-
-    def _is_boot_completed(self):
-        boot_cmd = ['shell', 'getprop', 'sys.boot_completed']
-        out, _ = self._run_adb_with_timeout(30, boot_cmd)
-        if out.strip() == '1':
-            return True
-        return False
-
-    def _install_apk(self):
-        install_ok = False
-        if int(self.sdk_level) >= 23:
-            cmd = ['install', '-r', '-g', self.installer_path]
-        else:
-            cmd = ['install', '-r', self.installer_path]
-            self.warning("Installing apk with default run-time permissions (sdk %s)" %
-                         str(self.sdk_level))
-        out, err = self._run_adb_with_timeout(300, cmd, True)
-        if 'Success' in out or 'Success' in err:
-            install_ok = True
-        return install_ok
+    @property
+    def device(self):
+        if not self._device:
+            try:
+                import mozdevice
+                self._device = mozdevice.ADBAndroid(adb=self.adb_path,
+                                                    device=self.device_serial,
+                                                    verbose=True)
+                self.info("New mozdevice with adb=%s, device=%s" %
+                          (self.adb_path, self.device_serial))
+            except Exception:
+                # As in adb_path, above.
+                pass
+        return self._device
 
     def _get_repo_url(self, path):
         """
@@ -147,6 +102,61 @@ class AndroidMixin:
                             output_dir=dir,
                             cache=c.get("tooltool_cache", None))
 
+    def dump_perf_info(self):
+        '''
+        Dump some host and android device performance-related information
+        to an artifact file, to help understand task performance.
+        '''
+        dir = self.query_abs_dirs()['abs_blob_upload_dir']
+        perf_path = os.path.join(dir, "android-performance.log")
+        with open(perf_path, "w") as f:
+
+            f.write('\n\nHost /proc/cpuinfo:\n')
+            out = subprocess.check_output(['cat', '/proc/cpuinfo'])
+            f.write(out)
+
+            f.write('\n\nHost /proc/meminfo:\n')
+            out = subprocess.check_output(['cat', '/proc/meminfo'])
+            f.write(out)
+
+            f.write('\n\nHost process list:\n')
+            out = subprocess.check_output(['ps', '-ef'])
+            f.write(out)
+
+            f.write('\n\nDevice /proc/cpuinfo:\n')
+            cmd = 'cat /proc/cpuinfo'
+            out = self.shell_output(cmd)
+            f.write(out)
+            cpuinfo = out
+
+            f.write('\n\nDevice /proc/meminfo:\n')
+            cmd = 'cat /proc/meminfo'
+            out = self.shell_output(cmd)
+            f.write(out)
+
+            f.write('\n\nDevice process list:\n')
+            cmd = 'ps'
+            out = self.shell_output(cmd)
+            f.write(out)
+
+        # Search android cpuinfo for "BogoMIPS"; if found and < (minimum), retry
+        # this task, in hopes of getting a higher-powered environment.
+        # (Carry on silently if BogoMIPS is not found -- this may vary by
+        # Android implementation -- no big deal.)
+        # See bug 1321605: Sometimes the emulator is really slow, and
+        # low bogomips can be a good predictor of that condition.
+        bogomips_minimum = int(self.config.get('bogomips_minimum') or 0)
+        for line in cpuinfo.split('\n'):
+            m = re.match("BogoMIPS.*: (\d*)", line)
+            if m:
+                bogomips = int(m.group(1))
+                if bogomips_minimum > 0 and bogomips < bogomips_minimum:
+                    self.fatal('INFRA-ERROR: insufficient Android bogomips (%d < %d)' %
+                               (bogomips, bogomips_minimum),
+                               EXIT_STATUS_DICT[TBPL_RETRY])
+                self.info("Found Android bogomips: %d" % bogomips)
+                break
+
     def logcat_start(self):
         """
            Start recording logcat. Writes logcat to the upload directory.
@@ -180,17 +190,22 @@ class AndroidMixin:
         """
            Install the specified apk.
         """
-        self.init()
-        cmd = [self.adb_path, '-s', self.device_serial, 'shell',
-               'getprop', 'ro.build.version.sdk']
-        self.sdk_level, _ = self._run_with_timeout(30, cmd)
-
-        install_ok = self._retry(3, 30, self._install_apk, "Install app APK")
-        if not install_ok:
+        import mozdevice
+        try:
+            self.device.install_app(apk)
+        except mozdevice.ADBError:
             self.fatal('INFRA-ERROR: Failed to install %s on %s' %
                        (self.installer_path, self.device_name),
                        EXIT_STATUS_DICT[TBPL_RETRY])
-        return install_ok
+
+    def is_boot_completed(self):
+        out = self.device.get_prop('sys.boot_completed', timeout=30)
+        if out.strip() == '1':
+            return True
+        return False
+
+    def shell_output(self, cmd):
+        return self.device.shell_output(cmd, timeout=30)
 
     def screenshot(self, prefix):
         """

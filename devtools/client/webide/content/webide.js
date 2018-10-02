@@ -57,7 +57,10 @@ window.addEventListener("unload", function() {
 var UI = {
   init: function() {
     this._telemetry = new Telemetry();
-    this._telemetry.toolOpened("webide");
+
+    // webide is not connected with a toolbox so we pass -1 as the
+    // toolbox session id.
+    this._telemetry.toolOpened("webide", -1, this);
 
     AppManager.init();
 
@@ -81,13 +84,13 @@ var UI = {
 
     // Auto install the ADB Addon Helper. Only once.
     // If the user decides to uninstall any of this addon, we won't install it again.
-    const autoinstallADBHelper = Services.prefs.getBoolPref("devtools.webide.autoinstallADBHelper");
-    if (autoinstallADBHelper) {
+    const autoinstallADBExtension = Services.prefs.getBoolPref("devtools.webide.autoinstallADBExtension");
+    if (autoinstallADBExtension) {
       const addons = GetAvailableAddons();
       addons.adb.install();
     }
 
-    Services.prefs.setBoolPref("devtools.webide.autoinstallADBHelper", false);
+    Services.prefs.setBoolPref("devtools.webide.autoinstallADBExtension", false);
 
     this.setupDeck();
 
@@ -102,7 +105,10 @@ var UI = {
     AppManager.off("app-manager-update", this.appManagerUpdate);
     AppManager.destroy();
     this.updateConnectionTelemetry();
-    this._telemetry.toolClosed("webide");
+
+    // webide is not connected with a toolbox so we pass -1 as the
+    // toolbox session id.
+    this._telemetry.toolClosed("webide", -1, this);
   },
 
   onfocus: function() {
@@ -365,6 +371,11 @@ var UI = {
     const disconnectCmd = document.querySelector("#cmd_disconnectRuntime");
     const devicePrefsCmd = document.querySelector("#cmd_showDevicePrefs");
     const settingsCmd = document.querySelector("#cmd_showSettings");
+    const performancePanelCmd = document.querySelector("#cmd_showPerformancePanel");
+
+    // Display the performance menu only if the pref is enabled
+    const performancePanelMenu = document.querySelector("menuitem[command=cmd_showPerformancePanel]");
+    performancePanelMenu.hidden = !Services.prefs.getBoolPref("devtools.performance.new-panel-enabled", false);
 
     if (AppManager.connected) {
       if (AppManager.deviceFront) {
@@ -375,12 +386,16 @@ var UI = {
         devicePrefsCmd.removeAttribute("disabled");
       }
       disconnectCmd.removeAttribute("disabled");
+      if (AppManager.perfFront) {
+        performancePanelCmd.removeAttribute("disabled");
+      }
     } else {
       detailsCmd.setAttribute("disabled", "true");
       screenshotCmd.setAttribute("disabled", "true");
       disconnectCmd.setAttribute("disabled", "true");
       devicePrefsCmd.setAttribute("disabled", "true");
       settingsCmd.setAttribute("disabled", "true");
+      performancePanelCmd.setAttribute("disabled", "true");
     }
 
     const runtimePanelButton = document.querySelector("#runtime-panel-button");
@@ -718,7 +733,7 @@ var UI = {
   async checkRuntimeVersion() {
     if (AppManager.connected) {
       const { client } = AppManager.connection;
-      const report = await client.checkRuntimeVersion(AppManager.listTabsForm);
+      const report = await client.checkRuntimeVersion();
       if (report.incompatible == "too-recent") {
         this.reportError("error_runtimeVersionTooRecent", report.runtimeID,
           report.localID);
@@ -857,6 +872,15 @@ var Cmds = {
 
   showDevicePrefs: function() {
     UI.selectDeckPanel("devicepreferences");
+  },
+
+  showPerformancePanel: function() {
+    UI.selectDeckPanel("performance");
+    const iframe = document.getElementById("deck-panel-performance");
+
+    iframe.addEventListener("DOMContentLoaded", () => {
+      iframe.contentWindow.gInit(AppManager.perfFront, AppManager.preferenceFront);
+    }, { once: true });
   },
 
   async play() {

@@ -1789,6 +1789,12 @@ CompositorBridgeParent::RecvAdoptChild(const LayersId& child)
 
   { // scope lock
     MonitorAutoLock lock(*sIndirectLayerTreesLock);
+    // If child is already belong to this CompositorBridgeParent,
+    // no need to handle adopting child.
+    if (sIndirectLayerTrees[child].mParent == this) {
+      return IPC_OK();
+    }
+
     if (sIndirectLayerTrees[child].mParent) {
       // We currently don't support adopting children from one compositor to
       // another if the two compositors don't have the same options.
@@ -1931,6 +1937,17 @@ CompositorBridgeParent::NotifyMemoryPressure()
     RefPtr<wr::WebRenderAPI> api = mWrBridge->GetWebRenderAPI();
     if (api) {
       api->NotifyMemoryPressure();
+    }
+  }
+}
+
+void
+CompositorBridgeParent::AccumulateMemoryReport(wr::MemoryReport* aReport)
+{
+  if (mWrBridge) {
+    RefPtr<wr::WebRenderAPI> api = mWrBridge->GetWebRenderAPI();
+    if (api) {
+      api->AccumulateMemoryReport(aReport);
     }
   }
 }

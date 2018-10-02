@@ -11,6 +11,7 @@
 
 #include "openvr.h"
 #include "mozilla/gfx/2D.h"
+#include "mozilla/TimeStamp.h"
 #include "moz_external_vr.h"
 
 #if defined(XP_WIN)
@@ -18,9 +19,13 @@
 #elif defined(XP_MACOSX)
 class MacIOSurface;
 #endif
+class nsITimer;
 
 namespace mozilla {
 namespace gfx {
+class VRThread;
+
+static const int kNumOpenVRHaptics = 1;
 
 class OpenVRSession : public VRSession
 {
@@ -36,6 +41,10 @@ public:
   bool StartPresentation() override;
   void StopPresentation() override;
   bool SubmitFrame(const mozilla::gfx::VRLayer_Stereo_Immersive& aLayer) override;
+  void VibrateHaptic(uint32_t aControllerIdx, uint32_t aHapticIndex,
+                    float aIntensity, float aDuration) override;
+  void StopVibrateHaptic(uint32_t aControllerIdx) override;
+  void StopAllHaptics() override;
 
 private:
   // OpenVR State
@@ -43,8 +52,11 @@ private:
   ::vr::IVRChaperone* mVRChaperone = nullptr;
   ::vr::IVRCompositor* mVRCompositor = nullptr;
   ::vr::TrackedDeviceIndex_t mControllerDeviceIndex[kVRControllerMaxCount];
+  float mHapticPulseRemaining[kVRControllerMaxCount][kNumOpenVRHaptics];
+  float mHapticPulseIntensity[kVRControllerMaxCount][kNumOpenVRHaptics];
   bool mShouldQuit;
   bool mIsWindowsMR;
+  TimeStamp mLastHapticUpdate;
 
   bool InitState(mozilla::gfx::VRSystemState& aSystemState);
   void UpdateStageParameters(mozilla::gfx::VRDisplayState& aState);
@@ -53,6 +65,7 @@ private:
   void EnumerateControllers(VRSystemState& aState);
   void UpdateControllerPoses(VRSystemState& aState);
   void UpdateControllerButtons(VRSystemState& aState);
+  void UpdateTelemetry(VRSystemState& aSystemState);
 
   bool SubmitFrame(void* aTextureHandle,
                    ::vr::ETextureType aTextureType,
@@ -64,6 +77,15 @@ private:
   void GetControllerDeviceId(::vr::ETrackedDeviceClass aDeviceType,
                              ::vr::TrackedDeviceIndex_t aDeviceIndex,
                              nsCString& aId);
+  void UpdateHaptics();
+  void StartHapticThread();
+  void StopHapticThread();
+  void StartHapticTimer();
+  void StopHapticTimer();
+  static void HapticTimerCallback(nsITimer* aTimer, void* aClosure);
+  RefPtr<nsITimer> mHapticTimer;
+  RefPtr<VRThread> mHapticThread;
+  mozilla::Mutex mControllerHapticStateMutex;
 };
 
 } // namespace mozilla

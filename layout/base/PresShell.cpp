@@ -23,6 +23,7 @@
 #include "mozilla/Logging.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Sprintf.h"
+#include "mozilla/StaticPrefs.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/TouchEvents.h"
@@ -725,25 +726,18 @@ nsIPresShell::FrameSelection()
 
 static bool sSynthMouseMove = true;
 static uint32_t sNextPresShellId;
-static bool sAccessibleCaretEnabled = false;
-static bool sAccessibleCaretOnTouch = false;
 
 /* static */ bool
 PresShell::AccessibleCaretEnabled(nsIDocShell* aDocShell)
 {
-  static bool initialized = false;
-  if (!initialized) {
-    Preferences::AddBoolVarCache(&sAccessibleCaretEnabled, "layout.accessiblecaret.enabled");
-    Preferences::AddBoolVarCache(&sAccessibleCaretOnTouch, "layout.accessiblecaret.enabled_on_touch");
-    initialized = true;
-  }
   // If the pref forces it on, then enable it.
-  if (sAccessibleCaretEnabled) {
+  if (StaticPrefs::layout_accessiblecaret_enabled()) {
     return true;
   }
   // If the touch pref is on, and touch events are enabled (this depends
   // on the specific device running), then enable it.
-  if (sAccessibleCaretOnTouch && dom::TouchEvent::PrefEnabled(aDocShell)) {
+  if (StaticPrefs::layout_accessiblecaret_enabled_on_touch() &&
+      dom::TouchEvent::PrefEnabled(aDocShell)) {
     return true;
   }
   // Otherwise, disabled.
@@ -3438,9 +3432,15 @@ ComputeWhereToScroll(int16_t aWhereToScroll,
  * This function takes a scrollable frame, a rect in the coordinate system
  * of the scrolled frame, and a desired percentage-based scroll
  * position and attempts to scroll the rect to that position in the
- * scrollport.
+ * visual viewport.
  *
  * This needs to work even if aRect has a width or height of zero.
+ *
+ * Note that, since we are performing a layout scroll, it's possible that
+ * this fnction will sometimes be unsuccessful; the content will move as
+ * fast as it can on the screen using layout viewport scrolling, and then
+ * stop there, even if it could get closer to the desired position by
+ * moving the visual viewport within the layout viewport.
  */
 static void ScrollToShowRect(nsIScrollableFrame*      aFrameAsScrollable,
                              const nsRect&            aRect,
@@ -3448,7 +3448,7 @@ static void ScrollToShowRect(nsIScrollableFrame*      aFrameAsScrollable,
                              nsIPresShell::ScrollAxis aHorizontal,
                              uint32_t                 aFlags)
 {
-  nsPoint scrollPt = aFrameAsScrollable->GetScrollPosition();
+  nsPoint scrollPt = aFrameAsScrollable->GetVisualViewportOffset();
   nsRect visibleRect(scrollPt,
                      aFrameAsScrollable->GetVisualViewportSize());
 
@@ -4342,11 +4342,6 @@ PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush)
                         ? FlushType::Layout
                         : FlushType::InterruptibleLayout) &&
         !mIsDestroying) {
-#ifdef MOZ_GECKO_PROFILER
-      AutoProfilerTracing tracingLayoutFlush("Paint", "Reflow",
-                                              std::move(mReflowCause));
-      mReflowCause = nullptr;
-#endif
       didLayoutFlush = true;
       mFrameConstructor->RecalcQuotesAndCounters();
       viewManager->FlushDelayedResize(true);
@@ -8909,6 +8904,13 @@ PresShell::ScheduleReflowOffTimer()
 bool
 PresShell::DoReflow(nsIFrame* target, bool aInterruptible)
 {
+#ifdef MOZ_GECKO_PROFILER
+  nsIURI* uri = mDocument->GetDocumentURI();
+  AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING(
+    "PresShell::DoReflow", LAYOUT,
+    uri ? uri->GetSpecOrDefault() : NS_LITERAL_CSTRING("N/A"));
+#endif
+
   gfxTextPerfMetrics* tp = mPresContext->GetTextPerfMetrics();
   TimeStamp timeStart;
   if (tp) {
@@ -8923,13 +8925,6 @@ PresShell::DoReflow(nsIFrame* target, bool aInterruptible)
   // schedule a similar paint when a frame is deleted.
   target->SchedulePaint(nsIFrame::PAINT_DEFAULT, false);
 
-#ifdef MOZ_GECKO_PROFILER
-  nsIURI* uri = mDocument->GetDocumentURI();
-  AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING(
-    "PresShell::DoReflow", LAYOUT,
-    uri ? uri->GetSpecOrDefault() : NS_LITERAL_CSTRING("N/A"));
-#endif
-
   nsDocShell* docShell = static_cast<nsDocShell*>(GetPresContext()->GetDocShell());
   RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
   bool isTimelineRecording = timelines && timelines->HasConsumer(docShell);
@@ -8937,6 +8932,12 @@ PresShell::DoReflow(nsIFrame* target, bool aInterruptible)
   if (isTimelineRecording) {
     timelines->AddMarkerForDocShell(docShell, "Reflow", MarkerTracingType::START);
   }
+
+#ifdef MOZ_GECKO_PROFILER
+  AutoProfilerTracing tracingLayoutFlush("Paint", "Reflow",
+                                          std::move(mReflowCause));
+  mReflowCause = nullptr;
+#endif
 
   if (mReflowContinueTimer) {
     mReflowContinueTimer->Cancel();
@@ -10609,6 +10610,16 @@ nsIPresShell::SetVisualViewportSize(nscoord aWidth, nscoord aHeight)
     }
     MarkFixedFramesForReflow(nsIPresShell::eResize);
   }
+}
+
+nsPoint
+nsIPresShell::GetVisualViewportOffsetRelativeToLayoutViewport() const
+{
+   nsPoint result;
+   if (nsIScrollableFrame* sf = GetRootScrollFrameAsScrollable()) {
+     result = GetVisualViewportOffset() - sf->GetScrollPosition();
+   }
+   return result;
 }
 
 void

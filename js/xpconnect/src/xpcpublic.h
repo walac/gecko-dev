@@ -92,6 +92,10 @@ bool IsInUAWidgetScope(JSObject* obj);
 
 bool IsInSandboxCompartment(JSObject* obj);
 
+bool MightBeWebContentCompartment(JS::Compartment* compartment);
+
+void SetCompartmentChangedDocumentDomain(JS::Compartment* compartment);
+
 // Return a raw XBL scope object corresponding to contentScope, which must
 // be an object whose global is a DOM window.
 //
@@ -567,8 +571,8 @@ class MOZ_RAII AutoScriptActivity
 bool
 ShouldDiscardSystemSource();
 
-bool
-SharedMemoryEnabled();
+void
+SetPrefableRealmOptions(JS::RealmOptions &options);
 
 bool
 ExtraWarningsForSystemJS();

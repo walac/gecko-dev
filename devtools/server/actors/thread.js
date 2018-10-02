@@ -7,7 +7,7 @@
 "use strict";
 
 const Services = require("Services");
-const { Cr } = require("chrome");
+const { Cr, Ci } = require("chrome");
 const { ActorPool, GeneratedLocation } = require("devtools/server/actors/common");
 const { createValueGrip } = require("devtools/server/actors/object/utils");
 const { longStringGrip } = require("devtools/server/actors/object/long-string");
@@ -64,6 +64,8 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     this._parentClosed = false;
     this._scripts = null;
     this._pauseOnDOMEvents = null;
+    this._xhrBreakpoints = [];
+    this._observingNetwork = false;
 
     this._options = {
       useSourceMaps: false,
@@ -82,7 +84,6 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     this.global = global;
 
     this._allEventsListener = this._allEventsListener.bind(this);
-    this.onNewGlobal = this.onNewGlobal.bind(this);
     this.onNewSourceEvent = this.onNewSourceEvent.bind(this);
     this.onUpdatedSourceEvent = this.onUpdatedSourceEvent.bind(this);
 
@@ -92,7 +93,9 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     this.objectGrip = this.objectGrip.bind(this);
     this.pauseObjectGrip = this.pauseObjectGrip.bind(this);
     this._onWindowReady = this._onWindowReady.bind(this);
+    this._onOpeningRequest = this._onOpeningRequest.bind(this);
     EventEmitter.on(this._parent, "window-ready", this._onWindowReady);
+
     // Set a wrappedJSObject property so |this| can be sent via the observer svc
     // for the xpcshell harness.
     this.wrappedJSObject = this;
@@ -107,7 +110,6 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
       this._dbg.uncaughtExceptionHook = this.uncaughtExceptionHook;
       this._dbg.onDebuggerStatement = this.onDebuggerStatement;
       this._dbg.onNewScript = this.onNewScript;
-      this._dbg.on("newGlobal", this.onNewGlobal);
       if (this._dbg.replaying) {
         this._dbg.replayingOnForcedPause = this.replayingOnForcedPause.bind(this);
       }
@@ -199,19 +201,6 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
   },
 
   /**
-   * Listener for our |Debugger|'s "newGlobal" event.
-   */
-  onNewGlobal: function(global) {
-    // Notify the client.
-    this.conn.send({
-      from: this.actorID,
-      type: "newGlobal",
-      // TODO: after bug 801084 lands see if we need to JSONify this.
-      hostAnnotations: global.hostAnnotations
-    });
-  },
-
-  /**
    * Clean up listeners, debuggees and clear actor pools associated with
    * the lifetime of this actor. This does not destroy the thread actor,
    * it resets it. This is used in methods `onReleaseMany` `onDetatch` and
@@ -227,6 +216,9 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     // valid for this connection. This is ok because we never keep
     // things like breakpoints across connections.
     this._sourceActorStore = null;
+
+    this._xhrBreakpoints = [];
+    this._updateNetworkObserver();
 
     EventEmitter.off(this._parent, "window-ready", this._onWindowReady);
     this.sources.off("newSource", this.onNewSourceEvent);
@@ -314,6 +306,100 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
     } catch (e) {
       reportError(e);
       return { error: "notAttached", message: e.toString() };
+    }
+  },
+
+  _findXHRBreakpointIndex(p, m) {
+    return this._xhrBreakpoints.findIndex(
+      ({ path, method }) => path === p && method === m);
+  },
+
+  removeXHRBreakpoint: function(path, method) {
+    const index = this._findXHRBreakpointIndex(path, method);
+
+    if (index >= 0) {
+      this._xhrBreakpoints.splice(index, 1);
+    }
+    return this._updateNetworkObserver();
+  },
+
+  setXHRBreakpoint: function(path, method) {
+    // request.path is a string,
+    // If requested url contains the path, then we pause.
+    const index = this._findXHRBreakpointIndex(path, method);
+
+    if (index === -1) {
+      this._xhrBreakpoints.push({ path, method });
+    }
+    return this._updateNetworkObserver();
+  },
+
+  _updateNetworkObserver() {
+    // Workers don't have access to `Services` and even if they did, network
+    // requests are all dispatched to the main thread, so there would be
+    // nothing here to listen for. We'll need to revisit implementing
+    // XHR breakpoints for workers.
+    if (isWorker) {
+      return false;
+    }
+
+    if (this._xhrBreakpoints.length > 0 && !this._observingNetwork) {
+      this._observingNetwork = true;
+      Services.obs.addObserver(this._onOpeningRequest, "http-on-opening-request");
+    } else if (this._xhrBreakpoints.length === 0 && this._observingNetwork) {
+      this._observingNetwork = false;
+      Services.obs.removeObserver(this._onOpeningRequest, "http-on-opening-request");
+    }
+
+    return true;
+  },
+
+  _onOpeningRequest: function(subject) {
+    if (this.skipBreakpoints) {
+      return;
+    }
+
+    const channel = subject.QueryInterface(Ci.nsIHttpChannel);
+    const url = channel.URI.asciiSpec;
+    const requestMethod = channel.requestMethod;
+
+    let causeType = Ci.nsIContentPolicy.TYPE_OTHER;
+    if (channel.loadInfo) {
+      causeType = channel.loadInfo.externalContentPolicyType;
+    }
+
+    const isXHR = (
+      causeType === Ci.nsIContentPolicy.TYPE_XMLHTTPREQUEST ||
+      causeType === Ci.nsIContentPolicy.TYPE_FETCH
+    );
+
+    if (!isXHR) {
+      // We currently break only if the request is either fetch or xhr
+      return;
+    }
+
+    let shouldPause = false;
+    for (const { path, method } of this._xhrBreakpoints) {
+      if (method !== "ANY" && method !== requestMethod) {
+        continue;
+      }
+      if (url.includes(path)) {
+        shouldPause = true;
+        break;
+      }
+    }
+
+    if (shouldPause) {
+      const frame = this.dbg.getNewestFrame();
+
+      // If there is no frame, this request was dispatched by logic that isn't
+      // primarily JS, so pausing the event loop wouldn't make sense.
+      // This covers background requests like loading the initial page document,
+      // or loading favicons. This also includes requests dispatched indirectly
+      // from workers. We'll need to handle them separately in the future.
+      if (frame) {
+        this._pauseAndRespond(frame, { type: "XHR" });
+      }
     }
   },
 
@@ -1111,22 +1197,12 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
   },
 
   /**
-   * Get the script and source lists from the debugger.
+   * Get the source lists from the debugger.
    */
   _discoverSources: function() {
-    // Only get one script per Debugger.Source.
-    const sourcesToScripts = new Map();
-    const scripts = this.dbg.findScripts();
-
-    for (let i = 0, len = scripts.length; i < len; i++) {
-      const s = scripts[i];
-      if (s.source) {
-        sourcesToScripts.set(s.source, s);
-      }
-    }
-
-    return Promise.all([...sourcesToScripts.values()].map(script => {
-      return this.sources.createSourceActors(script.source);
+    const sources = this.dbg.findSources();
+    return Promise.all(sources.map(source => {
+      return this.sources.createSourceActors(source);
     }));
   },
 
@@ -1519,7 +1595,13 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
       getGripDepth: () => this._gripDepth,
       incrementGripDepth: () => this._gripDepth++,
       decrementGripDepth: () => this._gripDepth--,
-      createValueGrip: v => createValueGrip(v, this._pausePool, this.pauseObjectGrip),
+      createValueGrip: v => {
+        if (this._pausePool) {
+          return createValueGrip(v, this._pausePool, this.pauseObjectGrip);
+        }
+
+        return createValueGrip(v, this.threadLifetimePool, this.objectGrip);
+      },
       sources: () => this.sources,
       createEnvironmentActor: (e, p) => this.createEnvironmentActor(e, p),
       promote: () => this.threadObjectGrip(actor),

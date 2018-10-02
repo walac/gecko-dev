@@ -11,14 +11,16 @@ ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 const {actionTypes: at, actionUtils: au} = ChromeUtils.import("resource://activity-stream/common/Actions.jsm", {});
 const {Prefs} = ChromeUtils.import("resource://activity-stream/lib/ActivityStreamPrefs.jsm", {});
 
+ChromeUtils.defineModuleGetter(this, "ASRouterPreferences",
+  "resource://activity-stream/lib/ASRouterPreferences.jsm");
 ChromeUtils.defineModuleGetter(this, "perfService",
   "resource://activity-stream/common/PerfService.jsm");
 ChromeUtils.defineModuleGetter(this, "PingCentre",
   "resource:///modules/PingCentre.jsm");
 ChromeUtils.defineModuleGetter(this, "UTEventReporting",
   "resource://activity-stream/lib/UTEventReporting.jsm");
-ChromeUtils.defineModuleGetter(this, "AppConstants",
-  "resource://gre/modules/AppConstants.jsm");
+ChromeUtils.defineModuleGetter(this, "UpdateUtils",
+  "resource://gre/modules/UpdateUtils.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "gUUIDGenerator",
   "@mozilla.org/uuid-generator;1",
@@ -35,13 +37,12 @@ const USER_PREFS_ENCODING = {
   "feeds.section.topstories": 1 << 2,
   "feeds.section.highlights": 1 << 3,
   "feeds.snippets": 1 << 4,
-  "showSponsored": 1 << 5
+  "showSponsored": 1 << 5,
 };
 
 const PREF_IMPRESSION_ID = "impressionId";
 const TELEMETRY_PREF = "telemetry";
 const EVENTS_TELEMETRY_PREF = "telemetry.ut.events";
-const ROUTER_MESSAGE_PROVIDER_PREF = "asrouter.messageProviders";
 
 this.TelemetryFeed = class TelemetryFeed {
   constructor(options) {
@@ -55,8 +56,6 @@ this.TelemetryFeed = class TelemetryFeed {
     this._prefs.observe(TELEMETRY_PREF, this._onTelemetryPrefChange);
     this._onEventsTelemetryPrefChange = this._onEventsTelemetryPrefChange.bind(this);
     this._prefs.observe(EVENTS_TELEMETRY_PREF, this._onEventsTelemetryPrefChange);
-    this._onRouterMessageProviderChange = this._onRouterMessageProviderChange.bind(this);
-    this._prefs.observe(ROUTER_MESSAGE_PROVIDER_PREF, this._onRouterMessageProviderChange);
   }
 
   init() {
@@ -102,7 +101,7 @@ this.TelemetryFeed = class TelemetryFeed {
     try {
       data_to_save = {
         load_trigger_ts: perfService.getMostRecentAbsMarkStartByName("browser-open-newtab-start"),
-        load_trigger_type: "menu_plus_or_keyboard"
+        load_trigger_type: "menu_plus_or_keyboard",
       };
     } catch (e) {
       // if no mark was returned, we have nothing to save
@@ -120,28 +119,6 @@ this.TelemetryFeed = class TelemetryFeed {
   }
 
   /**
-   * Check the CFR experiment cohort information by parsing the pref string of
-   * AS router message provider. The experiment cohort can be identified by the
-   * `cohort` field in the "cfr" provider.
-   */
-  _parseCFRCohort(pref) {
-    try {
-      for (let provider of JSON.parse(pref)) {
-        if (provider.id === "cfr" && provider.enabled && provider.cohort) {
-          return true;
-        }
-      }
-    } catch (e) {
-      Cu.reportError("Problem parsing JSON message provider pref for ASRouter");
-    }
-    return false;
-  }
-
-  _onRouterMessageProviderChange(prefVal) {
-    this._isInCFRCohort = this._parseCFRCohort(prefVal);
-  }
-
-  /**
    * Lazily initialize PingCentre for Activity Stream to send pings
    */
   get pingCentre() {
@@ -149,8 +126,8 @@ this.TelemetryFeed = class TelemetryFeed {
       {
         value: new PingCentre({
           topic: ACTIVITY_STREAM_ID,
-          overrideEndpointPref: ACTIVITY_STREAM_ENDPOINT_PREF
-        })
+          overrideEndpointPref: ACTIVITY_STREAM_ENDPOINT_PREF,
+        }),
       });
     return this.pingCentre;
   }
@@ -190,14 +167,15 @@ this.TelemetryFeed = class TelemetryFeed {
   }
 
   /**
-   * Lazily parse the AS router pref to check if it is in the CFR experiment cohort
+   *  Check if it is in the CFR experiment cohort. ASRouterPreferences lazily parses AS router pref.
    */
   get isInCFRCohort() {
-    if (this._isInCFRCohort === undefined) {
-      const pref = this._prefs.get(ROUTER_MESSAGE_PROVIDER_PREF);
-      this._isInCFRCohort = this._parseCFRCohort(pref);
+    for (let provider of ASRouterPreferences.providers) {
+      if (provider.id === "cfr" && provider.enabled && provider.cohort) {
+        return true;
+      }
     }
-    return this._isInCFRCohort;
+    return false;
   }
 
   /**
@@ -257,8 +235,8 @@ this.TelemetryFeed = class TelemetryFeed {
       perf: {
         load_trigger_type,
         is_preloaded: false,
-        is_prerendered: false
-      }
+        is_prerendered: false,
+      },
     };
 
     if (load_trigger_ts) {
@@ -328,8 +306,8 @@ this.TelemetryFeed = class TelemetryFeed {
   createPing(portID) {
     const ping = {
       addon_version: Services.appinfo.appBuildID,
-      locale: Services.locale.getAppLocaleAsLangTag(),
-      user_prefs: this.userPreferences
+      locale: Services.locale.appLocaleAsLangTag,
+      user_prefs: this.userPreferences,
     };
 
     // If the ping is part of a user session, add session-related info
@@ -359,7 +337,7 @@ this.TelemetryFeed = class TelemetryFeed {
         action: "activity_stream_impression_stats",
         impression_id: this._impressionId,
         client_id: "n/a",
-        session_id: "n/a"
+        session_id: "n/a",
       }
     );
   }
@@ -397,7 +375,7 @@ this.TelemetryFeed = class TelemetryFeed {
         page: session.page,
         session_duration: session.session_duration,
         action: "activity_stream_session",
-        perf: session.perf
+        perf: session.perf,
       }
     );
   }
@@ -412,8 +390,8 @@ this.TelemetryFeed = class TelemetryFeed {
     const ping = {
       client_id: "n/a",
       addon_version: Services.appinfo.appBuildID,
-      locale: Services.locale.getAppLocaleAsLangTag(),
-      impression_id: this._impressionId
+      locale: Services.locale.appLocaleAsLangTag,
+      impression_id: this._impressionId,
     };
     if (action.data.includeClientID) {
       // Ping-centre client will fill in the client_id if it's not provided in the ping
@@ -435,7 +413,7 @@ this.TelemetryFeed = class TelemetryFeed {
    * 3). In shield experiments conducted in release, it collects client_id and message_id
    */
   applyCFRPolicy(ping) {
-    if (AppConstants.MOZ_UPDATE_CHANNEL === "release" && !this.isInCFRCohort) {
+    if (UpdateUtils.getUpdateChannel(true) === "release" && !this.isInCFRCohort) {
       ping.message_id = ping.bucket_id || "n/a";
       ping.client_id = "n/a";
       ping.impression_id = this._impressionId;
@@ -585,7 +563,6 @@ this.TelemetryFeed = class TelemetryFeed {
     try {
       this._prefs.ignore(TELEMETRY_PREF, this._onTelemetryPrefChange);
       this._prefs.ignore(EVENTS_TELEMETRY_PREF, this._onEventsTelemetryPrefChange);
-      this._prefs.ignore(ROUTER_MESSAGE_PROVIDER_PREF, this._onRouterMessageProviderChange);
     } catch (e) {
       Cu.reportError(e);
     }
@@ -599,5 +576,4 @@ const EXPORTED_SYMBOLS = [
   "PREF_IMPRESSION_ID",
   "TELEMETRY_PREF",
   "EVENTS_TELEMETRY_PREF",
-  "ROUTER_MESSAGE_PROVIDER_PREF"
 ];

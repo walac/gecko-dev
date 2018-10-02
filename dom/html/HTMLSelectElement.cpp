@@ -22,13 +22,13 @@
 #include "nsContentList.h"
 #include "nsError.h"
 #include "nsGkAtoms.h"
-#include "nsIComboboxControlFrame.h"
+#include "nsComboboxControlFrame.h"
 #include "nsIDocument.h"
 #include "nsIFormControlFrame.h"
 #include "nsIForm.h"
 #include "nsIFormProcessor.h"
 #include "nsIFrame.h"
-#include "nsIListControlFrame.h"
+#include "nsListControlFrame.h"
 #include "nsISelectControlFrame.h"
 #include "nsLayoutUtils.h"
 #include "nsMappedAttributes.h"
@@ -113,9 +113,9 @@ SafeOptionListMutation::~SafeOptionListMutation()
 // construction, destruction
 
 
-HTMLSelectElement::HTMLSelectElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
+HTMLSelectElement::HTMLSelectElement(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
                                      FromParser aFromParser)
-  : nsGenericHTMLFormElementWithState(aNodeInfo, NS_FORM_SELECT),
+  : nsGenericHTMLFormElementWithState(std::move(aNodeInfo), NS_FORM_SELECT),
     mOptions(new HTMLOptionsCollection(this)),
     mAutocompleteAttrState(nsContentUtils::eAutocompleteAttrState_Unknown),
     mAutocompleteInfoState(nsContentUtils::eAutocompleteAttrState_Unknown),
@@ -1600,12 +1600,12 @@ HTMLSelectElement::DispatchContentReset()
     // Only dispatch content reset notification if this is a list control
     // frame or combo box control frame.
     if (IsCombobox()) {
-      nsIComboboxControlFrame* comboFrame = do_QueryFrame(formControlFrame);
+      nsComboboxControlFrame* comboFrame = do_QueryFrame(formControlFrame);
       if (comboFrame) {
         comboFrame->OnContentReset();
       }
     } else {
-      nsIListControlFrame* listFrame = do_QueryFrame(formControlFrame);
+      nsListControlFrame* listFrame = do_QueryFrame(formControlFrame);
       if (listFrame) {
         listFrame->OnContentReset();
       }
@@ -1779,7 +1779,7 @@ bool
 HTMLSelectElement::OpenInParentProcess()
 {
   nsIFormControlFrame* formControlFrame = GetFormControlFrame(false);
-  nsIComboboxControlFrame* comboFrame = do_QueryFrame(formControlFrame);
+  nsComboboxControlFrame* comboFrame = do_QueryFrame(formControlFrame);
   if (comboFrame) {
     return comboFrame->IsOpenInParentProcess();
   }
@@ -1791,7 +1791,7 @@ void
 HTMLSelectElement::SetOpenInParentProcess(bool aVal)
 {
   nsIFormControlFrame* formControlFrame = GetFormControlFrame(false);
-  nsIComboboxControlFrame* comboFrame = do_QueryFrame(formControlFrame);
+  nsComboboxControlFrame* comboFrame = do_QueryFrame(formControlFrame);
   if (comboFrame) {
     comboFrame->SetOpenInParentProcess(aVal);
   }
@@ -1803,7 +1803,7 @@ HTMLSelectElement::SetPreviewValue(const nsAString& aValue)
   mPreviewValue = aValue;
   nsContentUtils::RemoveNewlines(mPreviewValue);
   nsIFormControlFrame* formControlFrame = GetFormControlFrame(false);
-  nsIComboboxControlFrame* comboFrame = do_QueryFrame(formControlFrame);
+  nsComboboxControlFrame* comboFrame = do_QueryFrame(formControlFrame);
   if (comboFrame) {
     comboFrame->RedisplaySelectedText();
   }

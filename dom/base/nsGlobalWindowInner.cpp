@@ -102,6 +102,7 @@
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/TabGroup.h"
 #include "mozilla/StaticPrefs.h"
+#include "PaintWorkletImpl.h"
 
 // Interfaces Needed
 #include "nsIFrame.h"
@@ -1063,6 +1064,12 @@ nsGlobalWindowInner::~nsGlobalWindowInner()
     MOZ_ASSERT(sInnerWindowsById->Get(mWindowID),
                 "This window should be in the hash table");
     sInnerWindowsById->Remove(mWindowID);
+  }
+
+  // If AutoplayPermissionManager is going to be destroyed before getting the
+  // request's result, we would treat it as user deny.
+  if (mAutoplayPermissionManager) {
+    mAutoplayPermissionManager->DenyPlayRequestIfExists();
   }
 
   nsContentUtils::InnerOrOuterWindowDestroyed();
@@ -6268,6 +6275,12 @@ nsGlobalWindowInner::GetTopLevelPrincipal()
 nsIPrincipal*
 nsGlobalWindowInner::GetTopLevelStorageAreaPrincipal()
 {
+  if (mDoc && ((mDoc->GetSandboxFlags() & SANDBOXED_STORAGE_ACCESS) != 0 ||
+               nsContentUtils::IsInPrivateBrowsing(mDoc))) {
+    // Storage access is disabled
+    return nullptr;
+  }
+
   nsPIDOMWindowOuter* outerWindow = GetParentInternal();
   if (!outerWindow) {
     // No outer window available!
@@ -7807,7 +7820,7 @@ nsGlobalWindowInner::GetPaintWorklet(ErrorResult& aRv)
       return nullptr;
     }
 
-    mPaintWorklet = new Worklet(this, principal, Worklet::ePaintWorklet);
+    mPaintWorklet = PaintWorkletImpl::CreateWorklet(this, principal);
   }
 
   return mPaintWorklet;

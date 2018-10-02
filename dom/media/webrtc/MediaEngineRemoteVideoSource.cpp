@@ -187,8 +187,12 @@ MediaEngineRemoteVideoSource::Allocate(
   LOG((__PRETTY_FUNCTION__));
   AssertIsOnOwningThread();
 
-  MOZ_ASSERT(mInitDone);
   MOZ_ASSERT(mState == kReleased);
+
+  if (!mInitDone) {
+    LOG(("Init not done"));
+    return NS_ERROR_FAILURE;
+  }
 
   NormalizedConstraints constraints(aConstraints);
   webrtc::CaptureCapability newCapability;
@@ -292,8 +296,8 @@ MediaEngineRemoteVideoSource::Start(const RefPtr<const AllocationHandle>& aHandl
   LOG((__PRETTY_FUNCTION__));
   AssertIsOnOwningThread();
 
-  MOZ_ASSERT(mInitDone);
   MOZ_ASSERT(mState == kAllocated || mState == kStopped);
+  MOZ_ASSERT(mInitDone);
   MOZ_ASSERT(mStream);
   MOZ_ASSERT(IsTrackIDExplicit(mTrackID));
 
@@ -550,8 +554,10 @@ MediaEngineRemoteVideoSource::DeliverFrame(uint8_t* aBuffer,
     std::swap(req_ideal_width, req_ideal_height);
   }
 
-  int32_t dst_max_width = std::min(req_max_width, aProps.width());
-  int32_t dst_max_height = std::min(req_max_height, aProps.height());
+  int32_t dst_max_width = req_max_width == 0 ? aProps.width() :
+    std::min(req_max_width, aProps.width());
+  int32_t dst_max_height = req_max_height == 0 ? aProps.height() :
+    std::min(req_max_height, aProps.height());
   // This logic works for both camera and screen sharing case.
   // for camera case, req_ideal_width and req_ideal_height is 0.
   // The following snippet will set dst_width to dst_max_width and dst_height to dst_max_height
@@ -791,33 +797,70 @@ MediaEngineRemoteVideoSource::GetBestFitnessDistance(
 }
 
 static void
+LogConstraintStringRange(const NormalizedConstraintSet::StringRange& aRange)
+{
+  if (aRange.mExact.size() <= 1 && aRange.mIdeal.size() <= 1) {
+    LOG(("  %s: { exact: [%s], ideal: [%s] }",
+         aRange.mName,
+         (aRange.mExact.size()? NS_ConvertUTF16toUTF8(*aRange.mExact.begin()).get() : ""),
+         (aRange.mIdeal.size()? NS_ConvertUTF16toUTF8(*aRange.mIdeal.begin()).get() : "")));
+  } else {
+    LOG(("  %s: { exact: [", aRange.mName));
+    for (auto& entry : aRange.mExact) {
+      LOG(("      %s,", NS_ConvertUTF16toUTF8(entry).get()));
+    }
+    LOG(("    ], ideal: ["));
+    for (auto& entry : aRange.mIdeal) {
+      LOG(("      %s,", NS_ConvertUTF16toUTF8(entry).get()));
+    }
+    LOG(("    ]}"));
+  }
+}
+
+template<typename T>
+static void
+LogConstraintRange(const NormalizedConstraintSet::Range<T>& aRange)
+{
+  if (aRange.mIdeal.isSome()) {
+    LOG(("  %s: { min: %d, max: %d, ideal: %d }",
+         aRange.mName, aRange.mMin, aRange.mMax, aRange.mIdeal.valueOr(0)));
+  } else {
+    LOG(("  %s: { min: %d, max: %d }",
+         aRange.mName, aRange.mMin, aRange.mMax));
+  }
+}
+
+template<>
+void
+LogConstraintRange(const NormalizedConstraintSet::Range<double>& aRange)
+{
+  if (aRange.mIdeal.isSome()) {
+    LOG(("  %s: { min: %f, max: %f, ideal: %f }",
+         aRange.mName, aRange.mMin, aRange.mMax, aRange.mIdeal.valueOr(0)));
+  } else {
+    LOG(("  %s: { min: %f, max: %f }",
+         aRange.mName, aRange.mMin, aRange.mMax));
+  }
+}
+
+static void
 LogConstraints(const NormalizedConstraintSet& aConstraints)
 {
   auto& c = aConstraints;
-  if (c.mWidth.mIdeal.isSome()) {
-    LOG(("Constraints: width: { min: %d, max: %d, ideal: %d }",
-         c.mWidth.mMin, c.mWidth.mMax,
-         c.mWidth.mIdeal.valueOr(0)));
-  } else {
-    LOG(("Constraints: width: { min: %d, max: %d }",
-         c.mWidth.mMin, c.mWidth.mMax));
-  }
-  if (c.mHeight.mIdeal.isSome()) {
-    LOG(("             height: { min: %d, max: %d, ideal: %d }",
-         c.mHeight.mMin, c.mHeight.mMax,
-         c.mHeight.mIdeal.valueOr(0)));
-  } else {
-    LOG(("             height: { min: %d, max: %d }",
-         c.mHeight.mMin, c.mHeight.mMax));
-  }
-  if (c.mFrameRate.mIdeal.isSome()) {
-    LOG(("             frameRate: { min: %f, max: %f, ideal: %f }",
-         c.mFrameRate.mMin, c.mFrameRate.mMax,
-         c.mFrameRate.mIdeal.valueOr(0)));
-  } else {
-    LOG(("             frameRate: { min: %f, max: %f }",
-         c.mFrameRate.mMin, c.mFrameRate.mMax));
-  }
+  LOG(("Constraints: {"));
+  LOG(("%s", [&]() {
+    LogConstraintRange(c.mWidth);
+    LogConstraintRange(c.mHeight);
+    LogConstraintRange(c.mFrameRate);
+    LogConstraintStringRange(c.mMediaSource);
+    LogConstraintStringRange(c.mFacingMode);
+    LogConstraintStringRange(c.mDeviceId);
+    LogConstraintRange(c.mEchoCancellation);
+    LogConstraintRange(c.mAutoGainControl);
+    LogConstraintRange(c.mNoiseSuppression);
+    LogConstraintRange(c.mChannelCount);
+    return "}";
+  }()));
 }
 
 static void
@@ -899,9 +942,11 @@ MediaEngineRemoteVideoSource::ChooseCapability(
       // algorithm there.
       // TODO: This can be removed in bug 1453269.
       aCapability.width =
-        (c.mWidth.mIdeal.valueOr(0) & 0xffff) << 16 | (c.mWidth.mMax & 0xffff);
+        (std::min(0xffff, c.mWidth.mIdeal.valueOr(0)) & 0xffff) << 16 |
+        (std::min(0xffff, c.mWidth.mMax) & 0xffff);
       aCapability.height =
-        (c.mHeight.mIdeal.valueOr(0) & 0xffff) << 16 | (c.mHeight.mMax & 0xffff);
+        (std::min(0xffff, c.mHeight.mIdeal.valueOr(0)) & 0xffff) << 16 |
+        (std::min(0xffff, c.mHeight.mMax) & 0xffff);
       aCapability.maxFPS =
         c.mFrameRate.Clamp(c.mFrameRate.mIdeal.valueOr(aPrefs.mFPS));
       return true;

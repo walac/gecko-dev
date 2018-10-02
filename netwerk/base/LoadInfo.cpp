@@ -84,6 +84,7 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
   , mIsThirdPartyContext(false)
   , mIsDocshellReload(false)
   , mSendCSPViolationEvents(true)
+  , mTrackerBlockedReason(mozilla::Telemetry::LABELS_DOCUMENT_ANALYTICS_TRACKER_FASTBLOCKED::all)
   , mForcePreflight(false)
   , mIsPreflight(false)
   , mLoadTriggeredFromExternal(false)
@@ -91,6 +92,7 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
   , mIsTracker(false)
   , mIsTrackerBlocked(false)
   , mDocumentHasUserInteracted(false)
+  , mDocumentHasLoaded(false)
 {
   MOZ_ASSERT(mLoadingPrincipal);
   MOZ_ASSERT(mTriggeringPrincipal);
@@ -162,6 +164,21 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
         mTopLevelPrincipal = innerWindow->GetTopLevelPrincipal();
         mTopLevelStorageAreaPrincipal =
           innerWindow->GetTopLevelStorageAreaPrincipal();
+        mDocumentHasLoaded = innerWindow->IsDocumentLoaded();
+
+        if (innerWindow->IsFrame()) {
+          // For resources within iframes, we actually want the
+          // top-level document's flag, not the iframe document's.
+          mDocumentHasLoaded = false;
+          nsGlobalWindowOuter* topOuter = innerWindow->GetScriptableTopInternal();
+          if (topOuter) {
+            nsGlobalWindowInner* topInner =
+              nsGlobalWindowInner::Cast(topOuter->GetCurrentInnerWindow());
+            if (topInner) {
+              mDocumentHasLoaded = topInner->IsDocumentLoaded();
+            }
+          }
+        }
       }
     }
 
@@ -323,6 +340,7 @@ LoadInfo::LoadInfo(nsPIDOMWindowOuter* aOuterWindow,
   , mIsThirdPartyContext(false) // NB: TYPE_DOCUMENT implies not third-party.
   , mIsDocshellReload(false)
   , mSendCSPViolationEvents(true)
+  , mTrackerBlockedReason(mozilla::Telemetry::LABELS_DOCUMENT_ANALYTICS_TRACKER_FASTBLOCKED::all)
   , mForcePreflight(false)
   , mIsPreflight(false)
   , mLoadTriggeredFromExternal(false)
@@ -330,6 +348,7 @@ LoadInfo::LoadInfo(nsPIDOMWindowOuter* aOuterWindow,
   , mIsTracker(false)
   , mIsTrackerBlocked(false)
   , mDocumentHasUserInteracted(false)
+  , mDocumentHasLoaded(false)
 {
   // Top-level loads are never third-party
   // Grab the information we can out of the window.
@@ -422,6 +441,7 @@ LoadInfo::LoadInfo(const LoadInfo& rhs)
   , mAncestorPrincipals(rhs.mAncestorPrincipals)
   , mAncestorOuterWindowIDs(rhs.mAncestorOuterWindowIDs)
   , mCorsUnsafeHeaders(rhs.mCorsUnsafeHeaders)
+  , mTrackerBlockedReason(rhs.mTrackerBlockedReason)
   , mForcePreflight(rhs.mForcePreflight)
   , mIsPreflight(rhs.mIsPreflight)
   , mLoadTriggeredFromExternal(rhs.mLoadTriggeredFromExternal)
@@ -430,6 +450,7 @@ LoadInfo::LoadInfo(const LoadInfo& rhs)
   , mIsTracker(rhs.mIsTracker)
   , mIsTrackerBlocked(rhs.mIsTrackerBlocked)
   , mDocumentHasUserInteracted(rhs.mDocumentHasUserInteracted)
+  , mDocumentHasLoaded(rhs.mDocumentHasLoaded)
 {
 }
 
@@ -476,7 +497,8 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
                    bool aIsPreflight,
                    bool aLoadTriggeredFromExternal,
                    bool aServiceWorkerTaintingSynthesized,
-                   bool aDocumentHasUserInteracted)
+                   bool aDocumentHasUserInteracted,
+                   bool aDocumentHasLoaded)
   : mLoadingPrincipal(aLoadingPrincipal)
   , mTriggeringPrincipal(aTriggeringPrincipal)
   , mPrincipalToInherit(aPrincipalToInherit)
@@ -514,6 +536,7 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
   , mAncestorPrincipals(std::move(aAncestorPrincipals))
   , mAncestorOuterWindowIDs(aAncestorOuterWindowIDs)
   , mCorsUnsafeHeaders(aCorsUnsafeHeaders)
+  , mTrackerBlockedReason(mozilla::Telemetry::LABELS_DOCUMENT_ANALYTICS_TRACKER_FASTBLOCKED::all)
   , mForcePreflight(aForcePreflight)
   , mIsPreflight(aIsPreflight)
   , mLoadTriggeredFromExternal(aLoadTriggeredFromExternal)
@@ -521,6 +544,7 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
   , mIsTracker(false)
   , mIsTrackerBlocked(false)
   , mDocumentHasUserInteracted(aDocumentHasUserInteracted)
+  , mDocumentHasLoaded(aDocumentHasLoaded)
 {
   // Only top level TYPE_DOCUMENT loads can have a null loadingPrincipal
   MOZ_ASSERT(mLoadingPrincipal || aContentPolicyType == nsIContentPolicy::TYPE_DOCUMENT);
@@ -1374,6 +1398,21 @@ LoadInfo::SetIsTrackerBlocked(bool aIsTrackerBlocked)
 }
 
 NS_IMETHODIMP
+LoadInfo::GetTrackerBlockedReason(mozilla::Telemetry::LABELS_DOCUMENT_ANALYTICS_TRACKER_FASTBLOCKED *aLabel)
+{
+  MOZ_ASSERT(aLabel);
+  *aLabel = mTrackerBlockedReason;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::SetTrackerBlockedReason(mozilla::Telemetry::LABELS_DOCUMENT_ANALYTICS_TRACKER_FASTBLOCKED aLabel)
+{
+  mTrackerBlockedReason = aLabel;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 LoadInfo::GetDocumentHasUserInteracted(bool *aDocumentHasUserInteracted)
 {
   MOZ_ASSERT(aDocumentHasUserInteracted);
@@ -1385,6 +1424,21 @@ NS_IMETHODIMP
 LoadInfo::SetDocumentHasUserInteracted(bool aDocumentHasUserInteracted)
 {
   mDocumentHasUserInteracted = aDocumentHasUserInteracted;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::GetDocumentHasLoaded(bool *aDocumentHasLoaded)
+{
+  MOZ_ASSERT(aDocumentHasLoaded);
+  *aDocumentHasLoaded = mDocumentHasLoaded;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::SetDocumentHasLoaded(bool aDocumentHasLoaded)
+{
+  mDocumentHasLoaded = aDocumentHasLoaded;
   return NS_OK;
 }
 

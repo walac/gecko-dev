@@ -461,8 +461,7 @@ ElemSegment::serializedSize() const
 {
     return sizeof(tableIndex) +
            sizeof(offsetIfActive) +
-           SerializedPodVectorSize(elemFuncIndices) +
-           SerializedPodVectorSize(elemCodeRangeIndices(Tier::Serialized));
+           SerializedPodVectorSize(elemFuncIndices);
 }
 
 uint8_t*
@@ -471,7 +470,6 @@ ElemSegment::serialize(uint8_t* cursor) const
     cursor = WriteBytes(cursor, &tableIndex, sizeof(tableIndex));
     cursor = WriteBytes(cursor, &offsetIfActive, sizeof(offsetIfActive));
     cursor = SerializePodVector(cursor, elemFuncIndices);
-    cursor = SerializePodVector(cursor, elemCodeRangeIndices(Tier::Serialized));
     return cursor;
 }
 
@@ -480,16 +478,87 @@ ElemSegment::deserialize(const uint8_t* cursor)
 {
     (cursor = ReadBytes(cursor, &tableIndex, sizeof(tableIndex))) &&
     (cursor = ReadBytes(cursor, &offsetIfActive, sizeof(offsetIfActive))) &&
-    (cursor = DeserializePodVector(cursor, &elemFuncIndices)) &&
-    (cursor = DeserializePodVector(cursor, &elemCodeRangeIndices(Tier::Serialized)));
+    (cursor = DeserializePodVector(cursor, &elemFuncIndices));
     return cursor;
 }
 
 size_t
 ElemSegment::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const
 {
-    return elemFuncIndices.sizeOfExcludingThis(mallocSizeOf) +
-           elemCodeRangeIndices(Tier::Serialized).sizeOfExcludingThis(mallocSizeOf);
+    return elemFuncIndices.sizeOfExcludingThis(mallocSizeOf);
+}
+
+size_t
+DataSegment::serializedSize() const
+{
+    return sizeof(offsetIfActive) +
+           SerializedPodVectorSize(bytes);
+}
+
+uint8_t*
+DataSegment::serialize(uint8_t* cursor) const
+{
+    cursor = WriteBytes(cursor, &offsetIfActive, sizeof(offsetIfActive));
+    cursor = SerializePodVector(cursor, bytes);
+    return cursor;
+}
+
+const uint8_t*
+DataSegment::deserialize(const uint8_t* cursor)
+{
+    (cursor = ReadBytes(cursor, &offsetIfActive, sizeof(offsetIfActive))) &&
+    (cursor = DeserializePodVector(cursor, &bytes));
+    return cursor;
+}
+
+size_t
+DataSegment::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const
+{
+    return bytes.sizeOfExcludingThis(mallocSizeOf);
+}
+
+size_t
+CustomSection::serializedSize() const
+{
+    return SerializedPodVectorSize(name) +
+           SerializedPodVectorSize(payload->bytes);
+}
+
+uint8_t*
+CustomSection::serialize(uint8_t* cursor) const
+{
+    cursor = SerializePodVector(cursor, name);
+    cursor = SerializePodVector(cursor, payload->bytes);
+    return cursor;
+}
+
+const uint8_t*
+CustomSection::deserialize(const uint8_t* cursor)
+{
+    cursor = DeserializePodVector(cursor, &name);
+    if (!cursor) {
+        return nullptr;
+    }
+
+    Bytes bytes;
+    cursor = DeserializePodVector(cursor, &bytes);
+    if (!cursor) {
+        return nullptr;
+    }
+    payload = js_new<ShareableBytes>(std::move(bytes));
+    if (!payload) {
+        return nullptr;
+    }
+
+    return cursor;
+}
+
+size_t
+CustomSection::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const
+{
+    return name.sizeOfExcludingThis(mallocSizeOf) +
+           sizeof(*payload) +
+           payload->sizeOfExcludingThis(mallocSizeOf);
 }
 
 //  Heap length on ARM should fit in an ARM immediate. We approximate the set
@@ -897,8 +966,6 @@ wasm::LookupInSorted(const CodeRangeVector& codeRanges, CodeRange::OffsetInCode 
 UniqueTlsData
 wasm::CreateTlsData(uint32_t globalDataLength)
 {
-    MOZ_ASSERT(globalDataLength % gc::SystemPageSize() == 0);
-
     void* allocatedBase = js_calloc(TlsDataAlign + offsetof(TlsData, globalArea) + globalDataLength);
     if (!allocatedBase) {
         return nullptr;

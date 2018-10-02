@@ -47,7 +47,7 @@ def create_parser(product_choices=None):
 
 TEST is either the full path to a test file to run, or the URL of a test excluding
 scheme host and port.""")
-    parser.add_argument("--manifest-update", action="store_true", default=None,
+    parser.add_argument("--manifest-update", action="store_true", default=True,
                         help="Regenerate the test manifest.")
     parser.add_argument("--no-manifest-update", action="store_false", dest="manifest_update",
                         help="Prevent regeneration of the test manifest.")
@@ -205,6 +205,10 @@ scheme host and port.""")
                               help="Allow the wptrunner to install fonts on your system")
     config_group.add_argument("--font-dir", action="store", type=abs_path, dest="font_dir",
                               help="Path to local font installation directory", default=None)
+    config_group.add_argument("--headless", action="store_true",
+                              help="Run browser in headless mode", default=None)
+    config_group.add_argument("--no-headless", action="store_false", dest="headless",
+                              help="Don't run browser in headless mode")
 
     build_type = parser.add_mutually_exclusive_group()
     build_type.add_argument("--debug-build", dest="debug", action="store_true",
@@ -364,6 +368,7 @@ def set_from_config(kwargs):
 
 
     check_paths(kwargs)
+
 
 def get_test_paths(config):
     # Set up test_paths

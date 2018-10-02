@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/FontPropertyTypes.h"
+#include "mozilla/image/ImageMemoryReporter.h"
 #include "mozilla/layers/CompositorManagerChild.h"
 #include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/ImageBridgeChild.h"
@@ -631,6 +632,123 @@ static uint32_t GetSkiaGlyphCacheSize()
 }
 #endif
 
+class WebRenderMemoryReporter final : public nsIMemoryReporter {
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIMEMORYREPORTER
+
+private:
+  ~WebRenderMemoryReporter() = default;
+};
+
+// Memory reporter for WebRender.
+//
+// The reporting within WebRender is manual and incomplete. We could do a much
+// more thorough job by depending on the malloc_size_of crate, but integrating
+// that into WebRender is tricky [1].
+//
+// So the idea is to start with manual reporting for the large allocations
+// detected by DMD, and see how much that can cover in practice (which may
+// require a few rounds of iteration). If that approach turns out to be
+// fundamentally insufficient, we can either duplicate more of the malloc_size_of
+// functionality in WebRender, or deal with the complexity of a gecko-only
+// crate dependency.
+//
+// [1] See https://bugzilla.mozilla.org/show_bug.cgi?id=1480293#c1
+struct WebRenderMemoryReporterHelper {
+  WebRenderMemoryReporterHelper(nsIHandleReportCallback* aCallback, nsISupports* aData)
+    : mCallback(aCallback), mData(aData)
+  {}
+  nsCOMPtr<nsIHandleReportCallback> mCallback;
+  nsCOMPtr<nsISupports> mData;
+
+  void Report(size_t aBytes, const char* aName) const
+  {
+    nsPrintfCString path("explicit/gfx/webrender/%s", aName);
+    nsCString desc(NS_LITERAL_CSTRING("CPU heap memory used by WebRender"));
+    ReportInternal(aBytes, path, desc, nsIMemoryReporter::KIND_HEAP);
+  }
+
+  void ReportTexture(size_t aBytes, const char* aName) const
+  {
+    nsPrintfCString path("gfx/webrender/textures/%s", aName);
+    nsCString desc(NS_LITERAL_CSTRING("GPU texture memory used by WebRender"));
+    ReportInternal(aBytes, path, desc, nsIMemoryReporter::KIND_OTHER);
+  }
+
+  void ReportInternal(size_t aBytes, nsACString& aPath, nsACString& aDesc, int32_t aKind) const
+  {
+    // Generally, memory reporters pass the empty string as the process name to
+    // indicate "current process". However, if we're using a GPU process, the
+    // measurements will actually take place in that process, and it's easier to
+    // just note that here rather than trying to invoke the memory reporter in
+    // the GPU process.
+    nsAutoCString processName;
+    if (gfxConfig::IsEnabled(Feature::GPU_PROCESS)) {
+      GPUParent::GetGPUProcessName(processName);
+    }
+
+    mCallback->Callback(processName, aPath,
+                        aKind, nsIMemoryReporter::UNITS_BYTES,
+                        aBytes, aDesc, mData);
+  }
+};
+
+static void
+FinishAsyncMemoryReport()
+{
+  nsCOMPtr<nsIMemoryReporterManager> imgr =
+    do_GetService("@mozilla.org/memory-reporter-manager;1");
+  if (imgr) {
+    imgr->EndReport();
+  }
+}
+
+NS_IMPL_ISUPPORTS(WebRenderMemoryReporter, nsIMemoryReporter)
+
+NS_IMETHODIMP
+WebRenderMemoryReporter::CollectReports(nsIHandleReportCallback* aHandleReport,
+                                        nsISupports* aData, bool aAnonymize)
+{
+  MOZ_ASSERT(XRE_IsParentProcess());
+  MOZ_ASSERT(NS_IsMainThread());
+  layers::CompositorManagerChild* manager = CompositorManagerChild::GetInstance();
+  if (!manager) {
+    FinishAsyncMemoryReport();
+    return NS_OK;
+  }
+
+  WebRenderMemoryReporterHelper helper(aHandleReport, aData);
+  manager->SendReportMemory(
+    [=](wr::MemoryReport aReport) {
+      // CPU Memory.
+      helper.Report(aReport.primitive_stores, "primitive-stores");
+      helper.Report(aReport.clip_stores, "clip-stores");
+      helper.Report(aReport.gpu_cache_metadata, "gpu-cache/metadata");
+      helper.Report(aReport.gpu_cache_cpu_mirror, "gpu-cache/cpu-mirror");
+      helper.Report(aReport.render_tasks, "render-tasks");
+      helper.Report(aReport.hit_testers, "hit-testers");
+      helper.Report(aReport.fonts, "resource-cache/fonts");
+      helper.Report(aReport.images, "resource-cache/images");
+      helper.Report(aReport.rasterized_blobs, "resource-cache/rasterized-blobs");
+
+      // GPU Memory.
+      helper.ReportTexture(aReport.gpu_cache_textures, "gpu-cache");
+      helper.ReportTexture(aReport.vertex_data_textures, "vertex-data");
+      helper.ReportTexture(aReport.render_target_textures, "render-targets");
+      helper.ReportTexture(aReport.texture_cache_textures, "texture-cache");
+
+      FinishAsyncMemoryReport();
+    },
+    [](mozilla::ipc::ResponseRejectReason aReason) {
+      FinishAsyncMemoryReport();
+    }
+  );
+
+  return NS_OK;
+}
+
+
 void
 gfxPlatform::Init()
 {
@@ -823,6 +941,10 @@ gfxPlatform::Init()
     }
 
     RegisterStrongMemoryReporter(new GfxMemoryImageReporter());
+    if (XRE_IsParentProcess() && gfxVars::UseWebRender()) {
+      RegisterStrongAsyncMemoryReporter(new WebRenderMemoryReporter());
+    }
+
 #ifdef USE_SKIA
     RegisterStrongMemoryReporter(new SkMemoryReporter());
 #endif
@@ -1044,6 +1166,7 @@ gfxPlatform::InitLayersIPC()
   if (XRE_IsParentProcess() || recordreplay::IsRecordingOrReplaying()) {
     if (!gfxConfig::IsEnabled(Feature::GPU_PROCESS) && gfxVars::UseWebRender()) {
       wr::RenderThread::Start();
+      image::ImageMemoryReporter::InitForWebRender();
     }
 
     layers::CompositorThreadHolder::Start();
@@ -1077,6 +1200,7 @@ gfxPlatform::ShutdownLayersIPC()
         // This has to happen after shutting down the child protocols.
         layers::CompositorThreadHolder::Shutdown();
         gfx::VRListenerThreadHolder::Shutdown();
+        image::ImageMemoryReporter::ShutdownForWebRender();
         // There is a case that RenderThread exists when gfxVars::UseWebRender() is false.
         // This could happen when WebRender was fallbacked to compositor.
         if (wr::RenderThread::Get()) {
@@ -2598,7 +2722,9 @@ gfxPlatform::InitWebRenderConfig()
           featureWebRenderQualified.Disable(FeatureStatus::Blocked,
                                             "Bad device id",
                                             NS_LITERAL_CSTRING("FEATURE_FAILURE_BAD_DEVICE_ID"));
-        } else if (deviceID < 1000) { // > 1000 or 0x3e8 roughly corresponds to Tesla and newer
+        } else if (deviceID < 0x6c0) {
+           // 0x6c0 is the lowest Fermi device id. Unfortunately some Tesla devices that don't support D3D 10.1
+           // have higher deviceIDs. They will be included, but blocked by ANGLE.
           featureWebRenderQualified.Disable(FeatureStatus::Blocked,
                                             "Device too old",
                                             NS_LITERAL_CSTRING("FEATURE_FAILURE_DEVICE_TOO_OLD"));

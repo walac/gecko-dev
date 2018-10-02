@@ -67,6 +67,8 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   Translation: "resource:///modules/translation/Translation.jsm",
   UITour: "resource:///modules/UITour.jsm",
   UpdateUtils: "resource://gre/modules/UpdateUtils.jsm",
+  UrlbarInput: "resource:///modules/UrlbarInput.jsm",
+  UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
   Utils: "resource://gre/modules/sessionstore/Utils.jsm",
   Weave: "resource://services-sync/main.js",
   WebNavigationFrames: "resource://gre/modules/WebNavigationFrames.jsm",
@@ -247,31 +249,50 @@ var gMultiProcessBrowser =
         .QueryInterface(Ci.nsILoadContext)
         .useRemoteTabs;
 
+var gBrowserAllowScriptsToCloseInitialTabs = false;
+
 if (AppConstants.platform != "macosx") {
   var gEditUIVisible = true;
 }
 
-/* globals gNavToolbox, gURLBar:true */
-[
-  ["gNavToolbox",         "navigator-toolbox"],
-  ["gURLBar",             "urlbar"],
-].forEach(function(elementGlobal) {
-  var [name, id] = elementGlobal;
-  Object.defineProperty(window, name, {
-    configurable: true,
-    enumerable: true,
-    get() {
-      var element = document.getElementById(id);
-      if (!element)
-        return null;
-      delete window[name];
-      return window[name] = element;
-    },
-    set(val) {
-      delete window[name];
-      return window[name] = val;
-    },
-  });
+Object.defineProperty(this, "gURLBar", {
+  configurable: true,
+  enumerable: true,
+  get() {
+    delete this.gURLBar;
+
+    let element = document.getElementById("urlbar");
+
+    // For now, always use the legacy implementation in the first window to
+    // have a usable address bar e.g. for accessing about:config.
+    if (BrowserWindowTracker.windowCount <= 1 ||
+        !Services.prefs.getBoolPref("browser.urlbar.quantumbar", false)) {
+      return this.gURLBar = element;
+    }
+
+    // Disable the legacy XBL binding.
+    element.setAttribute("quantumbar", "true");
+
+    // Re-focus the input field if it was focused before switching bindings.
+    if (element.hasAttribute("focused")) {
+      element.inputField.focus();
+    }
+
+    return this.gURLBar =
+      new UrlbarInput({
+        textbox: element,
+        panel: document.getElementById("urlbar-results"),
+      });
+  },
+});
+
+Object.defineProperty(this, "gNavToolbox", {
+  configurable: true,
+  enumerable: true,
+  get() {
+    delete this.gNavToolbox;
+    return this.gNavToolbox = document.getElementById("navigator-toolbox");
+  },
 });
 
 // Smart getter for the findbar.  If you don't wish to force the creation of
@@ -884,59 +905,61 @@ function gKeywordURIFixup({ target: browser, data: fixupInfo }) {
   if (isIPv4Address(asciiHost) || /^(?:\d+|0x[a-f0-9]+)$/i.test(asciiHost))
     return;
 
-  let onLookupComplete = (request, record, status) => {
-    let browserRef = weakBrowser.get();
-    if (!Components.isSuccessCode(status) || !browserRef)
-      return;
+  let onLookupCompleteListener = {
+    onLookupComplete(request, record, status) {
+      let browserRef = weakBrowser.get();
+      if (!Components.isSuccessCode(status) || !browserRef)
+        return;
 
-    let currentURI = browserRef.currentURI;
-    // If we're in case (3) (see above), don't show an info bar.
-    if (!currentURI.equals(previousURI) &&
-        !currentURI.equals(preferredURI)) {
-      return;
-    }
+      let currentURI = browserRef.currentURI;
+      // If we're in case (3) (see above), don't show an info bar.
+      if (!currentURI.equals(previousURI) &&
+          !currentURI.equals(preferredURI)) {
+        return;
+      }
 
-    // show infobar offering to visit the host
-    let notificationBox = gBrowser.getNotificationBox(browserRef);
-    if (notificationBox.getNotificationWithValue("keyword-uri-fixup"))
-      return;
+      // show infobar offering to visit the host
+      let notificationBox = gBrowser.getNotificationBox(browserRef);
+      if (notificationBox.getNotificationWithValue("keyword-uri-fixup"))
+        return;
 
-    let message = gNavigatorBundle.getFormattedString(
-      "keywordURIFixup.message", [hostName]);
-    let yesMessage = gNavigatorBundle.getFormattedString(
-      "keywordURIFixup.goTo", [hostName]);
+      let message = gNavigatorBundle.getFormattedString(
+        "keywordURIFixup.message", [hostName]);
+      let yesMessage = gNavigatorBundle.getFormattedString(
+        "keywordURIFixup.goTo", [hostName]);
 
-    let buttons = [
-      {
-        label: yesMessage,
-        accessKey: gNavigatorBundle.getString("keywordURIFixup.goTo.accesskey"),
-        callback() {
-          // Do not set this preference while in private browsing.
-          if (!PrivateBrowsingUtils.isWindowPrivate(window)) {
-            let pref = "browser.fixup.domainwhitelist." + asciiHost;
-            Services.prefs.setBoolPref(pref, true);
-          }
-          openTrustedLinkIn(alternativeURI.spec, "current");
+      let buttons = [
+        {
+          label: yesMessage,
+          accessKey: gNavigatorBundle.getString("keywordURIFixup.goTo.accesskey"),
+          callback() {
+            // Do not set this preference while in private browsing.
+            if (!PrivateBrowsingUtils.isWindowPrivate(window)) {
+              let pref = "browser.fixup.domainwhitelist." + asciiHost;
+              Services.prefs.setBoolPref(pref, true);
+            }
+            openTrustedLinkIn(alternativeURI.spec, "current");
+          },
         },
-      },
-      {
-        label: gNavigatorBundle.getString("keywordURIFixup.dismiss"),
-        accessKey: gNavigatorBundle.getString("keywordURIFixup.dismiss.accesskey"),
-        callback() {
-          let notification = notificationBox.getNotificationWithValue("keyword-uri-fixup");
-          notificationBox.removeNotification(notification, true);
+        {
+          label: gNavigatorBundle.getString("keywordURIFixup.dismiss"),
+          accessKey: gNavigatorBundle.getString("keywordURIFixup.dismiss.accesskey"),
+          callback() {
+            let notification = notificationBox.getNotificationWithValue("keyword-uri-fixup");
+            notificationBox.removeNotification(notification, true);
+          },
         },
-      },
-    ];
-    let notification =
-      notificationBox.appendNotification(message, "keyword-uri-fixup", null,
-                                         notificationBox.PRIORITY_INFO_HIGH,
-                                         buttons);
-    notification.persistence = 1;
+      ];
+      let notification =
+        notificationBox.appendNotification(message, "keyword-uri-fixup", null,
+                                           notificationBox.PRIORITY_INFO_HIGH,
+                                           buttons);
+      notification.persistence = 1;
+    },
   };
 
   try {
-    gDNSService.asyncResolve(hostName, 0, onLookupComplete, Services.tm.mainThread,
+    gDNSService.asyncResolve(hostName, 0, onLookupCompleteListener, Services.tm.mainThread,
                              contentPrincipal.originAttributes);
   } catch (ex) {
     // Do nothing if the URL is invalid (we don't want to show a notification in that case).
@@ -992,6 +1015,18 @@ function handleUriInChrome(aBrowser, aUri) {
   return false;
 }
 
+/* Creates a null principal using the userContextId
+   from the current selected tab or a passed in tab argument */
+function _createNullPrincipalFromTabUserContextId(tab = gBrowser.selectedTab) {
+  let userContextId;
+  if (tab.hasAttribute("usercontextid")) {
+    userContextId = tab.getAttribute("usercontextid");
+  }
+  return Services.scriptSecurityManager.createNullPrincipal({
+    userContextId,
+  });
+}
+
 // A shared function used by both remote and non-remote browser XBL bindings to
 // load a URI or redirect it to the correct process.
 function _loadURI(browser, uri, params = {}) {
@@ -1013,6 +1048,10 @@ function _loadURI(browser, uri, params = {}) {
     postData,
     userContextId,
   } = params || {};
+
+  if (!triggeringPrincipal) {
+    throw new Error("Must load with a triggering Principal");
+  }
 
   let {
     uriObject,
@@ -1658,17 +1697,22 @@ var gBrowserInit = {
           gBrowser.loadTabs(specs, {
             inBackground: false,
             replace: true,
-            triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+            // See below for the semantics of window.arguments. Only the minimum is supported.
+            userContextId: window.arguments[6],
+            triggeringPrincipal: window.arguments[8] || Services.scriptSecurityManager.getSystemPrincipal(),
+            allowInheritPrincipal: window.arguments[9],
           });
         } catch (e) {}
       } else if (window.arguments.length >= 3) {
-        // window.arguments[2]: referrer (nsIURI | string)
+        // window.arguments[1]: unused (bug 871161)
+        //                 [2]: referrer (nsIURI | string)
         //                 [3]: postData (nsIInputStream)
         //                 [4]: allowThirdPartyFixup (bool)
         //                 [5]: referrerPolicy (int)
         //                 [6]: userContextId (int)
         //                 [7]: originPrincipal (nsIPrincipal)
         //                 [8]: triggeringPrincipal (nsIPrincipal)
+        //                 [9]: allowInheritPrincipal (bool)
         let referrerURI = window.arguments[2];
         if (typeof(referrerURI) == "string") {
           try {
@@ -1686,9 +1730,9 @@ var gBrowserInit = {
                 // pass the origin principal (if any) and force its use to create
                 // an initial about:blank viewer if present:
                 window.arguments[7], !!window.arguments[7], window.arguments[8],
-                // TODO fix allowInheritPrincipal
-                // (this is required by javascript: drop to the new window) Bug 1475201
-                true);
+                // TODO fix allowInheritPrincipal to default to false.
+                // Default to true unless explicitly set to false because of bug 1475201.
+                window.arguments[9] !== false);
         window.focus();
       } else {
         // Note: loadOneOrMoreURIs *must not* be called if window.arguments.length >= 3.
@@ -2117,8 +2161,7 @@ function BrowserReloadSkipCache() {
   BrowserReloadWithFlags(reloadFlags);
 }
 
-var BrowserHome = BrowserGoHome;
-function BrowserGoHome(aEvent) {
+function BrowserHome(aEvent) {
   if (aEvent && "button" in aEvent &&
       aEvent.button == 2) // right-click: do nothing
     return;
@@ -2382,6 +2425,10 @@ function BrowserTryToCloseWindow() {
 function loadURI(uri, referrer, postData, allowThirdPartyFixup, referrerPolicy,
                  userContextId, originPrincipal, forceAboutBlankViewerInCurrent,
                  triggeringPrincipal, allowInheritPrincipal = false) {
+  if (!triggeringPrincipal) {
+    throw new Error("Must load with a triggering Principal");
+  }
+
   try {
     openLinkIn(uri, "current",
                { referrerURI: referrer,
@@ -3123,10 +3170,12 @@ var BrowserOnClick = {
   },
 
   ignoreWarningLink(reason, blockedInfo) {
+    let triggeringPrincipal = Utils.deserializePrincipal(blockedInfo.triggeringPrincipal) || _createNullPrincipalFromTabUserContextId();
     // Allow users to override and continue through to the site,
     // but add a notify bar as a reminder, so that they don't lose
     // track after, e.g., tab switching.
     gBrowser.loadURI(gBrowser.currentURI.spec, {
+      triggeringPrincipal,
       flags: Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CLASSIFIER,
     });
 
@@ -3191,7 +3240,9 @@ var BrowserOnClick = {
  * when their own homepage is infected, we can get them somewhere safe.
  */
 function getMeOutOfHere() {
-  gBrowser.loadURI(getDefaultHomePage());
+  gBrowser.loadURI(getDefaultHomePage(), {
+    triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(), // Also needs to load homepage
+  });
 }
 
 /**
@@ -3207,7 +3258,9 @@ function goBackFromErrorPage() {
   if (state.index == 1) {
     // If the unsafe page is the first or the only one in history, go to the
     // start page.
-    gBrowser.loadURI(getDefaultHomePage());
+    gBrowser.loadURI(getDefaultHomePage(), {
+      triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+    });
   } else {
     BrowserBack();
   }
@@ -3243,7 +3296,10 @@ function BrowserReloadWithFlags(reloadFlags) {
     // If the remoteness has changed, the new browser doesn't have any
     // information of what was loaded before, so we need to load the previous
     // URL again.
-    gBrowser.loadURI(url, { flags: reloadFlags });
+    gBrowser.loadURI(url, {
+      flags: reloadFlags,
+      triggeringPrincipal: gBrowser.selectedBrowser.contentPrincipal,
+    });
     return;
   }
 
@@ -3644,7 +3700,6 @@ var newWindowButtonObserver = {
 const DOMEventHandler = {
   init() {
     let mm = window.messageManager;
-    mm.addMessageListener("Link:AddFeed", this);
     mm.addMessageListener("Link:LoadingIcon", this);
     mm.addMessageListener("Link:SetIcon", this);
     mm.addMessageListener("Link:SetFailedIcon", this);
@@ -3654,11 +3709,6 @@ const DOMEventHandler = {
 
   receiveMessage(aMsg) {
     switch (aMsg.name) {
-      case "Link:AddFeed":
-        let link = {type: aMsg.data.type, href: aMsg.data.href, title: aMsg.data.title};
-        FeedHandler.addFeed(link, aMsg.target);
-        break;
-
       case "Link:LoadingIcon":
         if (aMsg.data.canUseForTab) {
           this.setPendingIcon(aMsg.target);
@@ -3666,7 +3716,8 @@ const DOMEventHandler = {
         break;
 
       case "Link:SetIcon":
-        this.setIconFromLink(aMsg.target, aMsg.data.originalURL, aMsg.data.canUseForTab,
+        this.setIconFromLink(aMsg.target, aMsg.data.pageURL,
+                             aMsg.data.originalURL, aMsg.data.canUseForTab,
                              aMsg.data.expiration, aMsg.data.iconURL);
         break;
 
@@ -3704,14 +3755,15 @@ const DOMEventHandler = {
     tab.removeAttribute("pendingicon");
   },
 
-  setIconFromLink(aBrowser, aOriginalURL, aCanUseForTab, aExpiration, aIconURL) {
+  setIconFromLink(aBrowser, aPageURL, aOriginalURL, aCanUseForTab, aExpiration, aIconURL) {
     let tab = gBrowser.getTabForBrowser(aBrowser);
-    if (!tab)
+    if (!tab) {
       return false;
-
+    }
     try {
       PlacesUIUtils.loadFavicon(aBrowser, Services.scriptSecurityManager.getSystemPrincipal(),
-                                makeURI(aOriginalURL), aExpiration, makeURI(aIconURL));
+                                makeURI(aPageURL), makeURI(aOriginalURL),
+                                aExpiration, makeURI(aIconURL));
     } catch (ex) {
       Cu.reportError(ex);
     }
@@ -4603,8 +4655,9 @@ var XULBrowserWindow = {
       url = url.replace(/[\u200e\u200f\u202a\u202b\u202c\u202d\u202e]/g,
                         encodeURIComponent);
 
-      if (gURLBar._mayTrimURLs /* corresponds to browser.urlbar.trimURLs */)
+      if (UrlbarPrefs.get("trimURLs")) {
         url = trimURL(url);
+      }
     }
 
     this.overLink = url;
@@ -4689,9 +4742,6 @@ var XULBrowserWindow = {
         aStateFlags & nsIWebProgressListener.STATE_IS_NETWORK) {
 
       if (aRequest && aWebProgress.isTopLevel) {
-        // clear out feed data
-        browser.feeds = null;
-
         // clear out search-engine data
         browser.engines = null;
       }
@@ -4921,7 +4971,6 @@ var XULBrowserWindow = {
   },
 
   asyncUpdateUI() {
-    FeedHandler.updateFeeds();
     BrowserSearch.updateOpenSearchBadge();
   },
 
@@ -4940,7 +4989,8 @@ var XULBrowserWindow = {
   //  3. Called directly during this object's initializations.
   // aRequest will be null always in case 2 and 3, and sometimes in case 1 (for
   // instance, there won't be a request when STATE_BLOCKED_TRACKING_CONTENT is observed).
-  onSecurityChange(aWebProgress, aRequest, aState, aIsSimulated) {
+  onSecurityChange(aWebProgress, aRequest, aOldState, aState,
+                   aContentBlockingLogJSON, aIsSimulated) {
     // Don't need to do anything if the data we use to update the UI hasn't
     // changed
     let uri = gBrowser.currentURI;
@@ -4967,7 +5017,8 @@ var XULBrowserWindow = {
       uri = Services.uriFixup.createExposableURI(uri);
     } catch (e) {}
     gIdentityHandler.updateIdentity(this._state, uri);
-    ContentBlocking.onSecurityChange(this._state, aWebProgress, aIsSimulated);
+    ContentBlocking.onSecurityChange(aOldState, this._state, aWebProgress, aIsSimulated,
+                                     aContentBlockingLogJSON);
   },
 
   // simulate all change notifications after switching tabs
@@ -5660,6 +5711,7 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
     let haveMultipleTabs = gBrowser.visibleTabs.length > 1;
     document.getElementById("toolbar-context-reloadAllTabs").disabled = !haveMultipleTabs;
 
+    document.getElementById("toolbar-context-selectAllTabs").disabled = gBrowser.allTabsSelected();
     document.getElementById("toolbar-context-undoCloseTab").disabled =
       SessionStore.getClosedTabCount(window) == 0;
     return;
@@ -6094,7 +6146,8 @@ function handleLinkClick(event, href, linkNode) {
     const sm = Services.scriptSecurityManager;
     try {
       var targetURI = makeURI(href);
-      sm.checkSameOriginURI(referrerURI, targetURI, false);
+      let isPrivateWin = doc.nodePrincipal.originAttributes.privateBrowsingId > 0;
+      sm.checkSameOriginURI(referrerURI, targetURI, false, isPrivateWin);
       persistAllowMixedContentInChildTab = true;
     } catch (e) { }
   }
@@ -7657,7 +7710,9 @@ function switchToTabHavingURI(aURI, aOpenNew, aOpenParams = {}) {
         }
 
         if (ignoreFragment == "whenComparingAndReplace" || replaceQueryString) {
-          browser.loadURI(aURI.spec);
+          browser.loadURI(aURI.spec, {
+            triggeringPrincipal: aOpenParams.triggeringPrincipal || _createNullPrincipalFromTabUserContextId(),
+          });
         }
 
         if (!doAdopt) {

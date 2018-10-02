@@ -143,6 +143,45 @@ RenderThread::IsInRenderThread()
 }
 
 void
+RenderThread::DoAccumulateMemoryReport(MemoryReport aReport, const RefPtr<MemoryReportPromise::Private>& aPromise)
+{
+  MOZ_ASSERT(IsInRenderThread());
+  for (auto& r: mRenderers) {
+    wr_renderer_accumulate_memory_report(r.second->GetRenderer(), &aReport);
+  }
+
+  aPromise->Resolve(aReport, __func__);
+}
+
+// static
+RefPtr<MemoryReportPromise>
+RenderThread::AccumulateMemoryReport(MemoryReport aInitial)
+{
+  RefPtr<MemoryReportPromise::Private> p = new MemoryReportPromise::Private(__func__);
+  MOZ_ASSERT(!IsInRenderThread());
+  if (!Get() || !Get()->Loop()) {
+    // This happens when the GPU process fails to start and we fall back to the
+    // basic compositor in the parent process. We could assert against this if we
+    // made the webrender detection code in gfxPlatform.cpp smarter.
+    // See bug 1494430 comment 12.
+    NS_WARNING("No render thread, returning empty memory report");
+    p->Resolve(aInitial, __func__);
+    return p;
+  }
+
+  Get()->Loop()->PostTask(
+    NewRunnableMethod<MemoryReport, RefPtr<MemoryReportPromise::Private>>(
+      "wr::RenderThread::DoAccumulateMemoryReport",
+      Get(),
+      &RenderThread::DoAccumulateMemoryReport,
+      aInitial, p
+    )
+  );
+
+  return p;
+}
+
+void
 RenderThread::AddRenderer(wr::WindowId aWindowId, UniquePtr<RendererOGL> aRenderer)
 {
   MOZ_ASSERT(IsInRenderThread());

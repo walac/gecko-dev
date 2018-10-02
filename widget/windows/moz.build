@@ -99,6 +99,11 @@ SOURCES += [
     'WinMouseScrollHandler.cpp',
 ]
 
+# Needs INITGUID and we don't allow INITGUID in unified sources since bug 970429.
+SOURCES += [
+    'InputDeviceUtils.cpp',
+]
+
 if CONFIG['NS_PRINTING']:
     UNIFIED_SOURCES += [
         'nsDeviceContextSpecWin.cpp',
@@ -141,6 +146,7 @@ if CONFIG['MOZ_ENABLE_SKIA_PDF']:
   TEST_DIRS += ['gtest']
 
 LOCAL_INCLUDES += [
+    '/layout/forms',
     '/layout/generic',
     '/layout/xul',
     '/toolkit/xre',

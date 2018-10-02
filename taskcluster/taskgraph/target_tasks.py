@@ -328,7 +328,7 @@ def target_tasks_promote_desktop(full_task_graph, parameters, graph_config):
             return True
 
         # 'secondary' balrog/update verify/final verify tasks only run for RCs
-        if parameters.get('release_type') != 'rc':
+        if parameters.get('release_type') != 'release-rc':
             if 'secondary' in task.kind:
                 return False
 
@@ -361,7 +361,7 @@ def target_tasks_push_desktop(full_task_graph, parameters, graph_config):
 def target_tasks_ship_desktop(full_task_graph, parameters, graph_config):
     """Select the set of tasks required to ship desktop.
     Previous build deps will be optimized out via action task."""
-    is_rc = (parameters.get('release_type') == 'rc')
+    is_rc = (parameters.get('release_type') == 'release-rc')
     if is_rc:
         # ship_firefox_rc runs after `promote` rather than `push`; include
         # all promote tasks.
@@ -417,7 +417,7 @@ def target_tasks_promote_fennec(full_task_graph, parameters, graph_config):
 def target_tasks_ship_fennec(full_task_graph, parameters, graph_config):
     """Select the set of tasks required to ship fennec.
     Previous build deps will be optimized out via action task."""
-    is_rc = (parameters.get('release_type') == 'rc')
+    is_rc = (parameters.get('release_type') == 'release-rc')
     filtered_for_candidates = target_tasks_promote_fennec(
         full_task_graph, parameters, graph_config,
     )
@@ -474,6 +474,7 @@ def target_tasks_nightly_fennec(full_task_graph, parameters, graph_config):
                         'android-api-16-nightly',
                         'android-nightly',
                         'android-x86-nightly',
+                        'android-x86_64-nightly',
                         ):
             if not task.attributes.get('nightly', False):
                 return False
@@ -592,11 +593,11 @@ def target_tasks_file_update(full_task_graph, parameters, graph_config):
     return [l for l, t in full_task_graph.tasks.iteritems() if filter(t)]
 
 
-@_target_task('bouncer_check')
+@_target_task('cron_bouncer_check')
 def target_tasks_bouncer_check(full_task_graph, parameters, graph_config):
     """Select the set of tasks required to perform bouncer version verification.
     """
     def filter(task):
         # For now any task in the repo-update kind is ok
-        return task.kind in ['bouncer-check']
+        return task.kind in ['cron-bouncer-check']
     return [l for l, t in full_task_graph.tasks.iteritems() if filter(t)]

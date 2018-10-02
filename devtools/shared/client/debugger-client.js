@@ -6,6 +6,7 @@
 
 const Services = require("Services");
 const promise = require("devtools/shared/deprecated-sync-thenables");
+const {AppConstants} = require("resource://gre/modules/AppConstants.jsm");
 
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 const { getStack, callFunctionWithAsyncStack } = require("devtools/shared/platform/stack");
@@ -28,10 +29,15 @@ loader.lazyRequireGetter(this, "ThreadClient", "devtools/shared/client/thread-cl
 loader.lazyRequireGetter(this, "WorkerClient", "devtools/shared/client/worker-client");
 loader.lazyRequireGetter(this, "ObjectClient", "devtools/shared/client/object-client");
 
+// Retrieve the major platform version, i.e. if we are on Firefox 64.0a1, it will be 64.
+const PLATFORM_MAJOR_VERSION = AppConstants.MOZ_APP_VERSION.match(/\d+/)[0];
+
 // Define the minimum officially supported version of Firefox when connecting to a remote
 // runtime. (Use ".0a1" to support the very first nightly version)
-// This is usually the current ESR version.
-const MIN_SUPPORTED_PLATFORM_VERSION = "52.0a1";
+// This matches the release channel's version when we are on nightly,
+// or 2 versions before when we are on other channels.
+const MIN_SUPPORTED_PLATFORM_VERSION = (PLATFORM_MAJOR_VERSION - 2) + ".0a1";
+
 const MS_PER_DAY = 86400000;
 
 /**
@@ -200,18 +206,34 @@ DebuggerClient.prototype = {
    *   * String deviceID
    *            Build ID of remote runtime. A date with like this: YYYYMMDD.
    */
-  async checkRuntimeVersion(listTabsForm) {
-    let incompatible = null;
+  async checkRuntimeVersion() {
+    const localID = Services.appinfo.appBuildID.substr(0, 8);
 
-    const deviceFront = await this.mainRoot.getFront("device");
+    let deviceFront;
+    try {
+      deviceFront = await this.mainRoot.getFront("device");
+    } catch (e) {
+      // On <FF55, getFront is going to call RootActor.getRoot and fail
+      // because this method doesn't exists.
+      if (e.error == "unrecognizedPacketType") {
+        return {
+          incompatible: "too-old",
+          minVersion: MIN_SUPPORTED_PLATFORM_VERSION,
+          runtimeVersion: "<55",
+          localID,
+          runtimeID: "?",
+        };
+      }
+      throw e;
+    }
     const desc = await deviceFront.getDescription();
+    let incompatible = null;
 
     // 1) Check for Firefox too recent on device.
     // Compare device and firefox build IDs
     // and only compare by day (strip hours/minutes) to prevent
     // warning against builds of the same day.
     const runtimeID = desc.appbuildid.substr(0, 8);
-    const localID = Services.appinfo.appBuildID.substr(0, 8);
     function buildIDToDate(buildID) {
       const fields = buildID.match(/(\d{4})(\d{2})(\d{2})/);
       // Date expects 0 - 11 for months
@@ -321,20 +343,26 @@ DebuggerClient.prototype = {
   },
 
   /**
-   * Attach to a tab's target actor.
+   * Attach to a target actor:
+   *
+   *  - start watching for new documents (emits `tabNativated` messages)
+   *  - start watching for inner iframe updates (emits `frameUpdate` messages)
+   *  - retrieve the thread actor:
+   *    Instantiates a new ThreadActor that can be later attached to in order to
+   *    debug JS sources in the document.
    *
    * @param string targetActor
    *        The target actor ID for the tab to attach.
    */
-  attachTab: function(targetActor) {
+  attachTarget: function(targetActor) {
     if (this._clients.has(targetActor)) {
-      const cachedTab = this._clients.get(targetActor);
+      const cachedTarget = this._clients.get(targetActor);
       const cachedResponse = {
-        cacheDisabled: cachedTab.cacheDisabled,
-        javascriptEnabled: cachedTab.javascriptEnabled,
-        traits: cachedTab.traits,
+        cacheDisabled: cachedTarget.cacheDisabled,
+        javascriptEnabled: cachedTarget.javascriptEnabled,
+        traits: cachedTarget.traits,
       };
-      return promise.resolve([cachedResponse, cachedTab]);
+      return promise.resolve([cachedResponse, cachedTarget]);
     }
 
     const packet = {
@@ -342,9 +370,12 @@ DebuggerClient.prototype = {
       type: "attach"
     };
     return this.request(packet).then(response => {
-      const tabClient = new TabClient(this, response);
-      this.registerClient(tabClient);
-      return [response, tabClient];
+      // TabClient can actually represent targets other than a tab.
+      // It is planned to be renamed while being converted to a front
+      // in bug 1485660.
+      const targetClient = new TabClient(this, response);
+      this.registerClient(targetClient);
+      return [response, targetClient];
     });
   },
 
@@ -386,7 +417,24 @@ DebuggerClient.prototype = {
   },
 
   /**
-   * Attach to a Web Console actor.
+   * Attach to a Web Console actor. Depending on the listeners being passed as second
+   * arguments, starts listening for:
+   * - PageError:
+   *   Javascript error happening in the debugged context
+   * - ConsoleAPI:
+   *   Calls made to console.* API
+   * - NetworkActivity:
+   *   Http requests made in the debugged context
+   * - FileActivity:
+   *   Any requests made for a file:// or ftp:// URL. It can be the document or any of
+   *   its resources, like images.
+   * - ReflowActivity:
+   *   Any reflow made by the document being debugged.
+   * - ContentProcessMessages:
+   *   When the console actor runs in the parent process, also fetch calls made to
+   *   console.* API in all the content processes.
+   * - DocumentEvents:
+   *   Listen for DOMContentLoaded and load events.
    *
    * @param string consoleActor
    *        The ID for the console actor to attach to.
@@ -1121,7 +1169,11 @@ DebuggerClient.prototype = {
    */
   createObjectClient: function(grip) {
     return new ObjectClient(this, grip);
-  }
+  },
+
+  get transport() {
+    return this._transport;
+  },
 };
 
 eventSource(DebuggerClient.prototype);

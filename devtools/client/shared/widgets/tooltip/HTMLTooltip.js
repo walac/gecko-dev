@@ -6,13 +6,13 @@
 
 "use strict";
 
-const EventEmitter = require("devtools/shared/event-emitter");
-const {TooltipToggle} = require("devtools/client/shared/widgets/tooltip/TooltipToggle");
-const {focusableSelector} = require("devtools/client/shared/focus");
-const {getCurrentZoom} = require("devtools/shared/layout/utils");
-const {listenOnce} = require("devtools/shared/async-utils");
-
 const Services = require("Services");
+const EventEmitter = require("devtools/shared/event-emitter");
+
+loader.lazyRequireGetter(this, "focusableSelector", "devtools/client/shared/focus", true);
+loader.lazyRequireGetter(this, "TooltipToggle", "devtools/client/shared/widgets/tooltip/TooltipToggle", true);
+loader.lazyRequireGetter(this, "getCurrentZoom", "devtools/shared/layout/utils", true);
+loader.lazyRequireGetter(this, "listenOnce", "devtools/shared/async-utils", true);
 
 const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
@@ -329,10 +329,6 @@ function HTMLTooltip(toolboxDoc, {
   this._onMouseup = this._onMouseup.bind(this);
   this._onXulPanelHidden = this._onXulPanelHidden.bind(this);
 
-  this._toggle = new TooltipToggle(this);
-  this.startTogglingOnHover = this._toggle.start.bind(this._toggle);
-  this.stopTogglingOnHover = this._toggle.stop.bind(this._toggle);
-
   this.container = this._createContainer();
 
   if (this.useXulWrapper) {
@@ -360,8 +356,7 @@ module.exports.HTMLTooltip = HTMLTooltip;
 
 HTMLTooltip.prototype = {
   /**
-   * The tooltip panel is the parentNode of the tooltip content provided in
-   * setContent().
+   * The tooltip panel is the parentNode of the tooltip content.
    */
   get panel() {
     return this.container.querySelector(".tooltip-panel");
@@ -381,12 +376,18 @@ HTMLTooltip.prototype = {
     return this.isVisible() ? this._position : null;
   },
 
+  get toggle() {
+    if (!this._toggle) {
+      this._toggle = new TooltipToggle(this);
+    }
+
+    return this._toggle;
+  },
+
   /**
-   * Set the tooltip content element. The preferred width/height should also be
-   * specified here.
+   * Set the preferred width/height of the panel content.
+   * The panel content is set by appending content to `this.panel`.
    *
-   * @param {Element} content
-   *        The tooltip content, should be a HTML element.
    * @param {Object}
    *        - {Number} width: preferred width for the tooltip container. If not specified
    *          the tooltip container will be measured before being displayed, and the
@@ -404,12 +405,9 @@ HTMLTooltip.prototype = {
    *          making content behind this area inaccessible until the tooltip is
    *          dismissed.
    */
-  setContent: function(content, {width = "auto", height = "auto"} = {}) {
+  setContentSize: function({width = "auto", height = "auto"} = {}) {
     this.preferredWidth = width;
     this.preferredHeight = height;
-
-    this.panel.innerHTML = "";
-    this.panel.appendChild(content);
   },
 
   /**
@@ -453,6 +451,14 @@ HTMLTooltip.prototype = {
       this.topWindow.addEventListener("mouseup", this._onMouseup, true);
       this.emit("shown");
     }, 0);
+  },
+
+  startTogglingOnHover(baseNode, targetNodeCb, options) {
+    this.toggle.start(baseNode, targetNodeCb, options);
+  },
+
+  stopTogglingOnHover() {
+    this.toggle.stop();
   },
 
   /**
@@ -742,7 +748,10 @@ HTMLTooltip.prototype = {
     if (this.xulPanelWrapper) {
       this.xulPanelWrapper.remove();
     }
-    this._toggle.destroy();
+    if (this._toggle) {
+      this._toggle.destroy();
+      this._toggle = null;
+    }
   },
 
   _createContainer: function() {

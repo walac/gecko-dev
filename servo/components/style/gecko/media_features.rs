@@ -8,6 +8,7 @@ use Atom;
 use app_units::Au;
 use euclid::Size2D;
 use gecko_bindings::bindings;
+use gecko_bindings::structs;
 use media_queries::Device;
 use media_queries::media_feature::{AllowsRanges, ParsingRequirements};
 use media_queries::media_feature::{MediaFeatureDescription, Evaluator};
@@ -300,6 +301,94 @@ fn eval_prefers_reduced_motion(device: &Device, query_value: Option<PrefersReduc
     }
 }
 
+/// https://drafts.csswg.org/mediaqueries-4/#mf-interaction
+bitflags! {
+    struct PointerCapabilities: u8 {
+        const COARSE = structs::PointerCapabilities_Coarse;
+        const FINE = structs::PointerCapabilities_Fine;
+        const HOVER = structs::PointerCapabilities_Hover;
+    }
+}
+
+fn primary_pointer_capabilities(device: &Device) -> PointerCapabilities {
+    PointerCapabilities::from_bits_truncate(
+        unsafe { bindings::Gecko_MediaFeatures_PrimaryPointerCapabilities(device.document()) }
+    )
+}
+
+fn all_pointer_capabilities(device: &Device) -> PointerCapabilities {
+    PointerCapabilities::from_bits_truncate(
+        unsafe { bindings::Gecko_MediaFeatures_AllPointerCapabilities(device.document()) }
+    )
+}
+
+#[derive(Clone, Copy, Debug, FromPrimitive, Parse, ToCss)]
+#[repr(u8)]
+enum Pointer {
+    None,
+    Coarse,
+    Fine,
+}
+
+fn eval_pointer_capabilities(
+    query_value: Option<Pointer>,
+    pointer_capabilities: PointerCapabilities,
+) -> bool {
+    let query_value = match query_value {
+        Some(v) => v,
+        None => return !pointer_capabilities.is_empty(),
+    };
+
+    match query_value {
+        Pointer::None => pointer_capabilities.is_empty(),
+        Pointer::Coarse => pointer_capabilities.intersects(PointerCapabilities::COARSE),
+        Pointer::Fine => pointer_capabilities.intersects(PointerCapabilities::FINE),
+    }
+}
+
+/// https://drafts.csswg.org/mediaqueries-4/#pointer
+fn eval_pointer(device: &Device, query_value: Option<Pointer>) -> bool {
+    eval_pointer_capabilities(query_value, primary_pointer_capabilities(device))
+}
+
+/// https://drafts.csswg.org/mediaqueries-4/#descdef-media-any-pointer
+fn eval_any_pointer(device: &Device, query_value: Option<Pointer>) -> bool {
+    eval_pointer_capabilities(query_value, all_pointer_capabilities(device))
+}
+
+#[derive(Clone, Copy, Debug, FromPrimitive, Parse, ToCss)]
+#[repr(u8)]
+enum Hover {
+    None,
+    Hover,
+}
+
+fn eval_hover_capabilities(
+    query_value: Option<Hover>,
+    pointer_capabilities: PointerCapabilities,
+) -> bool {
+    let can_hover = pointer_capabilities.intersects(PointerCapabilities::HOVER);
+    let query_value = match query_value {
+        Some(v) => v,
+        None => return can_hover,
+    };
+
+    match query_value {
+        Hover::None => !can_hover,
+        Hover::Hover => can_hover,
+    }
+}
+
+/// https://drafts.csswg.org/mediaqueries-4/#hover
+fn eval_hover(device: &Device, query_value: Option<Hover>) -> bool {
+    eval_hover_capabilities(query_value, primary_pointer_capabilities(device))
+}
+
+/// https://drafts.csswg.org/mediaqueries-4/#descdef-media-any-hover
+fn eval_any_hover(device: &Device, query_value: Option<Hover>) -> bool {
+    eval_hover_capabilities(query_value, all_pointer_capabilities(device))
+}
+
 fn eval_moz_is_glyph(
     device: &Device,
     query_value: Option<bool>,
@@ -390,7 +479,7 @@ lazy_static! {
     /// to support new types in these entries and (2) ensuring that either
     /// nsPresContext::MediaFeatureValuesChanged is called when the value that
     /// would be returned by the evaluator function could change.
-    pub static ref MEDIA_FEATURES: [MediaFeatureDescription; 43] = [
+    pub static ref MEDIA_FEATURES: [MediaFeatureDescription; 48] = [
         feature!(
             atom!("width"),
             AllowsRanges::Yes,
@@ -509,6 +598,30 @@ lazy_static! {
             keyword_evaluator!(eval_prefers_reduced_motion, PrefersReducedMotion),
             ParsingRequirements::empty(),
         ),
+        feature!(
+            atom!("pointer"),
+            AllowsRanges::No,
+            keyword_evaluator!(eval_pointer, Pointer),
+            ParsingRequirements::empty(),
+        ),
+        feature!(
+            atom!("any-pointer"),
+            AllowsRanges::No,
+            keyword_evaluator!(eval_any_pointer, Pointer),
+            ParsingRequirements::empty(),
+        ),
+        feature!(
+            atom!("hover"),
+            AllowsRanges::No,
+            keyword_evaluator!(eval_hover, Hover),
+            ParsingRequirements::empty(),
+        ),
+        feature!(
+            atom!("any-hover"),
+            AllowsRanges::No,
+            keyword_evaluator!(eval_any_hover, Hover),
+            ParsingRequirements::empty(),
+        ),
 
         // Internal -moz-is-glyph media feature: applies only inside SVG glyphs.
         // Internal because it is really only useful in the user agent anyway
@@ -547,6 +660,7 @@ lazy_static! {
         system_metric_feature!(atom!("-moz-menubar-drag")),
         system_metric_feature!(atom!("-moz-swipe-animation-enabled")),
         system_metric_feature!(atom!("-moz-gtk-csd-available")),
+        system_metric_feature!(atom!("-moz-gtk-csd-transparent-background")),
         system_metric_feature!(atom!("-moz-gtk-csd-minimize-button")),
         system_metric_feature!(atom!("-moz-gtk-csd-maximize-button")),
         system_metric_feature!(atom!("-moz-gtk-csd-close-button")),

@@ -47,6 +47,7 @@ def add_command(config, tasks):
         "archive-prefix",
         "previous-archive-prefix",
         "aus-server",
+        "override-certs",
         "include-version",
         "mar-channel-id-override",
         "last-watershed",
@@ -96,7 +97,6 @@ def add_command(config, tasks):
             resolve_keyed_by(
                 task, thing,
                 item_name=task['name'],
-                project=config.params['project'],
                 platform=task['attributes']['build_platform'],
                 **{
                     'release-type': config.params['release_type'],

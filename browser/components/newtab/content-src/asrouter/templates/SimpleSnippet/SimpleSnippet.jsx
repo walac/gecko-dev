@@ -12,8 +12,13 @@ export class SimpleSnippet extends React.PureComponent {
   }
 
   onButtonClick() {
-    this.props.sendUserActionTelemetry({event: "CLICK_BUTTON", id: this.props.UISurface});
+    if (this.props.provider !== "preview") {
+      this.props.sendUserActionTelemetry({event: "CLICK_BUTTON", id: this.props.UISurface});
+    }
     this.props.onAction(this.props.content.button_action);
+    if (!this.props.content.do_not_autoblock) {
+      this.props.onBlock();
+    }
   }
 
   renderTitle() {

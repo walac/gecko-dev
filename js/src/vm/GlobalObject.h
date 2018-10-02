@@ -26,6 +26,8 @@ class TypedObjectModuleObject;
 class LexicalEnvironmentObject;
 class RegExpStatics;
 
+enum class ReferenceType;
+
 /*
  * Global object slots are reserved as follows:
  *
@@ -144,14 +146,22 @@ class GlobalObject : public NativeObject
                                        JSProtoKey key, HandleObject ctor, HandleObject proto);
 
   private:
-    static bool resolveConstructor(JSContext* cx, Handle<GlobalObject*> global, JSProtoKey key);
+    enum class IfClassIsDisabled {
+        DoNothing,
+        Throw
+    };
+
+    static bool resolveConstructor(JSContext* cx,
+                                   Handle<GlobalObject*> global,
+                                   JSProtoKey key,
+                                   IfClassIsDisabled mode);
 
   public:
     static bool ensureConstructor(JSContext* cx, Handle<GlobalObject*> global, JSProtoKey key) {
         if (global->isStandardClassResolved(key)) {
             return true;
         }
-        return resolveConstructor(cx, global, key);
+        return resolveConstructor(cx, global, key, IfClassIsDisabled::Throw);
     }
 
     static JSObject* getOrCreateConstructor(JSContext* cx, JSProtoKey key) {
@@ -472,6 +482,14 @@ class GlobalObject : public NativeObject
                                  initTypedObjectModule);
     }
 
+    static TypeDescr*
+    getOrCreateScalarTypeDescr(JSContext* cx, Handle<GlobalObject*> global,
+                               Scalar::Type scalarType);
+
+    static TypeDescr*
+    getOrCreateReferenceTypeDescr(JSContext* cx, Handle<GlobalObject*> global,
+                                  ReferenceType type);
+
     TypedObjectModuleObject& getTypedObjectModule() const;
 
     static JSObject*
@@ -738,16 +756,8 @@ class GlobalObject : public NativeObject
     static bool addIntrinsicValue(JSContext* cx, Handle<GlobalObject*> global,
                                   HandlePropertyName name, HandleValue value);
 
-    static bool setIntrinsicValue(JSContext* cx, Handle<GlobalObject*> global,
-                                  HandlePropertyName name, HandleValue value)
-    {
-        MOZ_ASSERT(cx->runtime()->isSelfHostingGlobal(global));
-        RootedObject holder(cx, GlobalObject::getIntrinsicsHolder(cx, global));
-        if (!holder) {
-            return false;
-        }
-        return SetProperty(cx, holder, name, value);
-    }
+    static inline bool setIntrinsicValue(JSContext* cx, Handle<GlobalObject*> global,
+                                         HandlePropertyName name, HandleValue value);
 
     static bool getSelfHostedFunction(JSContext* cx, Handle<GlobalObject*> global,
                                       HandlePropertyName selfHostedName, HandleAtom name,

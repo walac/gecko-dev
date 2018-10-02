@@ -185,6 +185,13 @@ class SearchBar extends _react.Component {
       return this.doSearch(e.target.value);
     };
 
+    this.onHistoryScroll = query => {
+      this.setState({
+        query
+      });
+      this.doSearch(query);
+    };
+
     this.renderSearchModifiers = () => {
       const {
         modifiers,
@@ -335,12 +342,13 @@ class SearchBar extends _react.Component {
     }, _react2.default.createElement(_SearchInput2.default, {
       query: this.state.query,
       count: count,
-      placeholder: L10N.getStr("sourceSearch.search.placeholder"),
+      placeholder: L10N.getStr("sourceSearch.search.placeholder2"),
       summaryMsg: this.buildSummaryMsg(),
       onChange: this.onChange,
       onBlur: this.onBlur,
       showErrorEmoji: this.shouldShowErrorEmoji(),
       onKeyDown: this.onKeyDown,
+      onHistoryScroll: this.onHistoryScroll,
       handleNext: e => this.traverseResults(e, false),
       handlePrev: e => this.traverseResults(e, true),
       handleClose: this.closeSearch,

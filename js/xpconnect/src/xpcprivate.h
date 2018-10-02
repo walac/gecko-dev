@@ -411,6 +411,8 @@ public:
         IDX_LASTINDEX               ,
         IDX_THEN                    ,
         IDX_ISINSTANCE              ,
+        IDX_INFINITY                ,
+        IDX_NAN                     ,
         IDX_TOTAL_COUNT // just a count of the above
     };
 
@@ -935,7 +937,8 @@ public:
     // object is wrapped into the compartment of the global.
     JSObject* EnsureContentXBLScope(JSContext* cx);
 
-    XPCWrappedNativeScope(JSContext* cx, JS::HandleObject aGlobal);
+    XPCWrappedNativeScope(JSContext* cx, JS::HandleObject aGlobal,
+                          const mozilla::SiteIdentifier& aSite);
 
     nsAutoPtr<JSObject2JSObjectMap> mWaiverWrapperMap;
 
@@ -2629,6 +2632,7 @@ struct GlobalProperties {
     bool MessageChannel: 1;
     bool Node : 1;
     bool NodeFilter : 1;
+    bool PromiseDebugging : 1;
     bool TextDecoder : 1;
     bool TextEncoder : 1;
     bool URL : 1;
@@ -2914,6 +2918,63 @@ enum WrapperDenialType {
 };
 bool ReportWrapperDenial(JSContext* cx, JS::HandleId id, WrapperDenialType type, const char* reason);
 
+class CompartmentOriginInfo
+{
+public:
+    CompartmentOriginInfo(const CompartmentOriginInfo&) = delete;
+
+    CompartmentOriginInfo(mozilla::BasePrincipal* aOrigin,
+                          const mozilla::SiteIdentifier& aSite)
+      : mOrigin(aOrigin)
+      , mSite(aSite)
+    {
+        MOZ_ASSERT(aOrigin);
+        MOZ_ASSERT(aSite.IsInitialized());
+    }
+
+    bool IsSameOrigin(nsIPrincipal* aOther) const;
+
+    // Does the principal of compartment a subsume the principal of compartment b?
+    static bool Subsumes(JS::Compartment* aCompA, JS::Compartment* aCompB);
+    static bool SubsumesIgnoringFPD(JS::Compartment* aCompA, JS::Compartment* aCompB);
+
+    bool MightBeWebContent() const;
+
+    // Note: this principal must not be used for subsumes/equality checks
+    // considering document.domain. See mOrigin.
+    mozilla::BasePrincipal* GetPrincipalIgnoringDocumentDomain() const {
+        return mOrigin;
+    }
+
+    const mozilla::SiteIdentifier& SiteRef() const {
+        return mSite;
+    }
+
+    bool HasChangedDocumentDomain() const {
+        return mChangedDocumentDomain;
+    }
+    void SetChangedDocumentDomain() {
+        mChangedDocumentDomain = true;
+    }
+
+private:
+    // All globals in the compartment must have this origin. Note that
+    // individual globals and principals can have their domain changed via
+    // document.domain, so this principal must not be used for things like
+    // subsumesConsideringDomain or equalsConsideringDomain. Use the realm's
+    // principal for that.
+    RefPtr<mozilla::BasePrincipal> mOrigin;
+
+    // In addition to the origin we also store the SiteIdentifier. When realms
+    // in different compartments can become same-origin (via document.domain),
+    // these compartments must have equal SiteIdentifiers. (This is derived from
+    // mOrigin but we cache it here for performance reasons.)
+    mozilla::SiteIdentifier mSite;
+
+    // True if any global in this compartment mutated document.domain.
+    bool mChangedDocumentDomain = false;
+};
+
 // The CompartmentPrivate contains XPConnect-specific stuff related to each JS
 // compartment. Since compartments are trust domains, this means mostly
 // information needed to select the right security policy for cross-compartment
@@ -2924,7 +2985,8 @@ class CompartmentPrivate
     CompartmentPrivate(const CompartmentPrivate&) = delete;
 
 public:
-    explicit CompartmentPrivate(JS::Compartment* c);
+    CompartmentPrivate(JS::Compartment* c, mozilla::BasePrincipal* origin,
+                       const mozilla::SiteIdentifier& site);
 
     ~CompartmentPrivate();
 
@@ -2940,6 +3002,8 @@ public:
         JS::Compartment* compartment = js::GetObjectCompartment(object);
         return Get(compartment);
     }
+
+    CompartmentOriginInfo originInfo;
 
     // Controls whether this compartment gets Xrays to same-origin. This behavior
     // is deprecated, but is still the default for sandboxes for compatibity

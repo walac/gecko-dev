@@ -25,6 +25,7 @@
 #include "vm/TaggedProto.h"
 
 #include "gc/Marking-inl.h"
+#include "vm/TypeInference-inl.h"
 #include "vm/UnboxedObject-inl.h"
 
 using namespace js;
@@ -239,15 +240,13 @@ ObjectGroup::useSingletonForAllocationSite(JSScript* script, jsbytecode* pc, JSP
 
     unsigned offset = script->pcToOffset(pc);
 
-    JSTryNote* tn = script->trynotes()->vector;
-    JSTryNote* tnlimit = tn + script->trynotes()->length;
-    for (; tn < tnlimit; tn++) {
-        if (tn->kind != JSTRY_FOR_IN && tn->kind != JSTRY_FOR_OF && tn->kind != JSTRY_LOOP) {
+    for (const JSTryNote& tn : script->trynotes()) {
+        if (tn.kind != JSTRY_FOR_IN && tn.kind != JSTRY_FOR_OF && tn.kind != JSTRY_LOOP) {
             continue;
         }
 
-        unsigned startOffset = script->mainOffset() + tn->start;
-        unsigned endOffset = startOffset + tn->length;
+        unsigned startOffset = script->mainOffset() + tn.start;
+        unsigned endOffset = startOffset + tn.length;
 
         if (offset >= startOffset && offset < endOffset) {
             return GenericObject;
@@ -483,7 +482,7 @@ class ObjectGroupRealm::NewTable : public JS::WeakCache<js::GCHashSet<NewEntry, 
 };
 
 /* static*/ ObjectGroupRealm&
-ObjectGroupRealm::get(ObjectGroup* group)
+ObjectGroupRealm::get(const ObjectGroup* group)
 {
     return group->realm()->objectGroups_;
 }
@@ -1695,7 +1694,7 @@ ObjectGroup::getCopyOnWriteObject(JSScript* script, jsbytecode* pc)
 }
 
 /* static */ bool
-ObjectGroup::findAllocationSite(JSContext* cx, ObjectGroup* group,
+ObjectGroup::findAllocationSite(JSContext* cx, const ObjectGroup* group,
                                 JSScript** script, uint32_t* offset)
 {
     *script = nullptr;

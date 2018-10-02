@@ -18,6 +18,7 @@
 #include "mozilla/Sprintf.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Unused.h"
+#include "mozilla/Variant.h"
 
 #include <chrono>
 #ifdef JS_POSIX_NSPR
@@ -139,6 +140,7 @@ using js::shell::RCFile;
 
 using mozilla::ArrayEqual;
 using mozilla::ArrayLength;
+using mozilla::AsVariant;
 using mozilla::Atomic;
 using mozilla::MakeScopeExit;
 using mozilla::Maybe;
@@ -146,6 +148,7 @@ using mozilla::Nothing;
 using mozilla::NumberEqualsInt32;
 using mozilla::TimeDuration;
 using mozilla::TimeStamp;
+using mozilla::Variant;
 
 // Avoid an unnecessary NSPR dependency on Linux and OS X just for the shell.
 #ifdef JS_POSIX_NSPR
@@ -799,6 +802,9 @@ ShellInterruptCallback(JSContext* cx)
     }
 
     if (!result && sc->exitCode == 0) {
+        static const char msg[] = "Script terminated by interrupt handler.\n";
+        fputs(msg, stderr);
+
         sc->exitCode = EXITCODE_TIMEOUT;
     }
 
@@ -872,12 +878,11 @@ RunFile(JSContext* cx, const char* filename, FILE* file, bool compileOnly)
     {
         CompileOptions options(cx);
         options.setIntroductionType("js shell file")
-               .setUTF8(true)
                .setFileAndLine(filename, 1)
                .setIsRunOnce(true)
                .setNoScriptRval(true);
 
-        if (!JS::Compile(cx, options, file, &script)) {
+        if (!JS::CompileUtf8File(cx, options, file, &script)) {
             return false;
         }
         MOZ_ASSERT(script);
@@ -948,7 +953,7 @@ InitModuleLoader(JSContext* cx)
     options.strictOption = true;
 
     RootedValue rv(cx);
-    return Evaluate(cx, options, src.get(), srcLen, &rv);
+    return JS::EvaluateUtf8(cx, options, src.get(), srcLen, &rv);
 }
 
 static bool
@@ -1198,18 +1203,18 @@ AddIntlExtras(JSContext* cx, unsigned argc, Value* vp)
 }
 #endif // ENABLE_INTL_API
 
-static bool
-EvalAndPrint(JSContext* cx, const char* bytes, size_t length,
-             int lineno, bool compileOnly)
+static MOZ_MUST_USE bool
+EvalUtf8AndPrint(JSContext* cx, const char* bytes, size_t length,
+                 int lineno, bool compileOnly)
 {
     // Eval.
     JS::CompileOptions options(cx);
     options.setIntroductionType("js shell interactive")
-           .setUTF8(true)
            .setIsRunOnce(true)
            .setFileAndLine("typein", lineno);
+
     RootedScript script(cx);
-    if (!JS::Compile(cx, options, bytes, length, &script)) {
+    if (!JS::CompileUtf8(cx, options, bytes, length, &script)) {
         return false;
     }
     if (compileOnly) {
@@ -1282,7 +1287,7 @@ ReadEvalPrintLoop(JSContext* cx, FILE* in, bool compileOnly)
                 hitEOF = true;
                 break;
             }
-        } while (!JS_BufferIsCompilableUnit(cx, cx->global(), buffer.begin(), buffer.length()));
+        } while (!JS_Utf8BufferIsCompilableUnit(cx, cx->global(), buffer.begin(), buffer.length()));
 
         if (hitEOF && buffer.empty()) {
             break;
@@ -1291,7 +1296,8 @@ ReadEvalPrintLoop(JSContext* cx, FILE* in, bool compileOnly)
         {
             // Report exceptions but keep going.
             AutoReportException are(cx);
-            (void) EvalAndPrint(cx, buffer.begin(), buffer.length(), startline, compileOnly);
+            mozilla::Unused <<
+                EvalUtf8AndPrint(cx, buffer.begin(), buffer.length(), startline, compileOnly);
         }
 
         // If a let or const fail to initialize they will remain in an unusable
@@ -1617,25 +1623,30 @@ LoadScript(JSContext* cx, unsigned argc, Value* vp, bool scriptRelative)
                                       "load");
             return false;
         }
+
         str = ResolvePath(cx, str, scriptRelative ? ScriptRelative : RootRelative);
         if (!str) {
             JS_ReportErrorASCII(cx, "unable to resolve path");
             return false;
         }
+
         UniqueChars filename = JS_EncodeStringToLatin1(cx, str);
         if (!filename) {
             return false;
         }
+
         errno = 0;
+
         CompileOptions opts(cx);
         opts.setIntroductionType("js shell load")
-            .setUTF8(true)
             .setIsRunOnce(true)
             .setNoScriptRval(true);
+
         RootedScript script(cx);
         RootedValue unused(cx);
-        if ((compileOnly && !Compile(cx, opts, filename.get(), &script)) ||
-            !Evaluate(cx, opts, filename.get(), &unused))
+        if (!(compileOnly
+              ? JS::CompileUtf8Path(cx, opts, filename.get(), &script)
+              : JS::EvaluateUtf8Path(cx, opts, filename.get(), &unused)))
         {
             return false;
         }
@@ -2336,7 +2347,8 @@ Run(JSContext* cx, unsigned argc, Value* vp)
                .setFileAndLine(filename.get(), 1)
                .setIsRunOnce(true)
                .setNoScriptRval(true);
-        if (!JS_CompileUCScript(cx, srcBuf, options, &script)) {
+
+        if (!JS::Compile(cx, options, srcBuf, &script)) {
             return false;
         }
     }
@@ -3060,17 +3072,15 @@ TryNotes(JSContext* cx, HandleScript script, Sprinter* sp)
         return false;
     }
 
-    JSTryNote* tn = script->trynotes()->vector;
-    JSTryNote* tnlimit = tn + script->trynotes()->length;
-    do {
-        uint32_t startOff = script->pcToOffset(script->main()) + tn->start;
+    for (const JSTryNote& tn : script->trynotes()) {
+        uint32_t startOff = script->pcToOffset(script->main()) + tn.start;
         if (!sp->jsprintf(" %-16s %6u %8u %8u\n",
-                          TryNoteName(static_cast<JSTryNoteKind>(tn->kind)),
-                          tn->stackDepth, startOff, startOff + tn->length))
+                          TryNoteName(static_cast<JSTryNoteKind>(tn.kind)),
+                          tn.stackDepth, startOff, startOff + tn.length))
         {
             return false;
         }
-    } while (++tn != tnlimit);
+    }
     return true;
 }
 
@@ -3085,28 +3095,26 @@ ScopeNotes(JSContext* cx, HandleScript script, Sprinter* sp)
         return false;
     }
 
-    ScopeNoteArray* notes = script->scopeNotes();
-    for (uint32_t i = 0; i < notes->length; i++) {
-        const ScopeNote* note = &notes->vector[i];
-        if (note->index == ScopeNote::NoScopeIndex) {
+    for (const ScopeNote& note : script->scopeNotes()) {
+        if (note.index == ScopeNote::NoScopeIndex) {
             if (!sp->jsprintf("%8s ", "(none)")) {
                 return false;
             }
         } else {
-            if (!sp->jsprintf("%8u ", note->index)) {
+            if (!sp->jsprintf("%8u ", note.index)) {
                 return false;
             }
         }
-        if (note->parent == ScopeNote::NoScopeIndex) {
+        if (note.parent == ScopeNote::NoScopeIndex) {
             if (!sp->jsprintf("%8s ", "(none)")) {
                 return false;
             }
         } else {
-            if (!sp->jsprintf("%8u ", note->parent)) {
+            if (!sp->jsprintf("%8u ", note.parent)) {
                 return false;
             }
         }
-        if (!sp->jsprintf("%8u %8u\n", note->start, note->start + note->length)) {
+        if (!sp->jsprintf("%8u %8u\n", note.start, note.start + note.length)) {
             return false;
         }
     }
@@ -3177,9 +3185,7 @@ DisassembleScript(JSContext* cx, HandleScript script, HandleFunction fun,
     }
 
     if (recursive && script->hasObjects()) {
-        ObjectArray* objects = script->objects();
-        for (unsigned i = 0; i != objects->length; ++i) {
-            JSObject* obj = objects->vector[i];
+        for (JSObject* obj : script->objects()) {
             if (obj->is<JSFunction>()) {
                 if (!sp->put("\n")) {
                     return false;
@@ -3370,12 +3376,11 @@ DisassFile(JSContext* cx, unsigned argc, Value* vp)
     {
         CompileOptions options(cx);
         options.setIntroductionType("js shell disFile")
-               .setUTF8(true)
                .setFileAndLine(filename.get(), 1)
                .setIsRunOnce(true)
                .setNoScriptRval(true);
 
-        if (!JS::Compile(cx, options, filename.get(), &script)) {
+        if (!JS::CompileUtf8Path(cx, options, filename.get(), &script)) {
             return false;
         }
     }
@@ -3503,7 +3508,7 @@ DisassWithSrc(JSContext* cx, unsigned argc, Value* vp)
 
 /* Pretend we can always preserve wrappers for dummy DOM objects. */
 static bool
-DummyPreserveWrapperCallback(JSContext* cx, JSObject* obj)
+DummyPreserveWrapperCallback(JSContext* cx, HandleObject obj)
 {
     return true;
 }
@@ -3698,7 +3703,9 @@ static const JSClass sandbox_class = {
 static void
 SetStandardRealmOptions(JS::RealmOptions& options)
 {
-    options.creationOptions().setSharedMemoryAndAtomicsEnabled(enableSharedMemory);
+    options.creationOptions().setSharedMemoryAndAtomicsEnabled(enableSharedMemory)
+                             .setStreamsEnabled(enableStreams);
+
 }
 
 static JSObject*
@@ -3998,9 +4005,9 @@ EvalInWorker(JSContext* cx, unsigned argc, Value* vp)
     Thread* thread;
     {
         AutoEnterOOMUnsafeRegion oomUnsafe;
-        thread = js_new<Thread>(Thread::Options().setStackSize(gMaxStackSize + 128 * 1024));
+        thread = js_new<Thread>(Thread::Options().setStackSize(gMaxStackSize + 256 * 1024));
         if (!thread || !thread->init(WorkerMain, input)) {
-            oomUnsafe.crash("EvalInThread");
+            oomUnsafe.crash("EvalInWorker");
         }
     }
 
@@ -4235,11 +4242,6 @@ CancelExecution(JSContext* cx)
     ShellContext* sc = GetShellContext(cx);
     sc->serviceInterrupt = true;
     JS_RequestInterruptCallback(cx);
-
-    if (sc->haveInterruptFunc) {
-        static const char msg[] = "Script runs for too long, terminating.\n";
-        fputs(msg, stderr);
-    }
 }
 
 static bool
@@ -4601,7 +4603,7 @@ Compile(JSContext* cx, unsigned argc, Value* vp)
     JS::SourceBufferHolder srcBuf(stableChars.twoByteRange().begin().get(),
                                   scriptContents->length(),
                                   JS::SourceBufferHolder::NoOwnership);
-    bool ok = JS_CompileUCScript(cx, srcBuf, options, &script);
+    bool ok = JS::Compile(cx, options, srcBuf, &script);
     args.rval().setUndefined();
     return ok;
 }
@@ -6133,6 +6135,46 @@ NukeAllCCWs(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
+RecomputeWrappers(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+
+    if (args.length() > 2) {
+        JS_ReportErrorNumberASCII(cx, my_GetErrorMessage, nullptr, JSSMSG_INVALID_ARGS,
+                                  "recomputeWrappers");
+        return false;
+    }
+
+    JS::Compartment* sourceComp = nullptr;
+    if (args.get(0).isObject()) {
+        sourceComp = GetObjectCompartment(UncheckedUnwrap(&args[0].toObject()));
+    }
+
+    JS::Compartment* targetComp = nullptr;
+    if (args.get(1).isObject()) {
+        targetComp = GetObjectCompartment(UncheckedUnwrap(&args[1].toObject()));
+    }
+
+    struct SingleOrAllCompartments final : public CompartmentFilter {
+        JS::Compartment* comp;
+        explicit SingleOrAllCompartments(JS::Compartment* c) : comp(c) {}
+        virtual bool match(JS::Compartment* c) const override {
+            return !comp || comp == c;
+        }
+    };
+
+    if (!js::RecomputeWrappers(cx,
+                               SingleOrAllCompartments(sourceComp),
+                               SingleOrAllCompartments(targetComp)))
+    {
+        return false;
+    }
+
+    args.rval().setUndefined();
+    return true;
+}
+
+static bool
 GetMaxArgs(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -6574,7 +6616,7 @@ struct SharedObjectMailbox
             SharedArrayRawBuffer* buffer;
             uint32_t              length;
         } sarb;
-        wasm::Module*             module;
+        const wasm::Module*       module;
     };
 
     SharedObjectMailbox() : tag(MailboxTag::Empty) {}
@@ -6774,14 +6816,186 @@ SetSharedObject(JSContext* cx, unsigned argc, Value* vp)
     return true;
 }
 
+typedef Vector<uint8_t, 0, SystemAllocPolicy> Uint8Vector;
+
+class StreamCacheEntry : public AtomicRefCounted<StreamCacheEntry>,
+                         public JS::OptimizedEncodingListener
+{
+    typedef AtomicRefCounted<StreamCacheEntry> AtomicBase;
+
+    Uint8Vector bytes_;
+    ExclusiveData<Uint8Vector> optimized_;
+
+  public:
+    explicit StreamCacheEntry(Uint8Vector&& original)
+      : bytes_(std::move(original)),
+        optimized_(mutexid::ShellStreamCacheEntryState)
+    {}
+
+    // Implement JS::OptimizedEncodingListener:
+
+    MozExternalRefCountType MOZ_XPCOM_ABI AddRef() override {
+        AtomicBase::AddRef();
+        return 1;  // unused
+    }
+    MozExternalRefCountType MOZ_XPCOM_ABI Release() override {
+        AtomicBase::Release();
+        return 0;  // unused
+    }
+
+    const Uint8Vector& bytes() const {
+        return bytes_;
+    }
+
+    void storeOptimizedEncoding(const uint8_t* srcBytes, size_t srcLength) override {
+        MOZ_ASSERT(srcLength > 0);
+
+        // Tolerate races since a single StreamCacheEntry object can be used as
+        // the source of multiple streaming compilations.
+        auto dstBytes = optimized_.lock();
+        if (dstBytes->length() > 0) {
+            return;
+        }
+
+        if (!dstBytes->resize(srcLength)) {
+            return;
+        }
+        memcpy(dstBytes->begin(), srcBytes, srcLength);
+    }
+
+    bool hasOptimizedEncoding() const {
+        return !optimized_.lock()->empty();
+    }
+    const Uint8Vector& optimizedEncoding() const {
+        return optimized_.lock().get();
+    }
+};
+
+typedef RefPtr<StreamCacheEntry> StreamCacheEntryPtr;
+
+class StreamCacheEntryObject : public NativeObject
+{
+    static const unsigned CACHE_ENTRY_SLOT = 0;
+    static const ClassOps classOps_;
+    static const JSPropertySpec properties_;
+
+    static void finalize(FreeOp*, JSObject* obj) {
+        obj->as<StreamCacheEntryObject>().cache().Release();
+    }
+
+    static bool cachedGetter(JSContext* cx, unsigned argc, Value* vp) {
+        CallArgs args = CallArgsFromVp(argc, vp);
+        if (!args.thisv().isObject() || !args.thisv().toObject().is<StreamCacheEntryObject>()) {
+            return false;
+        }
+
+        StreamCacheEntryObject& obj = args.thisv().toObject().as<StreamCacheEntryObject>();
+        args.rval().setBoolean(obj.cache().hasOptimizedEncoding());
+        return true;
+    }
+    static bool getBuffer(JSContext* cx, unsigned argc, Value* vp) {
+        CallArgs args = CallArgsFromVp(argc, vp);
+        if (!args.thisv().isObject() || !args.thisv().toObject().is<StreamCacheEntryObject>()) {
+            return false;
+        }
+
+        auto& bytes = args.thisv().toObject().as<StreamCacheEntryObject>().cache().bytes();
+        RootedArrayBufferObject buffer(cx, ArrayBufferObject::create(cx, bytes.length()));
+        if (!buffer) {
+            return false;
+        }
+
+        memcpy(buffer->dataPointer(), bytes.begin(), bytes.length());
+
+        args.rval().setObject(*buffer);
+        return true;
+    }
+
+  public:
+    static const unsigned RESERVED_SLOTS = 1;
+    static const Class class_;
+    static const JSPropertySpec properties[];
+
+    static bool construct(JSContext* cx, unsigned argc, Value* vp) {
+        CallArgs args = CallArgsFromVp(argc, vp);
+        if (!args.requireAtLeast(cx, "streamCacheEntry", 1)) {
+            return false;
+        }
+
+        SharedMem<uint8_t*> ptr;
+        size_t numBytes;
+        if (!args[0].isObject() || !IsBufferSource(&args[0].toObject(), &ptr, &numBytes)) {
+            RootedObject callee(cx, &args.callee());
+            ReportUsageErrorASCII(cx, callee, "Argument must be an ArrayBuffer");
+            return false;
+        }
+
+        Uint8Vector bytes;
+        if (!bytes.resize(numBytes)) {
+            return false;
+        }
+
+        memcpy(bytes.begin(), ptr.unwrap(), numBytes);
+
+        RefPtr<StreamCacheEntry> cache = cx->new_<StreamCacheEntry>(std::move(bytes));
+        if (!cache) {
+            return false;
+        }
+
+        RootedNativeObject obj(cx, NewObjectWithGivenProto<StreamCacheEntryObject>(cx, nullptr));
+        if (!obj) {
+            return false;
+        }
+        obj->initReservedSlot(CACHE_ENTRY_SLOT, PrivateValue(cache.forget().take()));
+
+        if (!JS_DefineProperty(cx, obj, "cached", cachedGetter, nullptr, 0)) {
+            return false;
+        }
+        if (!JS_DefineFunction(cx, obj, "getBuffer", getBuffer, 0, 0)) {
+            return false;
+        }
+
+        args.rval().setObject(*obj);
+        return true;
+    }
+
+    StreamCacheEntry& cache() const {
+        return *(StreamCacheEntry*)getReservedSlot(CACHE_ENTRY_SLOT).toPrivate();
+    }
+};
+
+const ClassOps StreamCacheEntryObject::classOps_ =
+{
+    nullptr, /* addProperty */
+    nullptr, /* delProperty */
+    nullptr, /* enumerate */
+    nullptr, /* newEnumerate */
+    nullptr, /* resolve */
+    nullptr, /* mayResolve */
+    StreamCacheEntryObject::finalize
+};
+
+const Class StreamCacheEntryObject::class_ =
+{
+    "StreamCacheEntryObject",
+    JSCLASS_HAS_RESERVED_SLOTS(StreamCacheEntryObject::RESERVED_SLOTS) |
+    JSCLASS_BACKGROUND_FINALIZE,
+    &StreamCacheEntryObject::classOps_
+};
+
 struct BufferStreamJob
 {
-    Vector<uint8_t, 0, SystemAllocPolicy> bytes;
+    Variant<Uint8Vector, StreamCacheEntryPtr> source;
     Thread thread;
     JS::StreamConsumer* consumer;
 
-    explicit BufferStreamJob(JS::StreamConsumer* consumer)
-      : consumer(consumer)
+    BufferStreamJob(Uint8Vector&& source, JS::StreamConsumer* consumer)
+      : source(AsVariant<Uint8Vector>(std::move(source))),
+        consumer(consumer)
+    {}
+    BufferStreamJob(StreamCacheEntry& source, JS::StreamConsumer* consumer)
+      : source(AsVariant<StreamCacheEntryPtr>(&source)),
+        consumer(consumer)
     {}
 };
 
@@ -6809,12 +7023,31 @@ static ExclusiveWaitableData<BufferStreamState>* bufferStreamState;
 static void
 BufferStreamMain(BufferStreamJob* job)
 {
-    const uint8_t* const bytes = job->bytes.begin();
+    const uint8_t* bytes;
+    size_t byteLength;
+    JS::OptimizedEncodingListener* listener;
+    if (job->source.is<StreamCacheEntryPtr>()) {
+        StreamCacheEntry& cache = *job->source.as<StreamCacheEntryPtr>();
+        if (cache.hasOptimizedEncoding()) {
+            const Uint8Vector& optimized = cache.optimizedEncoding();
+            job->consumer->consumeOptimizedEncoding(optimized.begin(), optimized.length());
+            goto done;
+        }
 
-    size_t byteOffset = 0;
+        bytes = cache.bytes().begin();
+        byteLength = cache.bytes().length();
+        listener = &cache;
+    } else {
+        bytes = job->source.as<Uint8Vector>().begin();
+        byteLength = job->source.as<Uint8Vector>().length();
+        listener = nullptr;
+    }
+
+    size_t byteOffset;
+    byteOffset = 0;
     while (true) {
-        if (byteOffset == job->bytes.length()) {
-            job->consumer->streamClosed(JS::StreamConsumer::EndOfFile);
+        if (byteOffset == byteLength) {
+            job->consumer->streamClosed(JS::StreamConsumer::EndOfFile, listener);
             break;
         }
 
@@ -6835,7 +7068,7 @@ BufferStreamMain(BufferStreamJob* job)
 
         std::this_thread::sleep_for(std::chrono::milliseconds(delayMillis));
 
-        chunkSize = Min(chunkSize, job->bytes.length() - byteOffset);
+        chunkSize = Min(chunkSize, byteLength - byteOffset);
 
         if (!job->consumer->consumeChunk(bytes + byteOffset, chunkSize)) {
             break;
@@ -6844,6 +7077,7 @@ BufferStreamMain(BufferStreamJob* job)
         byteOffset += chunkSize;
     }
 
+  done:
     auto state = bufferStreamState->lock();
     size_t jobIndex = 0;
     while (state->jobs[jobIndex].get() != job) {
@@ -6904,24 +7138,29 @@ ConsumeBufferSource(JSContext* cx, JS::HandleObject obj, JS::MimeType, JS::Strea
                                    : nullptr);
     }
 
+    UniquePtr<BufferStreamJob> job;
+
     SharedMem<uint8_t*> dataPointer;
     size_t byteLength;
-    if (!IsBufferSource(obj, &dataPointer, &byteLength)) {
-        JS_ReportErrorASCII(cx, "shell streaming consumes a buffer source (buffer or view)");
+    if (IsBufferSource(obj, &dataPointer, &byteLength)) {
+        Uint8Vector bytes;
+        if (!bytes.resize(byteLength)) {
+            JS_ReportOutOfMemory(cx);
+            return false;
+        }
+
+        memcpy(bytes.begin(), dataPointer.unwrap(), byteLength);
+        job = cx->make_unique<BufferStreamJob>(std::move(bytes), consumer);
+    } else if (obj->is<StreamCacheEntryObject>()) {
+        job = cx->make_unique<BufferStreamJob>(obj->as<StreamCacheEntryObject>().cache(), consumer);
+    } else {
+        JS_ReportErrorASCII(cx, "shell streaming consumes a buffer source (buffer or view) "
+                                "or StreamCacheEntryObject");
         return false;
     }
-
-    auto job = cx->make_unique<BufferStreamJob>(consumer);
     if (!job) {
         return false;
     }
-
-    if (!job->bytes.resize(byteLength)) {
-        JS_ReportOutOfMemory(cx);
-        return false;
-    }
-
-    memcpy(job->bytes.begin(), dataPointer.unwrap(), byteLength);
 
     BufferStreamJob* jobPtr = job.get();
 
@@ -8098,9 +8337,12 @@ JS_FN_HELP("parseBin", BinParse, 1, 0,
     JS_FN_HELP("timeout", Timeout, 1, 0,
 "timeout([seconds], [func])",
 "  Get/Set the limit in seconds for the execution time for the current context.\n"
-"  A negative value (default) means that the execution time is unlimited.\n"
-"  If a second argument is provided, it will be invoked when the timer elapses.\n"
-"  Calling this function will replace any callback set by |setInterruptCallback|.\n"),
+"  When the timeout expires the current interrupt callback is invoked.\n"
+"  The timeout is used just once.  If the callback returns a falsy value, the\n"
+"  script is aborted.  A negative value for seconds (this is the default) cancels\n"
+"  any pending timeout.\n"
+"  If a second argument is provided, it is installed as the interrupt handler,\n"
+"  exactly as if by |setInterruptCallback|.\n"),
 
     JS_FN_HELP("interruptIf", InterruptIf, 1, 0,
 "interruptIf(cond)",
@@ -8117,7 +8359,8 @@ JS_FN_HELP("parseBin", BinParse, 1, 0,
     JS_FN_HELP("setInterruptCallback", SetInterruptCallback, 1, 0,
 "setInterruptCallback(func)",
 "  Sets func as the interrupt callback function.\n"
-"  Calling this function will replace any callback set by |timeout|.\n"),
+"  Calling this function will replace any callback set by |timeout|.\n"
+"  If the callback returns a falsy value, the script is aborted.\n"),
 
     JS_FN_HELP("setJitCompilerOption", SetJitCompilerOption, 2, 0,
 "setJitCompilerOption(<option>, <number>)",
@@ -8191,6 +8434,12 @@ JS_FN_HELP("parseBin", BinParse, 1, 0,
 "nukeAllCCWs()",
 "  Like nukeCCW, but for all CrossCompartmentWrappers targeting the current compartment."),
 
+    JS_FN_HELP("recomputeWrappers", RecomputeWrappers, 2, 0,
+"recomputeWrappers([src, [target]])",
+"  Recompute all cross-compartment wrappers. src and target are both optional\n"
+"  and can be used to filter source or target compartments: the unwrapped\n"
+"  object's compartment is used as CompartmentFilter.\n"),
+
     JS_FN_HELP("wrapWithProto", WrapWithProto, 2, 0,
 "wrapWithProto(obj)",
 "  Wrap an object into a noop wrapper with prototype semantics."),
@@ -8231,6 +8480,12 @@ JS_FN_HELP("parseBin", BinParse, 1, 0,
 "  object encapsulates the code and its cached content. The cache entry is filled\n"
 "  and read by the \"evaluate\" function by using it in place of the source, and\n"
 "  by setting \"saveBytecode\" and \"loadBytecode\" options."),
+
+    JS_FN_HELP("streamCacheEntry", StreamCacheEntryObject::construct, 1, 0,
+"streamCacheEntry(buffer)",
+"  Create a shell-only object that holds wasm bytecode and can be streaming-\n"
+"  compiled and cached by WebAssembly.{compile,instantiate}Streaming(). On a\n"
+"  second compilation of the same cache entry, the cached code will be used."),
 
     JS_FN_HELP("printProfilerEvents", PrintProfilerEvents, 0, 0,
 "printProfilerEvents()",
@@ -9735,12 +9990,17 @@ ProcessArgs(JSContext* cx, OptionParser* op)
             filePaths.popFront();
         } else if (ccArgno < fpArgno && ccArgno < mpArgno && ccArgno < baArgno) {
             const char* code = codeChunks.front();
-            RootedValue rval(cx);
+
             JS::CompileOptions opts(cx);
             opts.setFileAndLine("-e", 1);
-            if (!JS::Evaluate(cx, opts, code, strlen(code), &rval)) {
+
+            // This might be upgradable to UTF-8, but for now keep assuming the
+            // worst.
+            RootedValue rval(cx);
+            if (!JS::EvaluateLatin1(cx, opts, code, strlen(code), &rval)) {
                 return false;
             }
+
             codeChunks.popFront();
             if (sc->quitting) {
                 break;
@@ -9818,8 +10078,7 @@ SetContextOptions(JSContext* cx, const OptionParser& op)
 #endif
                              .setTestWasmAwaitTier2(enableTestWasmAwaitTier2)
                              .setNativeRegExp(enableNativeRegExp)
-                             .setAsyncStack(enableAsyncStacks)
-                             .setStreams(enableStreams);
+                             .setAsyncStack(enableAsyncStacks);
 
     if (op.getBoolOption("no-unboxed-objects")) {
         jit::JitOptions.disableUnboxedObjects = true;
@@ -10146,8 +10405,7 @@ SetWorkerContextOptions(JSContext* cx)
                              .setWasmGc(enableWasmGc)
 #endif
                              .setTestWasmAwaitTier2(enableTestWasmAwaitTier2)
-                             .setNativeRegExp(enableNativeRegExp)
-                             .setStreams(enableStreams);
+                             .setNativeRegExp(enableNativeRegExp);
 
     cx->runtime()->setOffthreadIonCompilationEnabled(offthreadCompilation);
     cx->runtime()->profilingScripts = enableCodeCoverage || enableDisassemblyDumps;

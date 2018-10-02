@@ -4,22 +4,24 @@
 
 use api::{ColorF, BorderStyle, DeviceIntPoint, DeviceIntRect, DeviceIntSize, DevicePixelScale};
 use api::{DeviceUintPoint, DeviceUintRect, DeviceUintSize, DocumentLayer, FilterOp, ImageFormat};
-use api::{LayoutRect, MixBlendMode, PipelineId};
+use api::{MixBlendMode, PipelineId};
 use batch::{AlphaBatchBuilder, AlphaBatchContainer, ClipBatcher, resolve_image};
-use clip::{ClipStore};
-use clip_scroll_tree::{ClipScrollTree, SpatialNodeIndex};
+use clip::ClipStore;
+use clip_scroll_tree::{ClipScrollTree};
 use device::{FrameId, Texture};
 #[cfg(feature = "pathfinder")]
 use euclid::{TypedPoint2D, TypedVector2D};
 use gpu_cache::{GpuCache};
-use gpu_types::{BorderInstance, BlurDirection, BlurInstance, PrimitiveHeaders, TransformData, TransformPalette};
+use gpu_types::{BorderInstance, BlurDirection, BlurInstance, PrimitiveHeaders, ScalingInstance};
+use gpu_types::{TransformData, TransformPalette};
 use internal_types::{FastHashMap, SavedTargetIndex, SourceTexture};
 #[cfg(feature = "pathfinder")]
 use pathfinder_partitioner::mesh::Mesh;
-use prim_store::{PrimitiveIndex, PrimitiveStore, DeferredResolve};
+use prim_store::{PrimitiveStore, DeferredResolve};
 use profiler::FrameProfileCounters;
+use render_backend::FrameResources;
 use render_task::{BlitSource, RenderTaskAddress, RenderTaskId, RenderTaskKind};
-use render_task::{BlurTask, ClearMode, GlyphTask, RenderTaskLocation, RenderTaskTree};
+use render_task::{BlurTask, ClearMode, GlyphTask, RenderTaskLocation, RenderTaskTree, ScalingTask};
 use resource_cache::ResourceCache;
 use std::{cmp, usize, f32, i32, mem};
 use texture_allocator::GuillotineAllocator;
@@ -29,13 +31,6 @@ use webrender_api::{DevicePixel, FontRenderMode};
 const MIN_TARGET_SIZE: u32 = 2048;
 const STYLE_SOLID: i32 = ((BorderStyle::Solid as i32) << 8) | ((BorderStyle::Solid as i32) << 16);
 const STYLE_MASK: i32 = 0x00FF_FF00;
-
-#[derive(Debug)]
-pub struct ScrollbarPrimitive {
-    pub scroll_frame_index: SpatialNodeIndex,
-    pub prim_index: PrimitiveIndex,
-    pub frame_rect: LayoutRect,
-}
 
 #[derive(Debug, Copy, Clone)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
@@ -48,6 +43,7 @@ pub struct RenderTargetContext<'a, 'rc> {
     pub resource_cache: &'rc mut ResourceCache,
     pub use_dual_source_blending: bool,
     pub clip_scroll_tree: &'a ClipScrollTree,
+    pub resources: &'a FrameResources,
 }
 
 #[cfg_attr(feature = "capture", derive(Serialize))]
@@ -256,13 +252,6 @@ pub struct FrameOutput {
     pub pipeline_id: PipelineId,
 }
 
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-pub struct ScalingInfo {
-    pub src_task_id: RenderTaskId,
-    pub dest_task_id: RenderTaskId,
-}
-
 // Defines where the source data for a blit job can be found.
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
@@ -305,7 +294,7 @@ pub struct ColorRenderTarget {
     pub vertical_blurs: Vec<BlurInstance>,
     pub horizontal_blurs: Vec<BlurInstance>,
     pub readbacks: Vec<DeviceIntRect>,
-    pub scalings: Vec<ScalingInfo>,
+    pub scalings: Vec<ScalingInstance>,
     pub blits: Vec<BlitJob>,
     // List of frame buffer outputs for this render target.
     pub outputs: Vec<FrameOutput>,
@@ -446,9 +435,9 @@ impl RenderTarget for ColorRenderTarget {
                 self.readbacks.push(device_rect);
             }
             RenderTaskKind::Scaling(..) => {
-                self.scalings.push(ScalingInfo {
-                    src_task_id: task.children[0],
-                    dest_task_id: task_id,
+                self.scalings.push(ScalingInstance {
+                    task_address: render_tasks.get_task_address(task_id),
+                    src_task_address: render_tasks.get_task_address(task.children[0]),
                 });
             }
             RenderTaskKind::Blit(ref task_info) => {
@@ -518,7 +507,7 @@ pub struct AlphaRenderTarget {
     // List of blur operations to apply for this render target.
     pub vertical_blurs: Vec<BlurInstance>,
     pub horizontal_blurs: Vec<BlurInstance>,
-    pub scalings: Vec<ScalingInfo>,
+    pub scalings: Vec<ScalingInstance>,
     pub zero_clears: Vec<RenderTaskId>,
     allocator: TextureAllocator,
 }
@@ -599,6 +588,7 @@ impl RenderTarget for AlphaRenderTarget {
                     clip_store,
                     ctx.clip_scroll_tree,
                     transforms,
+                    &ctx.resources.clip_data_store,
                 );
             }
             RenderTaskKind::ClipRegion(ref task) => {
@@ -608,11 +598,12 @@ impl RenderTarget for AlphaRenderTarget {
                     task.clip_data_address,
                 );
             }
-            RenderTaskKind::Scaling(..) => {
-                self.scalings.push(ScalingInfo {
-                    src_task_id: task.children[0],
-                    dest_task_id: task_id,
-                });
+            RenderTaskKind::Scaling(ref info) => {
+                info.add_instances(
+                    &mut self.scalings,
+                    render_tasks.get_task_address(task_id),
+                    render_tasks.get_task_address(task.children[0]),
+                );
             }
         }
     }
@@ -693,15 +684,12 @@ impl TextureCacheRenderTarget {
             RenderTaskKind::Border(ref mut task_info) => {
                 self.clears.push(target_rect.0);
 
-                // TODO(gw): It may be better to store the task origin in
-                //           the render task data instead of per instance.
                 let task_origin = target_rect.0.origin.to_f32();
-                for instance in &mut task_info.instances {
-                    instance.task_origin = task_origin;
-                }
-
                 let instances = mem::replace(&mut task_info.instances, Vec::new());
-                for instance in instances {
+                for mut instance in instances {
+                    // TODO(gw): It may be better to store the task origin in
+                    //           the render task data instead of per instance.
+                    instance.task_origin = task_origin;
                     if instance.flags & STYLE_MASK == STYLE_SOLID {
                         self.border_segments_solid.push(instance);
                     } else {
@@ -1037,6 +1025,22 @@ impl BlurTask {
             task_address,
             src_task_address,
             blur_direction,
+        };
+
+        instances.push(instance);
+    }
+}
+
+impl ScalingTask {
+    fn add_instances(
+        &self,
+        instances: &mut Vec<ScalingInstance>,
+        task_address: RenderTaskAddress,
+        src_task_address: RenderTaskAddress,
+    ) {
+        let instance = ScalingInstance {
+            task_address,
+            src_task_address,
         };
 
         instances.push(instance);

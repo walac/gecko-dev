@@ -719,6 +719,17 @@ js::Int32ToString<CanGC>(JSContext* cx, int32_t si);
 template JSFlatString*
 js::Int32ToString<NoGC>(JSContext* cx, int32_t si);
 
+JSFlatString*
+js::Int32ToStringHelper(JSContext* cx, int32_t si)
+{
+    AutoUnsafeCallWithABI unsafe;
+    JSFlatString* res = Int32ToString<NoGC>(cx, si);
+    if (!res) {
+        cx->recoverFromOutOfMemory();
+    }
+    return res;
+}
+
 JSAtom*
 js::Int32ToAtom(JSContext* cx, int32_t si)
 {
@@ -842,7 +853,7 @@ num_toLocaleString_impl(JSContext* cx, const CallArgs& args)
      * Create the string, move back to bytes to make string twiddling
      * a bit easier and so we can insert platform charset seperators.
      */
-    UniqueChars numBytes = JS_EncodeStringToLatin1(cx, str);
+    UniqueChars numBytes = EncodeAscii(cx, str);
     if (!numBytes) {
         return false;
     }
@@ -1518,6 +1529,17 @@ js::NumberToString<CanGC>(JSContext* cx, double d);
 template JSString*
 js::NumberToString<NoGC>(JSContext* cx, double d);
 
+JSString*
+js::NumberToStringHelper(JSContext* cx, double d)
+{
+    AutoUnsafeCallWithABI unsafe;
+    JSString* res = NumberToString<NoGC>(cx, d);
+    if (!res) {
+        cx->recoverFromOutOfMemory();
+    }
+    return res;
+}
+
 JSAtom*
 js::NumberToAtom(JSContext* cx, double d)
 {
@@ -1904,6 +1926,29 @@ js::ToInt32Slow(JSContext* cx, const HandleValue v, int32_t* out)
         }
     }
     *out = ToInt32(d);
+    return true;
+}
+
+bool
+js::ToInt32OrBigIntSlow(JSContext* cx, MutableHandleValue vp)
+{
+    MOZ_ASSERT(!vp.isInt32());
+    if (vp.isDouble()) {
+        vp.setInt32(ToInt32(vp.toDouble()));
+        return true;
+    }
+
+    if (!ToNumeric(cx, vp)) {
+        return false;
+    }
+
+#ifdef ENABLE_BIGINT
+    if (vp.isBigInt()) {
+        return true;
+    }
+#endif
+
+    vp.setInt32(ToInt32(vp.toNumber()));
     return true;
 }
 

@@ -114,6 +114,8 @@ const char* const XPCJSRuntime::mStrings[] = {
     "lastIndex",            // IDX_LASTINDEX
     "then",                 // IDX_THEN
     "isInstance",           // IDX_ISINSTANCE
+    "Infinity",             // IDX_INFINITY
+    "NaN",                  // IDX_NAN
 };
 
 /***************************************************************************/
@@ -180,8 +182,10 @@ public:
 
 namespace xpc {
 
-CompartmentPrivate::CompartmentPrivate(JS::Compartment* c)
-    : wantXrays(false)
+CompartmentPrivate::CompartmentPrivate(JS::Compartment* c, mozilla::BasePrincipal* origin,
+                                       const SiteIdentifier& site)
+    : originInfo(origin, site)
+    , wantXrays(false)
     , allowWaivers(true)
     , isWebExtensionContentScript(false)
     , allowCPOWs(false)
@@ -511,6 +515,25 @@ IsInSandboxCompartment(JSObject* obj)
 }
 
 bool
+CompartmentOriginInfo::MightBeWebContent() const
+{
+    // Compartments with principals that are either the system principal or an
+    // expanded principal are definitely not web content.
+    return !nsContentUtils::IsSystemOrExpandedPrincipal(mOrigin);
+}
+
+bool
+MightBeWebContentCompartment(JS::Compartment* compartment)
+{
+    if (CompartmentPrivate* priv = CompartmentPrivate::Get(compartment)) {
+        return priv->originInfo.MightBeWebContent();
+    }
+
+    // No CompartmentPrivate; try IsSystemCompartment.
+    return !js::IsSystemCompartment(compartment);
+}
+
+bool
 IsUniversalXPConnectEnabled(JS::Compartment* compartment)
 {
     CompartmentPrivate* priv = CompartmentPrivate::Get(compartment);
@@ -567,6 +590,44 @@ EnableUniversalXPConnect(JSContext* cx)
     }
     scope->ForcePrivilegedComponents();
     return scope->AttachComponentsObject(cx);
+}
+
+bool
+CompartmentOriginInfo::IsSameOrigin(nsIPrincipal* aOther) const
+{
+    return mOrigin->FastEquals(aOther);
+}
+
+/* static */ bool
+CompartmentOriginInfo::Subsumes(JS::Compartment* aCompA, JS::Compartment* aCompB)
+{
+    CompartmentPrivate* apriv = CompartmentPrivate::Get(aCompA);
+    CompartmentPrivate* bpriv = CompartmentPrivate::Get(aCompB);
+    MOZ_ASSERT(apriv);
+    MOZ_ASSERT(bpriv);
+    return apriv->originInfo.mOrigin->FastSubsumes(bpriv->originInfo.mOrigin);
+}
+
+/* static */ bool
+CompartmentOriginInfo::SubsumesIgnoringFPD(JS::Compartment* aCompA, JS::Compartment* aCompB)
+{
+    CompartmentPrivate* apriv = CompartmentPrivate::Get(aCompA);
+    CompartmentPrivate* bpriv = CompartmentPrivate::Get(aCompB);
+    MOZ_ASSERT(apriv);
+    MOZ_ASSERT(bpriv);
+    return apriv->originInfo.mOrigin->FastSubsumesIgnoringFPD(bpriv->originInfo.mOrigin);
+}
+
+void
+SetCompartmentChangedDocumentDomain(JS::Compartment* compartment)
+{
+    // Note: we call this for all compartments that contain realms with a
+    // particular principal. Not all of these compartments have a
+    // CompartmentPrivate (for instance the temporary compartment/realm
+    // created by the JS engine for off-thread parsing).
+    if (CompartmentPrivate* priv = CompartmentPrivate::Get(compartment)) {
+        priv->originInfo.SetChangedDocumentDomain();
+    }
 }
 
 JSObject*
@@ -2769,7 +2830,7 @@ DestroyRealm(JSFreeOp* fop, JS::Realm* realm)
 }
 
 static bool
-PreserveWrapper(JSContext* cx, JSObject* obj)
+PreserveWrapper(JSContext* cx, JS::Handle<JSObject*> obj)
 {
     MOZ_ASSERT(cx);
     MOZ_ASSERT(obj);

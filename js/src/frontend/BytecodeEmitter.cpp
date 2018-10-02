@@ -15,6 +15,7 @@
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/PodOperations.h"
+#include "mozilla/ReverseIterator.h"
 
 #include <string.h>
 
@@ -2660,8 +2661,11 @@ BytecodeEmitter::emitSwitch(SwitchStatement* switchStmt)
 
                 NumericLiteral* literal = &caseValue->as<NumericLiteral>();
 #ifdef DEBUG
+                // Use NumberEqualsInt32 here because switches compare using
+                // strict equality, which will equate -0 and +0.  In contrast
+                // NumberIsInt32 would return false for -0.
                 int32_t v;
-                MOZ_ASSERT(mozilla::NumberIsInt32(literal->value(), &v));
+                MOZ_ASSERT(mozilla::NumberEqualsInt32(literal->value(), &v));
 #endif
                 int32_t i = int32_t(literal->value());
 
@@ -3431,6 +3435,11 @@ BytecodeEmitter::wrapWithDestructuringIteratorCloseTryNote(int32_t iterDepth, In
 bool
 BytecodeEmitter::emitDefault(ParseNode* defaultExpr, ParseNode* pattern)
 {
+    IfEmitter ifUndefined(this);
+    if (!ifUndefined.emitIf(Nothing())) {
+        return false;
+    }
+
     if (!emit1(JSOP_DUP)) {                               // VALUE VALUE
         return false;
     }
@@ -3440,21 +3449,19 @@ BytecodeEmitter::emitDefault(ParseNode* defaultExpr, ParseNode* pattern)
     if (!emit1(JSOP_STRICTEQ)) {                          // VALUE EQL?
         return false;
     }
-    // Emit source note to enable ion compilation.
-    if (!newSrcNote(SRC_IF)) {
+
+    if (!ifUndefined.emitThen()) {                        // VALUE
         return false;
     }
-    JumpList jump;
-    if (!emitJump(JSOP_IFEQ, &jump)) {                    // VALUE
+
+    if (!emit1(JSOP_POP)) {                               //
         return false;
     }
-    if (!emit1(JSOP_POP)) {                               // .
+    if (!emitInitializer(defaultExpr, pattern)) {         // DEFAULTVALUE
         return false;
     }
-    if (!emitInitializerInBranch(defaultExpr, pattern)) { // DEFAULTVALUE
-        return false;
-    }
-    if (!emitJumpTargetAndPatch(jump)) {
+
+    if (!ifUndefined.emitEnd()) {                         // VALUE/DEFAULTVALUE
         return false;
     }
     return true;
@@ -3516,13 +3523,6 @@ BytecodeEmitter::emitInitializer(ParseNode* initializer, ParseNode* pattern)
     }
 
     return true;
-}
-
-bool
-BytecodeEmitter::emitInitializerInBranch(ParseNode* initializer, ParseNode* pattern)
-{
-    TDZCheckCache tdzCache(this);
-    return emitInitializer(initializer, pattern);
 }
 
 bool
@@ -8447,34 +8447,13 @@ BytecodeEmitter::emitFunctionFormalParameters(ListNode* paramsBody)
             // If we have an initializer, emit the initializer and assign it
             // to the argument slot. TDZ is taken care of afterwards.
             MOZ_ASSERT(hasParameterExprs);
-            if (!emitArgOp(JSOP_GETARG, argSlot)) {
+
+            if (!emitArgOp(JSOP_GETARG, argSlot)) {       // ARG
                 return false;
             }
-            if (!emit1(JSOP_DUP)) {
-                return false;
-            }
-            if (!emit1(JSOP_UNDEFINED)) {
-                return false;
-            }
-            if (!emit1(JSOP_STRICTEQ)) {
-                return false;
-            }
-            // Emit source note to enable Ion compilation.
-            if (!newSrcNote(SRC_IF)) {
-                return false;
-            }
-            JumpList jump;
-            if (!emitJump(JSOP_IFEQ, &jump)) {
-                return false;
-            }
-            if (!emit1(JSOP_POP)) {
-                return false;
-            }
-            if (!emitInitializerInBranch(initializer, bindingElement)) {
-                return false;
-            }
-            if (!emitJumpTargetAndPatch(jump)) {
-                return false;
+
+            if (!emitDefault(initializer, bindingElement)) {
+                return false;                             // ARG/DEFAULT
             }
         } else if (isRest) {
             if (!emit1(JSOP_REST)) {
@@ -9435,16 +9414,6 @@ BytecodeEmitter::emitTree(ParseNode* pn, ValueUsage valueUsage /* = ValueUsage::
     return true;
 }
 
-bool
-BytecodeEmitter::emitTreeInBranch(ParseNode* pn,
-                                  ValueUsage valueUsage /* = ValueUsage::WantValue */)
-{
-    // Code that may be conditionally executed always need their own TDZ
-    // cache.
-    TDZCheckCache tdzCache(this);
-    return emitTree(pn, valueUsage);
-}
-
 static bool
 AllocSrcNote(JSContext* cx, SrcNotesVector& notes, unsigned* index)
 {
@@ -9662,12 +9631,12 @@ BytecodeEmitter::copySrcNotes(jssrcnote* destination, uint32_t nsrcnotes)
 }
 
 void
-CGNumberList::finish(ConstArray* array)
+CGNumberList::finish(mozilla::Span<GCPtrValue> array)
 {
-    MOZ_ASSERT(length() == array->length);
+    MOZ_ASSERT(length() == array.size());
 
     for (unsigned i = 0; i < length(); i++) {
-        array->vector[i] = DoubleValue(list[i]);
+        array[i].init(DoubleValue(list[i]));
     }
 }
 
@@ -9689,32 +9658,31 @@ CGObjectList::add(ObjectBox* objbox)
 }
 
 void
-CGObjectList::finish(ObjectArray* array)
+CGObjectList::finish(mozilla::Span<GCPtrObject> array)
 {
     MOZ_ASSERT(length <= INDEX_LIMIT);
-    MOZ_ASSERT(length == array->length);
+    MOZ_ASSERT(length == array.size());
 
-    js::GCPtrObject* cursor = array->vector + array->length;
     ObjectBox* objbox = lastbox;
-    do {
-        --cursor;
-        MOZ_ASSERT(!*cursor);
+    for (GCPtrObject& obj : mozilla::Reversed(array)) {
+        MOZ_ASSERT(obj == nullptr);
         MOZ_ASSERT(objbox->object->isTenured());
         if (objbox->isFunctionBox()) {
             objbox->asFunctionBox()->finish();
         }
-        *cursor = objbox->object;
-    } while ((objbox = objbox->emitLink) != nullptr);
-    MOZ_ASSERT(cursor == array->vector);
+        obj.init(objbox->object);
+        objbox = objbox->emitLink;
+    }
 }
 
 void
-CGScopeList::finish(ScopeArray* array)
+CGScopeList::finish(mozilla::Span<GCPtrScope> array)
 {
     MOZ_ASSERT(length() <= INDEX_LIMIT);
-    MOZ_ASSERT(length() == array->length);
+    MOZ_ASSERT(length() == array.size());
+
     for (uint32_t i = 0; i < length(); i++) {
-        array->vector[i].init(vector[i]);
+        array[i].init(vector[i]);
     }
 }
 
@@ -9735,12 +9703,12 @@ CGTryNoteList::append(JSTryNoteKind kind, uint32_t stackDepth, size_t start, siz
 }
 
 void
-CGTryNoteList::finish(TryNoteArray* array)
+CGTryNoteList::finish(mozilla::Span<JSTryNote> array)
 {
-    MOZ_ASSERT(length() == array->length);
+    MOZ_ASSERT(length() == array.size());
 
     for (unsigned i = 0; i < length(); i++) {
-        array->vector[i] = list[i];
+        array[i] = list[i];
     }
 }
 
@@ -9769,9 +9737,9 @@ CGScopeNoteList::recordEnd(uint32_t index, uint32_t offset, bool inPrologue)
 }
 
 void
-CGScopeNoteList::finish(ScopeNoteArray* array, uint32_t prologueLength)
+CGScopeNoteList::finish(mozilla::Span<ScopeNote> array, uint32_t prologueLength)
 {
-    MOZ_ASSERT(length() == array->length);
+    MOZ_ASSERT(length() == array.size());
 
     for (unsigned i = 0; i < length(); i++) {
         if (!list[i].startInPrologue) {
@@ -9782,14 +9750,14 @@ CGScopeNoteList::finish(ScopeNoteArray* array, uint32_t prologueLength)
         }
         MOZ_ASSERT(list[i].end >= list[i].start);
         list[i].length = list[i].end - list[i].start;
-        array->vector[i] = list[i];
+        array[i] = list[i];
     }
 }
 
 void
-CGYieldAndAwaitOffsetList::finish(YieldAndAwaitOffsetArray& array, uint32_t prologueLength)
+CGYieldAndAwaitOffsetList::finish(mozilla::Span<uint32_t> array, uint32_t prologueLength)
 {
-    MOZ_ASSERT(length() == array.length());
+    MOZ_ASSERT(length() == array.size());
 
     for (unsigned i = 0; i < length(); i++) {
         array[i] = prologueLength + list[i];

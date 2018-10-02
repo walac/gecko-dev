@@ -237,20 +237,6 @@ FFmpegVideoDecoder<LIBAV_VER>::DoDecode(MediaRawData* aSample,
     return NS_OK;
   }
 
-  if ((mCodecContext->pix_fmt == AV_PIX_FMT_YUV420P10LE ||
-       mCodecContext->pix_fmt == AV_PIX_FMT_YUV444P10LE
-#if LIBAVCODEC_VERSION_MAJOR >= 57
-       || mCodecContext->pix_fmt == AV_PIX_FMT_YUV444P12LE
-#endif
-       ) &&
-      (!mImageAllocator || (mImageAllocator->GetCompositorBackendType()
-                            != layers::LayersBackend::LAYERS_BASIC &&
-                            mImageAllocator->GetCompositorBackendType()
-                            != layers::LayersBackend::LAYERS_OPENGL))) {
-    return MediaResult(NS_ERROR_DOM_MEDIA_FATAL_ERR,
-                       RESULT_DETAIL("unsupported format type (hdr)"));
-  }
-
   // If we've decoded a frame then we need to output it
   int64_t pts = mPtsContext.GuessCorrectPts(mFrame->pkt_pts, mFrame->pkt_dts);
   // Retrieve duration from dts.
@@ -296,11 +282,11 @@ FFmpegVideoDecoder<LIBAV_VER>::DoDecode(MediaRawData* aSample,
     b.mPlanes[1].mWidth = b.mPlanes[2].mWidth = mFrame->width;
     b.mPlanes[1].mHeight = b.mPlanes[2].mHeight = mFrame->height;
     if (mCodecContext->pix_fmt == AV_PIX_FMT_YUV444P10LE) {
-      b.mBitDepth = 10;
+      b.mColorDepth = gfx::ColorDepth::COLOR_10;
     }
 #if LIBAVCODEC_VERSION_MAJOR >= 57
     else if (mCodecContext->pix_fmt == AV_PIX_FMT_YUV444P12LE) {
-      b.mBitDepth = 12;
+      b.mColorDepth = gfx::ColorDepth::COLOR_12;
     }
 #endif
   } else if (mCodecContext->pix_fmt == AV_PIX_FMT_YUV422P) {
@@ -310,7 +296,7 @@ FFmpegVideoDecoder<LIBAV_VER>::DoDecode(MediaRawData* aSample,
     b.mPlanes[1].mWidth = b.mPlanes[2].mWidth = (mFrame->width + 1) >> 1;
     b.mPlanes[1].mHeight = b.mPlanes[2].mHeight = (mFrame->height + 1) >> 1;
     if (mCodecContext->pix_fmt == AV_PIX_FMT_YUV420P10LE) {
-      b.mBitDepth = 10;
+      b.mColorDepth = gfx::ColorDepth::COLOR_10;
     }
   }
   if (mLib->av_frame_get_colorspace) {

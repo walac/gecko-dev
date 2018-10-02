@@ -164,6 +164,18 @@
     "n_values": 8,
     "description": "Application reputation remote verdict (0=SAFE, 1=DANGEROUS, 2=UNCOMMON, 3=POTENTIALLY_UNWANTED, 4=DANGEROUS_HOST, 5=UNKNOWN)"
   },
+  "APPLICATION_REPUTATION_REMOTE_LOOKUP_RESPONSE_TIME": {
+    "record_in_processes": ["main", "content"],
+    "alert_emails": ["dlee@mozilla.com", "safebrowsing-telemetry@mozilla.org"],
+    "expires_in_version": "never",
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [1479898],
+    "kind": "linear",
+    "low": 1000,
+    "high": 15000,
+    "n_buckets": 17,
+    "description": "Server response time to remote lookup request (ms)."
+  },
   "APPLICATION_REPUTATION_REMOTE_LOOKUP_TIMEOUT": {
     "record_in_processes": ["main", "content"],
     "alert_emails": ["francois@mozilla.com", "safebrowsing-telemetry@mozilla.org"],
@@ -198,45 +210,6 @@
     "n_values": 16,
     "description": "The operating system audio back-end used when successfully opening an audio stream, or whether the failure occurred on the first try or not <https://dxr.mozilla.org/mozilla-central/search?q=AUDIOSTREAM_BACKEND_ID_STR>",
     "releaseChannelCollection": "opt-out"
-  },
-  "AUSHELPER_CPU_ERROR_CODE": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["application-update-telemetry-alerts@mozilla.com"],
-    "bug_numbers": [1296630],
-    "expires_in_version": "60",
-    "kind": "enumerated",
-    "n_values": 16,
-    "releaseChannelCollection": "opt-out",
-    "description": "The error code from the aushelper system add-on when querying the registry for CPU information for bug 1296630 (see browser/extensions/aushelper/bootstrap.js)."
-  },
-  "AUSHELPER_CPU_RESULT_CODE": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["application-update-telemetry-alerts@mozilla.com"],
-    "bug_numbers": [1296630],
-    "expires_in_version": "60",
-    "kind": "enumerated",
-    "n_values": 5,
-    "releaseChannelCollection": "opt-out",
-    "description": "Whether the system is affected by bug 1296630 (1=No, 2=Yes, 3=Error, and 4=Unknown)."
-  },
-  "AUSHELPER_WEBSENSE_ERROR_CODE": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["application-update-telemetry-alerts@mozilla.com"],
-    "bug_numbers": [1305847],
-    "expires_in_version": "60",
-    "kind": "enumerated",
-    "n_values": 8,
-    "releaseChannelCollection": "opt-out",
-    "description": "The error code from the aushelper system add-on when gathering information on Websense (see browser/extensions/aushelper/bootstrap.js)."
-  },
-  "AUSHELPER_WEBSENSE_REG_EXISTS": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["application-update-telemetry-alerts@mozilla.com"],
-    "bug_numbers": [1305847],
-    "expires_in_version": "60",
-    "kind": "boolean",
-    "releaseChannelCollection": "opt-out",
-    "description": "Whether the system has a Websense InstallVersion registry value (see browser/extensions/aushelper/bootstrap.js)."
   },
   "BACKGROUNDFILESAVER_THREAD_COUNT": {
     "record_in_processes": ["main", "content"],
@@ -502,6 +475,15 @@
     "n_values": 10,
     "bug_numbers": [1135408],
     "description": "GPU Device Reset Reason (ok, hung, removed, reset, internal error, invalid call, out of memory)"
+  },
+  "DOCUMENT_ANALYTICS_TRACKER_FASTBLOCKED": {
+    "record_in_processes": ["content"],
+    "expires_in_version": "67",
+    "alert_emails": ["seceng-telemetry@mozilla.com", "fxprivacyandsecurity@mozilla.com"],
+    "kind": "categorical",
+    "labels": ["other", "googleanalytics", "scorecardresearch", "hotjar", "newrelic", "nrdata", "crwdcntrl", "eyeota", "yahooanalytics", "statcounter", "v12group", "all"],
+    "bug_numbers": [1489252],
+    "description": "Number of top-level documents which have resources blocked by fastblock, categorized by analytics provider."
   },
   "FETCH_IS_MAINTHREAD": {
     "record_in_processes": ["main", "content"],
@@ -998,6 +980,17 @@
     "high": 16777216,
     "n_buckets": 100,
     "description": "Unique Set Size (KB)"
+  },
+  "MEMORY_UNIQUE_CONTENT_STARTUP": {
+    "record_in_processes": ["content"],
+    "alert_emails": ["erahm@mozilla.com", "memshrink-telemetry-alerts@mozilla.com"],
+    "bug_numbers": [1494827],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "low": 2048,
+    "high": 131072,
+    "n_buckets": 100,
+    "description": "Unique Set Size of Content Process at Startup (KB)"
   },
   "MEMORY_VSIZE": {
     "record_in_processes": ["main", "content"],
@@ -2077,6 +2070,36 @@
     "description": "Amount of bytes sent using TLS early data at the start of a TLS connection for a given channel.",
     "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
     "bug_numbers": [1296288]
+  },
+  "ESNI_KEYS_RECORD_FETCH_DELAYS": {
+    "record_in_processes": ["main"],
+    "expires_in_version": "70",
+    "kind": "exponential",
+    "high": 60000,
+    "n_buckets": 100,
+    "description": "Added delays caused the esni keys fetching.(ms)",
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "bug_numbers": [1473736],
+    "releaseChannelCollection": "opt-out"
+  },
+  "ESNI_KEYS_RECORDS_FOUND": {
+    "record_in_processes": ["main"],
+    "expires_in_version": "70",
+    "kind": "boolean",
+    "description": "ESNI Keys found rate.",
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "bug_numbers": [1473736],
+    "releaseChannelCollection": "opt-out"
+  },
+  "ESNI_NOESNI_TLS_SUCCESS_RATE": {
+    "record_in_processes": ["main"],
+    "expires_in_version": "70",
+    "kind": "categorical",
+    "labels": ["EsniTLSSucceeded", "EsniTLSFailed", "NoEsniTLSSucceeded", "NoEsniTLSFailed"],
+    "description": "TLS handshake with and without esni success rate.",
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "bug_numbers": [1473736],
+    "releaseChannelCollection": "opt-out"
   },
   "SSL_HANDSHAKE_VERSION": {
     "record_in_processes": ["main", "content"],
@@ -3248,6 +3271,17 @@
     "n_buckets": 50,
     "description": "DNS Cache Entry Age at Removal Time (minutes)"
   },
+  "DNS_BY_TYPE_CLEANUP_AGE": {
+    "record_in_processes": ["main"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 1440,
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "bug_numbers": [1481251],
+    "releaseChannelCollection": "opt-out",
+    "n_buckets": 50,
+    "description": "DNS Cache Entry Age for by-type queries at Removal Time (minutes)"
+  },
   "DNS_PREMATURE_EVICTION": {
     "record_in_processes": ["main"],
     "expires_in_version": "never",
@@ -3258,6 +3292,17 @@
     "bug_numbers": [1460305],
     "n_buckets": 50,
     "description": "DNS Cache Entry Age at Removal Time of non-expired entries (minutes)"
+  },
+  "DNS_BY_TYPE_PREMATURE_EVICTION": {
+    "record_in_processes": ["main"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 1440,
+    "releaseChannelCollection": "opt-out",
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "bug_numbers": [1481251],
+    "n_buckets": 50,
+    "description": "DNS Cache Entry Age for by-type queries at Removal Time of non-expired entries (minutes)"
   },
   "DNS_LOOKUP_TIME": {
     "record_in_processes": ["main"],
@@ -3290,6 +3335,28 @@
     "bug_numbers": [1434852],
     "n_buckets": 50,
     "description": "Time for a completed native name resolution (msec)"
+  },
+  "DNS_BY_TYPE_FAILED_LOOKUP_TIME": {
+    "record_in_processes": ["main"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 60000,
+    "releaseChannelCollection": "opt-out",
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "bug_numbers": [1481251],
+    "n_buckets": 50,
+    "description": "Time for a completed by-type resolution that has a negative answer (msec)."
+  },
+  "DNS_BY_TYPE_SUCCEEDED_LOOKUP_TIME": {
+    "record_in_processes": ["main"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 60000,
+    "releaseChannelCollection": "opt-out",
+    "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
+    "bug_numbers": [1481251],
+    "n_buckets": 50,
+    "description": "Time for a completed by-type resolution that succeeded (msec)."
   },
   "DNS_NATIVE_QUEUING": {
     "record_in_processes": ["main"],
@@ -3729,10 +3796,10 @@
     "description": "How many speculative connections are made needlessly"
   },
   "TAB_COUNT": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": [],
-    "bug_numbers": [1361855],
-    "expires_in_version": "65",
+    "record_in_processes": ["main"],
+    "alert_emails": ["gijs@mozilla.com"],
+    "bug_numbers": [1361855, 1488945],
+    "expires_in_version": "never",
     "kind": "exponential",
     "high": 1000,
     "n_buckets": 100,
@@ -7959,17 +8026,6 @@
     "kind": "boolean",
     "description": "search service has been initialized synchronously"
   },
-  "SEARCH_SERVICE_ENGINE_COUNT": {
-    "record_in_processes": ["main", "content"],
-    "releaseChannelCollection": "opt-out",
-    "alert_emails": ["florian@mozilla.com"],
-    "expires_in_version": "60",
-    "bug_numbers": [1268424],
-    "kind": "linear",
-    "high": 200,
-    "n_buckets": 50,
-    "description": "Recorded once per session near startup: records the search plugin count, including both built-in plugins (including the ones the user has hidden) and user-installed plugins."
-  },
   "SEARCH_SERVICE_COUNTRY_FETCH_TIME_MS": {
     "record_in_processes": ["main", "content"],
     "alert_emails": ["mhammond@mozilla.com", "gavin@mozilla.com"],
@@ -8702,6 +8758,15 @@
     "kind": "enumerated",
     "n_values": 14,
     "description": "The DTLS cipher (as integer) negotiated for a RTCPeerConnection. See TransportLayerDtls::RecordCipherTelemetry for the meaning of the values"
+  },
+  "WEBRTC_SRTP_CIPHER": {
+    "record_in_processes": ["content"],
+    "alert_emails": ["webrtc-dtls-telemetry-alerts@mozilla.com", "nohlmeier@mozilla.com"],
+    "bug_numbers": [1491511],
+    "expires_in_version": "67",
+    "kind": "categorical",
+    "labels": ["Unknown", "Aes128CmHmacSha1_80", "Aes128CmHmacSha1_32", "AeadAes128Gcm", "AeadAes256Gcm"],
+    "description": "The SRTP cipher (as integer) negotiated for a RTCPeerConnection. See TransportLayerDtls::RecordCipherTelemetry for the meaning of the values"
   },
   "WEBRTC_ICE_FINAL_CONNECTION_STATE": {
     "record_in_processes": ["main", "content"],
@@ -11060,7 +11125,7 @@
   },
   "WEAVE_LOGIN_FAILED_FOR": {
     "record_in_processes": ["main"],
-    "expires_in_version": "65",
+    "expires_in_version": "68",
     "alert_emails": ["sync-dev@mozilla.org"],
     "kind": "exponential",
     "high": 20000,
@@ -12492,6 +12557,7 @@
     "kind": "enumerated",
     "bug_numbers": [1229961],
     "n_values": 12,
+    "releaseChannelCollection": "opt-out",
     "description": "Plugin drawing model. 0 when windowed, otherwise NPDrawingModel + 1."
   },
   "DOM_SCRIPT_KIND": {
@@ -12937,6 +13003,16 @@
     "high": 5000,
     "n_buckets": 50,
     "description": "The time, in percentage of a vsync interval, spent from beginning a paint in the content process until that frame is presented in the compositor."
+  },
+  "CONTENT_FRAME_TIME_WITH_SVG": {
+    "record_in_processes": ["main", "gpu"],
+    "alert_emails": ["gfx-telemetry-alerts@mozilla.com", "mwoodrow@mozilla.com"],
+    "bug_numbers": [1483549],
+    "expires_in_version": "66",
+    "kind": "exponential",
+    "high": 5000,
+    "n_buckets": 50,
+    "description": "The time, in percentage of a vsync interval, spent from beginning a paint in the content process until that frame is presented in the compositor, for frames that contained an SVG to be drawn by WebRender"
   },
   "CONTENT_LARGE_PAINT_PHASE_WEIGHT": {
     "record_in_processes": ["main", "content"],
@@ -14160,6 +14236,22 @@
     "n_buckets": 10,
     "bug_numbers": [1482259],
     "description": "In order to know how many silent audio track in the web comparing to other normal media, we record the silence proportion of audio track of media element. The range of value is from 0% - 100%.",
+    "releaseChannelCollection": "opt-out"
+  },
+  "WEB_AUDIO_BECOMES_AUDIBLE_TIME": {
+    "record_in_processes": ["main", "content"],
+    "alert_emails": [
+      "alwu@mozilla.com",
+      "cpearce@mozilla.com",
+      "nohlmeier@mozilla.com",
+      "padenot@mozilla.com"
+    ],
+    "expires_in_version": "69",
+    "kind": "linear",
+    "high": 60,
+    "n_buckets": 10,
+    "bug_numbers": [1490074],
+    "description": "How long the AudioContext would become audible since it was created, time unit is seconds.",
     "releaseChannelCollection": "opt-out"
   }
 }

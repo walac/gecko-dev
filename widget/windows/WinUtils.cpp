@@ -24,6 +24,7 @@
 #include "mozilla/WindowsVersion.h"
 #include "mozilla/Unused.h"
 #include "nsIContentPolicy.h"
+#include "nsIWindowsUIUtils.h"
 #include "nsContentUtils.h"
 
 #include "mozilla/Logging.h"
@@ -432,6 +433,7 @@ struct CoTaskMemFreePolicy
 
 SetThreadDpiAwarenessContextProc WinUtils::sSetThreadDpiAwarenessContext = NULL;
 EnableNonClientDpiScalingProc WinUtils::sEnableNonClientDpiScaling = NULL;
+GetSystemMetricsForDpiProc WinUtils::sGetSystemMetricsForDpi = NULL;
 
 /* static */
 void
@@ -453,6 +455,9 @@ WinUtils::Initialize()
         sSetThreadDpiAwarenessContext = (SetThreadDpiAwarenessContextProc)
           ::GetProcAddress(user32Dll, "SetThreadDpiAwarenessContext");
       }
+
+      sGetSystemMetricsForDpi = (GetSystemMetricsForDpiProc)
+        ::GetProcAddress(user32Dll, "GetSystemMetricsForDpi");
     }
   }
 }
@@ -668,6 +673,27 @@ WinUtils::MonitorFromRect(const gfx::Rect& rect)
   };
 
   return ::MonitorFromRect(&globalWindowBounds, MONITOR_DEFAULTTONEAREST);
+}
+
+/* static */
+bool
+WinUtils::HasSystemMetricsForDpi()
+{
+  return (sGetSystemMetricsForDpi != NULL);
+}
+
+/* static */
+int
+WinUtils::GetSystemMetricsForDpi(int nIndex, UINT dpi)
+{
+  if (HasSystemMetricsForDpi()) {
+    return sGetSystemMetricsForDpi(nIndex, dpi);
+  } else {
+    double scale = IsPerMonitorDPIAware()
+      ? dpi / SystemDPI()
+      : 1.0;
+    return NSToIntRound(::GetSystemMetrics(nIndex) * scale);
+  }
 }
 
 #ifdef ACCESSIBILITY
@@ -1782,6 +1808,138 @@ WinUtils::GetMaxTouchPoints()
     return GetSystemMetrics(SM_MAXIMUMTOUCHES);
   }
   return 0;
+}
+
+/* static */
+POWER_PLATFORM_ROLE
+WinUtils::GetPowerPlatformRole()
+{
+  typedef POWER_PLATFORM_ROLE (WINAPI* PowerDeterminePlatformRoleEx)
+    (ULONG Version);
+  static PowerDeterminePlatformRoleEx power_determine_platform_role =
+    reinterpret_cast<PowerDeterminePlatformRoleEx>(::GetProcAddress(
+      ::LoadLibraryW(L"PowrProf.dll"), "PowerDeterminePlatformRoleEx"));
+
+  POWER_PLATFORM_ROLE powerPlatformRole = PlatformRoleUnspecified;
+  if (!power_determine_platform_role) {
+    return powerPlatformRole;
+  }
+
+  return power_determine_platform_role(POWER_PLATFORM_ROLE_V2);
+}
+
+static bool
+IsWindows10TabletMode()
+{
+  nsCOMPtr<nsIWindowsUIUtils>
+    uiUtils(do_GetService("@mozilla.org/windows-ui-utils;1"));
+  if (NS_WARN_IF(!uiUtils)) {
+    return false;
+  }
+  bool isInTabletMode = false;
+  uiUtils->GetInTabletMode(&isInTabletMode);
+  return isInTabletMode;
+}
+
+static bool
+CallGetAutoRotationState(AR_STATE* aRotationState)
+{
+  typedef BOOL (WINAPI* GetAutoRotationStateFunc)(PAR_STATE pState);
+  static GetAutoRotationStateFunc get_auto_rotation_state_func =
+      reinterpret_cast<GetAutoRotationStateFunc>(::GetProcAddress(
+          GetModuleHandleW(L"user32.dll"), "GetAutoRotationState"));
+  if (get_auto_rotation_state_func) {
+    ZeroMemory(aRotationState, sizeof(AR_STATE));
+    return get_auto_rotation_state_func(aRotationState);
+  }
+  return false;
+}
+
+static bool
+IsTabletDevice()
+{
+  // Guarantees that:
+  // - The device has a touch screen.
+  // - It is used as a tablet which means that it has no keyboard connected.
+  // On Windows 10 it means that it is verifying with ConvertibleSlateMode.
+
+  if (!IsWin8OrLater()) {
+    return false;
+  }
+
+  if (IsWindows10TabletMode()) {
+    return true;
+  }
+
+  if (!GetSystemMetrics(SM_MAXIMUMTOUCHES)) {
+    return false;
+  }
+
+  // If the device is docked, the user is treating the device as a PC.
+  if (GetSystemMetrics(SM_SYSTEMDOCKED)) {
+    return false;
+  }
+
+  // If the device is not supporting rotation, it's unlikely to be a tablet,
+  // a convertible or a detachable. See:
+  // https://msdn.microsoft.com/en-us/library/windows/desktop/dn629263(v=vs.85).aspx
+  AR_STATE rotation_state;
+  if (CallGetAutoRotationState(&rotation_state) &&
+      (rotation_state & (AR_NOT_SUPPORTED | AR_LAPTOP | AR_NOSENSOR))) {
+    return false;
+  }
+
+  // PlatformRoleSlate was added in Windows 8+.
+  POWER_PLATFORM_ROLE role = WinUtils::GetPowerPlatformRole();
+  if (role == PlatformRoleMobile || role == PlatformRoleSlate) {
+    return !GetSystemMetrics(SM_CONVERTIBLESLATEMODE);
+  }
+  return false;
+}
+
+static bool
+IsMousePresent()
+{
+  return ::GetSystemMetrics(SM_MOUSEPRESENT);
+}
+
+/* static */
+PointerCapabilities
+WinUtils::GetPrimaryPointerCapabilities()
+{
+  if (IsTabletDevice()) {
+    return PointerCapabilities::Coarse;
+  }
+
+  if (IsMousePresent()) {
+    return PointerCapabilities::Fine|
+           PointerCapabilities::Hover;
+  }
+
+  if (IsTouchDeviceSupportPresent()) {
+    return PointerCapabilities::Coarse;
+  }
+
+  return PointerCapabilities::None;
+}
+
+/* static */
+PointerCapabilities
+WinUtils::GetAllPointerCapabilities()
+{
+  PointerCapabilities result = PointerCapabilities::None;
+
+  if (IsTabletDevice() ||
+      IsTouchDeviceSupportPresent()) {
+    result |= PointerCapabilities::Coarse;
+  }
+
+  if (IsMousePresent()) {
+    result |= PointerCapabilities::Fine |
+              PointerCapabilities::Hover;
+  }
+
+  return result;
 }
 
 /* static */
