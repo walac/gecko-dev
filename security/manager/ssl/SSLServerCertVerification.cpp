@@ -121,7 +121,7 @@
 #include "nsICertOverrideService.h"
 #include "nsISiteSecurityService.h"
 #include "nsISocketProvider.h"
-#include "nsIThreadPool.h"
+#include "nsThreadPool.h"
 #include "nsNetUtil.h"
 #include "nsNSSCertificate.h"
 #include "nsNSSComponent.h"
@@ -130,8 +130,8 @@
 #include "nsString.h"
 #include "nsURLHelper.h"
 #include "nsXPCOMCIDInternal.h"
-#include "pkix/pkix.h"
-#include "pkix/pkixnss.h"
+#include "mozpkix/pkix.h"
+#include "mozpkix/pkixnss.h"
 #include "secerr.h"
 #include "secoidt.h"
 #include "secport.h"
@@ -165,14 +165,8 @@ void
 InitializeSSLServerCertVerificationThreads()
 {
   // TODO: tuning, make parameters preferences
-  // XXX: instantiate nsThreadPool directly, to make this more bulletproof.
-  // Currently, the nsThreadPool.h header isn't exported for us to do so.
-  nsresult rv = CallCreateInstance(NS_THREADPOOL_CONTRACTID,
-                                   &gCertVerificationThreadPool);
-  if (NS_FAILED(rv)) {
-    NS_WARNING("Failed to create SSL cert verification threads.");
-    return;
-  }
+  gCertVerificationThreadPool = new nsThreadPool();
+  NS_ADDREF(gCertVerificationThreadPool);
 
   (void) gCertVerificationThreadPool->SetIdleThreadLimit(5);
   (void) gCertVerificationThreadPool->SetIdleThreadTimeout(30 * 1000);
@@ -1300,7 +1294,7 @@ GatherCertificateTransparencyTelemetry(const UniqueCERTCertList& certList,
 
   // Handle the histogram of SCTs counts.
   uint32_t sctsCount =
-    static_cast<uint32_t>(info.verifyResult.verifiedScts.length());
+    static_cast<uint32_t>(info.verifyResult.verifiedScts.size());
   // Note that sctsCount can also be 0 in case we've received SCT binary data,
   // but it failed to parse (e.g. due to unsupported CT protocol version).
   Telemetry::Accumulate(Telemetry::SSL_SCTS_PER_CONNECTION, sctsCount);

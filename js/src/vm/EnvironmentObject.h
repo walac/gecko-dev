@@ -612,6 +612,10 @@ class NonSyntacticVariablesObject : public EnvironmentObject
     static NonSyntacticVariablesObject* create(JSContext* cx);
 };
 
+extern bool
+CreateNonSyntacticEnvironmentChain(JSContext* cx, JS::AutoObjectVector& envChain,
+                                   MutableHandleObject env, MutableHandleScope scope);
+
 // With environment objects on the run-time environment chain.
 class WithEnvironmentObject : public EnvironmentObject
 {
@@ -1050,6 +1054,7 @@ class DebugEnvironments
     static void onPopLexical(JSContext* cx, const EnvironmentIter& ei);
     static void onPopLexical(JSContext* cx, AbstractFramePtr frame, jsbytecode* pc);
     static void onPopWith(AbstractFramePtr frame);
+    static void onPopModule(JSContext* cx, const EnvironmentIter& ei);
     static void onRealmUnsetIsDebuggee(Realm* realm);
 };
 

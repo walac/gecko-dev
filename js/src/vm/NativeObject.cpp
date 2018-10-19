@@ -23,6 +23,7 @@
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/Shape-inl.h"
+#include "vm/TypeInference-inl.h"
 #include "vm/UnboxedObject-inl.h"
 
 using namespace js;
@@ -464,7 +465,7 @@ NativeObject::growSlots(JSContext* cx, uint32_t oldCount, uint32_t newCount)
 }
 
 /* static */ bool
-NativeObject::growSlotsDontReportOOM(JSContext* cx, NativeObject* obj, uint32_t newCount)
+NativeObject::growSlotsPure(JSContext* cx, NativeObject* obj, uint32_t newCount)
 {
     // IC code calls this directly.
     AutoUnsafeCallWithABI unsafe;
@@ -477,7 +478,7 @@ NativeObject::growSlotsDontReportOOM(JSContext* cx, NativeObject* obj, uint32_t 
 }
 
 /* static */ bool
-NativeObject::addDenseElementDontReportOOM(JSContext* cx, NativeObject* obj)
+NativeObject::addDenseElementPure(JSContext* cx, NativeObject* obj)
 {
     // IC code calls this directly.
     AutoUnsafeCallWithABI unsafe;
@@ -2564,8 +2565,27 @@ js::NativeGetProperty(JSContext* cx, HandleNativeObject obj, HandleValue receive
 bool
 js::NativeGetPropertyNoGC(JSContext* cx, NativeObject* obj, const Value& receiver, jsid id, Value* vp)
 {
-    AutoAssertNoException noexc(cx);
+    AutoAssertNoPendingException noexc(cx);
     return NativeGetPropertyInline<NoGC>(cx, obj, receiver, id, NotNameLookup, vp);
+}
+
+bool
+js::NativeGetElement(JSContext* cx, HandleNativeObject obj, HandleValue receiver,
+                     int32_t index, MutableHandleValue vp)
+{
+    RootedId id(cx);
+
+    if (MOZ_LIKELY(index >=0)) {
+        if (!IndexToId(cx, index, &id)) {
+            return false;
+        }
+    } else {
+        RootedValue indexVal(cx, Int32Value(index));
+        if (!ValueToId<CanGC>(cx, indexVal, &id)) {
+            return false;
+        }
+    }
+    return NativeGetProperty(cx, obj, receiver, id, vp);
 }
 
 bool

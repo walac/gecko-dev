@@ -222,6 +222,7 @@ extern const char* const CacheKindNames[];
     _(GuardHasGetterSetter)               \
     _(GuardGroupHasUnanalyzedNewScript)   \
     _(GuardIndexIsNonNegative)            \
+    _(GuardIndexGreaterThanDenseInitLength) \
     _(GuardTagNotEqual)                   \
     _(GuardXrayExpandoShapeAndDefaultProto) \
     _(GuardFunctionPrototype)             \
@@ -266,6 +267,8 @@ extern const char* const CacheKindNames[];
     _(CallSetArrayLength)                 \
     _(CallProxySet)                       \
     _(CallProxySetByValue)                \
+    _(CallInt32ToString)                  \
+    _(CallNumberToString)                 \
                                           \
     /* The *Result ops load a value into the cache's result register. */ \
     _(LoadFixedSlotResult)                \
@@ -296,6 +299,7 @@ extern const char* const CacheKindNames[];
     _(CallProxyGetByValueResult)          \
     _(CallProxyHasPropResult)             \
     _(CallObjectHasSparseElementResult)   \
+    _(CallNativeGetElementResult)        \
     _(LoadUndefinedResult)                \
     _(LoadBooleanResult)                  \
     _(LoadStringResult)                   \
@@ -803,6 +807,10 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter
     void guardIndexIsNonNegative(Int32OperandId index) {
         writeOpWithOperandId(CacheOp::GuardIndexIsNonNegative, index);
     }
+    void guardIndexGreaterThanDenseInitLength(ObjOperandId obj, Int32OperandId index) {
+        writeOpWithOperandId(CacheOp::GuardIndexGreaterThanDenseInitLength, obj);
+        writeOperandId(index);
+    }
     void guardTagNotEqual(ValueTagOperandId lhs, ValueTagOperandId rhs) {
         writeOpWithOperandId(CacheOp::GuardTagNotEqual, lhs);
         writeOperandId(rhs);
@@ -1033,6 +1041,18 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter
         writeOperandId(rhs);
         buffer_.writeByte(uint32_t(strict));
     }
+    StringOperandId callInt32ToString(Int32OperandId id) {
+        StringOperandId res(nextOperandId_++);
+        writeOpWithOperandId(CacheOp::CallInt32ToString, id);
+        writeOperandId(res);
+        return res;
+    }
+    StringOperandId callNumberToString(ValOperandId id) {
+        StringOperandId res(nextOperandId_++);
+        writeOpWithOperandId(CacheOp::CallNumberToString, id);
+        writeOperandId(res);
+        return res;
+    }
 
     void megamorphicLoadSlotResult(ObjOperandId obj, PropertyName* name, bool handleMissing) {
         writeOpWithOperandId(CacheOp::MegamorphicLoadSlotResult, obj);
@@ -1243,6 +1263,10 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter
     }
     void callObjectHasSparseElementResult(ObjOperandId obj, Int32OperandId index) {
         writeOpWithOperandId(CacheOp::CallObjectHasSparseElementResult, obj);
+        writeOperandId(index);
+    }
+    void callNativeGetElementResult(ObjOperandId obj, Int32OperandId index) {
+        writeOpWithOperandId(CacheOp::CallNativeGetElementResult, obj);
         writeOperandId(index);
     }
     void loadEnvironmentFixedSlotResult(ObjOperandId obj, size_t offset) {
@@ -1555,6 +1579,9 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator
     bool tryAttachUnboxedElementHole(HandleObject obj, ObjOperandId objId,
                                      uint32_t index, Int32OperandId indexId);
 
+    bool tryAttachGenericElement(HandleObject obj, ObjOperandId objId,
+                                 uint32_t index, Int32OperandId indexId);
+
     bool tryAttachProxyElement(HandleObject obj, ObjOperandId objId);
 
     void attachMegamorphicNativeSlot(ObjOperandId objId, jsid id, bool handleMissing);
@@ -1802,8 +1829,8 @@ class MOZ_RAII HasPropIRGenerator : public IRGenerator
 
   public:
     // NOTE: Argument order is PROPERTY, OBJECT
-    HasPropIRGenerator(JSContext* cx, HandleScript script, jsbytecode* pc, CacheKind cacheKind,
-                       ICState::Mode mode, HandleValue idVal, HandleValue val);
+    HasPropIRGenerator(JSContext* cx, HandleScript script, jsbytecode* pc, ICState::Mode mode,
+                       CacheKind cacheKind, HandleValue idVal, HandleValue val);
 
     bool tryAttachStub();
 };
@@ -1975,6 +2002,7 @@ class MOZ_RAII BinaryArithIRGenerator : public IRGenerator
     bool tryAttachBitwise();
     bool tryAttachStringConcat();
     bool tryAttachStringObjectConcat();
+    bool tryAttachStringNumberConcat();
 
   public:
     BinaryArithIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc, ICState::Mode,

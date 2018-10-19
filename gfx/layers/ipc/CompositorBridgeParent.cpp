@@ -523,10 +523,19 @@ CompositorBridgeParent::StopAndClearResources()
     }
     indirectBridgeParents.clear();
 
+    RefPtr<wr::WebRenderAPI> api = mWrBridge->GetWebRenderAPI();
     // Ensure we are not holding the sIndirectLayerTreesLock here because we
     // are going to block on WR threads in order to shut it down properly.
     mWrBridge->Destroy();
     mWrBridge = nullptr;
+
+    if (api) {
+      // Make extra sure we are done cleaning WebRender up before continuing.
+      // After that we wont have a way to talk to a lot of the webrender parts.
+      api->FlushSceneBuilder();
+      api = nullptr;
+    }
+
     if (mAsyncImageManager) {
       mAsyncImageManager->Destroy();
       // WebRenderAPI should be already destructed
@@ -636,7 +645,7 @@ mozilla::ipc::IPCResult
 CompositorBridgeParent::RecvForcePresent()
 {
   if (mWrBridge) {
-    mWrBridge->ScheduleGenerateFrame();
+    mWrBridge->ScheduleForcedGenerateFrame();
   }
   // During the shutdown sequence mLayerManager may be null
   if (mLayerManager) {
@@ -1789,6 +1798,12 @@ CompositorBridgeParent::RecvAdoptChild(const LayersId& child)
 
   { // scope lock
     MonitorAutoLock lock(*sIndirectLayerTreesLock);
+    // If child is already belong to this CompositorBridgeParent,
+    // no need to handle adopting child.
+    if (sIndirectLayerTrees[child].mParent == this) {
+      return IPC_OK();
+    }
+
     if (sIndirectLayerTrees[child].mParent) {
       // We currently don't support adopting children from one compositor to
       // another if the two compositors don't have the same options.
@@ -1848,9 +1863,7 @@ CompositorBridgeParent::RecvAdoptChild(const LayersId& child)
 
 PWebRenderBridgeParent*
 CompositorBridgeParent::AllocPWebRenderBridgeParent(const wr::PipelineId& aPipelineId,
-                                                    const LayoutDeviceIntSize& aSize,
-                                                    TextureFactoryIdentifier* aTextureFactoryIdentifier,
-                                                    wr::IdNamespace* aIdNamespace)
+                                                    const LayoutDeviceIntSize& aSize)
 {
 #ifndef MOZ_BUILD_WEBRENDER
   // Extra guard since this in the parent process and we don't want a malicious
@@ -1879,8 +1892,6 @@ CompositorBridgeParent::AllocPWebRenderBridgeParent(const wr::PipelineId& aPipel
   if (!api) {
     mWrBridge = WebRenderBridgeParent::CreateDestroyed(aPipelineId);
     mWrBridge.get()->AddRef(); // IPDL reference
-    *aIdNamespace = mWrBridge->GetIdNamespace();
-    *aTextureFactoryIdentifier = TextureFactoryIdentifier(LayersBackend::LAYERS_NONE);
     return mWrBridge;
   }
   mAsyncImageManager = new AsyncImagePipelineManager(api->Clone());
@@ -1892,7 +1903,6 @@ CompositorBridgeParent::AllocPWebRenderBridgeParent(const wr::PipelineId& aPipel
   mWrBridge = new WebRenderBridgeParent(this, aPipelineId, mWidget, nullptr, std::move(api), std::move(asyncMgr), std::move(animStorage), mVsyncRate);
   mWrBridge.get()->AddRef(); // IPDL reference
 
-  *aIdNamespace = mWrBridge->GetIdNamespace();
   mCompositorScheduler = mWrBridge->CompositorScheduler();
   MOZ_ASSERT(mCompositorScheduler);
   { // scope lock
@@ -1900,7 +1910,6 @@ CompositorBridgeParent::AllocPWebRenderBridgeParent(const wr::PipelineId& aPipel
     MOZ_ASSERT(sIndirectLayerTrees[mRootLayerTreeID].mWrBridge == nullptr);
     sIndirectLayerTrees[mRootLayerTreeID].mWrBridge = mWrBridge;
   }
-  *aTextureFactoryIdentifier = mWrBridge->GetTextureFactoryIdentifier();
   return mWrBridge;
 }
 
@@ -1931,6 +1940,17 @@ CompositorBridgeParent::NotifyMemoryPressure()
     RefPtr<wr::WebRenderAPI> api = mWrBridge->GetWebRenderAPI();
     if (api) {
       api->NotifyMemoryPressure();
+    }
+  }
+}
+
+void
+CompositorBridgeParent::AccumulateMemoryReport(wr::MemoryReport* aReport)
+{
+  if (mWrBridge) {
+    RefPtr<wr::WebRenderAPI> api = mWrBridge->GetWebRenderAPI();
+    if (api) {
+      api->AccumulateMemoryReport(aReport);
     }
   }
 }

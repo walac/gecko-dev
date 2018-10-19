@@ -253,9 +253,6 @@ class ICEntry
         // handler via the over-recursion check on function entry.
         Kind_StackCheck,
 
-        // As above, but for the early check. See emitStackCheck.
-        Kind_EarlyStackCheck,
-
         // A fake IC entry for returning from DebugTrapHandler.
         Kind_DebugTrap,
 
@@ -905,16 +902,16 @@ class ICCacheIR_Monitored : public ICMonitoredStub
 class ICUpdatedStub : public ICStub
 {
   protected:
-    // Pointer to the start of the type updating stub chain.
-    ICStub* firstUpdateStub_;
-
     static const uint32_t MAX_OPTIMIZED_STUBS = 8;
     uint32_t numOptimizedStubs_;
 
+    // Pointer to the start of the type updating stub chain.
+    ICStub* firstUpdateStub_;
+
     ICUpdatedStub(Kind kind, JitCode* stubCode)
       : ICStub(kind, ICStub::Updated, stubCode),
-        firstUpdateStub_(nullptr),
-        numOptimizedStubs_(0)
+        numOptimizedStubs_(0),
+        firstUpdateStub_(nullptr)
     {}
 
   public:
@@ -1800,7 +1797,6 @@ class ICGetElem_Fallback : public ICMonitoredFallbackStub
     { }
 
     static const uint16_t EXTRA_NEGATIVE_INDEX = 0x1;
-    static const uint16_t EXTRA_UNOPTIMIZABLE_ACCESS = 0x2;
 
   public:
     void noteNegativeIndex() {
@@ -1808,12 +1804,6 @@ class ICGetElem_Fallback : public ICMonitoredFallbackStub
     }
     bool hasNegativeIndex() const {
         return extra_ & EXTRA_NEGATIVE_INDEX;
-    }
-    void noteUnoptimizableAccess() {
-        extra_ |= EXTRA_UNOPTIMIZABLE_ACCESS;
-    }
-    bool hadUnoptimizableAccess() const {
-        return extra_ & EXTRA_UNOPTIMIZABLE_ACCESS;
     }
 
     // Compiler for this stub kind.
@@ -1941,15 +1931,6 @@ class ICGetName_Fallback : public ICMonitoredFallbackStub
     { }
 
   public:
-    static const size_t UNOPTIMIZABLE_ACCESS_BIT = 0;
-
-    void noteUnoptimizableAccess() {
-        extra_ |= (1u << UNOPTIMIZABLE_ACCESS_BIT);
-    }
-    bool hadUnoptimizableAccess() const {
-        return extra_ & (1u << UNOPTIMIZABLE_ACCESS_BIT);
-    }
-
     class Compiler : public ICStubCompiler {
       protected:
         MOZ_MUST_USE bool generateStubCode(MacroAssembler& masm) override;
@@ -2030,15 +2011,7 @@ class ICGetProp_Fallback : public ICMonitoredFallbackStub
     { }
 
   public:
-    static const size_t UNOPTIMIZABLE_ACCESS_BIT = 0;
     static const size_t ACCESSED_GETTER_BIT = 1;
-
-    void noteUnoptimizableAccess() {
-        extra_ |= (1u << UNOPTIMIZABLE_ACCESS_BIT);
-    }
-    bool hadUnoptimizableAccess() const {
-        return extra_ & (1u << UNOPTIMIZABLE_ACCESS_BIT);
-    }
 
     void noteAccessedGetter() {
         extra_ |= (1u << ACCESSED_GETTER_BIT);
@@ -2087,14 +2060,6 @@ class ICSetProp_Fallback : public ICFallbackStub
     { }
 
   public:
-    static const size_t UNOPTIMIZABLE_ACCESS_BIT = 0;
-    void noteUnoptimizableAccess() {
-        extra_ |= (1u << UNOPTIMIZABLE_ACCESS_BIT);
-    }
-    bool hadUnoptimizableAccess() const {
-        return extra_ & (1u << UNOPTIMIZABLE_ACCESS_BIT);
-    }
-
     class Compiler : public ICStubCompiler {
       protected:
         CodeOffset bailoutReturnOffset_;
@@ -2152,8 +2117,6 @@ class ICCall_Fallback : public ICMonitoredFallbackStub
 {
     friend class ICStubSpace;
   public:
-    static const unsigned UNOPTIMIZABLE_CALL_FLAG = 0x1;
-
     static const uint32_t MAX_OPTIMIZED_STUBS = 16;
 
   private:
@@ -2162,13 +2125,6 @@ class ICCall_Fallback : public ICMonitoredFallbackStub
     {}
 
   public:
-    void noteUnoptimizableCall() {
-        extra_ |= UNOPTIMIZABLE_CALL_FLAG;
-    }
-    bool hadUnoptimizableCall() const {
-        return extra_ & UNOPTIMIZABLE_CALL_FLAG;
-    }
-
     bool scriptedStubsAreGeneralized() const {
         return hasStub(Call_AnyScripted);
     }
@@ -2859,17 +2815,7 @@ class ICInstanceOf_Fallback : public ICFallbackStub
       : ICFallbackStub(ICStub::InstanceOf_Fallback, stubCode)
     { }
 
-    static const uint16_t UNOPTIMIZABLE_ACCESS_BIT = 0x1;
-
   public:
-
-    void noteUnoptimizableAccess() {
-        extra_ |= UNOPTIMIZABLE_ACCESS_BIT;
-    }
-    bool hadUnoptimizableAccess() const {
-        return extra_ & UNOPTIMIZABLE_ACCESS_BIT;
-    }
-
     class Compiler : public ICStubCompiler {
       protected:
         MOZ_MUST_USE bool generateStubCode(MacroAssembler& masm) override;
@@ -3074,16 +3020,6 @@ class ICCompare_Fallback : public ICFallbackStub
       : ICFallbackStub(ICStub::Compare_Fallback, stubCode) {}
 
   public:
-    static const uint32_t MAX_OPTIMIZED_STUBS = 8;
-
-    static const size_t UNOPTIMIZABLE_ACCESS_BIT = 0;
-    void noteUnoptimizableAccess() {
-        extra_ |= (1u << UNOPTIMIZABLE_ACCESS_BIT);
-    }
-    bool hadUnoptimizableAccess() const {
-        return extra_ & (1u << UNOPTIMIZABLE_ACCESS_BIT);
-    }
-
     // Compiler for this stub kind.
     class Compiler : public ICStubCompiler {
       protected:
@@ -3116,7 +3052,6 @@ class ICBinaryArith_Fallback : public ICFallbackStub
     }
 
     static const uint16_t SAW_DOUBLE_RESULT_BIT = 0x1;
-    static const uint16_t UNOPTIMIZABLE_OPERANDS_BIT = 0x2;
 
   public:
     static const uint32_t MAX_OPTIMIZED_STUBS = 8;
@@ -3126,12 +3061,6 @@ class ICBinaryArith_Fallback : public ICFallbackStub
     }
     void setSawDoubleResult() {
         extra_ |= SAW_DOUBLE_RESULT_BIT;
-    }
-    bool hadUnoptimizableOperands() const {
-        return extra_ & UNOPTIMIZABLE_OPERANDS_BIT;
-    }
-    void noteUnoptimizableOperands() {
-        extra_ |= UNOPTIMIZABLE_OPERANDS_BIT;
     }
 
     // Compiler for this stub kind.

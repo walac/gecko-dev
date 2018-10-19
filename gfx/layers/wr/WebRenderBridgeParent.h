@@ -65,11 +65,13 @@ public:
   AsyncImagePipelineManager* AsyncImageManager() { return mAsyncImageManager; }
   CompositorVsyncScheduler* CompositorScheduler() { return mCompositorScheduler.get(); }
 
+  mozilla::ipc::IPCResult RecvEnsureConnected(TextureFactoryIdentifier* aTextureFactoryIdentifier,
+                                              MaybeIdNamespace* aMaybeIdNamespace) override;
+
   mozilla::ipc::IPCResult RecvNewCompositable(const CompositableHandle& aHandle,
                                               const TextureInfo& aInfo) override;
   mozilla::ipc::IPCResult RecvReleaseCompositable(const CompositableHandle& aHandle) override;
 
-  mozilla::ipc::IPCResult RecvCreate(const gfx::IntSize& aSize) override;
   mozilla::ipc::IPCResult RecvShutdown() override;
   mozilla::ipc::IPCResult RecvShutdownSync() override;
   mozilla::ipc::IPCResult RecvDeleteCompositorAnimations(InfallibleTArray<uint64_t>&& aIds) override;
@@ -89,6 +91,7 @@ public:
                                              nsTArray<RefCountedShmem>&& aSmallShmems,
                                              nsTArray<ipc::Shmem>&& aLargeShmems,
                                              const wr::IdNamespace& aIdNamespace,
+                                             const bool& aContainsSVGGroup,
                                              const TimeStamp& aRefreshStartTime,
                                              const TimeStamp& aTxnStartTime,
                                              const TimeStamp& aFwdTime) override;
@@ -140,6 +143,7 @@ public:
   bool IsPendingComposite() override { return false; }
   void FinishPendingComposite() override { }
   void CompositeToTarget(gfx::DrawTarget* aTarget, const gfx::IntRect* aRect = nullptr) override;
+  TimeDuration GetVsyncInterval() const override;
 
   // CompositableParentManager
   bool IsSameProcess() const override;
@@ -151,6 +155,7 @@ public:
 
   void HoldPendingTransactionId(const wr::Epoch& aWrEpoch,
                                 TransactionId aTransactionId,
+                                bool aContainsSVGGroup,
                                 const TimeStamp& aRefreshStartTime,
                                 const TimeStamp& aTxnStartTime,
                                 const TimeStamp& aFwdTime,
@@ -181,6 +186,14 @@ public:
    * want to trigger AsyncImagePipelines update checks.
    */
   void ScheduleGenerateFrame();
+
+  /**
+   * Schedule forced frame rendering at next composite timing.
+   *
+   * WebRender could skip frame rendering if there is no update.
+   * This function is used to force rendering even when there is not update.
+   */
+  void ScheduleForcedGenerateFrame();
 
   wr::Epoch UpdateWebRender(CompositorVsyncScheduler* aScheduler,
                             wr::WebRenderAPI* aApi,
@@ -218,7 +231,8 @@ private:
   void AddPipelineIdForCompositable(const wr::PipelineId& aPipelineIds,
                                     const CompositableHandle& aHandle,
                                     const bool& aAsync,
-                                    wr::TransactionBuilder& aTxn);
+                                    wr::TransactionBuilder& aTxn,
+                                    wr::TransactionBuilder& aTxnForImageBridge);
   void RemovePipelineIdForCompositable(const wr::PipelineId& aPipelineId,
                                        wr::TransactionBuilder& aTxn);
 
@@ -260,6 +274,7 @@ private:
   struct PendingTransactionId {
     PendingTransactionId(const wr::Epoch& aEpoch,
                          TransactionId aId,
+                         bool aContainsSVGGroup,
                          const TimeStamp& aRefreshStartTime,
                          const TimeStamp& aTxnStartTime,
                          const TimeStamp& aFwdTime,
@@ -269,6 +284,7 @@ private:
       , mRefreshStartTime(aRefreshStartTime)
       , mTxnStartTime(aTxnStartTime)
       , mFwdTime(aFwdTime)
+      , mContainsSVGGroup(aContainsSVGGroup)
       , mUseForTelemetry(aUseForTelemetry)
     {}
     wr::Epoch mEpoch;
@@ -276,6 +292,7 @@ private:
     TimeStamp mRefreshStartTime;
     TimeStamp mTxnStartTime;
     TimeStamp mFwdTime;
+    bool mContainsSVGGroup;
     bool mUseForTelemetry;
   };
 

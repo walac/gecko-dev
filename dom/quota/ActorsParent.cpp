@@ -29,6 +29,7 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/CondVar.h"
+#include "mozilla/Telemetry.h"
 #include "mozilla/dom/PContent.h"
 #include "mozilla/dom/asmjscache/AsmJSCache.h"
 #include "mozilla/dom/cache/QuotaClient.h"
@@ -1220,6 +1221,27 @@ public:
 
 private:
   ~InitOp()
+  { }
+
+  nsresult
+  DoDirectoryWork(QuotaManager* aQuotaManager) override;
+
+  void
+  GetResponse(RequestResponse& aResponse) override;
+};
+
+class InitTemporaryStorageOp final
+  : public QuotaRequestBase
+{
+public:
+  InitTemporaryStorageOp()
+    : QuotaRequestBase(/* aExclusive */ false)
+  {
+    AssertIsOnOwningThread();
+  }
+
+private:
+  ~InitTemporaryStorageOp()
   { }
 
   nsresult
@@ -5393,6 +5415,8 @@ QuotaManager::EnsureTemporaryStorageIsInitialized()
     return NS_OK;
   }
 
+  TimeStamp startTime = TimeStamp::Now();
+
   nsresult rv = InitializeRepository(PERSISTENCE_TYPE_DEFAULT);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     // We have to cleanup partially initialized quota.
@@ -5408,6 +5432,10 @@ QuotaManager::EnsureTemporaryStorageIsInitialized()
 
     return rv;
   }
+
+  Telemetry::AccumulateTimeDelta(Telemetry::QM_REPOSITORIES_INITIALIZATION_TIME,
+                                 startTime,
+                                 TimeStamp::Now());
 
   if (gFixedLimitKB >= 0) {
     mTemporaryStorageLimit = static_cast<uint64_t>(gFixedLimitKB) * 1024;
@@ -6765,6 +6793,10 @@ Quota::AllocPQuotaRequestParent(const RequestParams& aParams)
       actor = new InitOp();
       break;
 
+    case RequestParams::TInitTemporaryStorageParams:
+      actor = new InitTemporaryStorageOp();
+      break;
+
     case RequestParams::TInitOriginParams:
       actor = new InitOriginOp(aParams);
       break;
@@ -7405,6 +7437,31 @@ InitOp::GetResponse(RequestResponse& aResponse)
   AssertIsOnOwningThread();
 
   aResponse = InitResponse();
+}
+
+nsresult
+InitTemporaryStorageOp::DoDirectoryWork(QuotaManager* aQuotaManager)
+{
+  AssertIsOnIOThread();
+
+  AUTO_PROFILER_LABEL("InitTemporaryStorageOp::DoDirectoryWork", OTHER);
+
+  aQuotaManager->AssertStorageIsInitialized();
+
+  nsresult rv = aQuotaManager->EnsureTemporaryStorageIsInitialized();
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  return NS_OK;
+}
+
+void
+InitTemporaryStorageOp::GetResponse(RequestResponse& aResponse)
+{
+  AssertIsOnOwningThread();
+
+  aResponse = InitTemporaryStorageResponse();
 }
 
 InitOriginOp::InitOriginOp(const RequestParams& aParams)

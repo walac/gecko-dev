@@ -3,6 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 var FastBlock = {
+  reportBreakageLabel: "fastblock",
+  telemetryIdentifier: "fb",
   PREF_ENABLED: "browser.fastblock.enabled",
   PREF_UI_ENABLED: "browser.contentblocking.fastblock.control-center.ui.enabled",
 
@@ -22,6 +24,8 @@ var FastBlock = {
 };
 
 var TrackingProtection = {
+  reportBreakageLabel: "trackingprotection",
+  telemetryIdentifier: "tp",
   PREF_ENABLED_GLOBALLY: "privacy.trackingprotection.enabled",
   PREF_ENABLED_IN_PRIVATE_WINDOWS: "privacy.trackingprotection.pbmode.enabled",
   PREF_UI_ENABLED: "browser.contentblocking.trackingprotection.control-center.ui.enabled",
@@ -63,9 +67,6 @@ var TrackingProtection = {
   init() {
     this.updateEnabled();
 
-    this.enabledHistogramAdd(this.enabledGlobally);
-    this.disabledPBMHistogramAdd(!this.enabledInPrivateWindows);
-
     Services.prefs.addObserver(this.PREF_ENABLED_GLOBALLY, this);
     Services.prefs.addObserver(this.PREF_ENABLED_IN_PRIVATE_WINDOWS, this);
 
@@ -85,20 +86,6 @@ var TrackingProtection = {
     return this.enabledGlobally ||
            (this.enabledInPrivateWindows &&
             PrivateBrowsingUtils.isWindowPrivate(window));
-  },
-
-  enabledHistogramAdd(value) {
-    if (PrivateBrowsingUtils.isWindowPrivate(window)) {
-      return;
-    }
-    Services.telemetry.getHistogramById("TRACKING_PROTECTION_ENABLED").add(value);
-  },
-
-  disabledPBMHistogramAdd(value) {
-    if (PrivateBrowsingUtils.isWindowPrivate(window)) {
-      return;
-    }
-    Services.telemetry.getHistogramById("TRACKING_PROTECTION_PBM_DISABLED").add(value);
   },
 
   onGlobalToggleCommand() {
@@ -139,7 +126,9 @@ var TrackingProtection = {
 };
 
 var ThirdPartyCookies = {
+  telemetryIdentifier: "cr",
   PREF_ENABLED: "network.cookie.cookieBehavior",
+  PREF_REPORT_BREAKAGE_ENABLED: "browser.contentblocking.rejecttrackers.reportBreakage.enabled",
   PREF_ENABLED_VALUES: [
     // These values match the ones exposed under the Content Blocking section
     // of the Preferences UI.
@@ -154,10 +143,49 @@ var ThirdPartyCookies = {
       document.getElementById("identity-popup-content-blocking-category-3rdpartycookies");
   },
 
+  get reportBreakageLabel() {
+    switch (this.behaviorPref) {
+    case Ci.nsICookieService.BEHAVIOR_ACCEPT:
+      return "nocookiesblocked";
+    case Ci.nsICookieService.BEHAVIOR_REJECT_FOREIGN:
+      return "allthirdpartycookiesblocked";
+    case Ci.nsICookieService.BEHAVIOR_REJECT:
+      return "allcookiesblocked";
+    case Ci.nsICookieService.BEHAVIOR_LIMIT_FOREIGN:
+      return "cookiesfromunvisitedsitesblocked";
+    default:
+      Cu.reportError(`Error: Unknown cookieBehavior pref observed: ${this.behaviorPref}`);
+      // fall through
+    case Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER:
+      return "cookierestrictions";
+    }
+  },
+
+  get categoryLabelDefault() {
+    delete this.categoryLabelDefault;
+    return this.categoryLabelDefault =
+      document.getElementById("identity-popup-content-blocking-category-label-default");
+  },
+
+  get categoryLabelTrackers() {
+    delete this.categoryLabelTrackers;
+    return this.categoryLabelTrackers =
+      document.getElementById("identity-popup-content-blocking-category-label-trackers");
+  },
+
+  updateCategoryLabel() {
+    let rejectTrackers = this.behaviorPref == Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER;
+    this.categoryLabelDefault.hidden = rejectTrackers;
+    this.categoryLabelTrackers.hidden = !rejectTrackers;
+  },
+
   init() {
     XPCOMUtils.defineLazyPreferenceGetter(this, "behaviorPref", this.PREF_ENABLED,
-                                          Ci.nsICookieService.BEHAVIOR_ACCEPT);
+      Ci.nsICookieService.BEHAVIOR_ACCEPT, this.updateCategoryLabel.bind(this));
     XPCOMUtils.defineLazyPreferenceGetter(this, "visible", this.PREF_UI_ENABLED, false);
+    XPCOMUtils.defineLazyPreferenceGetter(this, "reportBreakageEnabled",
+      this.PREF_REPORT_BREAKAGE_ENABLED, false);
+    this.updateCategoryLabel();
   },
   get enabled() {
     return this.PREF_ENABLED_VALUES.includes(this.behaviorPref);
@@ -180,6 +208,7 @@ var ContentBlocking = {
   PREF_REPORT_BREAKAGE_URL: "browser.contentblocking.reportBreakage.url",
   PREF_INTRO_COUNT_CB: "browser.contentblocking.introCount",
   PREF_INTRO_COUNT_TP: "privacy.trackingprotection.introCount",
+  PREF_GLOBAL_TOGGLE: "browser.contentblocking.global-toggle.enabled",
   content: null,
   icon: null,
   activeTooltipText: null,
@@ -197,6 +226,11 @@ var ContentBlocking = {
   get appMenuButton() {
     delete this.appMenuButton;
     return this.appMenuButton = document.getElementById("appMenu-tp-toggle");
+  },
+
+  get appMenuVerticalSeparator() {
+    delete this.appMenuVerticalSeparator;
+    return this.appMenuVerticalSeparator = document.getElementById("appMenu-tp-vertical-separator");
   },
 
   strings: {
@@ -264,13 +298,19 @@ var ContentBlocking = {
     let baseURL = Services.urlFormatter.formatURLPref("app.support.baseURL");
     this.reportBreakageLearnMore.href = baseURL + "blocking-breakage";
 
-    this.updateReportBreakageUI = () => {
-      this.reportBreakageButton.hidden = !Services.prefs.getBoolPref(this.PREF_REPORT_BREAKAGE_ENABLED);
+    this.updateGlobalToggleVisibility = () => {
+      if (Services.prefs.getBoolPref(this.PREF_GLOBAL_TOGGLE, true)) {
+        this.appMenuButton.removeAttribute("hidden");
+        this.appMenuVerticalSeparator.removeAttribute("hidden");
+      } else {
+        this.appMenuButton.setAttribute("hidden", "true");
+        this.appMenuVerticalSeparator.setAttribute("hidden", "true");
+      }
     };
 
-    this.updateReportBreakageUI();
+    this.updateGlobalToggleVisibility();
 
-    Services.prefs.addObserver(this.PREF_REPORT_BREAKAGE_ENABLED, this.updateReportBreakageUI);
+    Services.prefs.addObserver(this.PREF_GLOBAL_TOGGLE, this.updateGlobalToggleVisibility);
 
     this.updateAnimationsEnabled = () => {
       this.iconBox.toggleAttribute("animationsenabled",
@@ -289,6 +329,8 @@ var ContentBlocking = {
 
     XPCOMUtils.defineLazyPreferenceGetter(this, "contentBlockingEnabled", this.PREF_ENABLED, false,
       this.updateEnabled.bind(this));
+    XPCOMUtils.defineLazyPreferenceGetter(this, "reportBreakageEnabled",
+      this.PREF_REPORT_BREAKAGE_ENABLED, false);
     XPCOMUtils.defineLazyPreferenceGetter(this, "contentBlockingUIEnabled", this.PREF_UI_ENABLED, false,
       this.updateUIEnabled.bind(this));
 
@@ -309,7 +351,7 @@ var ContentBlocking = {
     }
 
     Services.prefs.removeObserver(this.PREF_ANIMATIONS_ENABLED, this.updateAnimationsEnabled);
-    Services.prefs.removeObserver(this.PREF_REPORT_BREAKAGE_ENABLED, this.updateReportBreakageUI);
+    Services.prefs.removeObserver(this.PREF_GLOBAL_TOGGLE, this.updateGlobalToggleVisibility);
   },
 
   get enabled() {
@@ -324,6 +366,11 @@ var ContentBlocking = {
         this.strings.disableTooltip : this.strings.enableTooltip);
       this.appMenuButton.setAttribute("enabled", this.enabled);
       this.appMenuButton.setAttribute("aria-pressed", this.enabled);
+    }
+
+    // The enabled state of blockers may also change since it depends on this.enabled.
+    for (let blocker of this.blockers) {
+      blocker.categoryItem.classList.toggle("blocked", this.enabled && blocker.enabled);
     }
   },
 
@@ -395,6 +442,17 @@ var ContentBlocking = {
 
     formData.set("body", body);
 
+    let activatedBlockers = [];
+    for (let blocker of this.blockers) {
+      if (blocker.activated) {
+        activatedBlockers.push(blocker.reportBreakageLabel);
+      }
+    }
+
+    if (activatedBlockers.length) {
+      formData.set("labels", activatedBlockers.join(","));
+    }
+
     fetch(reportEndpoint, {
       method: "POST",
       credentials: "omit",
@@ -415,13 +473,6 @@ var ContentBlocking = {
     this.identityPopupMultiView.showSubView("identity-popup-breakageReportView");
   },
 
-  eventsHistogramAdd(value) {
-    if (PrivateBrowsingUtils.isWindowPrivate(window)) {
-      return;
-    }
-    Services.telemetry.getHistogramById("TRACKING_PROTECTION_EVENTS").add(value);
-  },
-
   shieldHistogramAdd(value) {
     if (PrivateBrowsingUtils.isWindowPrivate(window)) {
       return;
@@ -429,7 +480,8 @@ var ContentBlocking = {
     Services.telemetry.getHistogramById("TRACKING_PROTECTION_SHIELD").add(value);
   },
 
-  onSecurityChange(state, webProgress, isSimulated) {
+  onSecurityChange(oldState, state, webProgress, isSimulated,
+                   contentBlockingLogJSON) {
     let baseURI = this._baseURIForChannelClassifier;
 
     // Don't deal with about:, file: etc.
@@ -450,9 +502,14 @@ var ContentBlocking = {
     let anyBlockerActivated = false;
 
     for (let blocker of this.blockers) {
+      // Store data on whether the blocker is activated in the current document for
+      // reporting it using the "report breakage" dialog. Under normal circumstances this
+      // dialog should only be able to open in the currently selected tab and onSecurityChange
+      // runs on tab switch, so we can avoid associating the data with the document directly.
+      blocker.activated = blocker.isBlockerActivated(state);
       blocker.categoryItem.classList.toggle("blocked", this.enabled && blocker.enabled);
       blocker.categoryItem.hidden = !blocker.visible;
-      anyBlockerActivated = anyBlockerActivated || blocker.isBlockerActivated(state);
+      anyBlockerActivated = anyBlockerActivated || blocker.activated;
     }
 
     // We consider the shield state "active" when some kind of blocking activity
@@ -472,9 +529,22 @@ var ContentBlocking = {
 
     this.content.toggleAttribute("detected", detected);
     this.content.toggleAttribute("hasException", hasException);
+    this.content.toggleAttribute("active", active);
 
     this.iconBox.toggleAttribute("active", active);
     this.iconBox.toggleAttribute("hasException", this.enabled && hasException);
+
+    // For release (due to the large volume) we only want to receive reports
+    // for breakage that is directly related to third party cookie blocking.
+    if (this.reportBreakageEnabled ||
+        (ThirdPartyCookies.reportBreakageEnabled &&
+         ThirdPartyCookies.activated &&
+         !FastBlock.activated &&
+         !TrackingProtection.activated)) {
+      this.reportBreakageButton.removeAttribute("hidden");
+    } else {
+      this.reportBreakageButton.setAttribute("hidden", "true");
+    }
 
     if (isSimulated) {
       this.iconBox.removeAttribute("animate");
@@ -501,9 +571,6 @@ var ContentBlocking = {
       this.iconBox.removeAttribute("tooltiptext");
       this.shieldHistogramAdd(0);
     }
-
-    // Telemetry for state change.
-    this.eventsHistogramAdd(0);
   },
 
   disableForCurrentPage() {
@@ -519,9 +586,6 @@ var ContentBlocking = {
         "trackingprotection", Services.perms.ALLOW_ACTION);
     }
 
-    // Telemetry for disable protection.
-    this.eventsHistogramAdd(1);
-
     this.hideIdentityPopupAndReload();
   },
 
@@ -536,9 +600,6 @@ var ContentBlocking = {
     } else {
       Services.perms.remove(baseURI, "trackingprotection");
     }
-
-    // Telemetry for enable protection.
-    this.eventsHistogramAdd(2);
 
     this.hideIdentityPopupAndReload();
   },

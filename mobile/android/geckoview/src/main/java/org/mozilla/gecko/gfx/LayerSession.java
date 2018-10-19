@@ -70,13 +70,12 @@ public class LayerSession {
         private void onCompositorDetached() {
             // Clear out any pending calls on the UI thread.
             LayerSession.this.onCompositorDetached();
-            disposeNative();
         }
 
-        @WrapForJNI(calledFrom = "ui", dispatchTo = "gecko")
+        @WrapForJNI(dispatchTo = "gecko")
         @Override protected native void disposeNative();
 
-        @WrapForJNI(calledFrom = "any", dispatchTo = "gecko")
+        @WrapForJNI(calledFrom = "ui", dispatchTo = "gecko")
         public native void attachNPZC(PanZoomController npzc);
 
         @WrapForJNI(calledFrom = "ui", dispatchTo = "gecko")
@@ -141,11 +140,9 @@ public class LayerSession {
             LayerSession.this.updateOverscrollOffset(x, y);
         }
 
-        @WrapForJNI(calledFrom = "ui")
-        private void onSelectionCaretDrag(final boolean dragging) {
-            // Active SelectionCaretDrag requires DynamicToolbarAnimator to be pinned to
-            // avoid unwanted scroll interactions.
-            LayerSession.this.onSelectionCaretDrag(dragging);
+        @Override
+        protected void finalize() throws Throwable {
+            disposeNative();
         }
     }
 
@@ -482,13 +479,13 @@ public class LayerSession {
         mOverscroll.setDistance(y, OverscrollEdgeEffect.AXIS_Y);
     }
 
-    /* package */ void onSelectionCaretDrag(final boolean dragging) {
+    protected void setShouldPinOnScreen(final boolean pinned) {
         if (DEBUG) {
             ThreadUtils.assertOnUiThread();
         }
 
         if (mToolbar != null) {
-            mToolbar.setPinned(dragging, DynamicToolbarAnimator.PinReason.CARET_DRAG);
+            mToolbar.setPinned(pinned, DynamicToolbarAnimator.PinReason.CARET_DRAG);
         }
     }
 

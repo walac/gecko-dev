@@ -29,11 +29,8 @@
 #include "builtin/Reflect.h"
 #include "builtin/RegExp.h"
 #include "builtin/SelfHostingDefines.h"
-#include "builtin/Stream.h"
-#include "builtin/String.h"
 #include "builtin/TypedObject.h"
 #include "builtin/WeakMapObject.h"
-#include "gc/HashUtil.h"
 #include "gc/Marking.h"
 #include "gc/Policy.h"
 #include "jit/AtomicOperations.h"
@@ -1240,7 +1237,7 @@ intrinsic_MoveTypedArrayElements(JSContext* cx, unsigned argc, Value* vp)
     }
 #endif
 
-    SharedMem<uint8_t*> data = tarray->viewDataEither().cast<uint8_t*>();
+    SharedMem<uint8_t*> data = tarray->dataPointerEither().cast<uint8_t*>();
     jit::AtomicOperations::memmoveSafeWhenRacy(data + byteDest, data + byteSrc, byteSize);
 
     args.rval().setUndefined();
@@ -1343,10 +1340,10 @@ intrinsic_SetFromTypedArrayApproach(JSContext* cx, unsigned argc, Value* vp)
 
     size_t targetElementSize = TypedArrayElemSize(targetType);
     SharedMem<uint8_t*> targetData =
-        target->viewDataEither().cast<uint8_t*>() + targetOffset * targetElementSize;
+        target->dataPointerEither().cast<uint8_t*>() + targetOffset * targetElementSize;
 
     SharedMem<uint8_t*> unsafeSrcDataCrossCompartment =
-        unsafeTypedArrayCrossCompartment->viewDataEither().cast<uint8_t*>();
+        unsafeTypedArrayCrossCompartment->dataPointerEither().cast<uint8_t*>();
 
     uint32_t unsafeSrcElementSizeCrossCompartment =
         TypedArrayElemSize(unsafeSrcTypeCrossCompartment);
@@ -1377,7 +1374,7 @@ intrinsic_SetFromTypedArrayApproach(JSContext* cx, unsigned argc, Value* vp)
     SharedMem<uint8_t*> unsafeSrcDataLimitCrossCompartment =
         unsafeSrcDataCrossCompartment + unsafeSrcByteLengthCrossCompartment;
     SharedMem<uint8_t*> targetDataLimit =
-        target->viewDataEither().cast<uint8_t*>() + targetLength * targetElementSize;
+        target->dataPointerEither().cast<uint8_t*>() + targetLength * targetElementSize;
 
     // Step 24 test (but not steps 24a-d -- the caller handles those).
     bool overlap =
@@ -1466,7 +1463,7 @@ CopyToDisjointArray(TypedArrayObject* target, uint32_t targetOffset, SharedMem<v
                     Scalar::Type srcType, uint32_t count)
 {
     Scalar::Type destType = target->type();
-    SharedMem<uint8_t*> dest = target->viewDataEither().cast<uint8_t*>() + targetOffset * TypedArrayElemSize(destType);
+    SharedMem<uint8_t*> dest = target->dataPointerEither().cast<uint8_t*>() + targetOffset * TypedArrayElemSize(destType);
 
     switch (destType) {
       case Scalar::Int8: {
@@ -1529,7 +1526,7 @@ js::SetDisjointTypedElements(TypedArrayObject* target, uint32_t targetOffset,
 {
     Scalar::Type unsafeSrcTypeCrossCompartment = unsafeSrcCrossCompartment->type();
 
-    SharedMem<void*> unsafeSrcDataCrossCompartment = unsafeSrcCrossCompartment->viewDataEither();
+    SharedMem<void*> unsafeSrcDataCrossCompartment = unsafeSrcCrossCompartment->dataPointerEither();
     uint32_t count = unsafeSrcCrossCompartment->length();
 
     CopyToDisjointArray(target, targetOffset,
@@ -1600,7 +1597,7 @@ intrinsic_SetOverlappingTypedElements(JSContext* cx, unsigned argc, Value* vp)
     }
 
     jit::AtomicOperations::memcpySafeWhenRacy(SharedMem<uint8_t*>::unshared(copyOfSrcData.get()),
-                                              unsafeSrcCrossCompartment->viewDataEither().cast<uint8_t*>(),
+                                              unsafeSrcCrossCompartment->dataPointerEither().cast<uint8_t*>(),
                                               sourceByteLen);
 
     CopyToDisjointArray(target, targetOffset, SharedMem<void*>::unshared(copyOfSrcData.get()),
@@ -1687,10 +1684,10 @@ intrinsic_TypedArrayBitwiseSlice(JSContext* cx, unsigned argc, Value* vp)
     MOZ_ASSERT(elementSize == TypedArrayElemSize(unsafeTypedArrayCrossCompartment->type()));
 
     SharedMem<uint8_t*> sourceData =
-        source->viewDataEither().cast<uint8_t*>() + sourceOffset * elementSize;
+        source->dataPointerEither().cast<uint8_t*>() + sourceOffset * elementSize;
 
     SharedMem<uint8_t*> unsafeTargetDataCrossCompartment =
-        unsafeTypedArrayCrossCompartment->viewDataEither().cast<uint8_t*>();
+        unsafeTypedArrayCrossCompartment->dataPointerEither().cast<uint8_t*>();
 
     uint32_t byteLength = count * elementSize;
 
@@ -1924,8 +1921,8 @@ js::ReportIncompatibleSelfHostedMethod(JSContext* cx, const CallArgs& args)
             return false;
         }
         if (strcmp(funName, "IsTypedArrayEnsuringArrayBuffer") != 0) {
-            JS_ReportErrorNumberLatin1(cx, GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_METHOD,
-                                       funName, "method", InformalValueTypeName(args.thisv()));
+            JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_METHOD,
+                                     funName, "method", InformalValueTypeName(args.thisv()));
             return false;
         }
         ++iter;
@@ -2192,19 +2189,19 @@ intrinsic_HostResolveImportedModule(JSContext* cx, unsigned argc, Value* vp)
         return false;
     }
 
-    RootedScript script(cx, module->script());
-    RootedScript result(cx);
-    result = moduleResolveHook(cx, script, specifier);
+    RootedObject result(cx);
+    RootedValue referencingPrivate(cx, JS::GetModulePrivate(module));
+    result = moduleResolveHook(cx, referencingPrivate, specifier);
     if (!result) {
         return false;
     }
 
-    if (!result->module()) {
-        JS_ReportErrorASCII(cx, "Module resolve hook did not return a module script");
+    if (!result->is<ModuleObject>()) {
+        JS_ReportErrorASCII(cx, "Module resolve hook did not return Module object");
         return false;
     }
 
-    args.rval().setObject(*result->module());
+    args.rval().setObject(*result);
     return true;
 }
 
@@ -2385,6 +2382,7 @@ intrinsic_CopyDataPropertiesOrGetOwnKeys(JSContext* cx, unsigned argc, Value* vp
 // Additionally, a set of C++-implemented helper functions is defined on the
 // self-hosting global.
 static const JSFunctionSpec intrinsic_functions[] = {
+    // clang-format off
     JS_INLINABLE_FN("std_Array",                 array_construct,              1,0, Array),
     JS_INLINABLE_FN("std_Array_join",            array_join,                   1,0, ArrayJoin),
     JS_INLINABLE_FN("std_Array_push",            array_push,                   1,0, ArrayPush),
@@ -2778,6 +2776,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("PromiseResolve", intrinsic_PromiseResolve, 2, 0),
 
     JS_FS_END
+    // clang-format on
 };
 
 void
@@ -2983,11 +2982,6 @@ JSRuntime::initSelfHosting(JSContext* cx)
      */
     AutoSelfHostingErrorReporter errorReporter(cx);
 
-    CompileOptions options(cx);
-    FillSelfHostingCompileOptions(options);
-
-    RootedValue rv(cx);
-
     uint32_t srcLen = GetRawScriptsSize();
 
     const unsigned char* compressed = compressedSources;
@@ -2999,7 +2993,11 @@ JSRuntime::initSelfHosting(JSContext* cx)
         return false;
     }
 
-    if (!Evaluate(cx, options, src.get(), srcLen, &rv)) {
+    CompileOptions options(cx);
+    FillSelfHostingCompileOptions(options);
+
+    RootedValue rv(cx);
+    if (!EvaluateUtf8(cx, options, src.get(), srcLen, &rv)) {
         return false;
     }
 

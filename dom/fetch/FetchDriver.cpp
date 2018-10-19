@@ -48,6 +48,31 @@ namespace dom {
 
 namespace {
 
+void
+GetBlobURISpecFromChannel(nsIRequest* aRequest, nsCString& aBlobURISpec)
+{
+  MOZ_ASSERT(aRequest);
+
+  aBlobURISpec.SetIsVoid(true);
+
+  nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
+  if (!channel) {
+    return;
+  }
+
+  nsCOMPtr<nsIURI> uri;
+  nsresult rv = channel->GetURI(getter_AddRefs(uri));
+  if (NS_FAILED(rv)) {
+    return;
+  }
+
+  if (!dom::IsBlobURI(uri)) {
+    return;
+  }
+
+  uri->GetSpec(aBlobURISpec);
+}
+
 bool
 ShouldCheckSRI(const InternalRequest* const aRequest,
                const InternalResponse* const aResponse)
@@ -709,7 +734,7 @@ FetchDriver::HttpFetch(const nsACString& aPreferredAlternativeDataType)
   if (!aPreferredAlternativeDataType.IsEmpty()) {
     nsCOMPtr<nsICacheInfoChannel> cic = do_QueryInterface(chan);
     if (cic) {
-      cic->PreferAlternativeDataType(aPreferredAlternativeDataType);
+      cic->PreferAlternativeDataType(aPreferredAlternativeDataType, EmptyCString());
       MOZ_ASSERT(!mAltDataListener);
       mAltDataListener =
         new AlternativeDataStreamListener(this, chan, aPreferredAlternativeDataType);
@@ -962,6 +987,14 @@ FetchDriver::OnStartRequest(nsIRequest* aRequest,
       file->GetPath(path);
       response->SetBodyLocalPath(path);
     }
+  } else {
+    // If the request is a blob URI, then remember that URI so that we
+    // can later just use that blob instance instead of cloning it.
+    nsCString blobURISpec;
+    GetBlobURISpecFromChannel(aRequest, blobURISpec);
+    if (!blobURISpec.IsVoid()) {
+      response->SetBodyBlobURISpec(blobURISpec);
+    }
   }
 
   response->InitChannelInfo(channel);
@@ -1188,7 +1221,7 @@ FetchDriver::OnStopRequest(nsIRequest* aRequest,
   if (NS_FAILED(aStatusCode) || !mObserver) {
     nsCOMPtr<nsIAsyncOutputStream> outputStream = do_QueryInterface(mPipeOutputStream);
     if (outputStream) {
-      outputStream->CloseWithStatus(NS_BINDING_FAILED);
+      outputStream->CloseWithStatus(NS_FAILED(aStatusCode) ? aStatusCode : NS_BINDING_FAILED);
     }
     if (altDataListener) {
       altDataListener->Cancel();
@@ -1296,27 +1329,31 @@ FetchDriver::AsyncOnChannelRedirect(nsIChannel* aOldChannel,
   // However, ignore internal redirects here.  We don't want to flip
   // Response.redirected to true if an internal redirect occurs.  These
   // should be transparent to script.
+  nsCOMPtr<nsIURI> uri;
+  MOZ_ALWAYS_SUCCEEDS(aNewChannel->GetURI(getter_AddRefs(uri)));
+
+  nsCOMPtr<nsIURI> uriClone;
+  nsresult rv = NS_GetURIWithoutRef(uri, getter_AddRefs(uriClone));
+  if(NS_WARN_IF(NS_FAILED(rv))){
+    return rv;
+  }
+  nsCString spec;
+  rv = uriClone->GetSpec(spec);
+  if(NS_WARN_IF(NS_FAILED(rv))){
+    return rv;
+  }
+  nsCString fragment;
+  rv = uri->GetRef(fragment);
+  if(NS_WARN_IF(NS_FAILED(rv))){
+    return rv;
+  }
+
   if (!(aFlags & nsIChannelEventSink::REDIRECT_INTERNAL)) {
-    nsCOMPtr<nsIURI> uri;
-    MOZ_ALWAYS_SUCCEEDS(aNewChannel->GetURI(getter_AddRefs(uri)));
-
-    nsCOMPtr<nsIURI> uriClone;
-    nsresult rv = NS_GetURIWithoutRef(uri, getter_AddRefs(uriClone));
-    if(NS_WARN_IF(NS_FAILED(rv))){
-      return rv;
-    }
-    nsCString spec;
-    rv = uriClone->GetSpec(spec);
-    if(NS_WARN_IF(NS_FAILED(rv))){
-      return rv;
-    }
-    nsCString fragment;
-    rv = uri->GetRef(fragment);
-    if(NS_WARN_IF(NS_FAILED(rv))){
-      return rv;
-    }
-
     mRequest->AddURL(spec, fragment);
+  } else {
+    // Overwrite the URL only when the request is redirected by a service
+    // worker.
+    mRequest->SetURLForInternalRedirect(aFlags, spec, fragment);
   }
 
   NS_ConvertUTF8toUTF16 tRPHeaderValue(tRPHeaderCValue);

@@ -59,7 +59,6 @@ const startupPhases = {
       "nsSearchService.js",
     ]),
     modules: new Set([
-      "chrome://webcompat-reporter/content/WebCompatReporter.jsm",
       "chrome://webcompat/content/data/ua_overrides.jsm",
       "chrome://webcompat/content/lib/ua_overrider.jsm",
       "resource:///modules/AboutNewTab.jsm",
@@ -121,7 +120,9 @@ const startupPhases = {
   }},
 };
 
-if (Services.prefs.getBoolPref("browser.startup.blankWindow")) {
+if (Services.prefs.getBoolPref("browser.startup.blankWindow") &&
+    Services.prefs.getCharPref("lightweightThemes.selectedThemeID") ==
+      "default-theme@mozilla.org") {
   startupPhases["before profile selection"].whitelist.components.add("XULStore.js");
 }
 

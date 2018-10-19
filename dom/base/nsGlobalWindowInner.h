@@ -394,7 +394,7 @@ public:
   // Inner windows only.
   void RefreshRealmPrincipal();
 
-  // For accessing protected field mFullScreen
+  // For accessing protected field mFullscreen
   friend class FullscreenTransitionTask;
 
   // Inner windows only.
@@ -816,6 +816,19 @@ public:
   {
     return GetScrollY(aError);
   }
+
+  int32_t GetScreenLeft(mozilla::dom::CallerType aCallerType,
+                        mozilla::ErrorResult& aError)
+  {
+    return GetScreenX(aCallerType, aError);
+  }
+
+  int32_t GetScreenTop(mozilla::dom::CallerType aCallerType,
+                       mozilla::ErrorResult& aError)
+  {
+    return GetScreenY(aCallerType, aError);
+  }
+
   void GetScreenX(JSContext* aCx, JS::MutableHandle<JS::Value> aValue,
                   mozilla::dom::CallerType aCallerType,
                   mozilla::ErrorResult& aError);
@@ -878,7 +891,7 @@ public:
   int32_t GetScrollMaxY(mozilla::ErrorResult& aError);
   bool GetFullScreen(mozilla::ErrorResult& aError);
   bool GetFullScreen() override;
-  void SetFullScreen(bool aFullScreen, mozilla::ErrorResult& aError);
+  void SetFullScreen(bool aFullscreen, mozilla::ErrorResult& aError);
   bool Find(const nsAString& aString, bool aCaseSensitive, bool aBackwards,
             bool aWrapAround, bool aWholeWord, bool aSearchInFrames,
             bool aShowDialog, mozilla::ErrorResult& aError);
@@ -1083,7 +1096,7 @@ protected:
   // Object Management
   virtual ~nsGlobalWindowInner();
 
-  void FreeInnerObjects();
+  void FreeInnerObjects(bool aForDocumentOpen = false);
 
   // Only to be called on an inner window.
   // aDocument must not be null.

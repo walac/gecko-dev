@@ -234,7 +234,7 @@ function getDefaultEngineName(isUS) {
   let defaultEngineName = searchSettings.default.searchDefault;
 
   if (isUS === undefined)
-    isUS = Services.locale.getRequestedLocale() == "en-US" && isUSTimezone();
+    isUS = Services.locale.requestedLocale == "en-US" && isUSTimezone();
 
   if (isUS && ("US" in searchSettings &&
                "searchDefault" in searchSettings.US)) {
@@ -253,7 +253,7 @@ function getDefaultEngineList(isUS) {
   let visibleDefaultEngines = json.default.visibleDefaultEngines;
 
   if (isUS === undefined)
-    isUS = Services.locale.getRequestedLocale() == "en-US" && isUSTimezone();
+    isUS = Services.locale.requestedLocale == "en-US" && isUSTimezone();
 
   if (isUS) {
     let searchSettings = json.locales["en-US"];
@@ -405,8 +405,7 @@ var addTestEngines = async function(aItems) {
       }, "browser-search-engine-modified");
 
       if (item.xmlFileName) {
-        Services.search.addEngine(gDataUrl + item.xmlFileName,
-                                  null, null, false);
+        Services.search.addEngine(gDataUrl + item.xmlFileName, null, false);
       } else {
         Services.search.addEngineWithDetails(item.name, ...item.details);
       }

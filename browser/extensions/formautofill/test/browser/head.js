@@ -1,5 +1,6 @@
 /* exported MANAGE_ADDRESSES_DIALOG_URL, MANAGE_CREDIT_CARDS_DIALOG_URL, EDIT_ADDRESS_DIALOG_URL, EDIT_CREDIT_CARD_DIALOG_URL,
             BASE_URL, TEST_ADDRESS_1, TEST_ADDRESS_2, TEST_ADDRESS_3, TEST_ADDRESS_4, TEST_ADDRESS_5, TEST_ADDRESS_CA_1, TEST_ADDRESS_DE_1,
+            TEST_ADDRESS_IE_1,
             TEST_CREDIT_CARD_1, TEST_CREDIT_CARD_2, TEST_CREDIT_CARD_3, FORM_URL, CREDITCARD_FORM_URL,
             FTU_PREF, ENABLED_AUTOFILL_ADDRESSES_PREF, AUTOFILL_CREDITCARDS_AVAILABLE_PREF, ENABLED_AUTOFILL_CREDITCARDS_PREF,
             SUPPORTED_COUNTRIES_PREF,
@@ -97,6 +98,21 @@ const TEST_ADDRESS_DE_1 = {
   country: "DE",
   tel: "+4930983333000",
   email: "timbl@w3.org",
+};
+
+const TEST_ADDRESS_IE_1 = {
+  "given-name": "Bob",
+  "additional-name": "Z.",
+  "family-name": "Builder",
+  organization: "Best Co.",
+  "street-address": "123 Kilkenny St.",
+  "address-level3": "Some Townland",
+  "address-level2": "Dublin",
+  "address-level1": "Co. Dublin",
+  "postal-code": "A65 F4E2",
+  country: "IE",
+  tel: "+13534564947391",
+  email: "ie@example.com",
 };
 
 const TEST_CREDIT_CARD_1 = {
@@ -348,9 +364,9 @@ async function waitForFocusAndFormReady(win) {
 }
 
 async function testDialog(url, testFn, arg = undefined) {
-  if (url == EDIT_CREDIT_CARD_DIALOG_URL && arg) {
-    arg = Object.assign({}, arg, {
-      "cc-number": await MasterPassword.decrypt(arg["cc-number-encrypted"]),
+  if (url == EDIT_CREDIT_CARD_DIALOG_URL && arg && arg.record) {
+    arg.record = Object.assign({}, arg.record, {
+      "cc-number": await MasterPassword.decrypt(arg.record["cc-number-encrypted"]),
     });
   }
   let win = window.openDialog(url, null, "width=600,height=600", arg);

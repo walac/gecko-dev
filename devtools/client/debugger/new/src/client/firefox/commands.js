@@ -35,6 +35,18 @@ function setupCommands(dependencies) {
   };
 }
 
+function createObjectClient(grip) {
+  return debuggerClient.createObjectClient(grip);
+}
+
+function releaseActor(actor) {
+  if (!actor) {
+    return;
+  }
+
+  return debuggerClient.release(actor);
+}
+
 function sendPacket(packet, callback = r => r) {
   return debuggerClient.request(packet).then(callback);
 }
@@ -235,7 +247,7 @@ function debuggeeCommand(script) {
 }
 
 function navigate(url) {
-  return tabTarget.activeTab.navigateTo(url);
+  return tabTarget.activeTab.navigateTo({ url });
 }
 
 function reload() {
@@ -342,7 +354,12 @@ function pauseGrip(func) {
 async function fetchSources() {
   const {
     sources
-  } = await threadClient.getSources();
+  } = await threadClient.getSources(); // NOTE: this happens when we fetch sources and then immediately navigate
+
+  if (!sources) {
+    return;
+  }
+
   return sources.map(source => (0, _create.createSource)(source, {
     supportsWasm
   }));
@@ -401,6 +418,8 @@ async function fetchWorkers() {
 const clientCommands = {
   autocomplete,
   blackBox,
+  createObjectClient,
+  releaseActor,
   interrupt,
   eventListeners,
   pauseGrip,

@@ -189,7 +189,7 @@ typedef JSObject*
 (* JSGetIncumbentGlobalCallback)(JSContext* cx);
 
 typedef bool
-(* JSEnqueuePromiseJobCallback)(JSContext* cx, JS::HandleObject job,
+(* JSEnqueuePromiseJobCallback)(JSContext* cx, JS::HandleObject promise, JS::HandleObject job,
                                 JS::HandleObject allocationSite, JS::HandleObject incumbentGlobal,
                                 void* data);
 
@@ -503,8 +503,7 @@ class JS_PUBLIC_API(ContextOptions) {
         dumpStackOnDebuggeeWouldRun_(false),
         werror_(false),
         strictMode_(false),
-        extraWarnings_(false),
-        streams_(false)
+        extraWarnings_(false)
 #ifdef FUZZING
         , fuzzing_(false)
 #endif
@@ -548,16 +547,6 @@ class JS_PUBLIC_API(ContextOptions) {
     }
     ContextOptions& toggleWasm() {
         wasm_ = !wasm_;
-        return *this;
-    }
-
-    bool streams() const { return streams_; }
-    ContextOptions& setStreams(bool flag) {
-        streams_ = flag;
-        return *this;
-    }
-    ContextOptions& toggleStreams() {
-        streams_ = !streams_;
         return *this;
     }
 
@@ -718,7 +707,6 @@ class JS_PUBLIC_API(ContextOptions) {
     bool werror_ : 1;
     bool strictMode_ : 1;
     bool extraWarnings_ : 1;
-    bool streams_: 1;
 #ifdef FUZZING
     bool fuzzing_ : 1;
 #endif
@@ -904,6 +892,13 @@ extern JS_PUBLIC_API(void)
 IterateRealms(JSContext* cx, void* data, IterateRealmCallback realmCallback);
 
 /**
+ * Like IterateRealms, but only call the callback for realms using |principals|.
+ */
+extern JS_PUBLIC_API(void)
+IterateRealmsWithPrincipals(JSContext* cx, JSPrincipals* principals, void* data,
+                            IterateRealmCallback realmCallback);
+
+/**
  * Like IterateRealms, but only iterates realms in |compartment|.
  */
 extern JS_PUBLIC_API(void)
@@ -962,9 +957,26 @@ JS_MayResolveStandardClass(const JSAtomState& names, jsid id, JSObject* maybeObj
 extern JS_PUBLIC_API(bool)
 JS_EnumerateStandardClasses(JSContext* cx, JS::HandleObject obj);
 
+/**
+ * Fill "properties" with a list of standard class names that have not yet been
+ * resolved on "obj".  This can be used as (part of) a newEnumerate class hook on a
+ * global.  Already-resolved things are excluded because they might have been deleted
+ * by script after being resolved and enumeration considers already-defined
+ * properties anyway.
+ */
 extern JS_PUBLIC_API(bool)
 JS_NewEnumerateStandardClasses(JSContext* cx, JS::HandleObject obj, JS::AutoIdVector& properties,
                                bool enumerableOnly);
+
+/**
+ * Fill "properties" with a list of standard class names.  This can be used for
+ * proxies that want to define behavior that looks like enumerating a global without
+ * touching the global itself.
+ */
+extern JS_PUBLIC_API(bool)
+JS_NewEnumerateStandardClassesIncludingResolved(JSContext* cx, JS::HandleObject obj,
+                                                JS::AutoIdVector& properties,
+                                                bool enumerableOnly);
 
 extern JS_PUBLIC_API(bool)
 JS_GetClassObject(JSContext* cx, JSProtoKey key, JS::MutableHandle<JSObject*> objp);
@@ -1027,12 +1039,6 @@ CurrentGlobalOrNull(JSContext* cx);
  */
 extern JS_PUBLIC_API(JSObject*)
 GetNonCCWObjectGlobal(JSObject* obj);
-
-/**
- * Get the global object associated with a script's realm.
- */
-extern JS_PUBLIC_API(JSObject*)
-GetScriptGlobal(JSScript* script);
 
 } // namespace JS
 
@@ -1494,6 +1500,7 @@ class JS_PUBLIC_API(RealmCreationOptions)
         preserveJitCode_(false),
         cloneSingletons_(false),
         sharedMemoryAndAtomics_(false),
+        streams_(false),
         secureContext_(false),
         clampAndJitterTime_(true)
     {}
@@ -1559,6 +1566,12 @@ class JS_PUBLIC_API(RealmCreationOptions)
     bool getSharedMemoryAndAtomicsEnabled() const;
     RealmCreationOptions& setSharedMemoryAndAtomicsEnabled(bool flag);
 
+    bool getStreamsEnabled() const { return streams_; }
+    RealmCreationOptions& setStreamsEnabled(bool flag) {
+        streams_ = flag;
+        return *this;
+    }
+
     // This flag doesn't affect JS engine behavior.  It is used by Gecko to
     // mark whether content windows and workers are "Secure Context"s. See
     // https://w3c.github.io/webappsec-secure-contexts/
@@ -1587,6 +1600,7 @@ class JS_PUBLIC_API(RealmCreationOptions)
     bool preserveJitCode_;
     bool cloneSingletons_;
     bool sharedMemoryAndAtomics_;
+    bool streams_;
     bool secureContext_;
     bool clampAndJitterTime_;
 };
@@ -2176,7 +2190,7 @@ JS_GetOwnPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* nam
                             JS::MutableHandle<JS::PropertyDescriptor> desc);
 
 extern JS_PUBLIC_API(bool)
-JS_GetOwnUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name,
+JS_GetOwnUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen,
                               JS::MutableHandle<JS::PropertyDescriptor> desc);
 
 /**
@@ -2192,6 +2206,10 @@ JS_GetPropertyDescriptorById(JSContext* cx, JS::HandleObject obj, JS::HandleId i
 extern JS_PUBLIC_API(bool)
 JS_GetPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* name,
                          JS::MutableHandle<JS::PropertyDescriptor> desc);
+
+extern JS_PUBLIC_API(bool)
+JS_GetUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen,
+                           JS::MutableHandle<JS::PropertyDescriptor> desc);
 
 /**
  * Define a property on obj.
@@ -2508,8 +2526,9 @@ JS_DeleteElement(JSContext* cx, JS::HandleObject obj, uint32_t index);
  * This function is roughly equivalent to:
  *
  *     var result = [];
- *     for (key in obj)
+ *     for (key in obj) {
  *         result.push(key);
+ *     }
  *     return result;
  *
  * This is the closest thing we currently have to the ES6 [[Enumerate]]
@@ -2692,21 +2711,23 @@ extern JS_PUBLIC_API(JSObject*)
 JS_NewArrayObject(JSContext* cx, size_t length);
 
 /**
- * Returns true and sets |*isArray| indicating whether |value| is an Array
- * object or a wrapper around one, otherwise returns false on failure.
+ * On success, returns true, setting |*isArray| to true if |value| is an Array
+ * object or a wrapper around one, or to false if not.  Returns false on
+ * failure.
  *
- * This method returns true with |*isArray == false| when passed a proxy whose
- * target is an Array, or when passed a revoked proxy.
+ * This method returns true with |*isArray == false| when passed an ES6 proxy
+ * whose target is an Array, or when passed a revoked proxy.
  */
 extern JS_PUBLIC_API(bool)
 JS_IsArrayObject(JSContext* cx, JS::HandleValue value, bool* isArray);
 
 /**
- * Returns true and sets |*isArray| indicating whether |obj| is an Array object
- * or a wrapper around one, otherwise returns false on failure.
+ * On success, returns true, setting |*isArray| to true if |obj| is an Array
+ * object or a wrapper around one, or to false if not.  Returns false on
+ * failure.
  *
- * This method returns true with |*isArray == false| when passed a proxy whose
- * target is an Array, or when passed a revoked proxy.
+ * This method returns true with |*isArray == false| when passed an ES6 proxy
+ * whose target is an Array, or when passed a revoked proxy.
  */
 extern JS_PUBLIC_API(bool)
 JS_IsArrayObject(JSContext* cx, JS::HandleObject obj, bool* isArray);
@@ -2720,21 +2741,21 @@ JS_SetArrayLength(JSContext* cx, JS::Handle<JSObject*> obj, uint32_t length);
 namespace JS {
 
 /**
- * Returns true and sets |*isMap| indicating whether |obj| is an Map object
- * or a wrapper around one, otherwise returns false on failure.
+ * On success, returns true, setting |*isMap| to true if |obj| is a Map object
+ * or a wrapper around one, or to false if not.  Returns false on failure.
  *
- * This method returns true with |*isMap == false| when passed a proxy whose
- * target is an Map, or when passed a revoked proxy.
+ * This method returns true with |*isMap == false| when passed an ES6 proxy
+ * whose target is a Map, or when passed a revoked proxy.
  */
 extern JS_PUBLIC_API(bool)
 IsMapObject(JSContext* cx, JS::HandleObject obj, bool* isMap);
 
 /**
- * Returns true and sets |*isSet| indicating whether |obj| is an Set object
- * or a wrapper around one, otherwise returns false on failure.
+ * On success, returns true, setting |*isSet| to true if |obj| is a Set object
+ * or a wrapper around one, or to false if not.  Returns false on failure.
  *
- * This method returns true with |*isSet == false| when passed a proxy whose
- * target is an Set, or when passed a revoked proxy.
+ * This method returns true with |*isSet == false| when passed an ES6 proxy
+ * whose target is a Set, or when passed a revoked proxy.
  */
 extern JS_PUBLIC_API(bool)
 IsSetObject(JSContext* cx, JS::HandleObject obj, bool* isSet);
@@ -3000,7 +3021,7 @@ JS_DecompileFunction(JSContext* cx, JS::Handle<JSFunction*> fun);
 
 namespace JS {
 
-using ModuleResolveHook = JSScript* (*)(JSContext*, HandleScript, HandleString);
+using ModuleResolveHook = JSObject* (*)(JSContext*, HandleValue, HandleString);
 
 /**
  * Get the HostResolveImportedModule hook for the runtime.
@@ -3014,7 +3035,7 @@ GetModuleResolveHook(JSRuntime* rt);
 extern JS_PUBLIC_API(void)
 SetModuleResolveHook(JSRuntime* rt, ModuleResolveHook func);
 
-using ModuleMetadataHook = bool (*)(JSContext*, HandleScript, HandleObject);
+using ModuleMetadataHook = bool (*)(JSContext*, HandleValue, HandleObject);
 
 /**
  * Get the hook for populating the import.meta metadata object.
@@ -3031,23 +3052,37 @@ SetModuleMetadataHook(JSRuntime* rt, ModuleMetadataHook func);
 
 /**
  * Parse the given source buffer as a module in the scope of the current global
- * of cx.
+ * of cx and return a source text module record.
  */
 extern JS_PUBLIC_API(bool)
 CompileModule(JSContext* cx, const ReadOnlyCompileOptions& options,
-              SourceBufferHolder& srcBuf, JS::MutableHandleScript script);
+              SourceBufferHolder& srcBuf, JS::MutableHandleObject moduleRecord);
 
 /**
- * Set the [[HostDefined]] field of a classic script or module script.
+ * Set a private value associated with a source text module record.
  */
 extern JS_PUBLIC_API(void)
-SetTopLevelScriptPrivate(JSScript* script, void* value);
+SetModulePrivate(JSObject* module, const JS::Value& value);
 
 /**
- * Get the [[HostDefined]] field of a classic script or module script.
+ * Get the private value associated with a source text module record.
  */
-extern JS_PUBLIC_API(void*)
-GetTopLevelScriptPrivate(JSScript* script);
+extern JS_PUBLIC_API(JS::Value)
+GetModulePrivate(JSObject* module);
+
+/**
+ * Set a private value associated with a script. Note that this value is shared
+ * by all nested scripts compiled from a single source file.
+ */
+extern JS_PUBLIC_API(void)
+SetScriptPrivate(JSScript* script, const JS::Value& value);
+
+/**
+ * Get the private value associated with a script. Note that this value is
+ * shared by all nested scripts compiled from a single source file.
+ */
+extern JS_PUBLIC_API(JS::Value)
+GetScriptPrivate(JSScript* script);
 
 /*
  * Perform the ModuleInstantiate operation on the given source text module
@@ -3058,7 +3093,7 @@ GetTopLevelScriptPrivate(JSScript* script);
  * the module.
  */
 extern JS_PUBLIC_API(bool)
-ModuleInstantiate(JSContext* cx, JS::HandleScript script);
+ModuleInstantiate(JSContext* cx, JS::HandleObject moduleRecord);
 
 /*
  * Perform the ModuleEvaluate operation on the given source text module record.
@@ -3070,7 +3105,7 @@ ModuleInstantiate(JSContext* cx, JS::HandleScript script);
  * ModuleInstantiate must have completed prior to calling this.
  */
 extern JS_PUBLIC_API(bool)
-ModuleEvaluate(JSContext* cx, JS::HandleScript script);
+ModuleEvaluate(JSContext* cx, JS::HandleObject moduleRecord);
 
 /*
  * Get a list of the module specifiers used by a source text module
@@ -3089,7 +3124,7 @@ ModuleEvaluate(JSContext* cx, JS::HandleScript script);
  * GetRequestedModuleSourcePos()
  */
 extern JS_PUBLIC_API(JSObject*)
-GetRequestedModules(JSContext* cx, JS::HandleScript script);
+GetRequestedModules(JSContext* cx, JS::HandleObject moduleRecord);
 
 extern JS_PUBLIC_API(JSString*)
 GetRequestedModuleSpecifier(JSContext* cx, JS::HandleValue requestedModuleObject);
@@ -3097,6 +3132,12 @@ GetRequestedModuleSpecifier(JSContext* cx, JS::HandleValue requestedModuleObject
 extern JS_PUBLIC_API(void)
 GetRequestedModuleSourcePos(JSContext* cx, JS::HandleValue requestedModuleObject,
                             uint32_t* lineNumber, uint32_t* columnNumber);
+
+/*
+ * Get the top-level script for a module which has not yet been executed.
+ */
+extern JS_PUBLIC_API(JSScript*)
+GetModuleScript(JS::HandleObject moduleRecord);
 
 } /* namespace JS */
 
@@ -3359,6 +3400,51 @@ extern JS_PUBLIC_API(bool)
 AddPromiseReactions(JSContext* cx, JS::HandleObject promise,
                     JS::HandleObject onResolve, JS::HandleObject onReject);
 
+// This enum specifies whether a promise is expected to keep track of information
+// that is useful for embedders to implement user activation behavior handling as
+// specified in the HTML spec:
+// https://html.spec.whatwg.org/multipage/interaction.html#triggered-by-user-activation
+// By default, promises created by SpiderMonkey do not make any attempt to keep
+// track of information about whether an activation behavior was being processed
+// when the original promise in a promise chain was created.  If the embedder sets
+// either of the HadUserInteractionAtCreation or DidntHaveUserInteractionAtCreation
+// flags on a promise after creating it, SpiderMonkey will propagate that flag to
+// newly created promises when processing Promise#then and will make it possible
+// to query this flag off of a promise further down the chain later using the
+// GetPromiseUserInputEventHandlingState() API.
+enum class PromiseUserInputEventHandlingState {
+  // Don't keep track of this state (default for all promises)
+  DontCare,
+  // Keep track of this state, the original promise in the chain was created
+  // while an activation behavior was being processed.
+  HadUserInteractionAtCreation,
+  // Keep track of this state, the original promise in the chain was created
+  // while an activation behavior was not being processed.
+  DidntHaveUserInteractionAtCreation
+};
+
+/**
+ * Returns the given Promise's activation behavior state flag per above as a
+ * JS::PromiseUserInputEventHandlingState value.  All promises are created with
+ * the DontCare state by default.
+ *
+ * Returns JS::PromiseUserInputEventHandlingState::DontCare if the given object
+ * is a wrapper that can't safely be unwrapped.
+ */
+extern JS_PUBLIC_API(PromiseUserInputEventHandlingState)
+GetPromiseUserInputEventHandlingState(JS::HandleObject promise);
+
+/**
+ * Sets the given Promise's activation behavior state flag per above as a
+ * JS::PromiseUserInputEventHandlingState value.
+ *
+ * Returns false if the given object is a wrapper that can't safely be unwrapped,
+ * or if the promise isn't pending.
+ */
+extern JS_PUBLIC_API(bool)
+SetPromiseUserInputEventHandlingState(JS::HandleObject promise,
+                                      JS::PromiseUserInputEventHandlingState state);
+
 /**
  * Unforgeable version of the JS builtin Promise.all.
  *
@@ -3412,6 +3498,10 @@ typedef bool
 extern JS_PUBLIC_API(void)
 InitDispatchToEventLoop(JSContext* cx, DispatchToEventLoopCallback callback, void* closure);
 
+/* Vector of characters used for holding build ids. */
+
+typedef js::Vector<char, 0, js::SystemAllocPolicy> BuildIdCharVector;
+
 /**
  * The ConsumeStreamCallback is called from an active JSContext, passing a
  * StreamConsumer that wishes to consume the given host object as a stream of
@@ -3424,7 +3514,39 @@ InitDispatchToEventLoop(JSContext* cx, DispatchToEventLoopCallback callback, voi
  *
  * Note: consumeChunk() and streamClosed() may be called synchronously by
  * ConsumeStreamCallback.
+ *
+ * When streamClosed() is called, the embedding may optionally pass an
+ * OptimizedEncodingListener*, indicating that there is a cache entry associated
+ * with this stream that can store an optimized encoding of the bytes that were
+ * just streamed at some point in the future by having SpiderMonkey call
+ * storeOptimizedEncoding(). Until the optimized encoding is ready, SpiderMonkey
+ * will hold an outstanding refcount to keep the listener alive.
+ *
+ * After storeOptimizedEncoding() is called, on cache hit, the embedding
+ * may call consumeOptimizedEncoding() instead of consumeChunk()/streamClosed().
+ * The embedding must ensure that the GetOptimizedEncodingBuildId() at the time
+ * when an optimized encoding is created is the same as when it is later
+ * consumed.
  */
+
+class OptimizedEncodingListener
+{
+  protected:
+    virtual ~OptimizedEncodingListener() {}
+
+  public:
+    // SpiderMonkey will hold an outstanding reference count as long as it holds
+    // a pointer to OptimizedEncodingListener.
+    virtual MozExternalRefCountType MOZ_XPCOM_ABI AddRef() = 0;
+    virtual MozExternalRefCountType MOZ_XPCOM_ABI Release() = 0;
+
+    // SpiderMonkey may optionally call storeOptimizedEncoding() after it has
+    // finished processing a streamed resource.
+    virtual void storeOptimizedEncoding(const uint8_t* bytes, size_t length) = 0;
+};
+
+extern MOZ_MUST_USE JS_PUBLIC_API(bool)
+GetOptimizedEncodingBuildId(BuildIdCharVector* buildId);
 
 class JS_PUBLIC_API(StreamConsumer)
 {
@@ -3442,11 +3564,17 @@ class JS_PUBLIC_API(StreamConsumer)
     // Called by the embedding when the stream is closed according to the
     // contract described above.
     enum CloseReason { EndOfFile, Error };
-    virtual void streamClosed(CloseReason reason) = 0;
+    virtual void streamClosed(CloseReason reason,
+                              OptimizedEncodingListener* listener = nullptr) = 0;
+
+    // Called by the embedding *instead of* consumeChunk()/streamClosed() if an
+    // optimized encoding is available from a previous streaming of the same
+    // contents with the same optimized build id.
+    virtual void consumeOptimizedEncoding(const uint8_t* begin, size_t length) = 0;
 
     // Provides optional stream attributes such as base or source mapping URLs.
-    // Necessarily called before consumeChunk() or streamClosed(). The caller
-    // retains ownership of the given strings.
+    // Necessarily called before consumeChunk(), streamClosed() or
+    // consumeOptimizedEncoding(). The caller retains ownership of the strings.
     virtual void noteResponseURLs(const char* maybeUrl, const char* maybeSourceMapUrl) = 0;
 };
 
@@ -3665,8 +3793,9 @@ JS_PutEscapedString(JSContext* cx, char* buffer, size_t size, JSString* str, cha
  *
  *   // in a fallible context
  *   JSFlatString* fstr = JS_FlattenString(cx, str);
- *   if (!fstr)
+ *   if (!fstr) {
  *     return false;
+ *   }
  *   MOZ_ASSERT(fstr == JS_ASSERT_STRING_IS_FLAT(str));
  *
  *   // in an infallible context, for the same 'str'
@@ -4170,11 +4299,12 @@ extern JS_PUBLIC_API(JSObject*)
 JS_NewDateObject(JSContext* cx, int year, int mon, int mday, int hour, int min, int sec);
 
 /**
- * Returns true and sets |*isDate| indicating whether |obj| is a Date object or
- * a wrapper around one, otherwise returns false on failure.
+ * On success, returns true, setting |*isDate| to true if |obj| is a Date
+ * object or a wrapper around one, or to false if not.  Returns false on
+ * failure.
  *
- * This method returns true with |*isDate == false| when passed a proxy whose
- * target is a Date, or when passed a revoked proxy.
+ * This method returns true with |*isDate == false| when passed an ES6 proxy
+ * whose target is a Date, or when passed a revoked proxy.
  */
 extern JS_PUBLIC_API(bool)
 JS_ObjectIsDate(JSContext* cx, JS::HandleObject obj, bool* isDate);
@@ -4214,11 +4344,12 @@ JS_ExecuteRegExpNoStatics(JSContext* cx, JS::HandleObject reobj, char16_t* chars
                           size_t* indexp, bool test, JS::MutableHandleValue rval);
 
 /**
- * Returns true and sets |*isRegExp| indicating whether |obj| is a RegExp
- * object or a wrapper around one, otherwise returns false on failure.
+ * On success, returns true, setting |*isRegExp| to true if |obj| is a RegExp
+ * object or a wrapper around one, or to false if not.  Returns false on
+ * failure.
  *
- * This method returns true with |*isRegExp == false| when passed a proxy whose
- * target is a RegExp, or when passed a revoked proxy.
+ * This method returns true with |*isRegExp == false| when passed an ES6 proxy
+ * whose target is a RegExp, or when passed a revoked proxy.
  */
 extern JS_PUBLIC_API(bool)
 JS_ObjectIsRegExp(JSContext* cx, JS::HandleObject obj, bool* isRegExp);
@@ -4377,6 +4508,9 @@ extern JS_PUBLIC_API(void)
 JS_SetGCZeal(JSContext* cx, uint8_t zeal, uint32_t frequency);
 
 extern JS_PUBLIC_API(void)
+JS_UnsetGCZeal(JSContext* cx, uint8_t zeal);
+
+extern JS_PUBLIC_API(void)
 JS_ScheduleGC(JSContext* cx, uint32_t count);
 #endif
 
@@ -4393,6 +4527,7 @@ JS_SetOffthreadIonCompilationEnabled(JSContext* cx, bool enabled);
     Register(ION_FORCE_IC, "ion.forceinlineCaches")                         \
     Register(ION_ENABLE, "ion.enable")                                      \
     Register(ION_CHECK_RANGE_ANALYSIS, "ion.check-range-analysis")          \
+    Register(ION_FREQUENT_BAILOUT_THRESHOLD, "ion.frequent-bailout-threshold") \
     Register(BASELINE_ENABLE, "baseline.enable")                            \
     Register(OFFTHREAD_COMPILATION_ENABLE, "offthread-compilation.enable")  \
     Register(FULL_DEBUG_CHECKS, "jit.full-debug-checks")                    \
@@ -4626,8 +4761,6 @@ SetAsmJSCacheOps(JSContext* cx, const AsmJSCacheOps* callbacks);
  * the JS engine.
  */
 
-typedef js::Vector<char, 0, js::SystemAllocPolicy> BuildIdCharVector;
-
 typedef bool
 (* BuildIdOp)(BuildIdCharVector* buildId);
 
@@ -4673,17 +4806,21 @@ DeserializeWasmModule(PRFileDesc* bytecode, JS::UniqueChars filename, unsigned l
  * Convenience class for imitating a JS level for-of loop. Typical usage:
  *
  *     ForOfIterator it(cx);
- *     if (!it.init(iterable))
+ *     if (!it.init(iterable)) {
  *       return false;
+ *     }
  *     RootedValue val(cx);
  *     while (true) {
  *       bool done;
- *       if (!it.next(&val, &done))
+ *       if (!it.next(&val, &done)) {
  *         return false;
- *       if (done)
+ *       }
+ *       if (done) {
  *         break;
- *       if (!DoStuff(cx, val))
+ *       }
+ *       if (!DoStuff(cx, val)) {
  *         return false;
+ *       }
  *     }
  */
 class MOZ_STACK_CLASS JS_PUBLIC_API(ForOfIterator) {

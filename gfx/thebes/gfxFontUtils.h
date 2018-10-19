@@ -829,18 +829,18 @@ public:
     // so it should always succeed in finding the name table.
     static nsresult
     GetFullNameFromSFNT(const uint8_t* aFontData, uint32_t aLength,
-                        nsAString& aFullName);
+                        nsACString& aFullName);
 
     // helper to get fullname from name table, constructing from family+style
     // if no explicit fullname is present
     static nsresult
     GetFullNameFromTable(hb_blob_t *aNameTable,
-                         nsAString& aFullName);
+                         nsACString& aFullName);
 
     // helper to get family name from name table
     static nsresult
     GetFamilyNameFromTable(hb_blob_t *aNameTable,
-                           nsAString& aFamilyName);
+                           nsACString& aFamilyName);
 
     // Find the table directory entry for a given table tag, in a (validated)
     // buffer of 'sfnt' data. Returns null if the tag is not present.
@@ -865,17 +865,17 @@ public:
     // read all names matching aNameID, returning in aNames array
     static nsresult
     ReadNames(const char *aNameData, uint32_t aDataLen, uint32_t aNameID,
-              int32_t aPlatformID, nsTArray<nsString>& aNames);
+              int32_t aPlatformID, nsTArray<nsCString>& aNames);
 
     // reads English or first name matching aNameID, returning in aName
     // platform based on OS
     static nsresult
     ReadCanonicalName(hb_blob_t *aNameTable, uint32_t aNameID,
-                      nsString& aName);
+                      nsCString& aName);
 
     static nsresult
     ReadCanonicalName(const char *aNameData, uint32_t aDataLen,
-                      uint32_t aNameID, nsString& aName);
+                      uint32_t aNameID, nsCString& aName);
 
     // convert a name from the raw name table data into an nsString,
     // provided we know how; return true if successful, or false
@@ -883,7 +883,7 @@ public:
     static bool
     DecodeFontName(const char *aBuf, int32_t aLength, 
                    uint32_t aPlatformCode, uint32_t aScriptCode,
-                   uint32_t aLangCode, nsAString& dest);
+                   uint32_t aLangCode, nsACString& dest);
 
     static inline bool IsJoinCauser(uint32_t ch) {
         return (ch == 0x200D);
@@ -962,16 +962,16 @@ public:
 
     // parse a simple list of font family names into
     // an array of strings
-    static void ParseFontList(const nsAString& aFamilyList,
-                              nsTArray<nsString>& aFontList);
+    static void ParseFontList(const nsACString& aFamilyList,
+                              nsTArray<nsCString>& aFontList);
 
     // for a given font list pref name, append list of font names
     static void AppendPrefsFontList(const char *aPrefName,
-                                    nsTArray<nsString>& aFontList);
+                                    nsTArray<nsCString>& aFontList);
 
     // for a given font list pref name, initialize a list of font names
     static void GetPrefsFontList(const char *aPrefName, 
-                                 nsTArray<nsString>& aFontList);
+                                 nsTArray<nsCString>& aFontList);
 
     // generate a unique font name
     static nsresult MakeUniqueUserFontName(nsAString& aName);
@@ -999,7 +999,7 @@ protected:
 
     static nsresult
     ReadNames(const char *aNameData, uint32_t aDataLen, uint32_t aNameID,
-              int32_t aLangID, int32_t aPlatformID, nsTArray<nsString>& aNames);
+              int32_t aLangID, int32_t aPlatformID, nsTArray<nsCString>& aNames);
 
     // convert opentype name-table platform/encoding/language values to an
     // Encoding object we can use to convert the name data to unicode

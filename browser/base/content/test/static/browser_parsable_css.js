@@ -96,11 +96,6 @@ if (!Services.prefs.getBoolPref("layout.css.scrollbar-width.enabled")) {
 }
 
 let propNameWhitelist = [
-  // These are CSS custom properties that we found a definition of but
-  // no reference to.
-  // Bug 1441837
-  {propName: "--in-content-category-text-active",
-   isFromDevTools: false},
   // These custom properties are retrieved directly from CSSOM
   // in videocontrols.xml to get pre-defined style instead of computed
   // dimensions, which is why they are not referenced by CSS.
@@ -123,10 +118,6 @@ let propNameWhitelist = [
   {propName: "--positionDurationBox-width",
    isFromDevTools: false},
   {propName: "--positionDurationBox-width-long",
-   isFromDevTools: false},
-  // Used on Linux
-  {propName: "--in-content-box-background-odd",
-   platforms: ["win", "macosx"],
    isFromDevTools: false},
 
   // These variables are used in a shorthand, but the CSS parser deletes the values

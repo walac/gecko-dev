@@ -11,13 +11,13 @@
 use app_units::Au;
 use gecko::values::GeckoStyleCoordConvertible;
 use gecko_bindings::bindings;
-use gecko_bindings::structs::{self, nsCSSUnit, nsStyleCoord_CalcValue};
+use gecko_bindings::structs::{self, nsStyleCoord_CalcValue};
 use gecko_bindings::structs::{nsresult, SheetType, nsStyleImage};
 use gecko_bindings::sugar::ns_style_coord::{CoordData, CoordDataMut, CoordDataValue};
 use std::f32::consts::PI;
 use stylesheets::{Origin, RulesMutateError};
 use values::computed::{Angle, CalcLengthOrPercentage, Gradient, Image};
-use values::computed::{Integer, LengthOrPercentage, LengthOrPercentageOrAuto};
+use values::computed::{Integer, LengthOrPercentage, LengthOrPercentageOrAuto, NonNegativeLengthOrPercentageOrAuto};
 use values::computed::{Percentage, TextAlign};
 use values::computed::image::LineDirection;
 use values::computed::url::ComputedImageUrl;
@@ -106,37 +106,29 @@ impl From<nsStyleCoord_CalcValue> for LengthOrPercentageOrAuto {
     }
 }
 
-impl From<Angle> for CoordDataValue {
-    fn from(reference: Angle) -> Self {
-        match reference {
-            Angle::Deg(val) => CoordDataValue::Degree(val),
-            Angle::Grad(val) => CoordDataValue::Grad(val),
-            Angle::Rad(val) => CoordDataValue::Radian(val),
-            Angle::Turn(val) => CoordDataValue::Turn(val),
-        }
+// FIXME(emilio): A lot of these impl From should probably become explicit or
+// disappear as we move more stuff to cbindgen.
+impl From<nsStyleCoord_CalcValue> for NonNegativeLengthOrPercentageOrAuto {
+    fn from(other: nsStyleCoord_CalcValue) -> Self {
+        use style_traits::values::specified::AllowedNumericType;
+        use values::generics::NonNegative;
+        NonNegative(if other.mLength < 0 || other.mPercent < 0. {
+            LengthOrPercentageOrAuto::Calc(
+                CalcLengthOrPercentage::with_clamping_mode(
+                    Au(other.mLength).into(),
+                    if other.mHasPercent { Some(Percentage(other.mPercent)) } else { None },
+                    AllowedNumericType::NonNegative,
+                )
+            )
+        } else {
+            other.into()
+        })
     }
 }
 
-impl Angle {
-    /// Converts Angle struct into (value, unit) pair.
-    pub fn to_gecko_values(&self) -> (f32, nsCSSUnit) {
-        match *self {
-            Angle::Deg(val) => (val, nsCSSUnit::eCSSUnit_Degree),
-            Angle::Grad(val) => (val, nsCSSUnit::eCSSUnit_Grad),
-            Angle::Rad(val) => (val, nsCSSUnit::eCSSUnit_Radian),
-            Angle::Turn(val) => (val, nsCSSUnit::eCSSUnit_Turn),
-        }
-    }
-
-    /// Converts gecko (value, unit) pair into Angle struct
-    pub fn from_gecko_values(value: f32, unit: nsCSSUnit) -> Angle {
-        match unit {
-            nsCSSUnit::eCSSUnit_Degree => Angle::Deg(value),
-            nsCSSUnit::eCSSUnit_Grad => Angle::Grad(value),
-            nsCSSUnit::eCSSUnit_Radian => Angle::Rad(value),
-            nsCSSUnit::eCSSUnit_Turn => Angle::Turn(value),
-            _ => panic!("Unexpected unit for angle"),
-        }
+impl From<Angle> for CoordDataValue {
+    fn from(reference: Angle) -> Self {
+        CoordDataValue::Degree(reference.degrees())
     }
 }
 
@@ -205,13 +197,13 @@ impl nsStyleImage {
         match image {
             GenericImage::Gradient(boxed_gradient) => self.set_gradient(*boxed_gradient),
             GenericImage::Url(ref url) => unsafe {
-                bindings::Gecko_SetLayerImageImageValue(self, url.0.image_value.get());
+                bindings::Gecko_SetLayerImageImageValue(self, (url.0).0.url_value.get());
             },
             GenericImage::Rect(ref image_rect) => {
                 unsafe {
                     bindings::Gecko_SetLayerImageImageValue(
                         self,
-                        image_rect.url.0.image_value.get(),
+                        (image_rect.url.0).0.url_value.get(),
                     );
                     bindings::Gecko_InitializeImageCropRect(self);
 

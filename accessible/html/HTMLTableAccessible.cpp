@@ -307,8 +307,8 @@ HTMLTableHeaderCellAccessible::NativeRole() const
 {
   // Check value of @scope attribute.
   static Element::AttrValuesArray scopeValues[] =
-    { &nsGkAtoms::col, &nsGkAtoms::colgroup,
-      &nsGkAtoms::row, &nsGkAtoms::rowgroup, nullptr };
+    { nsGkAtoms::col, nsGkAtoms::colgroup,
+      nsGkAtoms::row, nsGkAtoms::rowgroup, nullptr };
   int32_t valueIdx =
     mContent->AsElement()->FindAttrValueIn(kNameSpaceID_None, nsGkAtoms::scope,
                                            scopeValues, eCaseMatters);
@@ -619,6 +619,13 @@ HTMLTableAccessible::CellAt(uint32_t aRowIdx, uint32_t aColIdx)
   nsIContent* cellContent = tableFrame->GetCellAt(aRowIdx, aColIdx);
   Accessible* cell = mDoc->GetAccessible(cellContent);
 
+  // Sometimes, the accessible returned here is a row accessible instead of
+  // a cell accessible, for example when a cell has CSS display:block; set.
+  // In such cases, iterate through the cells in this row differently to find it.
+  if (cell && cell->IsTableRow()) {
+    return CellInRowAt(cell, aColIdx);
+  }
+
   // XXX bug 576838: crazy tables (like table6 in tables/test_table2.html) may
   // return itself as a cell what makes Orca hang.
   return cell == this ? nullptr : cell;
@@ -761,6 +768,9 @@ HTMLTableAccessible::UnselectCol(uint32_t aColIdx)
 {
   RemoveRowsOrColumnsFromSelection(aColIdx, TableSelection::Column, false);
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// HTMLTableAccessible: protected implementation
 
 nsresult
 HTMLTableAccessible::AddRowOrColumnToSelection(int32_t aIndex, TableSelection aTarget)

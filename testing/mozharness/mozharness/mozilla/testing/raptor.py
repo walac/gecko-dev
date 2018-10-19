@@ -254,15 +254,15 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin):
         # binary path; if testing on firefox the binary path already came from mozharness/pro;
         # otherwise the binary path is forwarded from cmd line arg (raptor_cmd_line_args)
         kw_options['app'] = self.app
-        if self.app == "firefox":
+        if self.app == "firefox" or (self.app == "geckoview" and not self.run_local):
             binary_path = self.binary_path or self.config.get('binary_path')
             if not binary_path:
                 self.fatal("Raptor requires a path to the binary.")
             kw_options['binary'] = binary_path
-        else:
-            if not self.run_local and self.binary_path is None:
-                # in production we aready installed google chrome, so set the binary path for arg
-                # when running locally a --binary arg as passed in, already in raptor_cmd_line_args
+        else:  # running on google chrome
+            if not self.run_local:
+                # when running locally we already set the chrome binary above in init; here
+                # in production we aready installed chrome, so set the binary path to our install
                 kw_options['binary'] = self.chrome_path
 
         # options overwritten from **kw
@@ -288,8 +288,6 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin):
             options.extend(['--code-coverage'])
         for key, value in kw_options.items():
             options.extend(['--%s' % key, value])
-        if self.binary_path is not None:
-            options.extend(['--binary', self.binary_path])
 
         return options
 
@@ -368,7 +366,7 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin):
 
     def install(self):
         if self.app == "geckoview":
-            self.install_apk(os.path.basename(self.installer_url))
+            self.install_apk(self.installer_path)
         else:
             super(Raptor, self).install()
 
@@ -441,6 +439,9 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin):
         # mitmproxy needs path to mozharness when installing the cert, and tooltool
         env['SCRIPTSPATH'] = scripts_path
         env['EXTERNALTOOLSPATH'] = external_tools_path
+
+        # disable "GC poisoning" Bug# 1499043
+        env['JSGC_DISABLE_POISONING'] = '1'
 
         if self.repo_path is not None:
             env['MOZ_DEVELOPER_REPO_DIR'] = self.repo_path

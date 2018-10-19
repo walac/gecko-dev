@@ -7,9 +7,8 @@
 const { Ci } = require("chrome");
 const promise = require("promise");
 const Services = require("Services");
+const asyncStorage = require("devtools/shared/async-storage");
 const EventEmitter = require("devtools/shared/event-emitter");
-
-const TOOL_URL = "chrome://devtools/content/responsive.html/index.xhtml";
 
 loader.lazyRequireGetter(this, "DebuggerClient", "devtools/shared/client/debugger-client", true);
 loader.lazyRequireGetter(this, "DebuggerServer", "devtools/server/main", true);
@@ -25,6 +24,8 @@ loader.lazyRequireGetter(this, "PriorityLevels", "devtools/client/shared/compone
 loader.lazyRequireGetter(this, "TargetFactory", "devtools/client/framework/target", true);
 loader.lazyRequireGetter(this, "gDevTools", "devtools/client/framework/devtools", true);
 loader.lazyRequireGetter(this, "Telemetry", "devtools/client/shared/telemetry");
+
+const TOOL_URL = "chrome://devtools/content/responsive.html/index.xhtml";
 
 const RELOAD_CONDITION_PREF_PREFIX = "devtools.responsive.reloadConditions.";
 const RELOAD_NOTIFICATION_PREF = "devtools.responsive.reloadNotification.enabled";
@@ -87,42 +88,56 @@ const ResponsiveUIManager = exports.ResponsiveUIManager = {
    */
   async openIfNeeded(window, tab, options = {}) {
     if (!tab.linkedBrowser.isRemoteBrowser) {
-      this.showRemoteOnlyNotification(window, tab, options);
+      await this.showRemoteOnlyNotification(window, tab, options);
       return promise.reject(new Error("RDM only available for remote tabs."));
     }
     if (!this.isActiveForTab(tab)) {
       this.initMenuCheckListenerFor(window);
 
-      // Track whether a toolbox was opened before RDM was opened.
-      const toolbox = gDevTools.getToolbox(TargetFactory.forTab(tab));
-      const hostType = toolbox ? toolbox.hostType : "none";
-      const hasToolbox = !!toolbox;
-      const tel = this._telemetry;
-      if (hasToolbox) {
-        tel.scalarAdd("devtools.responsive.toolbox_opened_first", 1);
-      }
-
-      tel.recordEvent("devtools.main", "activate", "responsive_design", null, {
-        "host": hostType,
-        "width": Math.ceil(window.outerWidth / 50) * 50,
-        "session_id": toolbox ? toolbox.sessionId : -1
-      });
-
-      // Track opens keyed by the UI entry point used.
-      let { trigger } = options;
-      if (!trigger) {
-        trigger = "unknown";
-      }
-      tel.keyedScalarAdd("devtools.responsive.open_trigger", trigger, 1);
-
       const ui = new ResponsiveUI(window, tab);
       this.activeTabs.set(tab, ui);
+
+      // Explicitly not await on telemetry to avoid delaying RDM opening
+      this.recordTelemetryOpen(window, tab, options);
+
       await this.setMenuCheckFor(tab, window);
       await ui.inited;
       this.emit("on", { tab });
     }
 
     return this.getResponsiveUIForTab(tab);
+  },
+
+  /**
+   * Record all telemetry probes related to RDM opening.
+   */
+  async recordTelemetryOpen(window, tab, options) {
+    // Track whether a toolbox was opened before RDM was opened.
+    const isKnownTab = TargetFactory.isKnownTab(tab);
+    let toolbox;
+    if (isKnownTab) {
+      const target = await TargetFactory.forTab(tab);
+      toolbox = gDevTools.getToolbox(target);
+    }
+    const hostType = toolbox ? toolbox.hostType : "none";
+    const hasToolbox = !!toolbox;
+    const tel = this._telemetry;
+    if (hasToolbox) {
+      tel.scalarAdd("devtools.responsive.toolbox_opened_first", 1);
+    }
+
+    tel.recordEvent("activate", "responsive_design", null, {
+      "host": hostType,
+      "width": Math.ceil(window.outerWidth / 50) * 50,
+      "session_id": toolbox ? toolbox.sessionId : -1
+    });
+
+    // Track opens keyed by the UI entry point used.
+    let { trigger } = options;
+    if (!trigger) {
+      trigger = "unknown";
+    }
+    tel.keyedScalarAdd("devtools.responsive.open_trigger", trigger, 1);
   },
 
   /**
@@ -144,29 +159,12 @@ const ResponsiveUIManager = exports.ResponsiveUIManager = {
    */
   async closeIfNeeded(window, tab, options = {}) {
     if (this.isActiveForTab(tab)) {
-      const isKnownTab = TargetFactory.isKnownTab(tab);
-      const target = TargetFactory.forTab(tab);
-      const toolbox = gDevTools.getToolbox(target);
-
-      if (!toolbox && !isKnownTab) {
-        // Destroy the tabTarget to avoid a memory leak.
-        target.destroy();
-      }
-
       const ui = this.activeTabs.get(tab);
       const destroyed = await ui.destroy(options);
       if (!destroyed) {
         // Already in the process of destroying, abort.
         return;
       }
-
-      const hostType = toolbox ? toolbox.hostType : "none";
-      const t = this._telemetry;
-      t.recordEvent("devtools.main", "deactivate", "responsive_design", null, {
-        "host": hostType,
-        "width": Math.ceil(window.outerWidth / 50) * 50,
-        "session_id": toolbox ? toolbox.sessionId : -1
-      });
 
       this.activeTabs.delete(tab);
 
@@ -175,7 +173,27 @@ const ResponsiveUIManager = exports.ResponsiveUIManager = {
       }
       this.emit("off", { tab });
       await this.setMenuCheckFor(tab, window);
+
+      // Explicitly not await on telemetry to avoid delaying RDM closing
+      this.recordTelemetryClose(window, tab);
     }
+  },
+
+  async recordTelemetryClose(window, tab) {
+    const isKnownTab = TargetFactory.isKnownTab(tab);
+    let toolbox;
+    if (isKnownTab) {
+      const target = await TargetFactory.forTab(tab);
+      toolbox = gDevTools.getToolbox(target);
+    }
+
+    const hostType = toolbox ? toolbox.hostType : "none";
+    const t = this._telemetry;
+    t.recordEvent("deactivate", "responsive_design", null, {
+      "host": hostType,
+      "width": Math.ceil(window.outerWidth / 50) * 50,
+      "session_id": toolbox ? toolbox.sessionId : -1
+    });
   },
 
   /**
@@ -238,7 +256,7 @@ const ResponsiveUIManager = exports.ResponsiveUIManager = {
   },
 
   showRemoteOnlyNotification(window, tab, { trigger } = {}) {
-    showNotification(window, tab, {
+    return showNotification(window, tab, {
       toolboxButton: trigger == "toolbox",
       msg: l10n.getStr("responsive.remoteOnly"),
       priority: PriorityLevels.PRIORITY_CRITICAL_MEDIUM,
@@ -344,6 +362,9 @@ ResponsiveUI.prototype = {
     debug("Wait until RDP server connect");
     await this.connectToServer();
 
+    // Restore the previous state of RDM.
+    await this.restoreState();
+
     // Show the settings onboarding tooltip
     if (Services.prefs.getBoolPref(SHOW_SETTING_TOOLTIP_PREF)) {
       this.settingOnboardingTooltip =
@@ -374,7 +395,8 @@ ResponsiveUI.prototype = {
     // If our tab is about to be closed, there's not enough time to exit
     // gracefully, but that shouldn't be a problem since the tab will go away.
     // So, skip any waiting when we're about to close the tab.
-    const isWindowClosing = options && options.reason === "unload";
+    const isTabDestroyed = !this.tab.linkedBrowser;
+    const isWindowClosing = (options && options.reason === "unload") || isTabDestroyed;
     const isTabContentDestroying =
       isWindowClosing || (options && (options.reason === "TabClose" ||
                                       options.reason === "BeforeTabRemotenessChange"));
@@ -442,6 +464,10 @@ ResponsiveUI.prototype = {
   },
 
   async connectToServer() {
+    // The client being instantiated here is separate from the toolbox. It is being used
+    // separately and has a life cycle that doesn't correspond to the toolbox. As a
+    // result, it does not have a target, so we are not using `target.getFront` here. See
+    // also the implementation for about:debugging
     DebuggerServer.init();
     DebuggerServer.registerAllActors();
     this.client = new DebuggerClient(DebuggerServer.connectPipe());
@@ -503,6 +529,9 @@ ResponsiveUI.prototype = {
       case "change-touch-simulation":
         this.onChangeTouchSimulation(event);
         break;
+      case "change-user-agent":
+        this.onChangeUserAgent(event);
+        break;
       case "content-resize":
         this.onContentResize(event);
         break;
@@ -510,7 +539,10 @@ ResponsiveUI.prototype = {
         this.onExit();
         break;
       case "remove-device-association":
-        this.onRemoveDeviceAssociation(event);
+        this.onRemoveDeviceAssociation();
+        break;
+      case "viewport-resize":
+        this.onViewportResize(event);
         break;
     }
   },
@@ -553,6 +585,16 @@ ResponsiveUI.prototype = {
     this.emit("touch-simulation-changed");
   },
 
+  async onChangeUserAgent(event) {
+    const { userAgent } = event.data;
+    const reloadNeeded = await this.updateUserAgent(userAgent) &&
+                         this.reloadOnChange("userAgent");
+    if (reloadNeeded) {
+      this.getViewportBrowser().reload();
+    }
+    this.emit("user-agent-changed");
+  },
+
   onContentResize(event) {
     const { width, height } = event.data;
     this.emit("content-resize", {
@@ -566,7 +608,7 @@ ResponsiveUI.prototype = {
     ResponsiveUIManager.closeIfNeeded(browserWindow, tab);
   },
 
-  async onRemoveDeviceAssociation(event) {
+  async onRemoveDeviceAssociation() {
     let reloadNeeded = false;
     await this.updateDPPX();
     reloadNeeded |= await this.updateUserAgent() &&
@@ -578,6 +620,48 @@ ResponsiveUI.prototype = {
     }
     // Used by tests
     this.emit("device-association-removed");
+  },
+
+  onViewportResize(event) {
+    const { width, height } = event.data;
+    this.emit("viewport-resize", {
+      width,
+      height,
+    });
+  },
+
+  /**
+   * Restores the previous state of RDM.
+   */
+  async restoreState() {
+    const deviceState = await asyncStorage.getItem("devtools.responsive.deviceState");
+    if (deviceState) {
+      // Return if there is a device state to restore, this will be done when the
+      // device list is loaded after the post-init.
+      return;
+    }
+
+    const pixelRatio =
+      Services.prefs.getIntPref("devtools.responsive.viewport.pixelRatio", 0);
+    const touchSimulationEnabled =
+      Services.prefs.getBoolPref("devtools.responsive.touchSimulation.enabled", false);
+    const userAgent = Services.prefs.getCharPref("devtools.responsive.userAgent", "");
+
+    let reloadNeeded = false;
+
+    await this.updateDPPX(pixelRatio);
+
+    if (touchSimulationEnabled) {
+      reloadNeeded |= await this.updateTouchSimulation(touchSimulationEnabled) &&
+                      this.reloadOnChange("touchSimulation");
+    }
+    if (userAgent) {
+      reloadNeeded |= await this.updateUserAgent(userAgent) &&
+                      this.reloadOnChange("userAgent");
+    }
+    if (reloadNeeded) {
+      this.getViewportBrowser().reload();
+    }
   },
 
   /**
@@ -638,12 +722,18 @@ ResponsiveUI.prototype = {
    *         Whether a reload is needed to apply the change.
    */
   updateTouchSimulation(enabled) {
-    if (!enabled) {
-      return this.emulationFront.clearTouchEventsOverride();
+    let reloadNeeded;
+    if (enabled) {
+      reloadNeeded = this.emulationFront.setTouchEventsOverride(
+        Ci.nsIDocShell.TOUCHEVENTS_OVERRIDE_ENABLED
+      ).then(() => this.emulationFront.setMetaViewportOverride(
+        Ci.nsIDocShell.META_VIEWPORT_OVERRIDE_ENABLED
+      ));
+    } else {
+      reloadNeeded = this.emulationFront.clearTouchEventsOverride()
+        .then(() => this.emulationFront.clearMetaViewportOverride());
     }
-    return this.emulationFront.setTouchEventsOverride(
-      Ci.nsIDocShell.TOUCHEVENTS_OVERRIDE_ENABLED
-    );
+    return reloadNeeded;
   },
 
   /**

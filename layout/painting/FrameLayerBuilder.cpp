@@ -1626,11 +1626,12 @@ protected:
   Maybe<size_t> SetupMaskLayerForScrolledClip(Layer* aLayer,
                                               const DisplayItemClip& aClip);
 
-  /*
+  /**
    * Create/find a mask layer with suitable size for aMaskItem to paint
    * css-positioned-masking onto.
    */
-  void SetupMaskLayerForCSSMask(Layer* aLayer, nsDisplayMask* aMaskItem);
+  void SetupMaskLayerForCSSMask(Layer* aLayer,
+                                nsDisplayMasksAndClipPaths* aMaskItem);
 
   already_AddRefed<Layer> CreateMaskLayer(
     Layer* aLayer,
@@ -2297,13 +2298,12 @@ InvalidatePreTransformRect(PaintedLayer* aLayer,
 
   nsRect rect = aClip.ApplyNonRoundedIntersection(aRect);
 
+  if (aTransform) {
+    rect = aTransform->TransformRect(rect, data->mAppUnitsPerDevPixel);
+  }
+
   nsIntRect pixelRect = rect.ScaleToOutsidePixels(
     data->mXScale, data->mYScale, data->mAppUnitsPerDevPixel);
-
-  if (aTransform) {
-    pixelRect =
-      aTransform->TransformRect(pixelRect, data->mAppUnitsPerDevPixel);
-  }
 
   InvalidatePostTransformRegion(aLayer, pixelRect, aTranslation);
 }
@@ -2369,18 +2369,21 @@ FrameLayerBuilder::RemoveFrameFromLayerManager(
           t->GetUserData(&gPaintedDisplayItemLayerUserData));
       if (paintedData && data->mGeometry) {
         const int32_t appUnitsPerDevPixel = paintedData->mAppUnitsPerDevPixel;
-        nsRegion old = data->mGeometry->ComputeInvalidationRegion();
-        nsIntRegion rgn = old.ScaleToOutsidePixels(
-          paintedData->mXScale, paintedData->mYScale, appUnitsPerDevPixel);
+        nsRegion rgn = data->mGeometry->ComputeInvalidationRegion();
+        nsIntRegion pixelRgn = rgn.ToOutsidePixels(appUnitsPerDevPixel);
 
         if (data->mTransform) {
-          rgn = data->mTransform->TransformRegion(rgn, appUnitsPerDevPixel);
+          pixelRgn =
+            data->mTransform->TransformRegion(pixelRgn);
         }
 
-        rgn.MoveBy(-GetTranslationForPaintedLayer(t));
+        pixelRgn =
+          pixelRgn.ScaleRoundOut(paintedData->mXScale, paintedData->mYScale);
+
+        pixelRgn.MoveBy(-GetTranslationForPaintedLayer(t));
 
         paintedData->mRegionToInvalidate.Or(paintedData->mRegionToInvalidate,
-                                            rgn);
+                                            pixelRgn);
         paintedData->mRegionToInvalidate.SimplifyOutward(8);
       }
     }
@@ -4270,17 +4273,16 @@ PaintedLayerData::AccumulateHitTestInfo(ContainerState* aState,
     mHitRegion.OrWith(area);
   }
 
-  if (aItem->HitTestInfo() & CompositorHitTestInfo::eDispatchToContent) {
+  if (aItem->HitTestInfo().contains(CompositorHitTestFlags::eDispatchToContent)) {
     mDispatchToContentHitRegion.OrWith(area);
 
-    if (aItem->HitTestInfo() &
-        CompositorHitTestInfo::eRequiresTargetConfirmation) {
+  if (aItem->HitTestInfo().contains(CompositorHitTestFlags::eRequiresTargetConfirmation)) {
       mDTCRequiresTargetConfirmation = true;
     }
   }
 
-  auto touchFlags = hitTestInfo & CompositorHitTestInfo::eTouchActionMask;
-  if (touchFlags) {
+  const auto touchFlags = hitTestInfo & CompositorHitTestTouchActionMask;
+  if (!touchFlags.isEmpty()) {
     // If there are multiple touch-action areas, there are multiple elements
     // with touch-action properties. We don't know what the relationship is
     // between those elements in terms of DOM ancestry, and so we don't know how
@@ -4289,7 +4291,7 @@ PaintedLayerData::AccumulateHitTestInfo(ContainerState* aState,
     // main thread. See bug 1286957.
     if (mCollapsedTouchActions) {
       mDispatchToContentHitRegion.OrWith(area);
-    } else if (touchFlags == CompositorHitTestInfo::eTouchActionMask) {
+    } else if (touchFlags == CompositorHitTestTouchActionMask) {
       // everything was disabled, so touch-action:none
       mNoActionRegion.OrWith(area);
     } else {
@@ -4309,12 +4311,12 @@ PaintedLayerData::AccumulateHitTestInfo(ContainerState* aState,
       // together. Or add another region to the event regions to fix this
       // properly.
       if (touchFlags !=
-          CompositorHitTestInfo::eTouchActionDoubleTapZoomDisabled) {
-        if (!(hitTestInfo & CompositorHitTestInfo::eTouchActionPanXDisabled)) {
+          CompositorHitTestFlags::eTouchActionDoubleTapZoomDisabled) {
+        if (!hitTestInfo.contains(CompositorHitTestFlags::eTouchActionPanXDisabled)) {
           // pan-x is allowed
           mHorizontalPanRegion.OrWith(area);
         }
-        if (!(hitTestInfo & CompositorHitTestInfo::eTouchActionPanYDisabled)) {
+        if (!hitTestInfo.contains(CompositorHitTestFlags::eTouchActionPanYDisabled)) {
           // pan-y is allowed
           mVerticalPanRegion.OrWith(area);
         }
@@ -4442,12 +4444,13 @@ PaintInactiveLayer(nsDisplayListBuilder* aBuilder,
   basic->SetTarget(context);
 
   if (aItem->GetType() == DisplayItemType::TYPE_MASK) {
-    static_cast<nsDisplayMask*>(aItem)->PaintAsLayer(aBuilder, aCtx, basic);
+    static_cast<nsDisplayMasksAndClipPaths*>(aItem)->
+      PaintAsLayer(aBuilder, aCtx, basic);
     if (basic->InTransaction()) {
       basic->AbortTransaction();
     }
   } else if (aItem->GetType() == DisplayItemType::TYPE_FILTER) {
-    static_cast<nsDisplayFilter*>(aItem)->PaintAsLayer(aBuilder, aCtx, basic);
+    static_cast<nsDisplayFilters*>(aItem)->PaintAsLayer(aBuilder, aCtx, basic);
     if (basic->InTransaction()) {
       basic->AbortTransaction();
     }
@@ -4611,7 +4614,7 @@ SetCSSMaskLayerUserData(Layer* aMaskLayer)
 
 void
 ContainerState::SetupMaskLayerForCSSMask(Layer* aLayer,
-                                         nsDisplayMask* aMaskItem)
+                                         nsDisplayMasksAndClipPaths* aMaskItem)
 {
   RefPtr<ImageLayer> maskLayer =
     CreateOrRecycleMaskImageLayerFor(MaskLayerKey(aLayer, Nothing()),
@@ -4902,7 +4905,7 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
         transformNode->TransformRect(itemContent, mAppUnitsPerDevPixel);
 
       itemDrawRect =
-        transformNode->TransformRect(itemDrawRect, mAppUnitsPerDevPixel);
+        transformNode->TransformRect(itemDrawRect);
     }
 
 #ifdef DEBUG
@@ -5204,7 +5207,8 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
       if (item->GetType() == DisplayItemType::TYPE_MASK) {
         MOZ_ASSERT(itemClip.GetRoundedRectCount() == 0);
 
-        nsDisplayMask* maskItem = static_cast<nsDisplayMask*>(item);
+        nsDisplayMasksAndClipPaths* maskItem =
+          static_cast<nsDisplayMasksAndClipPaths*>(item);
         SetupMaskLayerForCSSMask(ownLayer, maskItem);
 
         if (iter.PeekNext() && iter.PeekNext()->GetType() ==
@@ -5411,9 +5415,10 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
 
         const Matrix4x4Flagged& matrix = transform->GetTransformForRendering();
 
-        Maybe<nsRect> clip;
+        Maybe<gfx::IntRect> clip;
         if (itemClip.HasClip()) {
-          clip.emplace(itemClip.NonRoundedIntersection());
+          const nsRect nonRoundedClip = itemClip.NonRoundedIntersection();
+          clip.emplace(nonRoundedClip.ToNearestPixels(mAppUnitsPerDevPixel));
         }
 
         transformNode = new TransformClipNode(transformNode, matrix, clip);
@@ -5514,12 +5519,6 @@ FrameLayerBuilder::ComputeGeometryChangeForItem(DisplayItemData* aData)
   nsPoint shift = layerData->mAnimatedGeometryRootOrigin -
                   layerData->mLastAnimatedGeometryRootOrigin;
 
-  if (aData->mTransform) {
-    // If this display item is inside a flattened transform, the shift is
-    // already included in the root transform.
-    shift = nsPoint();
-  }
-
   const DisplayItemClip& clip = item->GetClip();
   const int32_t appUnitsPerDevPixel = layerData->mAppUnitsPerDevPixel;
 
@@ -5581,6 +5580,12 @@ FrameLayerBuilder::ComputeGeometryChangeForItem(DisplayItemData* aData)
     const nsRegion& changedFrameInvalidations =
       aData->GetChangedFrameInvalidations();
 
+    if (aData->mTransform) {
+      // If this display item is inside a flattened transform the offset is
+      // already included in the root transform, so there is no need to shift.
+      shift = nsPoint();
+    }
+
     aData->mGeometry->MoveBy(shift);
 
     nsRegion combined;
@@ -5615,13 +5620,13 @@ FrameLayerBuilder::ComputeGeometryChangeForItem(DisplayItemData* aData)
       combined.And(combined, clipRegion);
     }
 
-    invalidPixels = combined.ScaleToOutsidePixels(
-      layerData->mXScale, layerData->mYScale, appUnitsPerDevPixel);
+    invalidPixels = combined.ToOutsidePixels(appUnitsPerDevPixel);
 
     if (aData->mTransform) {
-      invalidPixels =
-        aData->mTransform->TransformRegion(invalidPixels, appUnitsPerDevPixel);
+      invalidPixels = aData->mTransform->TransformRegion(invalidPixels);
     }
+
+    invalidPixels.ScaleRoundOut(layerData->mXScale, layerData->mYScale);
 
 #ifdef MOZ_DUMP_PAINTING
     if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
@@ -5811,15 +5816,15 @@ FrameLayerBuilder::AddPaintedDisplayItem(PaintedLayerData* aLayerData,
                       layer);
       }
 #endif
+
+      if (data && data->mTransform) {
+        invalid = data->mTransform->TransformRegion(invalid);
+      }
+
       invalid.ScaleRoundOut(paintedData->mXScale, paintedData->mYScale);
 
       if (hasClip) {
         invalid.And(invalid, intClip);
-      }
-
-      if (data && data->mTransform) {
-        invalid = data->mTransform->TransformRegion(
-          invalid, paintedData->mAppUnitsPerDevPixel);
       }
 
       InvalidatePostTransformRegion(
@@ -7739,9 +7744,9 @@ ContainerState::CreateMaskLayer(Layer* aLayer,
                                 const DisplayItemClip& aClip,
                                 const Maybe<size_t>& aForAncestorMaskLayer)
 {
-  // aLayer will never be the container layer created by an nsDisplayMask
-  // because nsDisplayMask propagates the DisplayItemClip to its contents
-  // and is not clipped itself.
+  // aLayer will never be the container layer created by an
+  // nsDisplayMasksAndClipPaths because nsDisplayMasksAndClipPaths propagates
+  // the DisplayItemClip to its contents and is not clipped itself.
   // This assertion will fail if that ever stops being the case.
   MOZ_ASSERT(!aLayer->GetUserData(&gCSSMaskLayerUserData),
              "A layer contains round clips should not have css-mask on it.");

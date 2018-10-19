@@ -408,6 +408,9 @@ class XPIState {
     if (saved.currentModifiedTime && saved.currentModifiedTime != this.lastModifiedTime) {
       this.lastModifiedTime = saved.currentModifiedTime;
       this.changed = true;
+    } else if (saved.currentModifiedTime === null) {
+      this.missing = true;
+      this.changed = true;
     }
   }
 
@@ -1491,6 +1494,20 @@ class BootstrapScope {
   }
 
   /**
+   * Returns state information for use by an AsyncShutdown blocker. If
+   * the wrapped bootstrap scope has a fetchState method, it is called,
+   * and its result returned. If not, returns null.
+   *
+   * @returns {Object|null}
+   */
+  fetchState() {
+    if (this.scope && this.scope.fetchState) {
+      return this.scope.fetchState();
+    }
+    return null;
+  }
+
+  /**
    * Calls a bootstrap method for an add-on.
    *
    * @param {string} aMethod
@@ -1768,7 +1785,7 @@ class BootstrapScope {
 
   async _install(reason, callUpdate, startup, extraArgs) {
     if (callUpdate) {
-      this.callBootstrapMethod("update", reason, extraArgs);
+      await this.callBootstrapMethod("update", reason, extraArgs);
     } else {
       this.callBootstrapMethod("install", reason, extraArgs);
     }
@@ -2189,9 +2206,12 @@ var XPIProvider = {
               }
             }
 
-            let promise = BootstrapScope.get(addon).shutdown(reason);
+            let scope = BootstrapScope.get(addon);
+            let promise = scope.shutdown(reason);
             AsyncShutdown.profileChangeTeardown.addBlocker(
-              `Extension shutdown: ${addon.id}`, promise);
+              `Extension shutdown: ${addon.id}`, promise, {
+                fetchState: scope.fetchState.bind(scope),
+              });
           }
         });
 

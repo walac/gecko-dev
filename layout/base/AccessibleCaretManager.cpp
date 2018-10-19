@@ -27,9 +27,6 @@
 #include "nsFrameSelection.h"
 #include "nsGenericHTMLElement.h"
 #include "nsIHapticFeedback.h"
-#ifdef MOZ_WIDGET_ANDROID
-#include "nsWindow.h"
-#endif
 
 namespace mozilla {
 
@@ -530,8 +527,13 @@ AccessibleCaretManager::SelectWordOrShortcut(const nsPoint& aPoint)
   }
 
   // Find the frame under point.
-  AutoWeakFrame ptFrame = nsLayoutUtils::GetFrameForPoint(rootFrame, aPoint,
-    nsLayoutUtils::IGNORE_PAINT_SUPPRESSION | nsLayoutUtils::IGNORE_CROSS_DOC);
+  uint32_t flags = nsLayoutUtils::IGNORE_PAINT_SUPPRESSION | nsLayoutUtils::IGNORE_CROSS_DOC;
+#ifdef MOZ_WIDGET_ANDROID
+  // On Android, we need IGNORE_ROOT_SCROLL_FRAME for correct hit testing
+  // when zoomed in or out.
+  flags = nsLayoutUtils::IGNORE_ROOT_SCROLL_FRAME;
+#endif
+  AutoWeakFrame ptFrame = nsLayoutUtils::GetFrameForPoint(rootFrame, aPoint, flags);
   if (!ptFrame.IsAlive()) {
     return NS_ERROR_FAILURE;
   }
@@ -861,17 +863,6 @@ AccessibleCaretManager::SetSelectionDragState(bool aState) const
   if (fs) {
     fs->SetDragState(aState);
   }
-
-  // Pin Fennecs DynamicToolbarAnimator in place before/after dragging,
-  // to avoid co-incident screen scrolling.
-#ifdef MOZ_WIDGET_ANDROID
-  if (XRE_IsParentProcess()) {
-    nsIDocument* doc = mPresShell->GetDocument();
-    MOZ_ASSERT(doc);
-    nsIWidget* widget = nsContentUtils::WidgetForDocument(doc);
-    static_cast<nsWindow*>(widget)->SetSelectionDragState(aState);
-  }
-#endif
 }
 
 bool
@@ -1402,12 +1393,19 @@ AccessibleCaretManager::DispatchCaretStateChangedEvent(CaretChangedReason aReaso
     nsRect clampedRect = nsLayoutUtils::ClampRectToScrollFrames(commonAncestorFrame,
                                                                 rect);
     nsLayoutUtils::TransformRect(commonAncestorFrame, rootFrame, clampedRect);
-    domRect->SetLayoutRect(clampedRect);
+    rect = clampedRect;
     init.mSelectionVisible = !clampedRect.IsEmpty();
   } else {
-    domRect->SetLayoutRect(rect);
     init.mSelectionVisible = true;
   }
+
+  // The rect computed above is relative to rootFrame, which is the (layout)
+  // viewport frame. However, the consumers of this event expect the bounds
+  // of the selection relative to the screen (visual viewport origin), so
+  // translate between the two.
+  rect -= mPresShell->GetVisualViewportOffsetRelativeToLayoutViewport();
+
+  domRect->SetLayoutRect(rect);
 
   // Send isEditable info w/ event detail. This info can help determine
   // whether to show cut command on selection dialog or not.

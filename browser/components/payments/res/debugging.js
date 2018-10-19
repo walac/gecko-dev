@@ -53,11 +53,13 @@ let REQUEST_1 = {
         },
       },
     ],
+    payer: {},
+    paymentMethod: {},
     shippingAddressErrors: {},
     shippingOptions: [
       {
-        id: "123",
-        label: "Fast",
+        id: "std",
+        label: "Standard (3-5 business days)",
         amount: {
           currency: "USD",
           value: 10,
@@ -65,11 +67,12 @@ let REQUEST_1 = {
         selected: false,
       },
       {
-        id: "456",
-        label: "Faster (default)",
+        id: "super-slow",
+        // Long to test truncation
+        label: "Ssssssssuuuuuuuuupppppeeeeeeerrrrr sssssllllllloooooowwwwww",
         amount: {
           currency: "USD",
-          value: 20,
+          value: 1.50,
         },
         selected: true,
       },
@@ -84,7 +87,7 @@ let REQUEST_1 = {
     requestShipping: true,
     shippingType: "shipping",
   },
-  shippingOption: "456",
+  shippingOption: "std",
 };
 
 let REQUEST_2 = {
@@ -92,7 +95,19 @@ let REQUEST_2 = {
   topLevelPrincipal: {URI: {displayHost: "example.com"}},
   requestId: "3797081f-a96b-c34b-a58b-1083c6e66e25",
   completeStatus: "",
-  paymentMethods: [],
+  paymentMethods: [
+    {
+      "supportedMethods": "basic-card",
+      "data": {
+        "supportedNetworks": [
+          "amex",
+          "discover",
+          "mastercard",
+          "visa",
+        ],
+      },
+    },
+  ],
   paymentDetails: {
     id: "",
     totalItem: {label: "", amount: {currency: "CAD", value: "25.75"}, pending: false},
@@ -120,6 +135,8 @@ let REQUEST_2 = {
         },
       },
     ],
+    payer: {},
+    paymentMethod: {},
     shippingAddressErrors: {},
     shippingOptions: [
       {
@@ -208,8 +225,25 @@ let ADDRESSES_1 = {
   "abcde12345": {
     "address-level2": "Mountain View",
     "country": "US",
+    "family-name": "Fields",
+    "given-name": "Mrs.",
     "guid": "abcde12345",
     "name": "Mrs. Fields",
+  },
+  "german1": {
+    "additional-name": "Y.",
+    "address-level1": "",
+    "address-level2": "Berlin",
+    "country": "DE",
+    "email": "de@example.com",
+    "family-name": "Mouse",
+    "given-name": "Anon",
+    "guid": "german1",
+    "name": "Anon Y. Mouse",
+    "organization": "Mozilla",
+    "postal-code": "10997",
+    "street-address": "Schlesische Str. 27",
+    "tel": "+49 30 983333002",
   },
   "missing-country": {
     "address-level1": "ON",
@@ -292,6 +326,7 @@ let BASIC_CARDS_1 = {
     "cc-name": "John Smith",
     "cc-exp-month": 6,
     "cc-exp-year": 2024,
+    "cc-type": "visa",
     "cc-given-name": "John",
     "cc-additional-name": "",
     "cc-family-name": "Smith",
@@ -309,6 +344,7 @@ let BASIC_CARDS_1 = {
     "cc-name": "Jane Doe",
     "cc-exp-month": 5,
     "cc-exp-year": 2023,
+    "cc-type": "mastercard",
     "cc-given-name": "Jane",
     "cc-additional-name": "",
     "cc-family-name": "Doe",
@@ -327,6 +363,26 @@ let BASIC_CARDS_1 = {
     "cc-given-name": "Jane",
     "cc-additional-name": "",
     "cc-family-name": "Fields",
+    "cc-type": "discover",
+  },
+  "amex-card": {
+    methodName: "basic-card",
+    billingAddressGUID: "68gjdh354j",
+    "cc-number": "************1941",
+    "guid": "amex-card",
+    "version": 1,
+    "timeCreated": 1517890536491,
+    "timeLastModified": 1517890564518,
+    "timeLastUsed": 0,
+    "timesUsed": 0,
+    "cc-name": "Capt America",
+    "cc-given-name": "Capt",
+    "cc-additional-name": "",
+    "cc-family-name": "America",
+    "cc-type": "amex",
+    "cc-exp-month": 6,
+    "cc-exp-year": 2023,
+    "cc-exp": "2023-06",
   },
   "missing-cc-name": {
     methodName: "basic-card",
@@ -406,10 +462,70 @@ let buttonActions = {
     paymentDialog.setStateFromParent({savedBasicCards: BASIC_CARDS_1});
   },
 
+  setBasicCardErrors() {
+    let request = Object.assign({}, requestStore.getState().request);
+    request.paymentDetails = Object.assign({}, requestStore.getState().request.paymentDetails);
+    request.paymentDetails.paymentMethod = {
+      cardNumber: "",
+      cardholderName: "",
+      cardSecurityCode: "",
+      expiryMonth: "",
+      expiryYear: "",
+      billingAddress: {
+        addressLine: "Can only buy from ROADS, not DRIVES, BOULEVARDS, or STREETS",
+        city: "Can only buy from CITIES, not TOWNSHIPS or VILLAGES",
+        country: "Can only buy from US, not CA",
+        organization: "Can only buy from CORPORATIONS, not CONSORTIUMS",
+        phone: "Only allowed to buy from area codes that start with 9",
+        postalCode: "Only allowed to buy from postalCodes that start with 0",
+        recipient: "Can only buy from names that start with J",
+        region: "Can only buy from regions that start with M",
+      },
+    };
+    requestStore.setState({
+      request,
+    });
+  },
+
+
   setChangesPrevented(evt) {
     requestStore.setState({
       changesPrevented: evt.target.checked,
     });
+  },
+
+  setCompleteStatus() {
+    let input = document.querySelector("[name='setCompleteStatus']:checked");
+    let completeStatus = input.value;
+    let request = requestStore.getState().request;
+    paymentDialog.setStateFromParent({
+      request: Object.assign({}, request, { completeStatus }),
+    });
+  },
+
+  setPayerErrors() {
+    let request = Object.assign({}, requestStore.getState().request);
+    request.paymentDetails = Object.assign({}, requestStore.getState().request.paymentDetails);
+    request.paymentDetails.payer = {
+      email: "Only @mozilla.com emails are supported",
+      name: "Payer name must start with M",
+      phone: "Payer area codes must start with 1",
+    };
+    requestStore.setState({
+      request,
+    });
+  },
+
+  setPaymentOptions() {
+    let options = {};
+    let checkboxes = document.querySelectorAll("#paymentOptions input[type='checkbox']");
+    for (let input of checkboxes) {
+      options[input.name] = input.checked;
+    }
+    let req = Object.assign({}, requestStore.getState().request, {
+      paymentOptions: options,
+    });
+    requestStore.setState({ request: req });
   },
 
   setRequest1() {
@@ -433,29 +549,17 @@ let buttonActions = {
     buttonActions.setPaymentOptions();
   },
 
-  setPaymentOptions() {
-    let options = {};
-    let checkboxes = document.querySelectorAll("#paymentOptions input[type='checkbox']");
-    for (let input of checkboxes) {
-      options[input.name] = input.checked;
-    }
-    let req = Object.assign({}, requestStore.getState().request, {
-      paymentOptions: options,
-    });
-    requestStore.setState({ request: req });
-  },
-
   setShippingError() {
     let request = Object.assign({}, requestStore.getState().request);
     request.paymentDetails = Object.assign({}, requestStore.getState().request.paymentDetails);
-    request.paymentDetails.error = "Error!";
+    request.paymentDetails.error = "Shipping Error!";
     request.paymentDetails.shippingOptions = [];
     requestStore.setState({
       request,
     });
   },
 
-  setAddressErrors() {
+  setShippingAddressErrors() {
     let request = Object.assign({}, requestStore.getState().request);
     request.paymentDetails = Object.assign({}, requestStore.getState().request.paymentDetails);
     request.paymentDetails.shippingAddressErrors = {
@@ -473,13 +577,15 @@ let buttonActions = {
     });
   },
 
-  setCompleteStatus() {
-    let input = document.querySelector("[name='setCompleteStatus']:checked");
-    let completeStatus = input.value;
-    let request = requestStore.getState().request;
-    paymentDialog.setStateFromParent({
-      request: Object.assign({}, request, { completeStatus }),
-    });
+  toggleDirectionality() {
+    let body = paymentDialog.ownerDocument.body;
+    body.dir = body.dir == "rtl" ? "ltr" : "rtl";
+  },
+
+  toggleBranding() {
+    for (let container of paymentDialog.querySelectorAll("accepted-cards")) {
+      container.classList.toggle("branded");
+    }
   },
 };
 

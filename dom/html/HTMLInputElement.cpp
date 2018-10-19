@@ -115,6 +115,7 @@
 #include "nsIMIMEInfo.h"
 #include "nsFrameSelection.h"
 #include "nsBaseCommandController.h"
+#include "nsXULControllers.h"
 
 // input type=date
 #include "js/Date.h"
@@ -122,8 +123,6 @@
 NS_IMPL_NS_NEW_HTML_ELEMENT_CHECK_PARSER(Input)
 
 // XXX align=left, hspace, vspace, border? other nav4 attrs
-
-static NS_DEFINE_CID(kXULControllersCID,  NS_XULCONTROLLERS_CID);
 
 namespace mozilla {
 namespace dom {
@@ -990,9 +989,9 @@ HTMLInputElement::Shutdown()
 // construction, destruction
 //
 
-HTMLInputElement::HTMLInputElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
+HTMLInputElement::HTMLInputElement(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
                                    FromParser aFromParser, FromClone aFromClone)
-  : nsGenericHTMLFormElementWithState(aNodeInfo, kInputDefaultType->value)
+  : nsGenericHTMLFormElementWithState(std::move(aNodeInfo), kInputDefaultType->value)
   , mAutocompleteAttrState(nsContentUtils::eAutocompleteAttrState_Unknown)
   , mAutocompleteInfoState(nsContentUtils::eAutocompleteAttrState_Unknown)
   , mDisabledChanged(false)
@@ -1132,8 +1131,8 @@ HTMLInputElement::Clone(dom::NodeInfo* aNodeInfo, nsINode** aResult) const
 {
   *aResult = nullptr;
 
-  already_AddRefed<mozilla::dom::NodeInfo> ni = RefPtr<mozilla::dom::NodeInfo>(aNodeInfo).forget();
-  RefPtr<HTMLInputElement> it = new HTMLInputElement(ni, NOT_FROM_PARSER,
+  RefPtr<HTMLInputElement> it = new HTMLInputElement(do_AddRef(aNodeInfo),
+                                                     NOT_FROM_PARSER,
                                                      FromClone::yes);
 
   nsresult rv = const_cast<HTMLInputElement*>(this)->CopyInnerTo(it);
@@ -3053,8 +3052,14 @@ HTMLInputElement::GetRadioGroupContainer() const
     return nullptr;
   }
 
-  //XXXsmaug It isn't clear how this should work in Shadow DOM.
-  return static_cast<nsDocument*>(GetUncomposedDoc());
+  DocumentOrShadowRoot* docOrShadow = GetUncomposedDocOrConnectedShadowRoot();
+  if (!docOrShadow) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsIRadioGroupContainer> container =
+    do_QueryInterface(&(docOrShadow->AsNode()));
+  return container;
 }
 
 HTMLInputElement*
@@ -4633,7 +4638,8 @@ HTMLInputElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
 
   // Add radio to document if we don't have a form already (if we do it's
   // already been added into that group)
-  if (aDocument && !mForm && mType == NS_FORM_INPUT_RADIO) {
+  if (!mForm && mType == NS_FORM_INPUT_RADIO &&
+      GetUncomposedDocOrConnectedShadowRoot()) {
     AddedToRadioGroup();
   }
 
@@ -5646,7 +5652,7 @@ NS_IMETHODIMP_(bool)
 HTMLInputElement::IsAttributeMapped(const nsAtom* aAttribute) const
 {
   static const MappedAttributeEntry attributes[] = {
-    { &nsGkAtoms::align },
+    { nsGkAtoms::align },
     { nullptr },
   };
 
@@ -5798,10 +5804,9 @@ HTMLInputElement::GetControllers(ErrorResult& aRv)
   {
     if (!mControllers)
     {
-      nsresult rv;
-      mControllers = do_CreateInstance(kXULControllersCID, &rv);
-      if (NS_FAILED(rv)) {
-        aRv.Throw(rv);
+      mControllers = new nsXULControllers();
+      if (!mControllers) {
+        aRv.Throw(NS_ERROR_FAILURE);
         return nullptr;
       }
 
@@ -6569,7 +6574,7 @@ HTMLInputElement::AddedToRadioGroup()
 {
   // If the element is neither in a form nor a document, there is no group so we
   // should just stop here.
-  if (!mForm && (!IsInUncomposedDoc() || IsInAnonymousSubtree())) {
+  if (!mForm && (!GetUncomposedDocOrConnectedShadowRoot() || IsInAnonymousSubtree())) {
     return;
   }
 

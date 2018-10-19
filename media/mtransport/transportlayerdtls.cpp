@@ -809,6 +809,19 @@ nsresult TransportLayerDtls::GetCipherSuite(uint16_t* cipherSuite) const {
   return NS_OK;
 }
 
+std::vector<uint16_t> TransportLayerDtls::GetDefaultSrtpCiphers() {
+  std::vector<uint16_t> ciphers;
+
+  ciphers.push_back(kDtlsSrtpAeadAes128Gcm);
+  // Since we don't support DTLS 1.3 or SHA384 ciphers (see bug 1312976)
+  // we don't really enough entropy to prefer this over 128 bit
+  ciphers.push_back(kDtlsSrtpAeadAes256Gcm);
+  ciphers.push_back(kDtlsSrtpAes128CmHmacSha1_80);
+  ciphers.push_back(kDtlsSrtpAes128CmHmacSha1_32);
+
+  return ciphers;
+}
+
 void TransportLayerDtls::StateChange(TransportLayer *layer, State state) {
   if (state <= state_) {
     MOZ_MTLOG(ML_ERROR, "Lower layer state is going backwards from ours");
@@ -1528,7 +1541,7 @@ TransportLayerDtls::RecordCipherTelemetry() {
   nsresult rv = GetCipherSuite(&cipher);
 
   if (NS_FAILED(rv)) {
-    MOZ_MTLOG(ML_ERROR, "Failed to get cipher suite");
+    MOZ_MTLOG(ML_ERROR, "Failed to get DTLS cipher suite");
     return;
   }
 
@@ -1580,6 +1593,34 @@ TransportLayerDtls::RecordCipherTelemetry() {
   }
 
   Telemetry::Accumulate(Telemetry::WEBRTC_DTLS_CIPHER, t_cipher);
+
+  rv = GetSrtpCipher(&cipher);
+
+  if (NS_FAILED(rv)) {
+    MOZ_MTLOG(ML_ERROR, "Failed to get SRTP cipher suite");
+    return;
+  }
+
+  mozilla::Telemetry::LABELS_WEBRTC_SRTP_CIPHER label =
+    mozilla::Telemetry::LABELS_WEBRTC_SRTP_CIPHER::Unknown;
+
+  switch (cipher) {
+    case kDtlsSrtpAes128CmHmacSha1_80:
+      label = Telemetry::LABELS_WEBRTC_SRTP_CIPHER::Aes128CmHmacSha1_80;
+      break;
+    case kDtlsSrtpAes128CmHmacSha1_32:
+      label = Telemetry::LABELS_WEBRTC_SRTP_CIPHER::Aes128CmHmacSha1_32;
+      break;
+    case kDtlsSrtpAeadAes128Gcm:
+      label = Telemetry::LABELS_WEBRTC_SRTP_CIPHER::AeadAes128Gcm;
+      break;
+    case kDtlsSrtpAeadAes256Gcm:
+      label = Telemetry::LABELS_WEBRTC_SRTP_CIPHER::AeadAes256Gcm;
+      break;
+  }
+
+  Telemetry::AccumulateCategorical(label);
+
 }
 
 }  // close namespace

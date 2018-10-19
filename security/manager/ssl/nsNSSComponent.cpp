@@ -52,7 +52,7 @@
 #include "nsXULAppAPI.h"
 #include "nss.h"
 #include "p12plcy.h"
-#include "pkix/pkixnss.h"
+#include "mozpkix/pkixnss.h"
 #include "secerr.h"
 #include "secmod.h"
 #include "ssl.h"
@@ -558,6 +558,7 @@ nsNSSComponent::UnloadFamilySafetyRoot()
 // 1: only attempt to detect Family Safety mode (don't import the root)
 // 2: detect Family Safety mode and import the root
 const char* kFamilySafetyModePref = "security.family_safety.mode";
+const uint32_t kFamilySafetyModeDefault = 0;
 
 // The telemetry gathered by this function is as follows:
 // 0-2: the value of the Family Safety mode pref
@@ -567,16 +568,12 @@ const char* kFamilySafetyModePref = "security.family_safety.mode";
 // 6: failed to import the Family Safety root
 // 7: successfully imported the root
 void
-nsNSSComponent::MaybeEnableFamilySafetyCompatibility()
+nsNSSComponent::MaybeEnableFamilySafetyCompatibility(uint32_t familySafetyMode)
 {
 #ifdef XP_WIN
   if (!(IsWin8Point1OrLater() && !IsWin10OrLater())) {
     return;
   }
-  // Disabled by default.
-  const uint32_t FAMILY_SAFETY_MODE_DEFAULT = 0;
-  uint32_t familySafetyMode = Preferences::GetUint(kFamilySafetyModePref,
-                                                   FAMILY_SAFETY_MODE_DEFAULT);
   if (familySafetyMode > 2) {
     familySafetyMode = 0;
   }
@@ -780,11 +777,15 @@ nsNSSComponent::GetEnterpriseRoots(nsIX509CertList** enterpriseRoots)
 class LoadLoadableRootsTask final : public Runnable
 {
 public:
-  explicit LoadLoadableRootsTask(nsNSSComponent* nssComponent,
-                                 bool importEnterpriseRoots)
+  LoadLoadableRootsTask(nsNSSComponent* nssComponent,
+                        bool importEnterpriseRoots,
+                        uint32_t familySafetyMode,
+                        Vector<nsCString>&& possibleLoadableRootsLocations)
     : Runnable("LoadLoadableRootsTask")
     , mNSSComponent(nssComponent)
     , mImportEnterpriseRoots(importEnterpriseRoots)
+    , mFamilySafetyMode(familySafetyMode)
+    , mPossibleLoadableRootsLocations(std::move(possibleLoadableRootsLocations))
   {
     MOZ_ASSERT(nssComponent);
   }
@@ -798,6 +799,8 @@ private:
   nsresult LoadLoadableRoots();
   RefPtr<nsNSSComponent> mNSSComponent;
   bool mImportEnterpriseRoots;
+  uint32_t mFamilySafetyMode;
+  Vector<nsCString> mPossibleLoadableRootsLocations;
   nsCOMPtr<nsIThread> mThread;
 };
 
@@ -858,6 +861,7 @@ LoadLoadableRootsTask::Run()
   if (mImportEnterpriseRoots) {
     mNSSComponent->ImportEnterpriseRoots();
   }
+  mNSSComponent->MaybeEnableFamilySafetyCompatibility(mFamilySafetyMode);
   nsresult rv = mNSSComponent->TrustLoaded3rdPartyRoots();
   if (NS_FAILED(rv)) {
     MOZ_LOG(gPIPNSSLog, LogLevel::Error,
@@ -987,6 +991,8 @@ nsNSSComponent::CheckForSmartCardChanges()
 static nsresult
 GetNSS3Directory(nsCString& result)
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   UniquePRString nss3Path(
     PR_GetLibraryFilePathname(MOZ_DLL_PREFIX "nss3" MOZ_DLL_SUFFIX,
                               reinterpret_cast<PRFuncPtr>(NSS_Initialize)));
@@ -1031,6 +1037,8 @@ GetNSS3Directory(nsCString& result)
 static nsresult
 GetDirectoryPath(const char* directoryKey, nsCString& result)
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   nsCOMPtr<nsIProperties> directoryService(
     do_GetService(NS_DIRECTORY_SERVICE_CONTRACTID));
   if (!directoryService) {
@@ -1059,20 +1067,24 @@ GetDirectoryPath(const char* directoryKey, nsCString& result)
 #endif
 }
 
-
-nsresult
-LoadLoadableRootsTask::LoadLoadableRoots()
+// The loadable roots library is probably in the same directory we loaded the
+// NSS shared library from, but in some cases it may be elsewhere. This function
+// enumerates and returns the possible locations as nsCStrings.
+static nsresult
+ListPossibleLoadableRootsLocations(
+  Vector<nsCString>& possibleLoadableRootsLocations)
 {
-  // Find the best Roots module for our purposes.
-  // Prefer the application's installation directory,
-  // but also ensure the library is at least the version we expect.
-  Vector<nsCString> possibleCKBILocations;
+  MOZ_ASSERT(NS_IsMainThread());
+  if (!NS_IsMainThread()) {
+    return NS_ERROR_NOT_SAME_THREAD;
+  }
+
   // First try in the directory where we've already loaded
   // MOZ_DLL_PREFIX nss3 MOZ_DLL_SUFFIX, since that's likely to be correct.
   nsAutoCString nss3Dir;
   nsresult rv = GetNSS3Directory(nss3Dir);
   if (NS_SUCCEEDED(rv)) {
-    if (!possibleCKBILocations.append(std::move(nss3Dir))) {
+    if (!possibleLoadableRootsLocations.append(std::move(nss3Dir))) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
   } else {
@@ -1084,7 +1096,7 @@ LoadLoadableRootsTask::LoadLoadableRoots()
   nsAutoCString currentProcessDir;
   rv = GetDirectoryPath(NS_XPCOM_CURRENT_PROCESS_DIR, currentProcessDir);
   if (NS_SUCCEEDED(rv)) {
-    if (!possibleCKBILocations.append(std::move(currentProcessDir))) {
+    if (!possibleLoadableRootsLocations.append(std::move(currentProcessDir))) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
   } else {
@@ -1094,7 +1106,7 @@ LoadLoadableRootsTask::LoadLoadableRoots()
   nsAutoCString greDir;
   rv = GetDirectoryPath(NS_GRE_DIR, greDir);
   if (NS_SUCCEEDED(rv)) {
-    if (!possibleCKBILocations.append(std::move(greDir))) {
+    if (!possibleLoadableRootsLocations.append(std::move(greDir))) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
   } else {
@@ -1103,14 +1115,21 @@ LoadLoadableRootsTask::LoadLoadableRoots()
   // As a last resort, this will cause the library loading code to use the OS'
   // default library search path.
   nsAutoCString emptyString;
-  if (!possibleCKBILocations.append(std::move(emptyString))) {
+  if (!possibleLoadableRootsLocations.append(std::move(emptyString))) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  for (const auto& possibleCKBILocation : possibleCKBILocations) {
-    if (mozilla::psm::LoadLoadableRoots(possibleCKBILocation)) {
-      MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("loaded CKBI from %s",
-                                            possibleCKBILocation.get()));
+  return NS_OK;
+}
+
+nsresult
+LoadLoadableRootsTask::LoadLoadableRoots()
+{
+  for (const auto& possibleLocation : mPossibleLoadableRootsLocations) {
+    if (mozilla::psm::LoadLoadableRoots(possibleLocation)) {
+      MOZ_LOG(gPIPNSSLog,
+              LogLevel::Debug,
+              ("loaded CKBI from %s", possibleLocation.get()));
       return NS_OK;
     }
   }
@@ -1486,6 +1505,8 @@ nsNSSComponent::setEnabledTLSVersions()
 static void
 SetNSSDatabaseCacheModeAsAppropriate()
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   nsCOMPtr<nsIFile> profileFile;
   nsresult rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR,
                                        getter_AddRefs(profileFile));
@@ -1870,14 +1891,6 @@ nsNSSComponent::InitializeNSS()
 
   DisableMD5();
 
-  // Note that this function does not change the trust of any loaded 3rd party
-  // roots. Because we're initializing the nsNSSComponent, and because if the
-  // user has a master password set on the softoken it could cause the
-  // authentication dialog to come up, we could conceivably re-enter
-  // nsNSSComponent initialization, which would be bad. Instead, we set the
-  // trust when the load loadable roots task finishes (below).
-  MaybeEnableFamilySafetyCompatibility();
-
   ConfigureTLSSessionIdentifiers();
 
   bool requireSafeNegotiation =
@@ -1969,8 +1982,18 @@ nsNSSComponent::InitializeNSS()
 
     bool importEnterpriseRoots = Preferences::GetBool(kEnterpriseRootModePref,
                                                       false);
+    uint32_t familySafetyMode = Preferences::GetUint(kFamilySafetyModePref,
+                                                     kFamilySafetyModeDefault);
+    Vector<nsCString> possibleLoadableRootsLocations;
+    rv = ListPossibleLoadableRootsLocations(possibleLoadableRootsLocations);
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
     RefPtr<LoadLoadableRootsTask> loadLoadableRootsTask(
-      new LoadLoadableRootsTask(this, importEnterpriseRoots));
+      new LoadLoadableRootsTask(this,
+                                importEnterpriseRoots,
+                                familySafetyMode,
+                                std::move(possibleLoadableRootsLocations)));
     rv = loadLoadableRootsTask->Dispatch();
     if (NS_FAILED(rv)) {
       return rv;
@@ -2126,7 +2149,9 @@ nsNSSComponent::Observe(nsISupports* aSubject, const char* aTopic,
       // When the pref changes, it is safe to change the trust of 3rd party
       // roots in the same event tick that they're loaded.
       UnloadFamilySafetyRoot();
-      MaybeEnableFamilySafetyCompatibility();
+      uint32_t familySafetyMode = Preferences::GetUint(
+        kFamilySafetyModePref, kFamilySafetyModeDefault);
+      MaybeEnableFamilySafetyCompatibility(familySafetyMode);
       TrustLoaded3rdPartyRoots();
     } else if (prefName.EqualsLiteral("security.content.signature.root_hash")) {
       MutexAutoLock lock(mMutex);

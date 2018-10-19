@@ -110,6 +110,7 @@ ARCHIVE_FILES = {
                 'awsy/**',
                 'web-platform/**',
                 'xpcshell/**',
+                'updater-dep/**',
             ],
         },
         {
@@ -408,7 +409,19 @@ ARCHIVE_FILES = {
                 'testing/crashtest/crashtests.list',
             ],
             'dest': 'reftest/tests',
-        }
+        },
+        {
+            'source': buildconfig.topobjdir,
+            'base': 'dist/xpi-stage',
+            'pattern': 'reftest/**',
+            'dest': 'reftest'
+        },
+        {
+            'source': buildconfig.topobjdir,
+            'base': 'dist/xpi-stage',
+            'pattern': 'specialpowers/**',
+            'dest': 'reftest'
+        },
     ],
     'talos': [
         {
@@ -519,6 +532,21 @@ ARCHIVE_FILES = {
             'dest': 'xpcshell',
         },
     ],
+    'updater-dep': [
+        {
+            'source': buildconfig.topobjdir,
+            'base': '_tests/updater-dep',
+            'pattern': '**',
+            'dest': 'updater-dep',
+        },
+        # Required by the updater on Linux
+        {
+            'source': buildconfig.topobjdir,
+            'base': 'config/external/sqlite',
+            'pattern': 'libmozsqlite3.so',
+            'dest': 'updater-dep',
+        },
+    ],
 }
 
 if buildconfig.substs.get('MOZ_CODE_COVERAGE'):
@@ -626,7 +654,7 @@ def find_files(archive):
             '**/*.pyc',
         ])
 
-        if archive != 'common' and base.startswith('_tests'):
+        if archive not in ('common', 'updater-dep') and base.startswith('_tests'):
             # We may have generated_harness_files to exclude from this entry.
             for path in generated_harness_files:
                 if path.startswith(base):

@@ -15,13 +15,12 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/RefPtr.h"
 #include "nsDataHashtable.h"
-#include "nsIAssociatedContentSecurity.h"
 #include "nsIClassInfo.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsITransportSecurityInfo.h"
 #include "nsNSSCertificate.h"
 #include "nsString.h"
-#include "pkix/pkixtypes.h"
+#include "mozpkix/pkixtypes.h"
 
 namespace mozilla { namespace psm {
 
@@ -32,7 +31,6 @@ enum class EVStatus {
 
 class TransportSecurityInfo : public nsITransportSecurityInfo
                             , public nsIInterfaceRequestor
-                            , public nsIAssociatedContentSecurity
                             , public nsISerializable
                             , public nsIClassInfo
 {
@@ -44,7 +42,6 @@ public:
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSITRANSPORTSECURITYINFO
   NS_DECL_NSIINTERFACEREQUESTOR
-  NS_DECL_NSIASSOCIATEDCONTENTSECURITY
   NS_DECL_NSISERIALIZABLE
   NS_DECL_NSICLASSINFO
 
@@ -71,6 +68,7 @@ public:
   void SetOriginAttributes(const OriginAttributes& aOriginAttributes);
 
   void SetCanceled(PRErrorCode errorCode);
+  bool IsCanceled();
 
   void SetStatusErrorBits(nsNSSCertificate* cert, uint32_t collected_errors);
 
@@ -106,6 +104,11 @@ public:
   bool mHaveCertErrorBits;
 
 private:
+  // True if SetCanceled has been called (or if this was deserialized with a
+  // non-zero mErrorCode, which can only be the case if SetCanceled was called
+  // on the original TransportSecurityInfo).
+  Atomic<bool> mCanceled;
+
   mutable ::mozilla::Mutex mMutex;
 
 protected:
@@ -113,8 +116,6 @@ protected:
 
 private:
   uint32_t mSecurityState;
-  int32_t mSubRequestsBrokenSecurity;
-  int32_t mSubRequestsNoSecurity;
 
   PRErrorCode mErrorCode;
 

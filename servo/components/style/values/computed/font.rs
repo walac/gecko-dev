@@ -483,16 +483,19 @@ impl SingleFontFamily {
             FontFamilyType::eFamily_fantasy => SingleFontFamily::Generic(atom!("fantasy")),
             FontFamilyType::eFamily_moz_fixed => SingleFontFamily::Generic(atom!("-moz-fixed")),
             FontFamilyType::eFamily_named => {
-                let name = Atom::from(&*family.mName);
+                let name = unsafe { Atom::from_raw(family.mName.mRawPtr) };
                 SingleFontFamily::FamilyName(FamilyName {
                     name,
                     syntax: FamilyNameSyntax::Identifiers,
                 })
             },
-            FontFamilyType::eFamily_named_quoted => SingleFontFamily::FamilyName(FamilyName {
-                name: (&*family.mName).into(),
-                syntax: FamilyNameSyntax::Quoted,
-            }),
+            FontFamilyType::eFamily_named_quoted => {
+                let name = unsafe { Atom::from_raw(family.mName.mRawPtr) };
+                SingleFontFamily::FamilyName(FamilyName {
+                    name,
+                    syntax: FamilyNameSyntax::Quoted,
+                })
+            },
             _ => panic!("Found unexpected font FontFamilyType"),
         }
     }
@@ -538,9 +541,15 @@ impl Hash for FontFamilyList {
     where
         H: Hasher,
     {
+        use string_cache::WeakAtom;
+
         for name in self.0.mNames.iter() {
             name.mType.hash(state);
-            name.mName.hash(state);
+            if !name.mName.mRawPtr.is_null() {
+                unsafe {
+                    WeakAtom::new(name.mName.mRawPtr).hash(state);
+                }
+            }
         }
     }
 }
@@ -552,7 +561,7 @@ impl PartialEq for FontFamilyList {
             return false;
         }
         for (a, b) in self.0.mNames.iter().zip(other.0.mNames.iter()) {
-            if a.mType != b.mType || &*a.mName != &*b.mName {
+            if a.mType != b.mType || a.mName.mRawPtr != b.mName.mRawPtr {
                 return false;
             }
         }
@@ -738,6 +747,7 @@ pub type FontVariationSettings = FontSettings<VariationValue<Number>>;
 /// it and store it as a 32-bit integer
 /// (see http://www.microsoft.com/typography/otspec/languagetags.htm).
 #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq)]
+#[repr(C)]
 pub struct FontLanguageOverride(pub u32);
 
 impl FontLanguageOverride {
@@ -856,7 +866,7 @@ impl ToAnimatedValue for FontStyleAngle {
 
     #[inline]
     fn from_animated_value(animated: Self::AnimatedValue) -> Self {
-        FontStyleAngle(Angle::Deg(
+        FontStyleAngle(Angle::from_degrees(
             animated
                 .degrees()
                 .min(specified::FONT_STYLE_OBLIQUE_MAX_ANGLE_DEGREES)
@@ -889,7 +899,7 @@ impl FontStyle {
     /// https://drafts.csswg.org/css-fonts-4/#valdef-font-style-oblique-angle
     #[inline]
     pub fn default_angle() -> FontStyleAngle {
-        FontStyleAngle(Angle::Deg(
+        FontStyleAngle(Angle::from_degrees(
             specified::DEFAULT_FONT_STYLE_OBLIQUE_ANGLE_DEGREES,
         ))
     }
@@ -909,7 +919,7 @@ impl FontStyle {
         if italic {
             return generics::FontStyle::Italic;
         }
-        generics::FontStyle::Oblique(FontStyleAngle(Angle::Deg(angle)))
+        generics::FontStyle::Oblique(FontStyleAngle(Angle::from_degrees(angle)))
     }
 }
 

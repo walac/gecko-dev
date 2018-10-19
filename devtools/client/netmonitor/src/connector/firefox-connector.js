@@ -14,7 +14,6 @@ loader.lazyRequireGetter(this, "TimelineFront", "devtools/shared/fronts/timeline
 
 // Network throttling
 loader.lazyRequireGetter(this, "throttlingProfiles", "devtools/client/shared/components/throttling/profiles");
-loader.lazyRequireGetter(this, "EmulationFront", "devtools/shared/fronts/emulation", true);
 
 /**
  * Connector to Firefox backend.
@@ -80,8 +79,7 @@ class FirefoxConnector {
       this.tabTarget.on("navigate", this.navigate);
 
       // Initialize Emulation front for network throttling.
-      const { tab } = await this.tabTarget.client.getTab();
-      this.emulationFront = EmulationFront(this.tabTarget.client, tab);
+      this.emulationFront = this.tabTarget.getFront("emulation");
     }
 
     // Displaying cache events is only intended for the UI panel.
@@ -317,10 +315,8 @@ class FirefoxConnector {
     };
 
     // Reconfigures the tab, optionally triggering a reload.
-    const reconfigureTab = (options) => {
-      return new Promise((resolve) => {
-        this.tabTarget.activeTab.reconfigure(options, resolve);
-      });
+    const reconfigureTab = options => {
+      return this.tabTarget.activeTab.reconfigure({ options });
     };
 
     // Reconfigures the tab and waits for the target to finish navigating.

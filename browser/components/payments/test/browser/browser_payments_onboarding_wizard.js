@@ -43,6 +43,8 @@ add_task(async function test_onboarding_wizard_without_saved_addresses_and_saved
       info("Checking if the address page has been rendered");
       let addressSaveButton = content.document.querySelector("address-form .save-button");
       ok(content.isVisible(addressSaveButton), "Address save button is rendered");
+      is(addressSaveButton.textContent, "Next",
+         "Address save button has the correct label during onboarding");
 
       info("Check if the total header is visible on the address page during on-boarding");
       let header = content.document.querySelector("header");
@@ -74,6 +76,8 @@ add_task(async function test_onboarding_wizard_without_saved_addresses_and_saved
       }, "Basic card page is shown after the address page during on boarding");
 
       let cardSaveButton = content.document.querySelector("basic-card-form .save-button");
+      is(cardSaveButton.textContent, "Next",
+         "Card save button has the correct label during onboarding");
       ok(content.isVisible(cardSaveButton), "Basic card page is rendered");
 
       let basicCardTitle = content.document.querySelector("basic-card-form h2");
@@ -87,7 +91,10 @@ add_task(async function test_onboarding_wizard_without_saved_addresses_and_saved
       }, "Shipping address is selected as the billing address");
     });
 
-    await fillInCardForm(frame, PTU.BasicCards.JohnDoe);
+    await fillInCardForm(frame, {
+      ["cc-csc"]: "123",
+      ...PTU.BasicCards.JohnDoe,
+    });
 
     await spawnPaymentDialogTask(frame, PTU.DialogContentTasks.clickPrimaryButton);
 
@@ -358,7 +365,10 @@ add_task(async function test_onboarding_wizard_with_requestShipping_turned_off()
       }, "Billing Address is correctly shown");
     });
 
-    await fillInCardForm(frame, PTU.BasicCards.JohnDoe);
+    await fillInCardForm(frame, {
+      ["cc-csc"]: "123",
+      ...PTU.BasicCards.JohnDoe,
+    });
 
     await spawnPaymentDialogTask(frame, PTU.DialogContentTasks.clickPrimaryButton);
 

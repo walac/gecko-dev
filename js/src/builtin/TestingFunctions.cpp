@@ -635,28 +635,32 @@ WasmDebuggingIsSupported(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
+WasmStreamingIsSupported(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setBoolean(wasm::HasStreamingSupport(cx));
+    return true;
+}
+
+static bool
+WasmCachingIsSupported(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setBoolean(wasm::HasCachingSupport(cx));
+    return true;
+}
+
+static bool
 WasmThreadsSupported(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 #ifdef ENABLE_WASM_THREAD_OPS
     bool isSupported = wasm::HasSupport(cx);
 # ifdef ENABLE_WASM_CRANELIFT
-    if (cx->options().wasmForceCranelift())
+    if (cx->options().wasmForceCranelift()) {
         isSupported = false;
+    }
 # endif
-#else
-    bool isSupported = false;
-#endif
-    args.rval().setBoolean(isSupported);
-    return true;
-}
-
-static bool
-WasmSaturatingTruncationSupported(JSContext* cx, unsigned argc, Value* vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-#ifdef ENABLE_WASM_SATURATING_TRUNC_OPS
-    bool isSupported = true;
 #else
     bool isSupported = false;
 #endif
@@ -671,8 +675,9 @@ WasmBulkMemSupported(JSContext* cx, unsigned argc, Value* vp)
 #ifdef ENABLE_WASM_BULKMEM_OPS
     bool isSupported = true;
 # ifdef ENABLE_WASM_CRANELIFT
-    if (cx->options().wasmForceCranelift())
+    if (cx->options().wasmForceCranelift()) {
         isSupported = false;
+    }
 # endif
 #else
     bool isSupported = false;
@@ -688,8 +693,9 @@ WasmGcEnabled(JSContext* cx, unsigned argc, Value* vp)
 #ifdef ENABLE_WASM_GC
     bool isSupported = cx->options().wasmBaseline() && cx->options().wasmGc();
 # ifdef ENABLE_WASM_CRANELIFT
-    if (cx->options().wasmForceCranelift())
+    if (cx->options().wasmForceCranelift()) {
         isSupported = false;
+    }
 # endif
 #else
     bool isSupported = false;
@@ -768,7 +774,7 @@ WasmTextToBinary(JSContext* cx, unsigned argc, Value* vp)
         return false;
     }
 
-    memcpy(binary->as<TypedArrayObject>().viewDataUnshared(), bytes.begin(), bytes.length());
+    memcpy(binary->as<TypedArrayObject>().dataPointerUnshared(), bytes.begin(), bytes.length());
 
     if (!withOffsets) {
         args.rval().setObject(*binary);
@@ -860,7 +866,7 @@ WasmExtractCode(JSContext* cx, unsigned argc, Value* vp)
     } else if (baselineTier) {
         tier = wasm::Tier::Baseline;
     } else {
-        tier = wasm::Tier::Ion;
+        tier = wasm::Tier::Optimized;
     }
 
     RootedValue result(cx);
@@ -976,6 +982,23 @@ GCPreserveCode(JSContext* cx, unsigned argc, Value* vp)
 #ifdef JS_GC_ZEAL
 
 static bool
+ParseGCZealMode(JSContext* cx, const CallArgs& args, uint8_t* zeal)
+{
+    uint32_t value;
+    if (!ToUint32(cx, args.get(0), &value)) {
+        return false;
+    }
+
+    if (value > uint32_t(gc::ZealMode::Limit)) {
+        JS_ReportErrorASCII(cx, "gczeal argument out of range");
+        return false;
+    }
+
+    *zeal = static_cast<uint8_t>(value);
+    return true;
+}
+
+static bool
 GCZeal(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -986,13 +1009,8 @@ GCZeal(JSContext* cx, unsigned argc, Value* vp)
         return false;
     }
 
-    uint32_t zeal;
-    if (!ToUint32(cx, args.get(0), &zeal)) {
-        return false;
-    }
-
-    if (zeal > uint32_t(gc::ZealMode::Limit)) {
-        JS_ReportErrorASCII(cx, "gczeal argument out of range");
+    uint8_t zeal;
+    if (!ParseGCZealMode(cx, args, &zeal)) {
         return false;
     }
 
@@ -1003,7 +1021,28 @@ GCZeal(JSContext* cx, unsigned argc, Value* vp)
         }
     }
 
-    JS_SetGCZeal(cx, (uint8_t)zeal, frequency);
+    JS_SetGCZeal(cx, zeal, frequency);
+    args.rval().setUndefined();
+    return true;
+}
+
+static bool
+UnsetGCZeal(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+
+    if (args.length() > 1) {
+        RootedObject callee(cx, &args.callee());
+        ReportUsageErrorASCII(cx, callee, "Too many arguments");
+        return false;
+    }
+
+    uint8_t zeal;
+    if (!ParseGCZealMode(cx, args, &zeal)) {
+        return false;
+    }
+
+    JS_UnsetGCZeal(cx, zeal);
     args.rval().setUndefined();
     return true;
 }
@@ -1647,6 +1686,7 @@ NewRope(JSContext* cx, unsigned argc, Value* vp)
 
     Rooted<JSRope*> str(cx, JSRope::new_<NoGC>(cx, left, right, length, heap));
     if (!str) {
+        JS_ReportOutOfMemory(cx);
         return false;
     }
 
@@ -1813,7 +1853,8 @@ struct MOZ_STACK_CLASS IterativeFailureTestParams
     RootedFunction testFunction;
     unsigned threadStart = 0;
     unsigned threadEnd = 0;
-    bool expectExceptionOnFailure = false;
+    bool expectExceptionOnFailure = true;
+    bool keepFailing = false;
     bool verbose = false;
 };
 
@@ -1821,7 +1862,7 @@ struct IterativeFailureSimulator
 {
     virtual void setup(JSContext* cx) {}
     virtual void teardown(JSContext* cx) {}
-    virtual void startSimulating(JSContext* cx, unsigned iteration, unsigned thread) = 0;
+    virtual void startSimulating(JSContext* cx, unsigned iteration, unsigned thread, bool keepFailing) = 0;
     virtual bool stopSimulating() = 0;
     virtual void cleanup(JSContext* cx) {}
 };
@@ -1849,9 +1890,11 @@ RunIterativeFailureTest(JSContext* cx, const IterativeFailureTestParams& params,
 
     size_t compartmentCount = CountCompartments(cx);
 
+    RootedValue exception(cx);
+
     simulator.setup(cx);
 
-    for (unsigned thread = params.threadStart; thread < params.threadEnd; thread++) {
+    for (unsigned thread = params.threadStart; thread <= params.threadEnd; thread++) {
         if (params.verbose) {
             fprintf(stderr, "thread %d\n", thread);
         }
@@ -1865,7 +1908,7 @@ RunIterativeFailureTest(JSContext* cx, const IterativeFailureTestParams& params,
 
             MOZ_ASSERT(!cx->isExceptionPending());
 
-            simulator.startSimulating(cx, iteration, thread);
+            simulator.startSimulating(cx, iteration, thread, params.keepFailing);
 
             RootedValue result(cx);
             bool ok = JS_CallFunction(cx, cx->global(), params.testFunction,
@@ -1890,8 +1933,15 @@ RunIterativeFailureTest(JSContext* cx, const IterativeFailureTestParams& params,
             // it. More correct would be to have the caller pass some kind of
             // exception specification and to check the exception against it.
 
+            if (!failureWasSimulated && cx->isExceptionPending()) {
+                if (!cx->getPendingException(&exception)) {
+                    return false;
+                }
+            }
             cx->clearPendingException();
             simulator.cleanup(cx);
+
+            gc::FinishGC(cx);
 
             // Some tests create a new compartment or zone on every
             // iteration. Our GC is triggered by GC allocations and not by
@@ -1906,7 +1956,7 @@ RunIterativeFailureTest(JSContext* cx, const IterativeFailureTestParams& params,
 #ifdef JS_TRACE_LOGGING
             // Reset the TraceLogger state if enabled.
             TraceLoggerThread* logger = TraceLoggerForCurrentThread(cx);
-            if (logger->enabled()) {
+            if (logger && logger->enabled()) {
                 while (logger->enabled()) {
                     logger->disable();
                 }
@@ -1919,6 +1969,14 @@ RunIterativeFailureTest(JSContext* cx, const IterativeFailureTestParams& params,
 
         if (params.verbose) {
             fprintf(stderr, "  finished after %d iterations\n", iteration - 2);
+            if (!exception.isUndefined()) {
+                RootedString str(cx, JS::ToString(cx, exception));
+                UniqueChars bytes(JS_EncodeStringToLatin1(cx, str));
+                if (!bytes) {
+                    return false;
+                }
+                fprintf(stderr, "  threw %s\n", bytes.get());
+            }
         }
     }
 
@@ -1945,31 +2003,61 @@ ParseIterativeFailureTestParams(JSContext* cx, const CallArgs& args,
     }
     params->testFunction = &args[0].toObject().as<JSFunction>();
 
-    // There are some places where we do fail without raising an exception, so
-    // we can't expose this to the fuzzers by default.
-    params->expectExceptionOnFailure = !fuzzingSafe;
     if (args.length() == 2) {
-        if (!args[1].isBoolean()) {
-            JS_ReportErrorASCII(cx, "The optional second argument must be a boolean.");
+        if (args[1].isBoolean()) {
+            params->expectExceptionOnFailure = args[1].toBoolean();
+        } else if (args[1].isObject()) {
+            RootedObject options(cx, &args[1].toObject());
+            RootedValue value(cx);
+
+            if (!JS_GetProperty(cx, options, "expectExceptionOnFailure", &value)) {
+                return false;
+            }
+            if (!value.isUndefined()) {
+                params->expectExceptionOnFailure = ToBoolean(value);
+            }
+
+            if (!JS_GetProperty(cx, options, "keepFailing", &value)) {
+                return false;
+            }
+            if (!value.isUndefined()) {
+                params->keepFailing = ToBoolean(value);
+            }
+        } else {
+            JS_ReportErrorASCII(cx, "The optional second argument must be an object or a boolean.");
             return false;
         }
-        params->expectExceptionOnFailure = args[1].toBoolean();
     }
 
-    // Test all threads by default.
-    params->threadStart = oom::FirstThreadTypeToTest;
-    params->threadEnd = oom::LastThreadTypeToTest;
+    // There are some places where we do fail without raising an exception, so
+    // we can't expose this to the fuzzers by default.
+    if (fuzzingSafe) {
+        params->expectExceptionOnFailure = false;
+    }
+
+    // Test all threads by default except worker threads, except if we are
+    // running in a worker thread in which case only the worker thread which
+    // requested the simulation is tested.
+    if (js::oom::GetThreadType() == js::THREAD_TYPE_WORKER) {
+        params->threadStart = oom::WorkerFirstThreadTypeToTest;
+        params->threadEnd = oom::WorkerLastThreadTypeToTest;
+    } else {
+        params->threadStart = oom::FirstThreadTypeToTest;
+        params->threadEnd = oom::LastThreadTypeToTest;
+    }
 
     // Test a single thread type if specified by the OOM_THREAD environment variable.
     int threadOption = 0;
     if (EnvVarAsInt("OOM_THREAD", &threadOption)) {
-        if (threadOption < oom::FirstThreadTypeToTest || threadOption > oom::LastThreadTypeToTest) {
+        if (threadOption < oom::FirstThreadTypeToTest || threadOption > oom::LastThreadTypeToTest ||
+            threadOption != js::THREAD_TYPE_CURRENT)
+        {
             JS_ReportErrorASCII(cx, "OOM_THREAD value out of range.");
             return false;
         }
 
         params->threadStart = threadOption;
-        params->threadEnd = threadOption + 1;
+        params->threadEnd = threadOption;
     }
 
     params->verbose = EnvVarIsDefined("OOM_VERBOSE");
@@ -1983,9 +2071,9 @@ struct OOMSimulator : public IterativeFailureSimulator
         cx->runtime()->hadOutOfMemory = false;
     }
 
-    void startSimulating(JSContext* cx, unsigned i, unsigned thread) override {
+    void startSimulating(JSContext* cx, unsigned i, unsigned thread, bool keepFailing) override {
         MOZ_ASSERT(!cx->runtime()->hadOutOfMemory);
-        js::oom::SimulateOOMAfter(i, thread, false);
+        js::oom::SimulateOOMAfter(i, thread, keepFailing);
     }
 
     bool stopSimulating() override {
@@ -2020,8 +2108,8 @@ OOMTest(JSContext* cx, unsigned argc, Value* vp)
 
 struct StackOOMSimulator : public IterativeFailureSimulator
 {
-    void startSimulating(JSContext* cx, unsigned i, unsigned thread) override {
-        js::oom::SimulateStackOOMAfter(i, thread, false);
+    void startSimulating(JSContext* cx, unsigned i, unsigned thread, bool keepFailing) override {
+        js::oom::SimulateStackOOMAfter(i, thread, keepFailing);
     }
 
     bool stopSimulating() override {
@@ -2068,8 +2156,8 @@ struct FailingIterruptSimulator : public IterativeFailureSimulator
         cx->interruptCallbacks().erase(prevEnd, cx->interruptCallbacks().end());
     }
 
-    void startSimulating(JSContext* cx, unsigned i, unsigned thread) override {
-        js::oom::SimulateInterruptAfter(i, thread, false);
+    void startSimulating(JSContext* cx, unsigned i, unsigned thread, bool keepFailing) override {
+        js::oom::SimulateInterruptAfter(i, thread, keepFailing);
     }
 
     bool stopSimulating() override {
@@ -2237,7 +2325,7 @@ static bool
 StreamsAreEnabled(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setBoolean(cx->options().streams());
+    args.rval().setBoolean(cx->realm()->creationOptions().getStreamsEnabled());
     return true;
 }
 
@@ -4484,6 +4572,101 @@ SetRNGState(JSContext* cx, unsigned argc, Value* vp)
 }
 #endif
 
+static ModuleEnvironmentObject*
+GetModuleEnvironment(JSContext* cx, HandleModuleObject module)
+{
+    // Use the initial environment so that tests can check bindings exists
+    // before they have been instantiated.
+    RootedModuleEnvironmentObject env(cx, &module->initialEnvironment());
+    MOZ_ASSERT(env);
+    return env;
+}
+
+static bool
+GetModuleEnvironmentNames(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (args.length() != 1) {
+        JS_ReportErrorASCII(cx, "Wrong number of arguments");
+        return false;
+    }
+
+    if (!args[0].isObject() || !args[0].toObject().is<ModuleObject>()) {
+        JS_ReportErrorASCII(cx, "First argument should be a ModuleObject");
+        return false;
+    }
+
+    RootedModuleObject module(cx, &args[0].toObject().as<ModuleObject>());
+    if (module->hadEvaluationError()) {
+        JS_ReportErrorASCII(cx, "Module environment unavailable");
+        return false;
+    }
+
+    RootedModuleEnvironmentObject env(cx, GetModuleEnvironment(cx, module));
+    Rooted<IdVector> ids(cx, IdVector(cx));
+    if (!JS_Enumerate(cx, env, &ids)) {
+        return false;
+    }
+
+    uint32_t length = ids.length();
+    RootedArrayObject array(cx, NewDenseFullyAllocatedArray(cx, length));
+    if (!array) {
+        return false;
+    }
+
+    array->setDenseInitializedLength(length);
+    for (uint32_t i = 0; i < length; i++) {
+        array->initDenseElement(i, StringValue(JSID_TO_STRING(ids[i])));
+    }
+
+    args.rval().setObject(*array);
+    return true;
+}
+
+static bool
+GetModuleEnvironmentValue(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (args.length() != 2) {
+        JS_ReportErrorASCII(cx, "Wrong number of arguments");
+        return false;
+    }
+
+    if (!args[0].isObject() || !args[0].toObject().is<ModuleObject>()) {
+        JS_ReportErrorASCII(cx, "First argument should be a ModuleObject");
+        return false;
+    }
+
+    if (!args[1].isString()) {
+        JS_ReportErrorASCII(cx, "Second argument should be a string");
+        return false;
+    }
+
+    RootedModuleObject module(cx, &args[0].toObject().as<ModuleObject>());
+    if (module->hadEvaluationError()) {
+        JS_ReportErrorASCII(cx, "Module environment unavailable");
+        return false;
+    }
+
+    RootedModuleEnvironmentObject env(cx, GetModuleEnvironment(cx, module));
+    RootedString name(cx, args[1].toString());
+    RootedId id(cx);
+    if (!JS_StringToId(cx, name, &id)) {
+        return false;
+    }
+
+    if (!GetProperty(cx, env, env, id, args.rval())) {
+        return false;
+    }
+
+    if (args.rval().isMagic(JS_UNINITIALIZED_LEXICAL)) {
+        ReportRuntimeLexicalError(cx, JSMSG_UNINITIALIZED_LEXICAL, id);
+        return false;
+    }
+
+    return true;
+}
+
 #ifdef DEBUG
 static const char*
 AssertionTypeToString(irregexp::RegExpAssertion::AssertionType type)
@@ -4979,7 +5162,17 @@ SetTimeZone(JSContext* cx, unsigned argc, Value* vp)
     };
 
     if (args[0].isString() && !args[0].toString()->empty()) {
-        UniqueChars timeZone = JS_EncodeStringToLatin1(cx, args[0].toString());
+        RootedLinearString str(cx, args[0].toString()->ensureLinear(cx));
+        if (!str) {
+            return false;
+        }
+
+        if (!StringIsAscii(str)) {
+            ReportUsageErrorASCII(cx, callee, "First argument contains non-ASCII characters");
+            return false;
+        }
+
+        UniqueChars timeZone = JS_EncodeStringToASCII(cx, str);
         if (!timeZone) {
             return false;
         }
@@ -5044,35 +5237,28 @@ SetDefaultLocale(JSContext* cx, unsigned argc, Value* vp)
     }
 
     if (args[0].isString() && !args[0].toString()->empty()) {
-        auto containsOnlyValidBCP47Characters = [](auto* chars, size_t length) {
-            return mozilla::IsAsciiAlpha(chars[0]) &&
-                   std::all_of(chars, chars + length, [](auto c) {
-                       return mozilla::IsAsciiAlphanumeric(c) || c == '-';
-                   });
-        };
-
         RootedLinearString str(cx, args[0].toString()->ensureLinear(cx));
         if (!str) {
             return false;
         }
 
-        bool hasValidChars;
-        {
-            JS::AutoCheckCannotGC nogc;
-
-            size_t length = str->length();
-            hasValidChars = str->hasLatin1Chars()
-                            ? containsOnlyValidBCP47Characters(str->latin1Chars(nogc), length)
-                            : containsOnlyValidBCP47Characters(str->twoByteChars(nogc), length);
-        }
-
-        if (!hasValidChars) {
-            ReportUsageErrorASCII(cx, callee, "First argument should be BCP47 language tag");
+        if (!StringIsAscii(str)) {
+            ReportUsageErrorASCII(cx, callee, "First argument contains non-ASCII characters");
             return false;
         }
 
-        UniqueChars locale = JS_EncodeStringToLatin1(cx, str);
+        UniqueChars locale = JS_EncodeStringToASCII(cx, str);
         if (!locale) {
+            return false;
+        }
+
+        bool containsOnlyValidBCP47Characters = mozilla::IsAsciiAlpha(locale[0]) &&
+            std::all_of(locale.get(), locale.get() + str->length(), [](auto c) {
+                return mozilla::IsAsciiAlphanumeric(c) || c == '-';
+            });
+
+        if (!containsOnlyValidBCP47Characters) {
+            ReportUsageErrorASCII(cx, callee, "First argument should be a BCP47 language tag");
             return false;
         }
 
@@ -5570,13 +5756,16 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "  oomAtAllocation() and return whether any allocation had been caused to fail."),
 
     JS_FN_HELP("oomTest", OOMTest, 0, 0,
-"oomTest(function, [expectExceptionOnFailure = true])",
+"oomTest(function, [expectExceptionOnFailure = true | options])",
 "  Test that the passed function behaves correctly under OOM conditions by\n"
 "  repeatedly executing it and simulating allocation failure at successive\n"
 "  allocations until the function completes without seeing a failure.\n"
 "  By default this tests that an exception is raised if execution fails, but\n"
 "  this can be disabled by passing false as the optional second parameter.\n"
-"  This is also disabled when --fuzzing-safe is specified."),
+"  This is also disabled when --fuzzing-safe is specified.\n"
+"  Alternatively an object can be passed to set the following options:\n"
+"    expectExceptionOnFailure: bool - as described above.\n"
+"    keepFailing: bool - continue to fail after first simulated failure.\n"),
 
     JS_FN_HELP("stackTest", StackTest, 0, 0,
 "stackTest(function, [expectExceptionOnFailure = true])",
@@ -5615,7 +5804,7 @@ JS_FN_HELP("rejectPromise", RejectPromise, 2, 0,
 
 JS_FN_HELP("streamsAreEnabled", StreamsAreEnabled, 0, 0,
 "streamsAreEnabled()",
-"  Returns a boolean indicating whether WHATWG Streams are enabled for the current compartment."),
+"  Returns a boolean indicating whether WHATWG Streams are enabled for the current realm."),
 
     JS_FN_HELP("makeFinalizeObserver", MakeFinalizeObserver, 0, 0,
 "makeFinalizeObserver()",
@@ -5637,8 +5826,13 @@ JS_FN_HELP("streamsAreEnabled", StreamsAreEnabled, 0, 0,
 
 #ifdef JS_GC_ZEAL
     JS_FN_HELP("gczeal", GCZeal, 2, 0,
-"gczeal(level, [N])",
+"gczeal(mode, [frequency])",
 gc::ZealModeHelpText),
+
+    JS_FN_HELP("unsetgczeal", UnsetGCZeal, 2, 0,
+"unsetgczeal(mode)",
+"  Turn off a single zeal mode set with gczeal() and don't finish any ongoing\n"
+"  collection that may be happening."),
 
     JS_FN_HELP("schedulegc", ScheduleGC, 1, 0,
 "schedulegc([num | obj | string])",
@@ -5772,14 +5966,17 @@ gc::ZealModeHelpText),
 "  Returns a boolean indicating whether WebAssembly debugging is supported on the current device;\n"
 "  returns false also if WebAssembly is not supported"),
 
+    JS_FN_HELP("wasmStreamingIsSupported", WasmStreamingIsSupported, 0, 0,
+"wasmStreamingIsSupported()",
+"  Returns a boolean indicating whether WebAssembly caching is supported by the runtime."),
+
+    JS_FN_HELP("wasmCachingIsSupported", WasmCachingIsSupported, 0, 0,
+"wasmCachingIsSupported()",
+"  Returns a boolean indicating whether WebAssembly caching is supported by the runtime."),
+
     JS_FN_HELP("wasmThreadsSupported", WasmThreadsSupported, 0, 0,
 "wasmThreadsSupported()",
 "  Returns a boolean indicating whether the WebAssembly threads proposal is\n"
-"  supported on the current device."),
-
-    JS_FN_HELP("wasmSaturatingTruncationSupported", WasmSaturatingTruncationSupported, 0, 0,
-"wasmSaturatingTruncationSupported()",
-"  Returns a boolean indicating whether the WebAssembly saturating truncates opcodes are\n"
 "  supported on the current device."),
 
     JS_FN_HELP("wasmBulkMemSupported", WasmBulkMemSupported, 0, 0,
@@ -6056,6 +6253,14 @@ gc::ZealModeHelpText),
 "setRNGState(seed0, seed1)",
 "  Set this compartment's RNG state.\n"),
 #endif
+
+    JS_FN_HELP("getModuleEnvironmentNames", GetModuleEnvironmentNames, 1, 0,
+"getModuleEnvironmentNames(module)",
+"  Get the list of a module environment's bound names for a specified module.\n"),
+
+    JS_FN_HELP("getModuleEnvironmentValue", GetModuleEnvironmentValue, 2, 0,
+"getModuleEnvironmentValue(module, name)",
+"  Get the value of a bound name in a module environment.\n"),
 
 #if defined(FUZZING) && defined(__AFL_COMPILER)
     JS_FN_HELP("aflloop", AflLoop, 1, 0,

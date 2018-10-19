@@ -78,11 +78,15 @@ function createToolMenuElements(toolDefinition, doc) {
     return;
   }
 
-  const oncommand = function(id, event) {
-    const window = event.target.ownerDocument.defaultView;
-    gDevToolsBrowser.selectToolCommand(window.gBrowser, id, Cu.now());
-    sendEntryPointTelemetry();
-  }.bind(null, id);
+  const oncommand = (async function(id, event) {
+    try {
+      const window = event.target.ownerDocument.defaultView;
+      await gDevToolsBrowser.selectToolCommand(window.gBrowser, id, Cu.now());
+      sendEntryPointTelemetry(window);
+    } catch (e) {
+      console.error(`Exception while opening ${id}: ${e}\n${e.stack}`);
+    }
+  }).bind(null, id);
 
   const menuitem = createMenuItem({
     doc,
@@ -106,17 +110,15 @@ function createToolMenuElements(toolDefinition, doc) {
  * `devtools/startup/devtools-startup.js` but that codepath is only used the
  * first time a toolbox is opened for a tab.
  */
-function sendEntryPointTelemetry() {
+function sendEntryPointTelemetry(window) {
   if (!telemetry) {
     telemetry = new Telemetry();
   }
 
-  telemetry.addEventProperty(
-    "devtools.main", "open", "tools", null, "shortcut", ""
-  );
+  telemetry.addEventProperty(window, "open", "tools", null, "shortcut", "");
 
   telemetry.addEventProperty(
-    "devtools.main", "open", "tools", null, "entrypoint", "SystemMenu"
+    window, "open", "tools", null, "entrypoint", "SystemMenu"
   );
 }
 
@@ -282,6 +284,8 @@ exports.addMenus = function(doc) {
   addTopLevelItems(doc);
 
   addAllToolsToMenu(doc);
+
+  require("../webreplay/menu").addWebReplayMenu(doc);
 };
 
 /**

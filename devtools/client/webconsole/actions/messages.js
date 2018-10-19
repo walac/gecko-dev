@@ -21,6 +21,7 @@ const {
   MESSAGE_CLOSE,
   MESSAGE_TYPE,
   MESSAGE_TABLE_RECEIVE,
+  PAUSED_EXCECUTION_POINT,
   PRIVATE_MESSAGES_CLEAR,
 } = require("../constants");
 
@@ -57,6 +58,13 @@ function messagesClear() {
   };
 }
 
+function setPauseExecutionPoint(executionPoint) {
+  return {
+    type: PAUSED_EXCECUTION_POINT,
+    executionPoint
+  };
+}
+
 function privateMessagesClear() {
   return {
     type: PRIVATE_MESSAGES_CLEAR
@@ -78,7 +86,7 @@ function messageClose(id) {
 }
 
 function messageTableDataGet(id, client, dataType) {
-  return (dispatch) => {
+  return ({dispatch}) => {
     let fetchObjectActorData;
     if (["Map", "WeakMap", "Set", "WeakSet"].includes(dataType)) {
       fetchObjectActorData = (cb) => client.enumEntries(cb);
@@ -139,4 +147,5 @@ module.exports = {
   privateMessagesClear,
   // for test purpose only.
   messageTableDataReceive,
+  setPauseExecutionPoint,
 };

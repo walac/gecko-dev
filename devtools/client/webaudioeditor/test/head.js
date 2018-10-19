@@ -48,7 +48,7 @@ function reload(aTarget, aWaitForTargetEvent = "navigate") {
 }
 
 function navigate(aTarget, aUrl, aWaitForTargetEvent = "navigate") {
-  executeSoon(() => aTarget.activeTab.navigateTo(aUrl));
+  executeSoon(() => aTarget.activeTab.navigateTo({ url: aUrl }));
   return once(aTarget, aWaitForTargetEvent);
 }
 
@@ -64,9 +64,9 @@ function initBackend(aUrl) {
 
   return (async function() {
     const tab = await addTab(aUrl);
-    const target = TargetFactory.forTab(tab);
+    const target = await TargetFactory.forTab(tab);
 
-    await target.makeRemote();
+    await target.attach();
 
     const front = new WebAudioFront(target.client, target.form);
     return { target, front };
@@ -83,9 +83,7 @@ function initWebAudioEditor(aUrl) {
 
   return (async function() {
     const tab = await addTab(aUrl);
-    const target = TargetFactory.forTab(tab);
-
-    await target.makeRemote();
+    const target = await TargetFactory.forTab(tab);
 
     Services.prefs.setBoolPref("devtools.webaudioeditor.enabled", true);
     const toolbox = await gDevTools.showToolbox(target, "webaudioeditor");

@@ -61,9 +61,10 @@ varying vec2 vPos;
 #define BORDER_STYLE_INSET        8
 #define BORDER_STYLE_OUTSET       9
 
-#define CLIP_NONE   0
-#define CLIP_DASH   1
-#define CLIP_DOT    2
+#define CLIP_NONE        0
+#define CLIP_DASH_CORNER 1
+#define CLIP_DASH_EDGE   2
+#define CLIP_DOT         3
 
 #ifdef WR_VERTEX_SHADER
 
@@ -151,7 +152,7 @@ void main(void) {
     int segment = aFlags & 0xff;
     int style0 = (aFlags >> 8) & 0xff;
     int style1 = (aFlags >> 16) & 0xff;
-    int clip_mode = (aFlags >> 24) & 0xff;
+    int clip_mode = (aFlags >> 24) & 0x0f;
 
     vec2 outer_scale = get_outer_corner_scale(segment);
     vec2 outer = outer_scale * aRect.zw;
@@ -356,7 +357,21 @@ void main(void) {
             d = distance(vClipParams1.xy, vPos) - vClipParams1.z;
             break;
         }
-        case CLIP_DASH: {
+        case CLIP_DASH_EDGE: {
+            bool is_vertical = vClipParams1.x == 0.;
+            float half_dash = is_vertical ? vClipParams1.y : vClipParams1.x;
+            // We want to draw something like:
+            // +---+---+---+---+
+            // |xxx|   |   |xxx|
+            // +---+---+---+---+
+            float pos = is_vertical ? vPos.y : vPos.x;
+            bool in_dash = pos < half_dash || pos > 3.0 * half_dash;
+            if (!in_dash) {
+                d = 1.;
+            }
+            break;
+        }
+        case CLIP_DASH_CORNER: {
             // Get SDF for the two line/tangent clip lines,
             // do SDF subtract to get clip distance.
             float d0 = distance_to_line(vClipParams1.xy,

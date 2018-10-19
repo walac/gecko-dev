@@ -298,6 +298,12 @@ nsFocusManager::IsFocused(nsIContent* aContent)
   return aContent == mFocusedElement;
 }
 
+bool
+nsFocusManager::IsTestMode()
+{
+  return sTestMode;
+}
+
 // get the current window for the given content node
 static nsPIDOMWindowOuter*
 GetCurrentWindow(nsIContent* aContent)
@@ -2361,11 +2367,11 @@ nsFocusManager::UpdateCaret(bool aMoveCaretToFocus,
   // this is called when a document is focused or when the caretbrowsing
   // preference is changed
   nsCOMPtr<nsIDocShell> focusedDocShell = mFocusedWindow->GetDocShell();
-  nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(focusedDocShell);
-  if (!dsti)
+  if (!focusedDocShell) {
     return;
+  }
 
-  if (dsti->ItemType() == nsIDocShellTreeItem::typeChrome) {
+  if (focusedDocShell->ItemType() == nsIDocShellTreeItem::typeChrome) {
     return;  // Never browse with caret in chrome
   }
 
@@ -3288,9 +3294,6 @@ nsFocusManager::GetNextTabbableContentInScope(nsIContent* aOwner,
         break;
       }
 
-      // Get the tab index of the next element. For NAC we rely on frames.
-      //XXXsmaug we should probably use frames also for Shadow DOM and special
-      //         case only display:contents elements.
       int32_t tabIndex = 0;
       if (iterContent->IsInNativeAnonymousSubtree() &&
           iterContent->GetPrimaryFrame()) {
@@ -3298,7 +3301,11 @@ nsFocusManager::GetNextTabbableContentInScope(nsIContent* aOwner,
       } else if (IsHostOrSlot(iterContent)) {
         tabIndex = HostOrSlotTabIndexValue(iterContent);
       } else {
-        iterContent->IsFocusable(&tabIndex);
+        nsIFrame* frame = iterContent->GetPrimaryFrame();
+        if (!frame) {
+          continue;
+        }
+        frame->IsFocusable(&tabIndex, 0);
       }
       if (tabIndex < 0 || !(aIgnoreTabIndex || tabIndex == aCurrentTabIndex)) {
         // If the element has native anonymous content, we may need to

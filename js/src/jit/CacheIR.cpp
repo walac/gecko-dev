@@ -18,6 +18,7 @@
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
+#include "vm/TypeInference-inl.h"
 #include "vm/UnboxedObject-inl.h"
 
 using namespace js;
@@ -287,6 +288,9 @@ GetPropIRGenerator::tryAttachStub()
                 return true;
             }
             if (tryAttachArgumentsObjectArg(obj, objId, indexId)) {
+                return true;
+            }
+            if (tryAttachGenericElement(obj, objId, index, indexId)) {
                 return true;
             }
 
@@ -2342,6 +2346,32 @@ GetPropIRGenerator::tryAttachUnboxedElementHole(HandleObject obj, ObjOperandId o
 }
 
 bool
+GetPropIRGenerator::tryAttachGenericElement(HandleObject obj, ObjOperandId objId,
+                                            uint32_t index, Int32OperandId indexId)
+{
+    if (!obj->isNative()) {
+        return false;
+    }
+
+    // To allow other types to attach in the non-megamorphic case we test the specific
+    // matching native reciever; however, once megamorphic we can attach for any native
+    if (mode_ == ICState::Mode::Megamorphic) {
+        writer.guardIsNativeObject(objId);
+    } else {
+        NativeObject* nobj = &obj->as<NativeObject>();
+        TestMatchingNativeReceiver(writer, nobj, objId);
+    }
+    writer.guardIndexGreaterThanDenseInitLength(objId, indexId);
+    writer.callNativeGetElementResult(objId, indexId);
+    writer.typeMonitorResult();
+
+    trackAttached(mode_ == ICState::Mode::Megamorphic
+                  ? "GenericElementMegamorphic": "GenericElement");
+    return true;
+}
+
+
+bool
 GetPropIRGenerator::tryAttachProxyElement(HandleObject obj, ObjOperandId objId)
 {
     if (!obj->is<ProxyObject>()) {
@@ -2853,7 +2883,7 @@ BindNameIRGenerator::trackAttached(const char* name)
 }
 
 HasPropIRGenerator::HasPropIRGenerator(JSContext* cx, HandleScript script, jsbytecode* pc,
-                                       CacheKind cacheKind, ICState::Mode mode,
+                                       ICState::Mode mode, CacheKind cacheKind,
                                        HandleValue idVal, HandleValue val)
   : IRGenerator(cx, script, pc, cacheKind, mode),
     val_(val),
@@ -5824,6 +5854,10 @@ BinaryArithIRGenerator::tryAttachStub()
         return true;
     }
 
+    if (tryAttachStringNumberConcat()) {
+        return true;
+    }
+
 
     trackAttached(IRGenerator::NotAttached);
     return false;
@@ -6017,6 +6051,49 @@ BinaryArithIRGenerator::tryAttachInt32()
     }
 
     writer.returnFromIC();
+    return true;
+}
+
+
+bool
+BinaryArithIRGenerator::tryAttachStringNumberConcat()
+{
+    // Only Addition
+    if (op_ != JSOP_ADD) {
+        return false;
+    }
+
+    if (!(lhs_.isString() && rhs_.isNumber()) &&
+        !(lhs_.isNumber() && rhs_.isString()))
+    {
+        return false;
+    }
+
+    ValOperandId lhsId(writer.setInputOperandId(0));
+    ValOperandId rhsId(writer.setInputOperandId(1));
+
+    auto guardToString = [&](ValOperandId id, HandleValue v) {
+        if (v.isString()) {
+            return writer.guardIsString(id);
+        }
+        if (v.isInt32()) {
+            Int32OperandId intId = writer.guardIsInt32(id);
+            return writer.callInt32ToString(intId);
+        }
+        // At this point we are creating an IC that will handle
+        // both Int32 and Double cases.
+        MOZ_ASSERT(v.isNumber());
+        writer.guardIsNumber(id);
+        return writer.callNumberToString(id);
+    };
+
+    StringOperandId lhsStrId = guardToString(lhsId, lhs_);
+    StringOperandId rhsStrId = guardToString(rhsId, rhs_);
+
+    writer.callStringConcatResult(lhsStrId, rhsStrId);
+
+    writer.returnFromIC();
+    trackAttached("BinaryArith.StringNumberConcat");
     return true;
 }
 

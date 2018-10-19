@@ -221,6 +221,10 @@ PaymentRequestParent::ChangeShippingAddress(const nsAString& aRequestId,
   rv = aAddress->GetRegion(region);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  nsAutoString regionCode;
+  rv = aAddress->GetRegionCode(regionCode);
+  NS_ENSURE_SUCCESS(rv, rv);
+
   nsAutoString city;
   rv = aAddress->GetCity(city);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -262,7 +266,7 @@ PaymentRequestParent::ChangeShippingAddress(const nsAString& aRequestId,
     addressLine.AppendElement(address);
   }
 
-  IPCPaymentAddress ipcAddress(country, addressLine, region, city,
+  IPCPaymentAddress ipcAddress(country, addressLine, region, regionCode, city,
                                dependentLocality, postalCode, sortingCode,
                                organization, recipient, phone);
 
@@ -294,6 +298,34 @@ PaymentRequestParent::ChangeShippingOption(const nsAString& aRequestId,
   nsAutoString requestId(aRequestId);
   nsAutoString option(aOption);
   if (!SendChangeShippingOption(requestId, option)) {
+    return NS_ERROR_FAILURE;
+  }
+  return NS_OK;
+}
+
+nsresult
+PaymentRequestParent::ChangePayerDetail(const nsAString& aRequestId,
+                                        const nsAString& aPayerName,
+                                        const nsAString& aPayerEmail,
+                                        const nsAString& aPayerPhone)
+{
+  nsAutoString requestId(aRequestId);
+  nsAutoString payerName(aPayerName);
+  nsAutoString payerEmail(aPayerEmail);
+  nsAutoString payerPhone(aPayerPhone);
+  if (!NS_IsMainThread()) {
+    RefPtr<PaymentRequestParent> self = this;
+    nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction("dom::PaymentRequestParent::ChangePayerDetail",
+                                                     [self, requestId, payerName, payerEmail, payerPhone] ()
+    {
+      self->ChangePayerDetail(requestId, payerName, payerEmail, payerPhone);
+    });
+    return NS_DispatchToMainThread(r);
+  }
+  if (!mActorAlive) {
+    return NS_ERROR_FAILURE;
+  }
+  if (!SendChangePayerDetail(requestId, payerName, payerEmail, payerPhone)) {
     return NS_ERROR_FAILURE;
   }
   return NS_OK;

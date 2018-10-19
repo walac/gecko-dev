@@ -483,9 +483,7 @@ enum class AstExprKind
     ConversionOperator,
     CurrentMemory,
     Drop,
-#ifdef ENABLE_WASM_SATURATING_TRUNC_OPS
     ExtraConversionOperator,
-#endif
     First,
     GetGlobal,
     GetLocal,
@@ -497,6 +495,12 @@ enum class AstExprKind
     MemOrTableDrop,
     MemFill,
     MemOrTableInit,
+#endif
+#ifdef ENABLE_WASM_GC
+    StructNew,
+    StructGet,
+    StructSet,
+    StructNarrow,
 #endif
     Nop,
     Pop,
@@ -1053,6 +1057,82 @@ class AstMemOrTableInit : public AstExpr
 };
 #endif
 
+#ifdef ENABLE_WASM_GC
+class AstStructNew : public AstExpr
+{
+    AstRef structType_;
+    AstExprVector fieldValues_;
+
+  public:
+    static const AstExprKind Kind = AstExprKind::StructNew;
+    AstStructNew(AstRef structType, AstExprType type, AstExprVector&& fieldVals)
+      : AstExpr(Kind, type), structType_(structType), fieldValues_(std::move(fieldVals))
+    {}
+    AstRef& structType() { return structType_; }
+    const AstExprVector& fieldValues() const { return fieldValues_; }
+};
+
+class AstStructGet : public AstExpr
+{
+    AstRef   structType_;
+    AstRef   fieldName_;
+    AstExpr* ptr_;
+
+  public:
+    static const AstExprKind Kind = AstExprKind::StructGet;
+    AstStructGet(AstRef structType, AstRef fieldName, AstExprType type, AstExpr* ptr)
+      : AstExpr(Kind, type),
+        structType_(structType),
+        fieldName_(fieldName),
+        ptr_(ptr)
+    {}
+    AstRef& structType() { return structType_; }
+    AstRef& fieldName() { return fieldName_; }
+    AstExpr& ptr() const { return *ptr_; }
+};
+
+class AstStructSet : public AstExpr
+{
+    AstRef   structType_;
+    AstRef   fieldName_;
+    AstExpr* ptr_;
+    AstExpr* value_;
+
+  public:
+    static const AstExprKind Kind = AstExprKind::StructSet;
+    AstStructSet(AstRef structType, AstRef fieldName, AstExpr* ptr, AstExpr* value)
+      : AstExpr(Kind, ExprType::Void),
+        structType_(structType),
+        fieldName_(fieldName),
+        ptr_(ptr),
+        value_(value)
+    {}
+    AstRef& structType() { return structType_; }
+    AstRef& fieldName() { return fieldName_; }
+    AstExpr& ptr() const { return *ptr_; }
+    AstExpr& value() const { return *value_; }
+};
+
+class AstStructNarrow : public AstExpr
+{
+    AstValType inputStruct_;
+    AstValType outputStruct_;
+    AstExpr*   ptr_;
+
+  public:
+    static const AstExprKind Kind = AstExprKind::StructNarrow;
+    AstStructNarrow(AstValType inputStruct, AstValType outputStruct, AstExpr* ptr)
+      : AstExpr(Kind, AstExprType(outputStruct)),
+        inputStruct_(inputStruct),
+        outputStruct_(outputStruct),
+        ptr_(ptr)
+    {}
+    AstValType& inputStruct() { return inputStruct_; }
+    AstValType& outputStruct() { return outputStruct_; }
+    AstExpr& ptr() const { return *ptr_; }
+};
+#endif
+
 class AstCurrentMemory final : public AstExpr
 {
   public:
@@ -1557,7 +1637,6 @@ class AstConversionOperator final : public AstExpr
     AstExpr* operand() const { return operand_; }
 };
 
-#ifdef ENABLE_WASM_SATURATING_TRUNC_OPS
 // Like AstConversionOperator, but for opcodes encoded with the Misc prefix.
 class AstExtraConversionOperator final : public AstExpr
 {
@@ -1574,7 +1653,6 @@ class AstExtraConversionOperator final : public AstExpr
     MiscOp op() const { return op_; }
     AstExpr* operand() const { return operand_; }
 };
-#endif
 
 class AstRefNull final : public AstExpr
 {

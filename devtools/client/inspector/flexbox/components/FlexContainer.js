@@ -4,16 +4,17 @@
 
 "use strict";
 
-const { createFactory, createRef, PureComponent } = require("devtools/client/shared/vendor/react");
+const {
+  createElement,
+  createRef,
+  Fragment,
+  PureComponent,
+} = require("devtools/client/shared/vendor/react");
 const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const { connect } = require("devtools/client/shared/vendor/react-redux");
 const { translateNodeFrontToGrip } = require("devtools/client/inspector/shared/utils");
 
-loader.lazyGetter(this, "FlexItemSelector", function() {
-  return createFactory(require("./FlexItemSelector"));
-});
-
-// Reps
 const { REPS, MODE } = require("devtools/client/shared/components/reps/reps");
 const { Rep } = REPS;
 const ElementNode = REPS.ElementNode;
@@ -23,14 +24,12 @@ const Types = require("../types");
 class FlexContainer extends PureComponent {
   static get propTypes() {
     return {
-      flexbox: PropTypes.shape(Types.flexbox).isRequired,
+      color: PropTypes.string.isRequired,
+      flexContainer: PropTypes.shape(Types.flexContainer).isRequired,
       getSwatchColorPickerTooltip: PropTypes.func.isRequired,
       onHideBoxModelHighlighter: PropTypes.func.isRequired,
       onSetFlexboxOverlayColor: PropTypes.func.isRequired,
       onShowBoxModelHighlighterForNode: PropTypes.func.isRequired,
-      onToggleFlexboxHighlighter: PropTypes.func.isRequired,
-      onToggleFlexItemShown: PropTypes.func.isRequired,
-      setSelectedNode: PropTypes.func.isRequired,
     };
   }
 
@@ -40,29 +39,21 @@ class FlexContainer extends PureComponent {
     this.colorValueEl = createRef();
     this.swatchEl = createRef();
 
-    this.onFlexboxCheckboxClick = this.onFlexboxCheckboxClick.bind(this);
-    this.onFlexboxInspectIconClick = this.onFlexboxInspectIconClick.bind(this);
     this.setFlexboxColor = this.setFlexboxColor.bind(this);
   }
 
   componentDidMount() {
-    const {
-      flexbox,
-      getSwatchColorPickerTooltip,
-      onSetFlexboxOverlayColor,
-    } = this.props;
-
-    const tooltip = getSwatchColorPickerTooltip();
+    const tooltip = this.props.getSwatchColorPickerTooltip();
 
     let previousColor;
     tooltip.addSwatch(this.swatchEl.current, {
       onCommit: this.setFlexboxColor,
       onPreview: this.setFlexboxColor,
       onRevert: () => {
-        onSetFlexboxOverlayColor(previousColor);
+        this.props.onSetFlexboxOverlayColor(previousColor);
       },
       onShow: () => {
-        previousColor = flexbox.color;
+        previousColor = this.props.color;
       },
     });
   }
@@ -77,112 +68,50 @@ class FlexContainer extends PureComponent {
     this.props.onSetFlexboxOverlayColor(color);
   }
 
-  onFlexboxCheckboxClick(e) {
-    // If the click was on the svg icon to select the node in the inspector, bail out.
-    const originalTarget = e.nativeEvent && e.nativeEvent.explicitOriginalTarget;
-    if (originalTarget && originalTarget.namespaceURI === "http://www.w3.org/2000/svg") {
-      // We should be able to cancel the click event propagation after the following reps
-      // issue is implemented : https://github.com/devtools-html/reps/issues/95 .
-      e.preventDefault();
-      return;
-    }
-
-    const {
-      flexbox,
-      onToggleFlexboxHighlighter,
-    } = this.props;
-
-    onToggleFlexboxHighlighter(flexbox.nodeFront);
-  }
-
-  onFlexboxInspectIconClick(nodeFront) {
-    const { setSelectedNode } = this.props;
-    setSelectedNode(nodeFront, { reason: "layout-panel" });
-    nodeFront.scrollIntoView().catch(e => console.error(e));
-  }
-
-  renderFlexItemSelector() {
-    const {
-      flexbox,
-      onToggleFlexItemShown,
-    } = this.props;
-    const {
-      flexItems,
-      flexItemShown,
-    } = flexbox;
-
-    if (!flexItemShown) {
-      return null;
-    }
-
-    return FlexItemSelector({
-      flexItem: flexItems.find(item => item.nodeFront.actorID === flexItemShown),
-      flexItems,
-      onToggleFlexItemShown,
-    });
-  }
-
   render() {
     const {
-      flexbox,
+      color,
+      flexContainer,
       onHideBoxModelHighlighter,
       onShowBoxModelHighlighterForNode,
     } = this.props;
-    const {
-      color,
-      highlighted,
-      nodeFront,
-    } = flexbox;
+    const { nodeFront } = flexContainer;
 
-    return (
-      dom.div({ className: "flex-container devtools-monospace" },
-        dom.div({},
-          dom.label({},
-            dom.input(
-              {
-                className: "devtools-checkbox-toggle",
-                checked: highlighted,
-                onChange: this.onFlexboxCheckboxClick,
-                type: "checkbox",
-              }
-            ),
-            Rep(
-              {
-                defaultRep: ElementNode,
-                mode: MODE.TINY,
-                object: translateNodeFrontToGrip(nodeFront),
-                onDOMNodeMouseOut: () => onHideBoxModelHighlighter(),
-                onDOMNodeMouseOver: () => onShowBoxModelHighlighterForNode(nodeFront),
-                onInspectIconClick: () => this.onFlexboxInspectIconClick(nodeFront),
-              }
-            )
-          ),
-          dom.div(
-            {
-              className: "layout-color-swatch",
-              ref: this.swatchEl,
-              style: {
-                backgroundColor: color,
-              },
-              title: color,
-            }
-          ),
-          // The SwatchColorPicker relies on the nextSibling of the swatch element to
-          // apply the selected color. This is why we use a span in display: none for
-          // now. Ideally we should modify the SwatchColorPickerTooltip to bypass this
-          // requirement. See https://bugzilla.mozilla.org/show_bug.cgi?id=1341578
-          dom.span(
-            {
-              className: "layout-color-value",
-              ref: this.colorValueEl,
-            },
-            color
-          )
-        ),
-        this.renderFlexItemSelector()
+    return createElement(Fragment, null,
+      Rep({
+        defaultRep: ElementNode,
+        mode: MODE.TINY,
+        object: translateNodeFrontToGrip(nodeFront),
+        onDOMNodeMouseOut: () => onHideBoxModelHighlighter(),
+        onDOMNodeMouseOver: () => onShowBoxModelHighlighterForNode(nodeFront),
+      }),
+      dom.div({
+        className: "layout-color-swatch",
+        ref: this.swatchEl,
+        style: {
+          backgroundColor: color,
+        },
+        title: color,
+      }),
+      // The SwatchColorPicker relies on the nextSibling of the swatch element to
+      // apply the selected color. This is why we use a span in display: none for
+      // now. Ideally we should modify the SwatchColorPickerTooltip to bypass this
+      // requirement. See https://bugzilla.mozilla.org/show_bug.cgi?id=1341578
+      dom.span(
+        {
+          className: "layout-color-value",
+          ref: this.colorValueEl,
+        },
+        color
       )
     );
   }
 }
 
-module.exports = FlexContainer;
+const mapStateToProps = state => {
+  return {
+    color: state.flexbox.color,
+  };
+};
+
+module.exports = connect(mapStateToProps)(FlexContainer);

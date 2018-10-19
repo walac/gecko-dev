@@ -20,7 +20,6 @@ module.exports = {
   "globals": {
     "AddonManagerPermissions": false,
     "BroadcastChannel": false,
-    "BrowserFeedWriter": false,
     "CSSAnimation": false,
     "CSSPrimitiveValue": false,
     "CSSValueList": false,
@@ -53,6 +52,8 @@ module.exports = {
     "MatchPatternSet": false,
     "MenuBoxObject": false,
     // Specific to Firefox (Chrome code only).
+    "PlacesBookmarkAddition": false,
+    "PlacesEvent": false,
     "PlacesObservers": false,
     "PlacesWeakCallbackWrapper": false,
     "PrioEncoder": false,

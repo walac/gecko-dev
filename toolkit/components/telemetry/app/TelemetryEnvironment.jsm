@@ -183,6 +183,9 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["app.support.baseURL", {what: RECORD_PREF_VALUE}],
   ["accessibility.browsewithcaret", {what: RECORD_PREF_VALUE}],
   ["accessibility.force_disabled", {what:  RECORD_PREF_VALUE}],
+  ["app.normandy.test.with_true_default", {what: RECORD_PREF_VALUE}],
+  ["app.normandy.test.with_false_default", {what: RECORD_PREF_VALUE}],
+  ["app.normandy.test.without_default", {what: RECORD_PREF_VALUE}],
   ["app.shield.optoutstudies.enabled", {what: RECORD_PREF_VALUE}],
   ["app.update.auto", {what: RECORD_PREF_VALUE}],
   ["app.update.interval", {what: RECORD_PREF_VALUE}],
@@ -228,6 +231,8 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["general.smoothScroll", {what: RECORD_PREF_VALUE}],
   ["gfx.direct2d.disabled", {what: RECORD_PREF_VALUE}],
   ["gfx.direct2d.force-enabled", {what: RECORD_PREF_VALUE}],
+  ["gfx.webrender.all", {what: RECORD_PREF_VALUE}],
+  ["gfx.webrender.all.qualified", {what: RECORD_PREF_VALUE}],
   ["gfx.webrender.force-disabled", {what: RECORD_PREF_VALUE}],
   ["layers.acceleration.disabled", {what: RECORD_PREF_VALUE}],
   ["layers.acceleration.force-enabled", {what: RECORD_PREF_VALUE}],
@@ -296,7 +301,7 @@ function enforceBoolean(aValue) {
  */
 function getBrowserLocale() {
   try {
-    return Services.locale.getAppLocaleAsLangTag();
+    return Services.locale.appLocaleAsLangTag;
   } catch (e) {
     return null;
   }
@@ -1441,17 +1446,21 @@ EnvironmentCache.prototype = {
    * @returns Promise<> resolved when the I/O is complete.
    */
   async _updateProfile() {
-    const logger = Log.repository.getLoggerWithMessagePrefix(LOGGER_NAME, "ProfileAge - ");
-    let profileAccessor = new ProfileAge(null, logger);
+    let profileAccessor = await ProfileAge();
 
     let creationDate = await profileAccessor.created;
     let resetDate = await profileAccessor.reset;
+    let firstUseDate = await profileAccessor.firstUse;
 
     this._currentEnvironment.profile.creationDate =
       Utils.millisecondsToDays(creationDate);
     if (resetDate) {
       this._currentEnvironment.profile.resetDate =
         Utils.millisecondsToDays(resetDate);
+    }
+    if (firstUseDate) {
+      this._currentEnvironment.profile.firstUseDate =
+        Utils.millisecondsToDays(firstUseDate);
     }
   },
 

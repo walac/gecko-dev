@@ -1369,7 +1369,7 @@ GetPropagatedScrollStylesForViewport(nsPresContext* aPresContext,
   // Check the style on the document root element
   ServoStyleSet* styleSet = aPresContext->StyleSet();
   RefPtr<ComputedStyle> rootStyle =
-    styleSet->ResolveStyleFor(docElement, nullptr, LazyComputeBehavior::Allow);
+    styleSet->ResolveStyleFor(docElement, LazyComputeBehavior::Allow);
   if (CheckOverflow(rootStyle->StyleDisplay(), aStyles)) {
     // tell caller we stole the overflow style from the root element
     return docElement;
@@ -1394,7 +1394,7 @@ GetPropagatedScrollStylesForViewport(nsPresContext* aPresContext,
              "GetBodyElement returned something bogus");
 
   RefPtr<ComputedStyle> bodyStyle =
-    styleSet->ResolveStyleFor(bodyElement, rootStyle,
+    styleSet->ResolveStyleFor(bodyElement,
                               LazyComputeBehavior::Allow);
 
   if (CheckOverflow(bodyStyle->StyleDisplay(), aStyles)) {
@@ -1634,7 +1634,7 @@ nsITheme*
 nsPresContext::GetTheme()
 {
   if (!sNoTheme && !mTheme) {
-    mTheme = do_GetService("@mozilla.org/chrome/chrome-native-theme;1");
+    mTheme = do_GetNativeTheme();
     if (!mTheme)
       sNoTheme = true;
   }
@@ -2262,7 +2262,7 @@ nsPresContext::FireDOMPaintEvent(nsTArray<nsRect>* aList,
     // something happened in a subdocument. Tell only the chrome event handler.
     // (Events sent to the window get propagated to the chrome event handler
     // automatically.)
-    dispatchTarget = do_QueryInterface(ourWindow->GetParentTarget());
+    dispatchTarget = ourWindow->GetParentTarget();
     if (!dispatchTarget) {
       return;
     }

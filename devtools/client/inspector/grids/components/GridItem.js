@@ -7,12 +7,15 @@
 const { createRef, PureComponent } = require("devtools/client/shared/vendor/react");
 const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
-const { translateNodeFrontToGrip } = require("devtools/client/inspector/shared/utils");
 
-// Reps
-const { REPS, MODE } = require("devtools/client/shared/components/reps/reps");
-const { Rep } = REPS;
-const ElementNode = REPS.ElementNode;
+loader.lazyGetter(this, "Rep", function() {
+  return require("devtools/client/shared/components/reps/reps").REPS.Rep;
+});
+loader.lazyGetter(this, "MODE", function() {
+  return require("devtools/client/shared/components/reps/reps").MODE;
+});
+
+loader.lazyRequireGetter(this, "translateNodeFrontToGrip", "devtools/client/inspector/shared/utils", true);
 
 const Types = require("../types");
 
@@ -96,7 +99,6 @@ class GridItem extends PureComponent {
       onHideBoxModelHighlighter,
       onShowBoxModelHighlighterForNode,
     } = this.props;
-    const { nodeFront } = grid;
 
     return (
       dom.li({},
@@ -104,18 +106,19 @@ class GridItem extends PureComponent {
           dom.input(
             {
               checked: grid.highlighted,
+              disabled: grid.disabled,
               type: "checkbox",
               value: grid.id,
               onChange: this.onGridCheckboxClick,
             }
           ),
           Rep({
-            defaultRep: ElementNode,
+            defaultRep: Rep.ElementNode,
             mode: MODE.TINY,
-            object: translateNodeFrontToGrip(nodeFront),
+            object: translateNodeFrontToGrip(grid.nodeFront),
             onDOMNodeMouseOut: () => onHideBoxModelHighlighter(),
-            onDOMNodeMouseOver: () => onShowBoxModelHighlighterForNode(nodeFront),
-            onInspectIconClick: () => this.onGridInspectIconClick(nodeFront),
+            onDOMNodeMouseOver: () => onShowBoxModelHighlighterForNode(grid.nodeFront),
+            onInspectIconClick: () => this.onGridInspectIconClick(grid.nodeFront),
           })
         ),
         dom.div(

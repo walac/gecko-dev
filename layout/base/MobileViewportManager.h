@@ -53,22 +53,23 @@ public:
   void RequestReflow();
 
   /* Notify the MobileViewportManager that the resolution on the presShell was
-   * updated, and the SPCSPS needs to be updated. */
+   * updated, and the visual viewport size needs to be updated. */
   void ResolutionUpdated();
 
-private:
-  ~MobileViewportManager();
-
   /* Called to compute the initial viewport on page load or before-first-paint,
-   * whichever happens first. */
+   * whichever happens first. Also called directly if we are created after the
+   * presShell is initialized. */
   void SetInitialViewport();
+
+  private:
+  ~MobileViewportManager();
 
   /* Main helper method to update the CSS viewport and any other properties that
    * need updating. */
   void RefreshViewportSize(bool aForceAdjustResolution);
 
-  /* Secondary main helper method to update just the SPCSPS. */
-  void RefreshSPCSPS();
+  /* Secondary main helper method to update just the visual viewport size. */
+  void RefreshVisualViewportSize();
 
   /* Helper to clamp the given zoom by the min/max in the viewport info. */
   mozilla::CSSToScreenScale ClampZoom(const mozilla::CSSToScreenScale& aZoom,
@@ -87,9 +88,8 @@ private:
                                              const mozilla::CSSSize& aViewport,
                                              const mozilla::Maybe<float>& aDisplayWidthChangeRatio);
 
-  /* Updates the scroll-position-clamping scrollport size */
-  void UpdateSPCSPS(const mozilla::ScreenIntSize& aDisplaySize,
-                    const mozilla::CSSToScreenScale& aZoom);
+  void UpdateVisualViewportSize(const mozilla::ScreenIntSize& aDisplaySize,
+                                const mozilla::CSSToScreenScale& aZoom);
 
   /* Updates the displayport margins for the presShell's root scrollable frame */
   void UpdateDisplayPortMargins();

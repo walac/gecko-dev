@@ -302,7 +302,7 @@ class GlobalHelperThreadState
     JSScript* finishScriptParseTask(JSContext* cx, JS::OffThreadToken* token);
     JSScript* finishScriptDecodeTask(JSContext* cx, JS::OffThreadToken* token);
     bool finishMultiScriptsDecodeTask(JSContext* cx, JS::OffThreadToken* token, MutableHandle<ScriptVector> scripts);
-    JSScript* finishModuleParseTask(JSContext* cx, JS::OffThreadToken* token);
+    JSObject* finishModuleParseTask(JSContext* cx, JS::OffThreadToken* token);
 
 #if defined(JS_BUILD_BINAST)
     JSScript* finishBinASTDecodeTask(JSContext* cx, JS::OffThreadToken* token);
@@ -314,6 +314,8 @@ class GlobalHelperThreadState
 
     template <typename T>
     bool checkTaskThreadLimit(size_t maxThreads, bool isMaster = false) const;
+
+    void triggerFreeUnusedMemory();
 
   private:
     /*
@@ -362,6 +364,12 @@ struct HelperThread
      * or written with the helper thread state lock held.
      */
     bool terminate;
+
+    /*
+     * Indicates that this thread should free its unused memory when it is next
+     * idle.
+     */
+    bool shouldFreeUnusedMemory;
 
     /* The current task being executed by this thread, if any. */
     mozilla::Maybe<HelperTaskUnion> currentTask;
@@ -451,6 +459,8 @@ struct HelperThread
 
         return nullptr;
     }
+
+    void maybeFreeUnusedMemory(JSContext* cx);
 
     void handleWasmWorkload(AutoLockHelperThreadState& locked, wasm::CompileMode mode);
 
@@ -838,6 +848,15 @@ class SourceCompressionTask
 
     void work();
     void complete();
+
+  private:
+    struct PerformTaskWork;
+    friend struct PerformTaskWork;
+
+    // The work algorithm, aware whether it's compressing one-byte UTF-8 source
+    // text or UTF-16, for CharT either Utf8Unit or char16_t.  Invoked by
+    // work() after doing a type-test of the ScriptSource*.
+    template<typename CharT> void workEncodingSpecific();
 };
 
 // A PromiseHelperTask is an OffThreadPromiseTask that executes a single job on

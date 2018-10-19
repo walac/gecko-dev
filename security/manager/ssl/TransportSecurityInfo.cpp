@@ -23,7 +23,7 @@
 #include "nsReadableUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsXULAppAPI.h"
-#include "pkix/pkixtypes.h"
+#include "mozpkix/pkixtypes.h"
 #include "secerr.h"
 
 //#define DEBUG_SSL_VERBOSE //Enable this define to get minimal
@@ -52,10 +52,9 @@ TransportSecurityInfo::TransportSecurityInfo()
   , mHasIsEVStatus(false)
   , mHaveCipherSuiteAndProtocol(false)
   , mHaveCertErrorBits(false)
+  , mCanceled(false)
   , mMutex("TransportSecurityInfo::mMutex")
   , mSecurityState(nsIWebProgressListener::STATE_IS_INSECURE)
-  , mSubRequestsBrokenSecurity(0)
-  , mSubRequestsNoSecurity(0)
   , mErrorCode(0)
   , mPort(0)
 {
@@ -64,7 +63,6 @@ TransportSecurityInfo::TransportSecurityInfo()
 NS_IMPL_ISUPPORTS(TransportSecurityInfo,
                   nsITransportSecurityInfo,
                   nsIInterfaceRequestor,
-                  nsIAssociatedContentSecurity,
                   nsISerializable,
                   nsIClassInfo)
 
@@ -87,10 +85,21 @@ TransportSecurityInfo::SetOriginAttributes(
   mOriginAttributes = aOriginAttributes;
 }
 
+// NB: GetErrorCode may be called before an error code is set (if ever). In that
+// case, this returns (by pointer) 0, which is treated as a successful value.
 NS_IMETHODIMP
 TransportSecurityInfo::GetErrorCode(int32_t* state)
 {
   MutexAutoLock lock(mMutex);
+
+  // We're in an inconsistent state if we think we've been canceled but no error
+  // code was set or we haven't been canceled but an error code was set.
+  MOZ_ASSERT(!((mCanceled && mErrorCode == 0) ||
+              (!mCanceled && mErrorCode != 0)));
+  if ((mCanceled && mErrorCode == 0) || (!mCanceled && mErrorCode != 0)) {
+    mCanceled = true;
+    mErrorCode = SEC_ERROR_LIBRARY_FAILURE;
+  }
 
   *state = mErrorCode;
   return NS_OK;
@@ -99,9 +108,20 @@ TransportSecurityInfo::GetErrorCode(int32_t* state)
 void
 TransportSecurityInfo::SetCanceled(PRErrorCode errorCode)
 {
-  MutexAutoLock lock(mMutex);
+  MOZ_ASSERT(errorCode != 0);
+  if (errorCode == 0) {
+    errorCode = SEC_ERROR_LIBRARY_FAILURE;
+  }
 
+  MutexAutoLock lock(mMutex);
   mErrorCode = errorCode;
+  mCanceled = true;
+}
+
+bool
+TransportSecurityInfo::IsCanceled()
+{
+  return mCanceled;
 }
 
 NS_IMETHODIMP
@@ -115,44 +135,6 @@ void
 TransportSecurityInfo::SetSecurityState(uint32_t aState)
 {
   mSecurityState = aState;
-}
-
-NS_IMETHODIMP
-TransportSecurityInfo::GetCountSubRequestsBrokenSecurity(
-  int32_t *aSubRequestsBrokenSecurity)
-{
-  *aSubRequestsBrokenSecurity = mSubRequestsBrokenSecurity;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-TransportSecurityInfo::SetCountSubRequestsBrokenSecurity(
-  int32_t aSubRequestsBrokenSecurity)
-{
-  mSubRequestsBrokenSecurity = aSubRequestsBrokenSecurity;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-TransportSecurityInfo::GetCountSubRequestsNoSecurity(
-  int32_t *aSubRequestsNoSecurity)
-{
-  *aSubRequestsNoSecurity = mSubRequestsNoSecurity;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-TransportSecurityInfo::SetCountSubRequestsNoSecurity(
-  int32_t aSubRequestsNoSecurity)
-{
-  mSubRequestsNoSecurity = aSubRequestsNoSecurity;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-TransportSecurityInfo::Flush()
-{
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -209,11 +191,13 @@ TransportSecurityInfo::Write(nsIObjectOutputStream* aStream)
   if (NS_FAILED(rv)) {
     return rv;
   }
-  rv = aStream->Write32(mSubRequestsBrokenSecurity);
+  // mSubRequestsBrokenSecurity was removed in bug 748809
+  rv = aStream->Write32(0);
   if (NS_FAILED(rv)) {
     return rv;
   }
-  rv = aStream->Write32(mSubRequestsNoSecurity);
+  // mSubRequestsNoSecurity was removed in bug 748809
+  rv = aStream->Write32(0);
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -411,26 +395,18 @@ TransportSecurityInfo::Read(nsIObjectInputStream* aStream)
   if (NS_FAILED(rv)) {
     return rv;
   }
-  uint32_t subRequestsBrokenSecurity;
-  rv = aStream->Read32(&subRequestsBrokenSecurity);
+  // mSubRequestsBrokenSecurity was removed in bug 748809
+  uint32_t unusedSubRequestsBrokenSecurity;
+  rv = aStream->Read32(&unusedSubRequestsBrokenSecurity);
   if (NS_FAILED(rv)) {
     return rv;
   }
-  if (subRequestsBrokenSecurity >
-      static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
-    return NS_ERROR_UNEXPECTED;
-  }
-  mSubRequestsBrokenSecurity = subRequestsBrokenSecurity;
-  uint32_t subRequestsNoSecurity;
-  rv = aStream->Read32(&subRequestsNoSecurity);
+  // mSubRequestsNoSecurity was removed in bug 748809
+  uint32_t unusedSubRequestsNoSecurity;
+  rv = aStream->Read32(&unusedSubRequestsNoSecurity);
   if (NS_FAILED(rv)) {
     return rv;
   }
-  if (subRequestsNoSecurity >
-        static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
-    return NS_ERROR_UNEXPECTED;
-  }
-  mSubRequestsNoSecurity = subRequestsNoSecurity;
   uint32_t errorCode;
   rv = aStream->Read32(&errorCode);
   if (NS_FAILED(rv)) {
@@ -438,6 +414,11 @@ TransportSecurityInfo::Read(nsIObjectInputStream* aStream)
   }
   // PRErrorCode will be a negative value
   mErrorCode = static_cast<PRErrorCode>(errorCode);
+  // If mErrorCode is non-zero, SetCanceled was called on the
+  // TransportSecurityInfo that was serialized.
+  if (mErrorCode != 0) {
+    mCanceled = true;
+  }
 
   // Re-purpose mErrorMessageCached to represent serialization version
   // If string doesn't match exact version it will be treated as older

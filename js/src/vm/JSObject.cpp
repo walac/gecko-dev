@@ -69,10 +69,12 @@
 #include "vm/JSFunction-inl.h"
 #include "vm/NativeObject-inl.h"
 #include "vm/NumberObject-inl.h"
+#include "vm/ObjectGroup-inl.h"
 #include "vm/Realm-inl.h"
 #include "vm/Shape-inl.h"
 #include "vm/StringObject-inl.h"
 #include "vm/TypedArrayObject-inl.h"
+#include "vm/TypeInference-inl.h"
 #include "vm/UnboxedObject-inl.h"
 
 using namespace js;
@@ -95,8 +97,8 @@ js::ReportNotObjectArg(JSContext* cx, const char* nth, const char* fun, HandleVa
 
     UniqueChars bytes;
     if (const char* chars = ValueToSourceForError(cx, v, bytes)) {
-        JS_ReportErrorNumberLatin1(cx, GetErrorMessage, nullptr, JSMSG_NOT_NONNULL_OBJECT_ARG,
-                                   nth, fun, chars);
+        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_NOT_NONNULL_OBJECT_ARG,
+                                 nth, fun, chars);
     }
 }
 
@@ -107,8 +109,8 @@ js::ReportNotObjectWithName(JSContext* cx, const char* name, HandleValue v)
 
     UniqueChars bytes;
     if (const char* chars = ValueToSourceForError(cx, v, bytes)) {
-        JS_ReportErrorNumberLatin1(cx, GetErrorMessage, nullptr, JSMSG_NOT_NONNULL_OBJECT_NAME,
-                                   name, chars);
+        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_NOT_NONNULL_OBJECT_NAME,
+                                 name, chars);
     }
 }
 
@@ -2465,7 +2467,7 @@ bool
 js::LookupNameNoGC(JSContext* cx, PropertyName* name, JSObject* envChain,
                    JSObject** objp, JSObject** pobjp, PropertyResult* propp)
 {
-    AutoAssertNoException nogc(cx);
+    AutoAssertNoPendingException nogc(cx);
 
     MOZ_ASSERT(!*objp && !*pobjp && !*propp);
 

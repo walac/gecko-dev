@@ -1029,9 +1029,7 @@ Debugger::slowPathOnLeaveFrame(JSContext* cx, AbstractFramePtr frame, jsbytecode
                 RootedValue wrappedValue(cx, value);
                 RootedValue completion(cx);
                 if (!dbg->wrapDebuggeeValue(cx, &wrappedValue)) {
-                {
                     resumeMode = dbg->reportUncaughtException(ar);
-                }
                     break;
                 }
 
@@ -1734,7 +1732,7 @@ Debugger::processHandlerResult(Maybe<AutoRealm>& ar, bool success, const Value& 
     return leaveDebugger(ar, frame, maybeThisv, CallUncaughtExceptionHook::Yes, resumeMode, vp);
 }
 
-
+
 /*** Debuggee completion values ******************************************************************/
 
 /* static */ void
@@ -1913,9 +1911,6 @@ Debugger::fireEnterFrame(JSContext* cx, MutableHandleValue vp)
     MOZ_ASSERT(hook);
     MOZ_ASSERT(hook->isCallable());
 
-    Maybe<AutoRealm> ar;
-    ar.emplace(cx, object);
-
     RootedValue scriptFrame(cx);
 
     FrameIter iter(cx);
@@ -1927,6 +1922,9 @@ Debugger::fireEnterFrame(JSContext* cx, MutableHandleValue vp)
         MOZ_ASSERT(genObj->isRunning() || genObj->isClosing());
     }
 #endif
+
+    Maybe<AutoRealm> ar;
+    ar.emplace(cx, object);
 
     if (!getFrame(cx, iter, &scriptFrame)) {
         return reportUncaughtException(ar);
@@ -2785,7 +2783,7 @@ UpdateExecutionObservabilityOfScriptsInZone(JSContext* cx, Zone* zone,
             }
 
             bool enableTrap = observing == Debugger::IsObserving::Observing;
-            instance->ensureEnterFrameTrapsState(cx, enableTrap);
+            instance->debug().ensureEnterFrameTrapsState(cx, enableTrap);
         }
     }
 
@@ -4417,19 +4415,73 @@ Debugger::removeDebuggeeGlobal(FreeOp* fop, GlobalObject* global,
 
 static inline DebuggerSourceReferent GetSourceReferent(JSObject* obj);
 
+class MOZ_STACK_CLASS Debugger::QueryBase
+{
+  protected:
+    QueryBase(JSContext* cx, Debugger* dbg)
+      : cx(cx),
+        debugger(dbg),
+        iterMarker(&cx->runtime()->gc),
+        realms(cx->zone()),
+        oom(false)
+    {}
+
+    // The context in which we should do our work.
+    JSContext* cx;
+
+    // The debugger for which we conduct queries.
+    Debugger* debugger;
+
+    // Require the set of realms to stay fixed while the query is alive.
+    gc::AutoEnterIteration iterMarker;
+
+    using RealmSet = HashSet<Realm*, DefaultHasher<Realm*>, ZoneAllocPolicy>;
+
+    // A script must be in one of these realms to match the query.
+    RealmSet realms;
+
+    // Indicates whether OOM has occurred while matching.
+    bool oom;
+
+    bool addRealm(Realm* realm) {
+        return realms.put(realm);
+    }
+
+    // Arrange for this query to match only scripts that run in |global|.
+    bool matchSingleGlobal(GlobalObject* global) {
+        MOZ_ASSERT(realms.count() == 0);
+        if (!addRealm(global->realm())) {
+            ReportOutOfMemory(cx);
+            return false;
+        }
+        return true;
+    }
+
+    // Arrange for this ScriptQuery to match all scripts running in debuggee
+    // globals.
+    bool matchAllDebuggeeGlobals() {
+        MOZ_ASSERT(realms.count() == 0);
+        // Build our realm set from the debugger's set of debuggee globals.
+        for (WeakGlobalObjectSet::Range r = debugger->debuggees.all(); !r.empty(); r.popFront()) {
+            if (!addRealm(r.front()->realm())) {
+                ReportOutOfMemory(cx);
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
 /*
  * A class for parsing 'findScripts' query arguments and searching for
  * scripts that match the criteria they represent.
  */
-class MOZ_STACK_CLASS Debugger::ScriptQuery
+class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase
 {
   public:
     /* Construct a ScriptQuery to use matching scripts for |dbg|. */
-    ScriptQuery(JSContext* cx, Debugger* dbg):
-        cx(cx),
-        debugger(dbg),
-        iterMarker(&cx->runtime()->gc),
-        realms(cx->zone()),
+    ScriptQuery(JSContext* cx, Debugger* dbg)
+      : QueryBase(cx, dbg),
         url(cx),
         displayURLString(cx),
         hasSource(false),
@@ -4440,8 +4492,7 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery
         innermostForRealm(cx->zone()),
         scriptVector(cx, ScriptVector(cx)),
         lazyScriptVector(cx, LazyScriptVector(cx)),
-        wasmInstanceVector(cx, WasmInstanceObjectVector(cx)),
-        oom(false)
+        wasmInstanceVector(cx, WasmInstanceObjectVector(cx))
     {}
 
     /*
@@ -4679,20 +4730,6 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery
     }
 
   private:
-    /* The context in which we should do our work. */
-    JSContext* cx;
-
-    /* The debugger for which we conduct queries. */
-    Debugger* debugger;
-
-    /* Require the set of realms to stay fixed while the ScriptQuery is alive. */
-    gc::AutoEnterIteration iterMarker;
-
-    using RealmSet = HashSet<Realm*, DefaultHasher<Realm*>, ZoneAllocPolicy>;
-
-    /* A script must be in one of these realms to match the query. */
-    RealmSet realms;
-
     /* If this is a string, matching scripts have urls equal to it. */
     RootedValue url;
 
@@ -4741,39 +4778,6 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery
      * Like above, but for wasm modules.
      */
     Rooted<WasmInstanceObjectVector> wasmInstanceVector;
-
-    /* Indicates whether OOM has occurred while matching. */
-    bool oom;
-
-    bool addRealm(Realm* realm) {
-        return realms.put(realm);
-    }
-
-    /* Arrange for this ScriptQuery to match only scripts that run in |global|. */
-    bool matchSingleGlobal(GlobalObject* global) {
-        MOZ_ASSERT(realms.count() == 0);
-        if (!addRealm(global->realm())) {
-            ReportOutOfMemory(cx);
-            return false;
-        }
-        return true;
-    }
-
-    /*
-     * Arrange for this ScriptQuery to match all scripts running in debuggee
-     * globals.
-     */
-    bool matchAllDebuggeeGlobals() {
-        MOZ_ASSERT(realms.count() == 0);
-        // Build our realm set from the debugger's set of debuggee globals.
-        for (WeakGlobalObjectSet::Range r = debugger->debuggees.all(); !r.empty(); r.popFront()) {
-            if (!addRealm(r.front()->realm())) {
-                ReportOutOfMemory(cx);
-                return false;
-            }
-        }
-        return true;
-    }
 
     /*
      * Given that parseQuery or omittedQuery has been called, prepare to match
@@ -5035,6 +5039,175 @@ Debugger::findScripts(JSContext* cx, unsigned argc, Value* vp)
 }
 
 /*
+ * A class for searching sources for 'findSources'.
+ */
+class MOZ_STACK_CLASS Debugger::SourceQuery : public Debugger::QueryBase
+{
+  public:
+    using SourceSet = JS::GCHashSet<JSObject*,
+                                    js::MovableCellHasher<JSObject*>,
+                                    ZoneAllocPolicy>;
+
+    SourceQuery(JSContext* cx, Debugger* dbg)
+      : QueryBase(cx, dbg),
+        sources(cx, SourceSet(cx->zone()))
+    {}
+
+    bool findSources() {
+        if (!matchAllDebuggeeGlobals()) {
+            return false;
+        }
+
+        Realm* singletonRealm = nullptr;
+        if (realms.count() == 1) {
+            singletonRealm = realms.all().front();
+        }
+
+        // Search each realm for debuggee scripts.
+        MOZ_ASSERT(sources.empty());
+        oom = false;
+        IterateScripts(cx, singletonRealm, this, considerScript);
+        IterateLazyScripts(cx, singletonRealm, this, considerLazyScript);
+        if (oom) {
+            ReportOutOfMemory(cx);
+            return false;
+        }
+
+        // TODO: Until such time that wasm modules are real ES6 modules,
+        // unconditionally consider all wasm toplevel instance scripts.
+        for (WeakGlobalObjectSet::Range r = debugger->allDebuggees(); !r.empty(); r.popFront()) {
+            for (wasm::Instance* instance : r.front()->realm()->wasm.instances()) {
+                consider(instance->object());
+                if (oom) {
+                    ReportOutOfMemory(cx);
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    Handle<SourceSet> foundSources() const {
+        return sources;
+    }
+
+  private:
+    Rooted<SourceSet> sources;
+
+    static void considerScript(JSRuntime* rt, void* data, JSScript* script,
+                               const JS::AutoRequireNoGC& nogc) {
+        SourceQuery* self = static_cast<SourceQuery*>(data);
+        self->consider(script, nogc);
+    }
+
+    static void considerLazyScript(JSRuntime* rt, void* data, LazyScript* lazyScript,
+                                   const JS::AutoRequireNoGC& nogc) {
+        SourceQuery* self = static_cast<SourceQuery*>(data);
+        self->consider(lazyScript, nogc);
+    }
+
+    void consider(JSScript* script, const JS::AutoRequireNoGC& nogc) {
+        if (oom || script->selfHosted()) {
+            return;
+        }
+        Realm* realm = script->realm();
+        if (!realms.has(realm)) {
+            return;
+        }
+
+        if (!script->sourceObject()) {
+            return;
+        }
+
+        ScriptSourceObject* source =
+            &UncheckedUnwrap(script->sourceObject())->as<ScriptSourceObject>();
+        if (!sources.put(source)) {
+            oom = true;
+        }
+    }
+
+    void consider(LazyScript* lazyScript, const JS::AutoRequireNoGC& nogc) {
+        if (oom) {
+            return;
+        }
+        Realm* realm = lazyScript->realm();
+        if (!realms.has(realm)) {
+            return;
+        }
+
+        // If the script is already delazified, it should already be handled.
+        if (lazyScript->maybeScript()) {
+            return;
+        }
+
+        ScriptSourceObject* source = &lazyScript->sourceObject();
+        if (!sources.put(source)) {
+            oom = true;
+        }
+    }
+
+    void consider(WasmInstanceObject* instanceObject) {
+        if (oom) {
+            return;
+        }
+
+        if (!sources.put(instanceObject)) {
+            oom = true;
+        }
+    }
+};
+
+static inline DebuggerSourceReferent
+AsSourceReferent(JSObject* obj)
+{
+    if (obj->is<ScriptSourceObject>()) {
+        return AsVariant(&obj->as<ScriptSourceObject>());
+    }
+    return AsVariant(&obj->as<WasmInstanceObject>());
+}
+
+/* static */ bool
+Debugger::findSources(JSContext* cx, unsigned argc, Value* vp)
+{
+    THIS_DEBUGGER(cx, argc, vp, "findSources", args, dbg);
+
+    if (gc::GCRuntime::temporaryAbortIfWasmGc(cx)) {
+        JS_ReportErrorASCII(cx, "API temporarily unavailable under wasm gc");
+        return false;
+    }
+
+    SourceQuery query(cx, dbg);
+    if (!query.findSources()) {
+        return false;
+    }
+
+    Handle<SourceQuery::SourceSet> sources(query.foundSources());
+
+    size_t resultLength = sources.count();
+    RootedArrayObject result(cx, NewDenseFullyAllocatedArray(cx, resultLength));
+    if (!result) {
+        return false;
+    }
+
+    result->ensureDenseInitializedLength(cx, 0, resultLength);
+
+    size_t i = 0;
+    for (auto iter = sources.get().iter(); !iter.done(); iter.next()) {
+        Rooted<DebuggerSourceReferent> sourceReferent(cx, AsSourceReferent(iter.get()));
+        RootedObject sourceObject(cx, dbg->wrapVariantReferent(cx, sourceReferent));
+        if (!sourceObject) {
+            return false;
+        }
+        result->setDenseElement(i, ObjectValue(*sourceObject));
+        i++;
+    }
+
+    args.rval().setObject(*result);
+    return true;
+}
+
+/*
  * A class for parsing 'findObjects' query arguments and searching for objects
  * that match the criteria they represent.
  */
@@ -5067,6 +5240,16 @@ class MOZ_STACK_CLASS Debugger::ObjectQuery
                 JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
                                           "query object's 'class' property",
                                           "neither undefined nor a string");
+                return false;
+            }
+            JSLinearString* str = cls.toString()->ensureLinear(cx);
+            if (!str) {
+                return false;
+            }
+            if (!StringIsAscii(str)) {
+                JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
+                                          "query object's 'class' property",
+                                          "not a string containing only ASCII characters");
                 return false;
             }
             className = cls;
@@ -5197,7 +5380,7 @@ class MOZ_STACK_CLASS Debugger::ObjectQuery
      */
     bool prepareQuery() {
         if (className.isString()) {
-            classNameCString = JS_EncodeStringToLatin1(cx, className.toString());
+            classNameCString = JS_EncodeStringToASCII(cx, className.toString());
             if (!classNameCString) {
                 return false;
             }
@@ -5477,6 +5660,7 @@ const JSFunctionSpec Debugger::methods[] = {
     JS_FN("getNewestFrame", Debugger::getNewestFrame, 0, 0),
     JS_FN("clearAllBreakpoints", Debugger::clearAllBreakpoints, 0, 0),
     JS_FN("findScripts", Debugger::findScripts, 1, 0),
+    JS_FN("findSources", Debugger::findSources, 1, 0),
     JS_FN("findObjects", Debugger::findObjects, 1, 0),
     JS_FN("findAllGlobals", Debugger::findAllGlobals, 0, 0),
     JS_FN("makeGlobalObjectReference", Debugger::makeGlobalObjectReference, 1, 0),
@@ -5557,6 +5741,14 @@ DelazifyScript(JSContext* cx, Handle<LazyScript*> lazyScript)
     if (lazyScript->hasEnclosingLazyScript()) {
         Rooted<LazyScript*> enclosingLazyScript(cx, lazyScript->enclosingLazyScript());
         if (!DelazifyScript(cx, enclosingLazyScript)) {
+            return nullptr;
+        }
+
+        if (!lazyScript->enclosingScriptHasEverBeenCompiled()) {
+            // It didn't work! Delazifying the enclosing script still didn't
+            // delazify this script. This happens when the function
+            // corresponding to this script was removed by constant folding.
+            JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_DEBUG_OPTIMIZED_OUT_FUN);
             return nullptr;
         }
     }
@@ -5809,6 +6001,16 @@ DebuggerScript_getIsAsyncFunction(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
+DebuggerScript_getIsModule(JSContext* cx, unsigned argc, Value* vp)
+{
+    THIS_DEBUGSCRIPT_SCRIPT_MAYBE_LAZY(cx, argc, vp, "(get isModule)", args, obj);
+    DebuggerScriptReferent referent = GetScriptReferent(obj);
+    args.rval().setBoolean(referent.is<JSScript*>() &&
+                           referent.as<JSScript*>()->isModule());
+    return true;
+}
+
+static bool
 DebuggerScript_getDisplayName(JSContext* cx, unsigned argc, Value* vp)
 {
     THIS_DEBUGSCRIPT_SCRIPT_MAYBE_LAZY(cx, argc, vp, "(get displayName)", args, obj);
@@ -5911,12 +6113,13 @@ struct DebuggerScriptGetLineCountMatcher
         }
         return match(script);
     }
-    ReturnType match(Handle<WasmInstanceObject*> wasmInstance) {
-        uint32_t result;
-        if (!wasmInstance->instance().debug().totalSourceLines(cx_, &result)) {
-            return false;
+    ReturnType match(Handle<WasmInstanceObject*> instanceObj) {
+        wasm::Instance& instance = instanceObj->instance();
+        if (instance.debugEnabled()) {
+            totalLines = double(instance.debug().totalSourceLines());
+        } else {
+            totalLines = 0;
         }
-        totalLines = double(result);
         return true;
     }
 };
@@ -6056,12 +6259,10 @@ DebuggerScript_getChildScripts(JSContext* cx, unsigned argc, Value* vp)
         // and the calling function is stored as script->objects()->vector[0].
         // It is not really a child script of this script, so skip it using
         // innerObjectsStart().
-        ObjectArray* objects = script->objects();
         RootedFunction fun(cx);
         RootedScript funScript(cx);
-        RootedObject obj(cx), s(cx);
-        for (uint32_t i = 0; i < objects->length; i++) {
-            obj = objects->vector[i];
+        RootedObject s(cx);
+        for (const GCPtrObject& obj : script->objects()) {
             if (obj->is<JSFunction>()) {
                 fun = &obj->as<JSFunction>();
                 // The inner function could be a wasm native.
@@ -6247,13 +6448,11 @@ class FlowGraphSummary {
                 // was an incoming edge of the catch block. This is needed
                 // because we only report offsets of entry points which have
                 // valid incoming edges.
-                JSTryNote* tn = script->trynotes()->vector;
-                JSTryNote* tnlimit = tn + script->trynotes()->length;
-                for (; tn < tnlimit; tn++) {
-                    uint32_t startOffset = script->mainOffset() + tn->start;
+                for (const JSTryNote& tn : script->trynotes()) {
+                    uint32_t startOffset = script->mainOffset() + tn.start;
                     if (startOffset == r.frontOffset() + 1) {
-                        uint32_t catchOffset = startOffset + tn->length;
-                        if (tn->kind == JSTRY_CATCH || tn->kind == JSTRY_FINALLY) {
+                        uint32_t catchOffset = startOffset + tn.length;
+                        if (tn.kind == JSTRY_CATCH || tn.kind == JSTRY_FINALLY) {
                             addEdge(lineno, column, catchOffset);
                         }
                     }
@@ -6370,15 +6569,16 @@ class DebuggerScriptGetOffsetLocationMatcher
         }
         return match(script);
     }
-    ReturnType match(Handle<WasmInstanceObject*> instance) {
-        size_t lineno;
-        size_t column;
-        bool found;
-        if (!instance->instance().debug().getOffsetLocation(cx_, offset_, &found, &lineno, &column)) {
+    ReturnType match(Handle<WasmInstanceObject*> instanceObj) {
+        wasm::Instance& instance = instanceObj->instance();
+        if (!instance.debugEnabled()) {
+            JS_ReportErrorNumberASCII(cx_, GetErrorMessage, nullptr, JSMSG_DEBUG_BAD_OFFSET);
             return false;
         }
 
-        if (!found) {
+        size_t lineno;
+        size_t column;
+        if (!instance.debug().getOffsetLocation(offset_, &lineno, &column)) {
             JS_ReportErrorNumberASCII(cx_, GetErrorMessage, nullptr, JSMSG_DEBUG_BAD_OFFSET);
             return false;
         }
@@ -6676,9 +6876,11 @@ class DebuggerScriptGetAllColumnOffsetsMatcher
         }
         return match(script);
     }
-    ReturnType match(Handle<WasmInstanceObject*> instance) {
+    ReturnType match(Handle<WasmInstanceObject*> instanceObj) {
+        wasm::Instance& instance = instanceObj->instance();
+
         Vector<wasm::ExprLoc> offsets(cx_);
-        if (!instance->instance().debug().getAllColumnOffsets(cx_, &offsets)) {
+        if (instance.debugEnabled() && !instance.debug().getAllColumnOffsets(cx_, &offsets)) {
             return false;
         }
 
@@ -6765,9 +6967,11 @@ class DebuggerScriptGetLineOffsetsMatcher
         }
         return match(script);
     }
-    ReturnType match(Handle<WasmInstanceObject*> instance) {
+    ReturnType match(Handle<WasmInstanceObject*> instanceObj) {
+        wasm::Instance& instance = instanceObj->instance();
+
         Vector<uint32_t> offsets(cx_);
-        if (!instance->instance().debug().getLineOffsets(cx_, lineno_, &offsets)) {
+        if (instance.debugEnabled() && !instance.debug().getLineOffsets(cx_, lineno_, &offsets)) {
             return false;
         }
 
@@ -7088,7 +7292,7 @@ struct DebuggerScriptSetBreakpointMatcher
     }
     ReturnType match(Handle<WasmInstanceObject*> wasmInstance) {
         wasm::Instance& instance = wasmInstance->instance();
-        if (!instance.debug().hasBreakpointTrapAtOffset(offset_)) {
+        if (!instance.debugEnabled() || !instance.debug().hasBreakpointTrapAtOffset(offset_)) {
             JS_ReportErrorNumberASCII(cx_, GetErrorMessage, nullptr, JSMSG_DEBUG_BAD_OFFSET);
             return false;
         }
@@ -7196,8 +7400,12 @@ class DebuggerScriptClearBreakpointMatcher
         }
         return match(script);
     }
-    ReturnType match(Handle<WasmInstanceObject*> instance) {
-        return instance->instance().debug().clearBreakpointsIn(cx_, instance, dbg_, handler_);
+    ReturnType match(Handle<WasmInstanceObject*> instanceObj) {
+        wasm::Instance& instance = instanceObj->instance();
+        if (!instance.debugEnabled()) {
+            return true;
+        }
+        return instance.debug().clearBreakpointsIn(cx_, instanceObj, dbg_, handler_);
     }
 };
 
@@ -7264,17 +7472,14 @@ class DebuggerScriptIsInCatchScopeMatcher
         size_t offset = offset_ - script->mainOffset();
 
         if (script->hasTrynotes()) {
-            JSTryNote* tnBegin = script->trynotes()->vector;
-            JSTryNote* tnEnd = tnBegin + script->trynotes()->length;
-            while (tnBegin != tnEnd) {
-                if (tnBegin->start <= offset &&
-                    offset <= tnBegin->start + tnBegin->length &&
-                    tnBegin->kind == JSTRY_CATCH)
+            for (const JSTryNote& tn : script->trynotes()) {
+                if (tn.start <= offset &&
+                    offset <= tn.start + tn.length &&
+                    tn.kind == JSTRY_CATCH)
                 {
                     isInCatch_ = true;
                     return true;
                 }
-                ++tnBegin;
             }
         }
         isInCatch_ = false;
@@ -7410,6 +7615,7 @@ DebuggerScript_construct(JSContext* cx, unsigned argc, Value* vp)
 static const JSPropertySpec DebuggerScript_properties[] = {
     JS_PSG("isGeneratorFunction", DebuggerScript_getIsGeneratorFunction, 0),
     JS_PSG("isAsyncFunction", DebuggerScript_getIsAsyncFunction, 0),
+    JS_PSG("isModule", DebuggerScript_getIsModule, 0),
     JS_PSG("displayName", DebuggerScript_getDisplayName, 0),
     JS_PSG("url", DebuggerScript_getUrl, 0),
     JS_PSG("startLine", DebuggerScript_getStartLine, 0),
@@ -7617,11 +7823,11 @@ class DebuggerSourceGetTextMatcher
 
     ReturnType match(HandleScriptSourceObject sourceObject) {
         ScriptSource* ss = sourceObject->source();
-        bool hasSourceData = ss->hasSourceData();
-        if (!ss->hasSourceData() && !JSScript::loadSource(cx_, ss, &hasSourceData)) {
+        bool hasSourceText = ss->hasSourceText();
+        if (!ss->hasSourceText() && !JSScript::loadSource(cx_, ss, &hasSourceText)) {
             return nullptr;
         }
-        if (!hasSourceData) {
+        if (!hasSourceText) {
             return NewStringCopyZ<CanGC>(cx_, "[no source]");
         }
 
@@ -7632,13 +7838,15 @@ class DebuggerSourceGetTextMatcher
         return ss->substring(cx_, 0, ss->length());
     }
 
-    ReturnType match(Handle<WasmInstanceObject*> wasmInstance) {
-        if (wasmInstance->instance().debug().maybeBytecode() &&
-            wasmInstance->instance().debug().binarySource())
-        {
-            return NewStringCopyZ<CanGC>(cx_, "[wasm]");
+    ReturnType match(Handle<WasmInstanceObject*> instanceObj) {
+        wasm::Instance& instance = instanceObj->instance();
+        const char* msg;
+        if (!instance.debugEnabled()) {
+            msg = "Restart with developer tools open to view WebAssembly source.";
+        } else {
+            msg = "[debugger missing wasm binary-to-text conversion]";
         }
-        return wasmInstance->instance().debug().createText(cx_);
+        return NewStringCopyZ<CanGC>(cx_, msg);
     }
 };
 
@@ -7675,22 +7883,22 @@ DebuggerSource_getBinary(JSContext* cx, unsigned argc, Value* vp)
         return false;
     }
 
-    RootedWasmInstanceObject wasmInstance(cx, referent.as<WasmInstanceObject*>());
-    if (!wasmInstance->instance().debug().binarySource()) {
+    RootedWasmInstanceObject instanceObj(cx, referent.as<WasmInstanceObject*>());
+    wasm::Instance& instance = instanceObj->instance();
+
+    if (!instance.debugEnabled() || !instance.debug().binarySource()) {
         JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                   JSMSG_DEBUG_NO_BINARY_SOURCE);
         return false;
     }
 
-    auto bytecode = wasmInstance->instance().debug().maybeBytecode();
-    size_t arrLength = bytecode ? bytecode->length() : 0;
-    RootedObject arr(cx, JS_NewUint8Array(cx, arrLength));
+    const wasm::Bytes& bytecode = instance.debug().bytecode();
+    RootedObject arr(cx, JS_NewUint8Array(cx, bytecode.length()));
     if (!arr) {
         return false;
     }
-    if (bytecode) {
-        memcpy(arr->as<TypedArrayObject>().viewDataUnshared(), bytecode->begin(), arrLength);
-    }
+
+    memcpy(arr->as<TypedArrayObject>().dataPointerUnshared(), bytecode.begin(), bytecode.length());
 
     args.rval().setObject(*arr);
     return true;
@@ -7714,18 +7922,8 @@ class DebuggerSourceGetURLMatcher
         }
         return Nothing();
     }
-    ReturnType match(Handle<WasmInstanceObject*> wasmInstance) {
-        if (wasmInstance->instance().metadata().filenameIsURL) {
-            JSString* str = NewStringCopyZ<CanGC>(cx_, wasmInstance->instance().metadata().filename.get());
-            if (!str) {
-                return Nothing();
-            }
-            return Some(str);
-        }
-        if (JSString* str = wasmInstance->instance().debug().debugDisplayURL(cx_)) {
-            return Some(str);
-        }
-        return Nothing();
+    ReturnType match(Handle<WasmInstanceObject*> instanceObj) {
+        return Some(instanceObj->instance().createDisplayURL(cx_));
     }
 };
 
@@ -7988,17 +8186,18 @@ class DebuggerSourceGetSourceMapURLMatcher
         result_.set(str);
         return true;
     }
-    ReturnType match(Handle<WasmInstanceObject*> wasmInstance) {
-        // sourceMapURL is not available if debugger was not in
-        // allowWasmBinarySource mode.
-        if (!wasmInstance->instance().debug().binarySource()) {
+    ReturnType match(Handle<WasmInstanceObject*> instanceObj) {
+        wasm::Instance& instance = instanceObj->instance();
+        if (!instance.debugEnabled()) {
             result_.set(nullptr);
             return true;
         }
+
         RootedString str(cx_);
-        if (!wasmInstance->instance().debug().getSourceMappingURL(cx_, &str)) {
+        if (!instance.debug().getSourceMappingURL(cx_, &str)) {
             return false;
         }
+
         result_.set(str);
         return true;
     }
@@ -10275,6 +10474,42 @@ DebuggerObject::callMethod(JSContext* cx, unsigned argc, Value* vp)
 }
 
 /* static */ bool
+DebuggerObject::getPropertyMethod(JSContext* cx, unsigned argc, Value* vp)
+{
+    THIS_DEBUGOBJECT(cx, argc, vp, "getProperty", args, object)
+
+    RootedId id(cx);
+    if (!ValueToId<CanGC>(cx, args.get(0), &id)) {
+        return false;
+    }
+
+    if (!DebuggerObject::getProperty(cx, object, id, args.rval())) {
+        return false;
+    }
+
+    return true;
+}
+
+/* static */ bool
+DebuggerObject::setPropertyMethod(JSContext* cx, unsigned argc, Value* vp)
+{
+    THIS_DEBUGOBJECT(cx, argc, vp, "setProperty", args, object)
+
+    RootedId id(cx);
+    if (!ValueToId<CanGC>(cx, args.get(0), &id)) {
+        return false;
+    }
+
+    RootedValue value(cx, args.get(1));
+
+    if (!DebuggerObject::setProperty(cx, object, id, value, args.rval())) {
+        return false;
+    }
+
+    return true;
+}
+
+/* static */ bool
 DebuggerObject::applyMethod(JSContext* cx, unsigned argc, Value* vp)
 {
     THIS_DEBUGOBJECT(cx, argc, vp, "apply", callArgs, object);
@@ -10521,6 +10756,8 @@ const JSFunctionSpec DebuggerObject::methods_[] = {
     JS_FN("isExtensible", DebuggerObject::isExtensibleMethod, 0, 0),
     JS_FN("isSealed", DebuggerObject::isSealedMethod, 0, 0),
     JS_FN("isFrozen", DebuggerObject::isFrozenMethod, 0, 0),
+    JS_FN("getProperty", DebuggerObject::getPropertyMethod, 0, 0),
+    JS_FN("setProperty", DebuggerObject::setPropertyMethod, 0, 0),
     JS_FN("getOwnPropertyNames", DebuggerObject::getOwnPropertyNamesMethod, 0, 0),
     JS_FN("getOwnPropertySymbols", DebuggerObject::getOwnPropertySymbolsMethod, 0, 0),
     JS_FN("getOwnPropertyDescriptor", DebuggerObject::getOwnPropertyDescriptorMethod, 1, 0),
@@ -10819,7 +11056,7 @@ Debugger::getObjectAllocationSite(JSObject& obj)
     }
 
     MOZ_ASSERT(!metadata->is<WrapperObject>());
-    return SavedFrame::isSavedFrameAndNotProto(*metadata)
+    return metadata->is<SavedFrame>()
         ? &metadata->as<SavedFrame>()
         : nullptr;
 }
@@ -11249,6 +11486,65 @@ DebuggerObject::deleteProperty(JSContext* cx, HandleDebuggerObject object, Handl
 
     ErrorCopier ec(ar);
     return DeleteProperty(cx, referent, id, result);
+}
+
+/* static */ bool
+DebuggerObject::getProperty(JSContext* cx, HandleDebuggerObject object,
+                            HandleId id, MutableHandleValue result)
+{
+    RootedObject referent(cx, object->referent());
+    Debugger* dbg = object->owner();
+
+    // Enter the debuggee compartment and rewrap all input value for that
+    // compartment. (Rewrapping always takes place in the destination
+    // compartment.)
+    Maybe<AutoRealm> ar;
+    EnterDebuggeeObjectRealm(cx, ar, referent);
+    if (!cx->compartment()->wrap(cx, &referent)) {
+        return false;
+    }
+    cx->markId(id);
+
+    LeaveDebuggeeNoExecute nnx(cx);
+
+    bool ok = GetProperty(cx, referent, referent, id, result);
+
+    return dbg->receiveCompletionValue(ar, ok, result, result);
+}
+
+/* static */ bool
+DebuggerObject::setProperty(JSContext* cx, HandleDebuggerObject object,
+                            HandleId id, HandleValue value_,
+                            MutableHandleValue result)
+{
+    RootedObject referent(cx, object->referent());
+    Debugger* dbg = object->owner();
+
+    // Unwrap Debugger.Objects. This happens in the debugger's compartment since
+    // that is where any exceptions must be reported.
+    RootedValue value(cx, value_);
+    if (!dbg->unwrapDebuggeeValue(cx, &value)) {
+        return false;
+    }
+
+    // Enter the debuggee compartment and rewrap all input value for that
+    // compartment. (Rewrapping always takes place in the destination
+    // compartment.)
+    Maybe<AutoRealm> ar;
+    EnterDebuggeeObjectRealm(cx, ar, referent);
+    if (!cx->compartment()->wrap(cx, &referent) || !cx->compartment()->wrap(cx, &value)) {
+        return false;
+    }
+    cx->markId(id);
+
+    LeaveDebuggeeNoExecute nnx(cx);
+
+    RootedValue receiver(cx, ObjectValue(*referent));
+    ObjectOpResult opResult;
+    bool ok = SetProperty(cx, referent, id, value, receiver, opResult);
+
+    result.setBoolean(ok && opResult.reallyOk());
+    return dbg->receiveCompletionValue(ar, ok, result, result);
 }
 
 /* static */ bool

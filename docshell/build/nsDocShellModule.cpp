@@ -37,9 +37,6 @@
 #include "nsSHEntryShared.h"
 #include "nsSHistory.h"
 
-// LoadContexts (used for testing)
-#include "LoadContext.h"
-
 using mozilla::dom::ContentHandlerService;
 
 static bool gInitialized = false;
@@ -117,10 +114,9 @@ NS_DEFINE_NAMED_CID(NS_EXTERNALURLHANDLERSERVICE_CID);
 #endif
 NS_DEFINE_NAMED_CID(NS_SHENTRY_CID);
 NS_DEFINE_NAMED_CID(NS_CONTENTHANDLERSERVICE_CID);
-NS_DEFINE_NAMED_CID(NS_LOADCONTEXT_CID);
-NS_DEFINE_NAMED_CID(NS_PRIVATELOADCONTEXT_CID);
 
 const mozilla::Module::CIDEntry kDocShellCIDs[] = {
+  // clang-format off
   { &kNS_DOCSHELL_CID, false, nullptr, nsDocShellConstructor },
   { &kNS_DEFAULTURIFIXUP_CID, false, nullptr, nsDefaultURIFixupConstructor },
   { &kNS_WEBNAVIGATION_INFO_CID, false, nullptr, nsWebNavigationInfoConstructor },
@@ -142,12 +138,12 @@ const mozilla::Module::CIDEntry kDocShellCIDs[] = {
   { &kNS_EXTERNALURLHANDLERSERVICE_CID, false, nullptr, nsExternalURLHandlerServiceConstructor },
 #endif
   { &kNS_SHENTRY_CID, false, nullptr, nsSHEntryConstructor },
-  { &kNS_LOADCONTEXT_CID, false, nullptr, mozilla::CreateTestLoadContext },
-  { &kNS_PRIVATELOADCONTEXT_CID, false, nullptr, mozilla::CreatePrivateTestLoadContext },
   { nullptr }
+  // clang-format on
 };
 
 const mozilla::Module::ContractIDEntry kDocShellContracts[] = {
+  // clang-format off
   { "@mozilla.org/docshell;1", &kNS_DOCSHELL_CID },
   { NS_URIFIXUP_CONTRACTID, &kNS_DEFAULTURIFIXUP_CID },
   { NS_WEBNAVIGATION_INFO_CONTRACTID, &kNS_WEBNAVIGATION_INFO_CID },
@@ -197,10 +193,9 @@ const mozilla::Module::ContractIDEntry kDocShellContracts[] = {
   { NS_EXTERNALURLHANDLERSERVICE_CONTRACTID, &kNS_EXTERNALURLHANDLERSERVICE_CID },
 #endif
   { NS_SHENTRY_CONTRACTID, &kNS_SHENTRY_CID },
-  { NS_LOADCONTEXT_CONTRACTID, &kNS_LOADCONTEXT_CID },
-  { NS_PRIVATELOADCONTEXT_CONTRACTID, &kNS_PRIVATELOADCONTEXT_CID },
   { NS_OSPERMISSIONREQUEST_CONTRACTID, &kNS_OSPERMISSIONREQUEST_CID, mozilla::Module::MAIN_PROCESS_ONLY },
   { nullptr }
+  // clang-format on
 };
 
 static const mozilla::Module kDocShellModule = {

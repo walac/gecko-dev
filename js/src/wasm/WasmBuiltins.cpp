@@ -89,7 +89,7 @@ WasmHandleDebugTrap()
     DebugFrame* debugFrame = DebugFrame::from(fp);
 
     if (site->kind() == CallSite::EnterFrame) {
-        if (!instance->enterFrameTrapsEnabled()) {
+        if (!instance->debug().enterFrameTrapsEnabled()) {
             return true;
         }
         debugFrame->setIsDebuggee();
@@ -266,6 +266,8 @@ WasmHandleTrap()
         return ReportError(cx, JSMSG_WASM_IND_CALL_TO_NULL);
       case Trap::IndirectCallBadSig:
         return ReportError(cx, JSMSG_WASM_IND_CALL_BAD_SIG);
+      case Trap::NullPointerDereference:
+        return ReportError(cx, JSMSG_WASM_DEREF_NULL);
       case Trap::OutOfBounds:
         return ReportError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
       case Trap::UnalignedAccess:
@@ -460,7 +462,7 @@ SaturatingTruncateDoubleToUint64(double input)
         return UINT64_MAX;
     }
     // Handle in-range values.
-    if (input >= -1.0) {
+    if (input > -1.0) {
         return uint64_t(input);
     }
     // Handle NaN and negative overflow.
@@ -686,11 +688,15 @@ AddressOf(SymbolicAddress imm, ABIFunctionType* abiType)
       case SymbolicAddress::TableInit:
         *abiType = Args_General5;
         return FuncCast(Instance::tableInit, *abiType);
-#ifdef ENABLE_WASM_GC
       case SymbolicAddress::PostBarrier:
         *abiType = Args_General2;
         return FuncCast(Instance::postBarrier, *abiType);
-#endif
+      case SymbolicAddress::StructNew:
+        *abiType = Args_General2;
+        return FuncCast(Instance::structNew, *abiType);
+      case SymbolicAddress::StructNarrow:
+        *abiType = Args_General4;
+        return FuncCast(Instance::structNarrow, *abiType);
 #if defined(JS_CODEGEN_MIPS32)
       case SymbolicAddress::js_jit_gAtomic64Lock:
         return &js::jit::gAtomic64Lock;
@@ -772,9 +778,9 @@ wasm::NeedsBuiltinThunk(SymbolicAddress sym)
       case SymbolicAddress::TableCopy:
       case SymbolicAddress::TableDrop:
       case SymbolicAddress::TableInit:
-#ifdef ENABLE_WASM_GC
       case SymbolicAddress::PostBarrier:
-#endif
+      case SymbolicAddress::StructNew:
+      case SymbolicAddress::StructNarrow:
         return true;
       case SymbolicAddress::Limit:
         break;

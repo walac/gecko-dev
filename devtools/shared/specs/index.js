@@ -54,11 +54,6 @@ const Types = exports.__TypesForTests = [
     front: null,
   },
   {
-    types: ["function-call", "call-watcher"],
-    spec: "devtools/shared/specs/call-watcher",
-    front: "devtools/shared/fronts/call-watcher",
-  },
-  {
     types: ["frame-snapshot", "canvas"],
     spec: "devtools/shared/specs/canvas",
     front: "devtools/shared/fronts/canvas",
@@ -99,6 +94,11 @@ const Types = exports.__TypesForTests = [
     types: ["framerate"],
     spec: "devtools/shared/specs/framerate",
     front: "devtools/shared/fronts/framerate",
+  },
+  {
+    types: ["function-call"],
+    spec: "devtools/shared/specs/function-call",
+    front: "devtools/shared/fronts/function-call",
   },
   /* heap snapshot has old fashion client and no front */
   {
@@ -181,6 +181,11 @@ const Types = exports.__TypesForTests = [
     types: ["reflow"],
     spec: "devtools/shared/specs/reflow",
     front: "devtools/shared/fronts/reflow",
+  },
+  {
+    types: ["screenshot"],
+    spec: "devtools/shared/specs/screenshot",
+    front: "devtools/shared/fronts/screenshot",
   },
   /* Script and source have old fashion client and no front */
   {
@@ -336,7 +341,8 @@ function lazyLoadFront(type) {
       require(modulePath);
     } catch (e) {
       throw new Error(
-        `Unable to load lazy front module '${modulePath}' for type '${type}'`);
+        `Unable to load lazy front module '${modulePath}' for type '${type}'.
+        Error: ${e}`);
     }
     lazyFronts.delete(type);
     return true;

@@ -31,6 +31,7 @@ typedef struct {
   /* The depressed state is for buttons which remain active for a longer period:
    * activated toggle buttons or buttons showing a popup menu. */
   guint8 depressed;
+  guint8 backdrop;
   gint32 curpos; /* curpos and maxpos are used for scrollbars */
   gint32 maxpos;
   gint32 scale;  /* actual widget scale */
@@ -326,6 +327,8 @@ typedef enum {
   MOZ_GTK_HEADER_BAR,
   /* Paints a GtkHeaderBar in maximized state */
   MOZ_GTK_HEADER_BAR_MAXIMIZED,
+  /* Container for GtkHeaderBar buttons */
+  MOZ_GTK_HEADER_BAR_BUTTON_BOX,
   /* Paints GtkHeaderBar title buttons.
    * Keep the order here as MOZ_GTK_HEADER_BAR_BUTTON_* are processed
    * as an array from MOZ_GTK_HEADER_BAR_BUTTON_CLOSE to the last one.

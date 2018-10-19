@@ -26,10 +26,9 @@
 #include "nsNetUtil.h"
 #include "nsISupportsPriority.h"
 #include "nsIAuthPromptProvider.h"
-#include "nsIBackgroundChannelRegistrar.h"
+#include "mozilla/net/BackgroundChannelRegistrar.h"
 #include "nsSerializationHelper.h"
 #include "nsISerializable.h"
-#include "nsIAssociatedContentSecurity.h"
 #include "nsIApplicationCacheService.h"
 #include "mozilla/ipc/InputStreamUtils.h"
 #include "mozilla/ipc/URIUtils.h"
@@ -48,6 +47,7 @@
 #include "mozilla/net/RedirectChannelRegistrar.h"
 #include "nsIWindowWatcher.h"
 #include "nsIDocument.h"
+#include "nsISecureBrowserUI.h"
 #include "nsStreamUtils.h"
 #include "nsStringStream.h"
 #include "nsIStorageStream.h"
@@ -153,7 +153,7 @@ HttpChannelParent::Init(const HttpChannelCreationArgs& aArgs)
                        a.allowStaleCacheContent(), a.contentTypeHint(),
                        a.corsMode(), a.redirectMode(),
                        a.channelId(), a.integrityMetadata(),
-                       a.contentWindowId(), a.preferredAlternativeType(),
+                       a.contentWindowId(), a.preferredAlternativeTypes(),
                        a.topLevelOuterContentWindowId(),
                        a.launchServiceWorkerStart(),
                        a.launchServiceWorkerEnd(),
@@ -263,7 +263,7 @@ HttpChannelParent::CleanupBackgroundChannel()
     // This HttpChannelParent might still have a reference from
     // BackgroundChannelRegistrar.
     nsCOMPtr<nsIBackgroundChannelRegistrar> registrar =
-      do_GetService(NS_BACKGROUNDCHANNELREGISTRAR_CONTRACTID);
+      BackgroundChannelRegistrar::GetOrCreate();
     MOZ_ASSERT(registrar);
 
     registrar->DeleteChannel(mChannel->ChannelId());
@@ -455,7 +455,7 @@ HttpChannelParent::DoAsyncOpen(  const URIParams&           aURI,
                                  const uint64_t&            aChannelId,
                                  const nsString&            aIntegrityMetadata,
                                  const uint64_t&            aContentWindowId,
-                                 const nsCString&           aPreferredAlternativeType,
+                                 const ArrayOfStringPairs&  aPreferredAlternativeTypes,
                                  const uint64_t&            aTopLevelOuterContentWindowId,
                                  const TimeStamp&           aLaunchServiceWorkerStart,
                                  const TimeStamp&           aLaunchServiceWorkerEnd,
@@ -614,7 +614,9 @@ HttpChannelParent::DoAsyncOpen(  const URIParams&           aURI,
     do_QueryInterface(static_cast<nsIChannel*>(httpChannel.get()));
   if (cacheChannel) {
     cacheChannel->SetCacheKey(aCacheKey);
-    cacheChannel->PreferAlternativeDataType(aPreferredAlternativeType);
+    for (auto& pair : aPreferredAlternativeTypes) {
+      cacheChannel->PreferAlternativeDataType(mozilla::Get<0>(pair), mozilla::Get<1>(pair));
+    }
 
     cacheChannel->SetAllowStaleCacheContent(aAllowStaleCacheContent);
 
@@ -718,6 +720,15 @@ HttpChannelParent::DoAsyncOpen(  const URIParams&           aURI,
                 })
          ->Track(mRequest);
 
+  // The stream, received from the child process, must be cloneable and seekable
+  // in order to allow devtools to inspect its content.
+  nsCOMPtr<nsIRunnable> r =
+    NS_NewRunnableFunction("HttpChannelParent::EnsureUploadStreamIsCloneable",
+      [self]() {
+        self->TryInvokeAsyncOpen(NS_OK);
+      });
+  ++mAsyncOpenBarrier;
+  mChannel->EnsureUploadStreamIsCloneable(r);
   return true;
 }
 
@@ -730,18 +741,18 @@ HttpChannelParent::WaitForBgParent()
 
 
   nsCOMPtr<nsIBackgroundChannelRegistrar> registrar =
-    do_GetService(NS_BACKGROUNDCHANNELREGISTRAR_CONTRACTID);
+    BackgroundChannelRegistrar::GetOrCreate();
   MOZ_ASSERT(registrar);
   registrar->LinkHttpChannel(mChannel->ChannelId(), this);
 
   if (mBgParent) {
-    already_AddRefed<GenericPromise> promise = mPromise.Ensure(__func__);
+    RefPtr<GenericPromise> promise = mPromise.Ensure(__func__);
     // resolve promise immediatedly if bg channel is ready.
     mPromise.Resolve(true, __func__);
-    return promise;
+    return promise.forget();
   }
 
-  return mPromise.Ensure(__func__);;
+  return mPromise.Ensure(__func__);
 }
 
 bool
@@ -875,17 +886,6 @@ HttpChannelParent::RecvSetCacheTokenCachedCharset(const nsCString& charset)
 {
   if (mCacheEntry)
     mCacheEntry->SetMetaDataElement("charset", charset.get());
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-HttpChannelParent::RecvUpdateAssociatedContentSecurity(const int32_t& broken,
-                                                       const int32_t& no)
-{
-  if (mAssociatedContentSecurity) {
-    mAssociatedContentSecurity->SetCountSubRequestsBrokenSecurity(broken);
-    mAssociatedContentSecurity->SetCountSubRequestsNoSecurity(no);
-  }
   return IPC_OK();
 }
 
@@ -1071,7 +1071,6 @@ HttpChannelParent::ContinueRedirect2Verify(const nsresult& aResult)
 mozilla::ipc::IPCResult
 HttpChannelParent::RecvDocumentChannelCleanup(const bool& clearCacheEntry)
 {
-  // From now on only using mAssociatedContentSecurity.  Free everything else.
   CleanupBackgroundChannel(); // Background channel can be closed.
   mChannel = nullptr;          // Reclaim some memory sooner.
   if (clearCacheEntry) {
@@ -1631,7 +1630,29 @@ HttpChannelParent::OnStopRequest(nsIRequest *aRequest,
   }
 
   if (NeedFlowControl()) {
-    Telemetry::Accumulate(Telemetry::NETWORK_BACK_PRESSURE_SUSPENSION_RATE, mHasSuspendedByBackPressure);
+    bool isLocal = false;
+    NetAddr peerAddr = mChannel->GetPeerAddr();
+
+    #if defined(XP_UNIX)
+      // Unix-domain sockets are always local.
+      isLocal = (peerAddr.raw.family == PR_AF_LOCAL);
+    #endif
+
+    isLocal = isLocal || IsLoopBackAddress(&peerAddr);
+
+    if (!isLocal) {
+      if (!mHasSuspendedByBackPressure) {
+        AccumulateCategorical(Telemetry::LABELS_NETWORK_BACK_PRESSURE_SUSPENSION_RATE_V2::NotSuspended);
+      } else {
+        AccumulateCategorical(Telemetry::LABELS_NETWORK_BACK_PRESSURE_SUSPENSION_RATE_V2::Suspended);
+      }
+    } else {
+      if (!mHasSuspendedByBackPressure) {
+        AccumulateCategorical(Telemetry::LABELS_NETWORK_BACK_PRESSURE_SUSPENSION_RATE_V2::NotSuspendedLocal);
+      } else {
+        AccumulateCategorical(Telemetry::LABELS_NETWORK_BACK_PRESSURE_SUSPENSION_RATE_V2::SuspendedLocal);
+      }
+    }
   }
 
   return NS_OK;
@@ -1668,10 +1689,6 @@ HttpChannelParent::OnDataAvailable(nsIRequest *aRequest,
   uint32_t toRead = std::min<uint32_t>(aCount, kCopyChunkSize);
 
   nsCString data;
-  if (!data.SetCapacity(toRead, fallible)) {
-    LOG(("  out of memory!"));
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
 
   int32_t count = static_cast<int32_t>(aCount);
 
@@ -1753,6 +1770,26 @@ HttpChannelParent::RecvBytesRead(const int32_t& aCount)
     mSuspendedForFlowControl = false;
   }
   mSendWindowSize += aCount;
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+HttpChannelParent::RecvOpenOriginalCacheInputStream()
+{
+  if (mIPCClosed) {
+    return IPC_OK();
+  }
+  AutoIPCStream autoStream;
+  if (mCacheEntry) {
+    nsCOMPtr<nsIInputStream> inputStream;
+    nsresult rv = mCacheEntry->OpenInputStream(0, getter_AddRefs(inputStream));
+    if (NS_SUCCEEDED(rv)) {
+      PContentParent* pcp = Manager()->Manager();
+      Unused << autoStream.Serialize(inputStream, static_cast<ContentParent*>(pcp));
+    }
+  }
+
+  Unused << SendOriginalCacheInputStreamAvailable(autoStream.TakeOptionalValue());
   return IPC_OK();
 }
 
@@ -2398,7 +2435,6 @@ HttpChannelParent::UpdateAndSerializeSecurityInfo(nsACString& aSerializedSecurit
   nsCOMPtr<nsISupports> secInfoSupp;
   mChannel->GetSecurityInfo(getter_AddRefs(secInfoSupp));
   if (secInfoSupp) {
-    mAssociatedContentSecurity = do_QueryInterface(secInfoSupp);
     nsCOMPtr<nsISerializable> secInfoSer = do_QueryInterface(secInfoSupp);
     if (secInfoSer) {
       NS_SerializeToString(secInfoSer, aSerializedSecurityInfoOut);

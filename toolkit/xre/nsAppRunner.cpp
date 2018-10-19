@@ -55,11 +55,11 @@
 
 #include "nsIAppShellService.h"
 #include "nsIAppStartup.h"
-#include "nsIAppStartupNotifier.h"
+#include "nsAppStartupNotifier.h"
 #include "nsIMutableArray.h"
 #include "nsICategoryManager.h"
 #include "nsIChromeRegistry.h"
-#include "nsICommandLineRunner.h"
+#include "nsCommandLine.h"
 #include "nsIComponentManager.h"
 #include "nsIComponentRegistrar.h"
 #include "nsIConsoleService.h"
@@ -180,7 +180,7 @@
 #endif
 
 // for X remote support
-#ifdef MOZ_ENABLE_XREMOTE
+#if defined(MOZ_WIDGET_GTK)
 #include "XRemoteClient.h"
 #include "nsIRemoteService.h"
 #include "nsProfileLock.h"
@@ -1117,7 +1117,7 @@ nsXULAppInfo::SetEnabled(bool aEnabled)
       return NS_ERROR_FAILURE;
     }
 
-    nsCOMPtr<nsIFile> xreBinDirectory = do_QueryInterface(greBinDir);
+    nsCOMPtr<nsIFile> xreBinDirectory = greBinDir;
     if (!xreBinDirectory) {
       return NS_ERROR_FAILURE;
     }
@@ -1399,11 +1399,11 @@ public:
   nsresult Initialize();
   nsresult SetWindowCreator(nsINativeAppSupport* native);
 
-  static nsresult CreateAppSupport(nsISupports* aOuter, REFNSIID aIID, void** aResult);
-
 private:
   nsIServiceManager* mServiceManager;
   static nsINativeAppSupport* gNativeAppSupport;
+
+  friend already_AddRefed<nsINativeAppSupport> NS_GetNativeAppSupport();
 };
 
 ScopedXPCOMStartup::~ScopedXPCOMStartup()
@@ -1435,10 +1435,6 @@ ScopedXPCOMStartup::~ScopedXPCOMStartup()
 #define APPINFO_CID \
   { 0x95d89e3e, 0xa169, 0x41a3, { 0x8e, 0x56, 0x71, 0x99, 0x78, 0xe1, 0x5b, 0x12 } }
 
-// {0C4A446C-EE82-41f2-8D04-D366D2C7A7D4}
-static const nsCID kNativeAppSupportCID =
-  { 0xc4a446c, 0xee82, 0x41f2, { 0x8d, 0x4, 0xd3, 0x66, 0xd2, 0xc7, 0xa7, 0xd4 } };
-
 // {5F5E59CE-27BC-47eb-9D1F-B09CA9049836}
 static const nsCID kProfileServiceCID =
   { 0x5f5e59ce, 0x27bc, 0x47eb, { 0x9d, 0x1f, 0xb0, 0x9c, 0xa9, 0x4, 0x98, 0x36 } };
@@ -1456,7 +1452,6 @@ NS_DEFINE_NAMED_CID(APPINFO_CID);
 static const mozilla::Module::CIDEntry kXRECIDs[] = {
   { &kAPPINFO_CID, false, nullptr, AppInfoConstructor },
   { &kProfileServiceCID, false, ProfileServiceFactoryConstructor, nullptr },
-  { &kNativeAppSupportCID, false, nullptr, ScopedXPCOMStartup::CreateAppSupport },
   { nullptr }
 };
 
@@ -1467,7 +1462,6 @@ static const mozilla::Module::ContractIDEntry kXREContracts[] = {
   { NS_CRASHREPORTER_CONTRACTID, &kAPPINFO_CID },
 #endif // MOZ_CRASHREPORTER
   { NS_PROFILESERVICE_CONTRACTID, &kProfileServiceCID },
-  { NS_NATIVEAPPSUPPORT_CONTRACTID, &kNativeAppSupportCID },
   { nullptr }
 };
 
@@ -1571,16 +1565,14 @@ ScopedXPCOMStartup::SetWindowCreator(nsINativeAppSupport* native)
   return wwatch->SetWindowCreator(creator);
 }
 
-/* static */ nsresult
-ScopedXPCOMStartup::CreateAppSupport(nsISupports* aOuter, REFNSIID aIID, void** aResult)
+/* static */ already_AddRefed<nsINativeAppSupport>
+NS_GetNativeAppSupport()
 {
-  if (aOuter)
-    return NS_ERROR_NO_AGGREGATION;
+  if (!ScopedXPCOMStartup::gNativeAppSupport) {
+    return nullptr;
+  }
 
-  if (!gNativeAppSupport)
-    return NS_ERROR_NOT_INITIALIZED;
-
-  return gNativeAppSupport->QueryInterface(aIID, aResult);
+  return do_AddRef(ScopedXPCOMStartup::gNativeAppSupport);
 }
 
 nsINativeAppSupport* ScopedXPCOMStartup::gNativeAppSupport;
@@ -1595,10 +1587,7 @@ static void DumpArbitraryHelp()
     ScopedXPCOMStartup xpcom;
     xpcom.Initialize();
 
-    nsCOMPtr<nsICommandLineRunner> cmdline
-      (do_CreateInstance("@mozilla.org/toolkit/command-line;1"));
-    if (!cmdline)
-      return;
+    nsCOMPtr<nsICommandLineRunner> cmdline(new nsCommandLine());
 
     nsCString text;
     rv = cmdline->GetHelpText(text);
@@ -1659,48 +1648,6 @@ DumpHelp()
   DumpArbitraryHelp();
 }
 
-#if defined(DEBUG) && defined(XP_WIN)
-#ifdef DEBUG_warren
-#define _CRTDBG_MAP_ALLOC
-#endif
-// Set a CRT ReportHook function to capture and format MSCRT
-// warnings, errors and assertions.
-// See http://msdn.microsoft.com/en-US/library/74kabxyx(v=VS.80).aspx
-#include <stdio.h>
-#include <crtdbg.h>
-#include "mozilla/mozalloc_abort.h"
-static int MSCRTReportHook( int aReportType, char *aMessage, int *oReturnValue)
-{
-  *oReturnValue = 0; // continue execution
-
-  // Do not use fprintf or other functions which may allocate
-  // memory from the heap which may be corrupted. Instead,
-  // use fputs to output the leading portion of the message
-  // and use mozalloc_abort to emit the remainder of the
-  // message.
-
-  switch(aReportType) {
-  case 0:
-    fputs("\nWARNING: CRT WARNING", stderr);
-    fputs(aMessage, stderr);
-    fputs("\n", stderr);
-    break;
-  case 1:
-    fputs("\n###!!! ABORT: CRT ERROR ", stderr);
-    mozalloc_abort(aMessage);
-    break;
-  case 2:
-    fputs("\n###!!! ABORT: CRT ASSERT ", stderr);
-    mozalloc_abort(aMessage);
-    break;
-  }
-
-  // do not invoke the debugger
-  return 1;
-}
-
-#endif
-
 static inline void
 DumpVersion()
 {
@@ -1712,7 +1659,7 @@ DumpVersion()
   printf("\n");
 }
 
-#ifdef MOZ_ENABLE_XREMOTE
+#if defined(MOZ_WIDGET_GTK)
 static RemoteResult
 ParseRemoteCommandLine(nsCString& program,
                        const char** profile,
@@ -1782,7 +1729,7 @@ StartRemoteClient(const char* aDesktopStartupID,
 
   return REMOTE_FOUND;
 }
-#endif // MOZ_ENABLE_XREMOTE
+#endif // MOZ_WIDGET_GTK
 
 void
 XRE_InitOmnijar(nsIFile* greOmni, nsIFile* appOmni)
@@ -1817,7 +1764,7 @@ RegisterApplicationRestartChanged(const char* aPref, void* aData) {
     // Excludes argv[0] because RegisterApplicationRestart adds the
     // executable name, replace that temporarily with -os-restarted
     char* exeName = gRestartArgv[0];
-    gRestartArgv[0] = "-os-restarted";
+    gRestartArgv[0] = const_cast<char*>("-os-restarted");
     wchar_t** restartArgvConverted =
       AllocConvertUTF8toUTF16Strings(gRestartArgc, gRestartArgv);
     gRestartArgv[0] = exeName;
@@ -2130,6 +2077,7 @@ ShowProfileManager(nsIToolkitProfileService* aProfileSvc,
   nsCOMPtr<nsIFile> profD, profLD;
   char16_t* profileNamePtr;
   nsAutoCString profileName;
+  bool offline = false;
 
   {
     ScopedXPCOMStartup xpcom;
@@ -2183,6 +2131,10 @@ ShowProfileManager(nsIToolkitProfileService* aProfileSvc,
       rv = ioParamBlock->GetInt(0, &dialogConfirmed);
       if (NS_FAILED(rv) || dialogConfirmed == 0) return NS_ERROR_ABORT;
 
+      int32_t startOffline;
+      rv = ioParamBlock->GetInt(1, &startOffline);
+      offline = NS_SUCCEEDED(rv) && startOffline == 1;
+
       nsCOMPtr<nsIProfileLock> lock;
       rv = dlgArray->QueryElementAt(0, NS_GET_IID(nsIProfileLock),
                                     getter_AddRefs(lock));
@@ -2208,8 +2160,6 @@ ShowProfileManager(nsIToolkitProfileService* aProfileSvc,
   SaveFileToEnv("XRE_PROFILE_LOCAL_PATH", profLD);
   SaveWordToEnv("XRE_PROFILE_NAME", profileName);
 
-  bool offline = false;
-  aProfileSvc->GetStartOffline(&offline);
   if (offline) {
     SaveToEnv("XRE_START_OFFLINE=1");
   }
@@ -3069,10 +3019,8 @@ public:
   XREMain() :
     mStartOffline(false)
     , mShuttingDown(false)
-#ifdef MOZ_ENABLE_XREMOTE
-    , mDisableRemote(false)
-#endif
 #if defined(MOZ_WIDGET_GTK)
+    , mDisableRemote(false)
     , mGdkDisplay(nullptr)
 #endif
   {};
@@ -3094,7 +3042,7 @@ public:
   nsCOMPtr<nsIFile> mProfD;
   nsCOMPtr<nsIFile> mProfLD;
   nsCOMPtr<nsIProfileLock> mProfileLock;
-#ifdef MOZ_ENABLE_XREMOTE
+#if defined(MOZ_WIDGET_GTK)
   nsCOMPtr<nsIRemoteService> mRemoteService;
   nsProfileLock mRemoteLock;
   nsCOMPtr<nsIFile> mRemoteLockDir;
@@ -3109,7 +3057,7 @@ public:
 
   bool mStartOffline;
   bool mShuttingDown;
-#ifdef MOZ_ENABLE_XREMOTE
+#if defined(MOZ_WIDGET_GTK)
   bool mDisableRemote;
 #endif
 
@@ -3238,6 +3186,17 @@ XREMain::XRE_mainInit(bool* aExitFlag)
     }
     ChaosMode::SetChaosFeature(feature);
   }
+
+#ifdef MOZ_ASAN_REPORTER
+  // In ASan Reporter builds, we enable certain chaos features by default unless
+  // the user explicitly requests a particular set of features.
+  if (!PR_GetEnv("MOZ_CHAOSMODE")) {
+    ChaosMode::SetChaosFeature(static_cast<ChaosFeature>(
+                               ChaosFeature::ThreadScheduling
+                               | ChaosFeature::NetworkScheduling
+                               | ChaosFeature::TimerScheduling));
+  }
+#endif
 
   if (ChaosMode::isActive(ChaosFeature::Any)) {
     printf_stderr("*** You are running in chaos test mode. See ChaosMode.h. ***\n");
@@ -3950,7 +3909,7 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
   HeapSetInformation(NULL, HeapEnableTerminationOnCorruption, NULL, 0);
 #endif /* XP_WIN */
 
-#if defined(MOZ_WIDGET_GTK) || defined(MOZ_ENABLE_XREMOTE)
+#if defined(MOZ_WIDGET_GTK)
   // Stash DESKTOP_STARTUP_ID in malloc'ed memory because gtk_init will clear it.
 #define HAVE_DESKTOP_STARTUP_ID
   const char* desktopStartupIDEnv = PR_GetEnv("DESKTOP_STARTUP_ID");
@@ -4080,7 +4039,7 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
     mDisableRemote = true;
   }
 #endif
-#ifdef MOZ_ENABLE_XREMOTE
+#if defined(MOZ_WIDGET_GTK)
   // handle --remote now that xpcom is fired up
   bool newInstance;
   {
@@ -4639,13 +4598,7 @@ XREMain::XRE_mainRun()
   // ready in time for early consumers, such as the component loader.
   mDirProvider.InitializeUserPrefs();
 
-  {
-    nsCOMPtr<nsIObserver> startupNotifier
-      (do_CreateInstance(NS_APPSTARTUPNOTIFIER_CONTRACTID, &rv));
-    NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
-
-    startupNotifier->Observe(nullptr, APPSTARTUP_TOPIC, nullptr);
-  }
+  nsAppStartupNotifier::NotifyObservers(APPSTARTUP_TOPIC);
 
   nsCOMPtr<nsIAppStartup> appStartup
     (do_GetService(NS_APPSTARTUP_CONTRACTID));
@@ -4673,8 +4626,7 @@ XREMain::XRE_mainRun()
   NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
   if (!mShuttingDown) {
-    cmdLine = do_CreateInstance("@mozilla.org/toolkit/command-line;1");
-    NS_ENSURE_TRUE(cmdLine, NS_ERROR_FAILURE);
+    cmdLine = new nsCommandLine();
 
     rv = cmdLine->Init(gArgc, gArgv, workingDir,
                        nsICommandLine::STATE_INITIAL_LAUNCH);
@@ -4740,8 +4692,7 @@ XREMain::XRE_mainRun()
 #ifdef XP_MACOSX
     // we re-initialize the command-line service and do appleevents munging
     // after we are sure that we're not restarting
-    cmdLine = do_CreateInstance("@mozilla.org/toolkit/command-line;1");
-    NS_ENSURE_TRUE(cmdLine, NS_ERROR_FAILURE);
+    cmdLine = new nsCommandLine();
 
     CommandLineServiceMac::SetupMacCommandLine(gArgc, gArgv, false);
 
@@ -4771,7 +4722,7 @@ XREMain::XRE_mainRun()
   }
 
   if (!mShuttingDown) {
-#ifdef MOZ_ENABLE_XREMOTE
+#if defined(MOZ_WIDGET_GTK)
     // if we have X remote support, start listening for requests on the
     // proxy window.
     if (!mDisableRemote)
@@ -4783,7 +4734,7 @@ XREMain::XRE_mainRun()
       mRemoteLock.Cleanup();
       mRemoteLockDir->Remove(false);
     }
-#endif /* MOZ_ENABLE_XREMOTE */
+#endif /* MOZ_WIDGET_GTK */
 
     mNativeApp->Enable();
   }
@@ -4988,12 +4939,12 @@ XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig)
   }
 
   if (!mShuttingDown) {
-#ifdef MOZ_ENABLE_XREMOTE
+#if defined(MOZ_WIDGET_GTK)
     // shut down the x remote proxy window
     if (mRemoteService) {
       mRemoteService->Shutdown();
     }
-#endif /* MOZ_ENABLE_XREMOTE */
+#endif /* MOZ_WIDGET_GTK */
   }
 
   mScopedXPCOM = nullptr;
@@ -5333,21 +5284,6 @@ SetupErrorHandling(const char* progname)
 
   SetErrorMode(realMode);
 
-#endif
-
-#if defined (DEBUG) && defined(XP_WIN)
-  // Send MSCRT Warnings, Errors and Assertions to stderr.
-  // See http://msdn.microsoft.com/en-us/library/1y71x448(v=VS.80).aspx
-  // and http://msdn.microsoft.com/en-us/library/a68f826y(v=VS.80).aspx.
-
-  _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE);
-  _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);
-  _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
-  _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
-  _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
-  _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
-
-  _CrtSetReportHook(MSCRTReportHook);
 #endif
 
   InstallSignalHandlers(progname);

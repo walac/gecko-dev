@@ -194,8 +194,12 @@ typedef bool (*IonBinaryArithICFn)(JSContext* cx, HandleScript outerScript, IonB
 static const VMFunction IonBinaryArithICInfo =
     FunctionInfo<IonBinaryArithICFn>(IonBinaryArithIC::update, "IonBinaryArithIC::update");
 
-typedef bool (*IonCompareICFn)(JSContext* cx, HandleScript outerScript, IonCompareIC* stub,
-                                    HandleValue lhs, HandleValue rhs, MutableHandleValue res);
+typedef bool (*IonCompareICFn)(JSContext* cx,
+                               HandleScript outerScript,
+                               IonCompareIC* stub,
+                               HandleValue lhs,
+                               HandleValue rhs,
+                               bool* res);
 static const VMFunction IonCompareICInfo =
     FunctionInfo<IonCompareICFn>(IonCompareIC::update, "IonCompareIC::update");
 
@@ -419,8 +423,8 @@ CodeGenerator::visitOutOfLineICFallback(OutOfLineICFallback* ool)
         pushArg(ImmGCPtr(gen->info().script()));
         callVM(IonCompareICInfo, lir);
 
-        StoreValueTo(compareIC->output()).generate(this);
-        restoreLiveIgnore(lir, StoreValueTo(compareIC->output()).clobbered());
+        StoreRegisterTo(compareIC->output()).generate(this);
+        restoreLiveIgnore(lir, StoreRegisterTo(compareIC->output()).clobbered());
 
         masm.jump(ool->rejoin());
         return;
@@ -1838,6 +1842,16 @@ CreateDependentString::generate(MacroAssembler& masm, const JSAtomState& names,
 
     masm.bind(&nonEmpty);
 
+    // Complete matches use the base string.
+    Label nonBaseStringMatch;
+    masm.branchTest32(Assembler::NonZero, temp2_, temp2_, &nonBaseStringMatch);
+    masm.branch32(Assembler::NotEqual, Address(base, JSString::offsetOfLength()), temp1_,
+                  &nonBaseStringMatch);
+    masm.movePtr(base, string_);
+    masm.jump(&done);
+
+    masm.bind(&nonBaseStringMatch);
+
     Label notInline;
 
     int32_t maxInlineLength = encoding_ == CharEncoding::Latin1
@@ -1852,6 +1866,25 @@ CreateDependentString::generate(MacroAssembler& masm, const JSAtomState& names,
                                       ? JSThinInlineString::MAX_LENGTH_LATIN1
                                       : JSThinInlineString::MAX_LENGTH_TWO_BYTE;
         masm.branch32(Assembler::Above, temp1_, Imm32(maxThinInlineLength), &fatInline);
+        if (encoding_ == CharEncoding::Latin1) {
+            // One character Latin-1 strings can be loaded directly from the
+            // static strings table.
+            Label thinInline;
+            masm.branch32(Assembler::Above, temp1_, Imm32(1), &thinInline);
+            {
+                static_assert(StaticStrings::UNIT_STATIC_LIMIT -1 == JSString::MAX_LATIN1_CHAR,
+                              "Latin-1 strings can be loaded from static strings");
+
+                masm.loadStringChars(base, temp1_, encoding_);
+                masm.loadChar(temp1_, temp2_, temp1_, encoding_);
+
+                masm.movePtr(ImmPtr(&runtime->staticStrings().unitStaticTable), string_);
+                masm.loadPtr(BaseIndex(string_, temp1_, ScalePointer), string_);
+
+                masm.jump(&done);
+            }
+            masm.bind(&thinInline);
+        }
         {
             newGCString(FallbackKind::InlineString);
             masm.jump(&stringAllocated);
@@ -2901,11 +2934,11 @@ CodeGenerator::visitStringReplace(LStringReplace* lir)
 }
 
 void
-CodeGenerator::visitBinaryCache(LBinaryCache* lir)
+CodeGenerator::visitBinaryValueCache(LBinaryValueCache* lir)
 {
     LiveRegisterSet liveRegs = lir->safepoint()->liveRegs();
-    TypedOrValueRegister lhs = TypedOrValueRegister(ToValue(lir, LBinaryCache::LhsInput));
-    TypedOrValueRegister rhs = TypedOrValueRegister(ToValue(lir, LBinaryCache::RhsInput));
+    TypedOrValueRegister lhs = TypedOrValueRegister(ToValue(lir, LBinaryValueCache::LhsInput));
+    TypedOrValueRegister rhs = TypedOrValueRegister(ToValue(lir, LBinaryValueCache::RhsInput));
     ValueOperand output = ToOutValue(lir);
 
     JSOp jsop = JSOp(*lir->mirRaw()->toInstruction()->resumePoint()->pc());
@@ -2921,6 +2954,22 @@ CodeGenerator::visitBinaryCache(LBinaryCache* lir)
         addIC(lir, allocateIC(ic));
         return;
       }
+      default:
+        MOZ_CRASH("Unsupported jsop in MBinaryValueCache");
+    }
+}
+
+void
+CodeGenerator::visitBinaryBoolCache(LBinaryBoolCache* lir)
+{
+    LiveRegisterSet liveRegs = lir->safepoint()->liveRegs();
+    TypedOrValueRegister lhs = TypedOrValueRegister(ToValue(lir, LBinaryBoolCache::LhsInput));
+    TypedOrValueRegister rhs = TypedOrValueRegister(ToValue(lir, LBinaryBoolCache::RhsInput));
+    Register output = ToRegister(lir->output());
+
+    JSOp jsop = JSOp(*lir->mirRaw()->toInstruction()->resumePoint()->pc());
+
+    switch (jsop) {
       case JSOP_LT:
       case JSOP_LE:
       case JSOP_GT:
@@ -2934,7 +2983,7 @@ CodeGenerator::visitBinaryCache(LBinaryCache* lir)
         return;
       }
       default:
-        MOZ_CRASH("Unsupported jsop in MBinaryCache");
+        MOZ_CRASH("Unsupported jsop in MBinaryBoolCache");
     }
 }
 
@@ -2962,6 +3011,18 @@ CodeGenerator::visitClassConstructor(LClassConstructor* lir)
     pushArg(ImmPtr(lir->mir()->pc()));
     pushArg(ImmGCPtr(current->mir()->info().script()));
     callVM(MakeDefaultConstructorInfo, lir);
+}
+
+typedef JSObject* (*GetOrCreateModuleMetaObjectFn)(JSContext*, HandleObject);
+static const VMFunction GetOrCreateModuleMetaObjectInfo =
+    FunctionInfo<GetOrCreateModuleMetaObjectFn>(js::GetOrCreateModuleMetaObject,
+                                                "GetOrCreateModuleMetaObject");
+
+void
+CodeGenerator::visitModuleMetadata(LModuleMetadata* lir)
+{
+    pushArg(ImmPtr(lir->mir()->module()));
+    callVM(GetOrCreateModuleMetaObjectInfo, lir);
 }
 
 typedef JSObject* (*LambdaFn)(JSContext*, HandleFunction, HandleObject);
@@ -5286,16 +5347,14 @@ CodeGenerator::visitGetDynamicName(LGetDynamicName* lir)
     masm.passABIArg(envChain);
     masm.passABIArg(name);
     masm.passABIArg(temp2);
-    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, GetDynamicName));
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, GetDynamicNamePure));
 
     const ValueOperand out = ToOutValue(lir);
 
     masm.loadValue(Address(masm.getStackPointer(), 0), out);
     masm.adjustStack(sizeof(Value));
 
-    Label undefined;
-    masm.branchTestUndefined(Assembler::Equal, out, &undefined);
-    bailoutFrom(&undefined, lir->snapshot());
+    bailoutIfFalseBool(ReturnReg, lir->snapshot());
 }
 
 typedef bool (*DirectEvalSFn)(JSContext*, HandleObject, HandleScript, HandleValue,
@@ -6870,7 +6929,7 @@ CodeGenerator::visitCreateArgumentsObject(LCreateArgumentsObject* lir)
 
         // Try to allocate an arguments object. This will leave the reserved
         // slots uninitialized, so it's important we don't GC until we
-        // initialize these slots in ArgumentsObject::finishForIon.
+        // initialize these slots in ArgumentsObject::finishForIonPure.
         Label failure;
         TemplateObject templateObject(templateObj);
         masm.createGCObject(objTemp, temp, templateObject, gc::DefaultHeap, &failure,
@@ -6886,7 +6945,7 @@ CodeGenerator::visitCreateArgumentsObject(LCreateArgumentsObject* lir)
         masm.passABIArg(callObj);
         masm.passABIArg(objTemp);
 
-        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, ArgumentsObject::finishForIon));
+        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, ArgumentsObject::finishForIonPure));
         masm.branchTestPtr(Assembler::Zero, ReturnReg, ReturnReg, &failure);
 
         // Discard saved callObj on the stack.
@@ -11269,7 +11328,7 @@ CodeGenerator::visitThrow(LThrow* lir)
     callVM(ThrowInfoCodeGen, lir);
 }
 
-typedef bool (*BitNotFn)(JSContext*, HandleValue, int* p);
+typedef bool (*BitNotFn)(JSContext*, MutableHandleValue, MutableHandleValue);
 static const VMFunction BitNotInfo = FunctionInfo<BitNotFn>(BitNot, "BitNot");
 
 void
@@ -11279,7 +11338,7 @@ CodeGenerator::visitBitNotV(LBitNotV* lir)
     callVM(BitNotInfo, lir);
 }
 
-typedef bool (*BitopFn)(JSContext*, HandleValue, HandleValue, int* p);
+typedef bool (*BitopFn)(JSContext*, MutableHandleValue, MutableHandleValue, MutableHandleValue);
 static const VMFunction BitAndInfo = FunctionInfo<BitopFn>(BitAnd, "BitAnd");
 static const VMFunction BitOrInfo = FunctionInfo<BitopFn>(BitOr, "BitOr");
 static const VMFunction BitXorInfo = FunctionInfo<BitopFn>(BitXor, "BitXor");

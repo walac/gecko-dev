@@ -347,7 +347,7 @@ class AddonInternal {
      */
     const locales = [].concat(...this.locales.map(loc => loc.locales));
 
-    let requestedLocales = Services.locale.getRequestedLocales();
+    let requestedLocales = Services.locale.requestedLocales;
 
     /**
      * If en-US is not in the list, add it as the last fallback.
@@ -534,13 +534,8 @@ class AddonInternal {
   }
 
   async updateBlocklistState(options = {}) {
-    let {applySoftBlock = true, oldAddon = null, updateDatabase = true} = options;
+    let {applySoftBlock = true, updateDatabase = true} = options;
 
-    if (oldAddon) {
-      this.userDisabled = oldAddon.userDisabled;
-      this.softDisabled = oldAddon.softDisabled;
-      this.blocklistState = oldAddon.blocklistState;
-    }
     let oldState = this.blocklistState;
 
     let entry = await this.findBlocklistEntry();
@@ -579,7 +574,7 @@ class AddonInternal {
     }
   }
 
-  async setUserDisabled(val) {
+  async setUserDisabled(val, allowSystemAddons = false) {
     if (val == (this.userDisabled || this.softDisabled)) {
       return;
     }
@@ -587,7 +582,7 @@ class AddonInternal {
     if (this.inDatabase) {
       // System add-ons should not be user disabled, as there is no UI to
       // re-enable them.
-      if (this.location.isSystem) {
+      if (this.location.isSystem && !allowSystemAddons) {
         throw new Error(`Cannot disable system add-on ${this.id}`);
       }
       await XPIDatabase.updateAddonDisabledState(this, val);
@@ -684,6 +679,14 @@ class AddonInternal {
     }
 
     return permissions;
+  }
+
+  propagateDisabledState(oldAddon) {
+    if (oldAddon) {
+      this.userDisabled = oldAddon.userDisabled;
+      this.softDisabled = oldAddon.softDisabled;
+      this.blocklistState = oldAddon.blocklistState;
+    }
   }
 }
 
@@ -980,12 +983,14 @@ AddonWrapper = class {
     return addon.softDisabled || addon.userDisabled;
   }
 
-  enable() {
-    return addonFor(this).setUserDisabled(false);
+  enable(options = {}) {
+    const {allowSystemAddons = false} = options;
+    return addonFor(this).setUserDisabled(false, allowSystemAddons);
   }
 
-  disable() {
-    return addonFor(this).setUserDisabled(true);
+  disable(options = {}) {
+    const {allowSystemAddons = false} = options;
+    return addonFor(this).setUserDisabled(true, allowSystemAddons);
   }
 
   set softDisabled(val) {
@@ -2447,6 +2452,11 @@ this.XPIDatabaseReconcile = {
     // appDisabled depends on whether the add-on is a foreignInstall so update
     aNewAddon.appDisabled = !XPIDatabase.isUsableAddon(aNewAddon);
 
+    if (aLocation.isSystem) {
+      const pref = `extensions.${aId.split("@")[0]}.enabled`;
+      aNewAddon.userDisabled = !Services.prefs.getBoolPref(pref, true);
+    }
+
     if (isDetectedInstall && aNewAddon.foreignInstall) {
       // Add the installation source info for the sideloaded extension.
       aNewAddon.installTelemetryInfo = {
@@ -2735,7 +2745,7 @@ this.XPIDatabaseReconcile = {
       for (let [id, oldAddon] of dbAddons) {
         // Check if the add-on is still installed
         let xpiState = location.get(id);
-        if (xpiState) {
+        if (xpiState && !xpiState.missing) {
           let newAddon = this.updateExistingAddon(oldAddon, xpiState,
                                                   findManifest(location, id),
                                                   aUpdateCompatibility, aSchemaChange);
@@ -2753,7 +2763,7 @@ this.XPIDatabaseReconcile = {
       }
 
       for (let [id, xpiState] of location) {
-        if (locationAddons.has(id))
+        if (locationAddons.has(id) || xpiState.missing)
           continue;
         let newAddon = findManifest(location, id);
         let addon = this.addMetadata(location, id, xpiState, newAddon,

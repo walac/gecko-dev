@@ -102,6 +102,7 @@
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/TabGroup.h"
 #include "mozilla/StaticPrefs.h"
+#include "PaintWorkletImpl.h"
 
 // Interfaces Needed
 #include "nsIFrame.h"
@@ -1065,6 +1066,12 @@ nsGlobalWindowInner::~nsGlobalWindowInner()
     sInnerWindowsById->Remove(mWindowID);
   }
 
+  // If AutoplayPermissionManager is going to be destroyed before getting the
+  // request's result, we would treat it as user deny.
+  if (mAutoplayPermissionManager) {
+    mAutoplayPermissionManager->DenyPlayRequestIfExists();
+  }
+
   nsContentUtils::InnerOrOuterWindowDestroyed();
 
 #ifdef DEBUG
@@ -1143,7 +1150,7 @@ nsGlobalWindowInner::CleanupCachedXBLHandlers()
 }
 
 void
-nsGlobalWindowInner::FreeInnerObjects()
+nsGlobalWindowInner::FreeInnerObjects(bool aForDocumentOpen)
 {
   if (IsDying()) {
     return;
@@ -1201,8 +1208,10 @@ nsGlobalWindowInner::FreeInnerObjects()
     mDocumentURI = mDoc->GetDocumentURI();
     mDocBaseURI = mDoc->GetDocBaseURI();
 
-    while (mDoc->EventHandlingSuppressed()) {
-      mDoc->UnsuppressEventHandlingAndFireEvents(false);
+    if (!aForDocumentOpen) {
+      while (mDoc->EventHandlingSuppressed()) {
+        mDoc->UnsuppressEventHandlingAndFireEvents(false);
+      }
     }
 
     if (mObservingDidRefresh) {
@@ -3638,15 +3647,15 @@ nsGlobalWindowInner::GetNearestWidget() const
 }
 
 void
-nsGlobalWindowInner::SetFullScreen(bool aFullScreen, mozilla::ErrorResult& aError)
+nsGlobalWindowInner::SetFullScreen(bool aFullscreen, mozilla::ErrorResult& aError)
 {
-  FORWARD_TO_OUTER_OR_THROW(SetFullScreenOuter, (aFullScreen, aError), aError, /* void */);
+  FORWARD_TO_OUTER_OR_THROW(SetFullscreenOuter, (aFullscreen, aError), aError, /* void */);
 }
 
 bool
 nsGlobalWindowInner::GetFullScreen(ErrorResult& aError)
 {
-  FORWARD_TO_OUTER_OR_THROW(GetFullScreenOuter, (), aError, false);
+  FORWARD_TO_OUTER_OR_THROW(GetFullscreenOuter, (), aError, false);
 }
 
 bool
@@ -6268,6 +6277,12 @@ nsGlobalWindowInner::GetTopLevelPrincipal()
 nsIPrincipal*
 nsGlobalWindowInner::GetTopLevelStorageAreaPrincipal()
 {
+  if (mDoc && ((mDoc->GetSandboxFlags() & SANDBOXED_STORAGE_ACCESS) != 0 ||
+               nsContentUtils::IsInPrivateBrowsing(mDoc))) {
+    // Storage access is disabled
+    return nullptr;
+  }
+
   nsPIDOMWindowOuter* outerWindow = GetParentInternal();
   if (!outerWindow) {
     // No outer window available!
@@ -7507,6 +7522,10 @@ nsGlobalWindowInner::GetSidebar(OwningExternalOrWindowProxy& aResult,
 void
 nsGlobalWindowInner::ClearDocumentDependentSlots(JSContext* aCx)
 {
+  if (js::GetContextCompartment(aCx) != js::GetObjectCompartment(GetWrapperPreserveColor())) {
+    MOZ_CRASH("Looks like bug 1488480/1405521, with ClearDocumentDependentSlots in a bogus compartment");
+  }
+
   // If JSAPI OOMs here, there is basically nothing we can do to recover safely.
   if (!Window_Binding::ClearCachedDocumentValue(aCx, this) ||
       !Window_Binding::ClearCachedPerformanceValue(aCx, this)) {
@@ -7807,7 +7826,7 @@ nsGlobalWindowInner::GetPaintWorklet(ErrorResult& aRv)
       return nullptr;
     }
 
-    mPaintWorklet = new Worklet(this, principal, Worklet::ePaintWorklet);
+    mPaintWorklet = PaintWorkletImpl::CreateWorklet(this, principal);
   }
 
   return mPaintWorklet;

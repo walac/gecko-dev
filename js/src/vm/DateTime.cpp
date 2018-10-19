@@ -626,13 +626,17 @@ IsOlsonCompatibleWindowsTimeZoneId(const char* tz)
 }
 #elif ENABLE_INTL_API && defined(ICU_TZ_HAS_RECREATE_DEFAULT)
 static inline const char*
-TZContainsPath(const char* tzVar)
+TZContainsAbsolutePath(const char* tzVar)
 {
-    // A TZ beginning with a colon is expected to be followed by a path --
-    // typically an absolute path (often /etc/localtime), but alternatively a
-    // path relative to /usr/share/zoneinfo/.
-    // NB: We currently only support absolute paths.
-    return tzVar[0] == ':' && tzVar[1] == '/' ? tzVar + 1 : nullptr;
+    // A TZ environment variable may be an absolute path. The path
+    // format of TZ may begin with a colon. (ICU handles relative paths.)
+    if (tzVar[0] == ':' && tzVar[1] == '/') {
+        return tzVar + 1;
+    }
+    if (tzVar[0] == '/') {
+        return tzVar;
+    }
+    return nullptr;
 }
 
 /**
@@ -673,8 +677,9 @@ ReadTimeZoneLink(const char* tz)
     constexpr size_t linkNameLen = mozilla::ArrayLength(linkName) - 1; // -1 to null-terminate.
 
     // Return if the TZ value is too large.
-    if (std::strlen(tz) > linkNameLen)
+    if (std::strlen(tz) > linkNameLen) {
         return icu::UnicodeString();
+    }
 
     std::strcpy(linkName, tz);
 
@@ -687,13 +692,15 @@ ReadTimeZoneLink(const char* tz)
     const char* timeZoneWithZoneInfo;
     while (!(timeZoneWithZoneInfo = std::strstr(linkName, ZoneInfoPath))) {
         // Return if the symlink nesting is too deep.
-        if (++depth > FollowDepthLimit)
+        if (++depth > FollowDepthLimit) {
             return icu::UnicodeString();
+        }
 
         // Return on error or if the result was truncated.
         ssize_t slen = readlink(linkName, linkTarget, linkTargetLen);
-        if (slen < 0 || size_t(slen) >= linkTargetLen)
+        if (slen < 0 || size_t(slen) >= linkTargetLen) {
             return icu::UnicodeString();
+        }
 
         // Ensure linkTarget is null-terminated. (readlink may not necessarily
         // null-terminate the string.)
@@ -721,8 +728,9 @@ ReadTimeZoneLink(const char* tz)
         separator[1] = '\0';
 
         // Return if the concatenated path name is too large.
-        if (std::strlen(linkName) + len > linkNameLen)
+        if (std::strlen(linkName) + len > linkNameLen) {
             return icu::UnicodeString();
+        }
 
         // Keep it simple and just concatenate the path names.
         std::strcat(linkName, linkTarget);
@@ -740,12 +748,14 @@ ReadTimeZoneLink(const char* tz)
         // According to theory.html, '.' is allowed in time zone ids, but the
         // accompanying zic.c file doesn't allow it. Assume the source file is
         // correct and disallow '.' here, too.
-        if (mozilla::IsAsciiAlphanumeric(c) || c == '_' || c == '-' || c == '+')
+        if (mozilla::IsAsciiAlphanumeric(c) || c == '_' || c == '-' || c == '+') {
             continue;
+        }
 
         // Reject leading, trailing, or consecutive '/' characters.
-        if (c == '/' && i > 0 && i + 1 < timeZoneLen && timeZone[i + 1] != '/')
+        if (c == '/' && i > 0 && i + 1 < timeZoneLen && timeZone[i + 1] != '/') {
             continue;
+        }
 
         return icu::UnicodeString();
     }
@@ -777,11 +787,15 @@ js::ResyncICUDefaultTimeZone()
                 // TODO: Handle invalid time zone identifiers (bug 342068).
             }
 #else
-            // Handle links (starting with ':') manually because ICU currently
-            // doesn't support the TZ filespec format.
+            // The TZ environment variable allows both absolute and
+            // relative paths, optionally beginning with a colon (':').
+            // (Relative paths, without the colon, are just Olson time
+            // zone names.)  We need to handle absolute paths ourselves,
+            // including handling that they might be symlinks.
             // <https://unicode-org.atlassian.net/browse/ICU-13694>
-            if (const char* tzlink = TZContainsPath(tz))
+            if (const char* tzlink = TZContainsAbsolutePath(tz)) {
                 tzid.setTo(ReadTimeZoneLink(tzlink));
+            }
 #endif /* defined(XP_WIN) */
 
             if (!tzid.isEmpty()) {

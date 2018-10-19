@@ -32,7 +32,7 @@ private:
   void DeferredDestroy();
 
   RefPtr<VRGPUParent> mSelfRef;
-#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK))
+#if !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK)
   RefPtr<VRService> mVRService;
 #endif
 };

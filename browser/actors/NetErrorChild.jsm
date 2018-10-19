@@ -14,6 +14,10 @@ ChromeUtils.defineModuleGetter(this, "BrowserUtils",
 ChromeUtils.defineModuleGetter(this, "WebNavigationFrames",
                                "resource://gre/modules/WebNavigationFrames.jsm");
 
+XPCOMUtils.defineLazyGlobalGetters(this, ["URL"]);
+
+XPCOMUtils.defineLazyGlobalGetters(this, ["URL"]);
+
 XPCOMUtils.defineLazyGetter(this, "gPipNSSBundle", function() {
   return Services.strings.createBundle("chrome://pipnss/locale/pipnss.properties");
 });
@@ -81,6 +85,14 @@ class NetErrorChild extends ActorChild {
     return doc.documentURI.startsWith("about:certerror");
   }
 
+  getParams(doc) {
+    let searchParams = new URL(doc.documentURI).searchParams;
+    return {
+      cssClass: searchParams.get("s"),
+      error: searchParams.get("e"),
+    };
+  }
+
   _getCertValidityRange(docShell) {
     let {securityInfo} = docShell.failedChannel;
     securityInfo.QueryInterface(Ci.nsITransportSecurityInfo);
@@ -98,9 +110,7 @@ class NetErrorChild extends ActorChild {
 
   _setTechDetails(input, doc) {
     // CSS class and error code are set from nsDocShell.
-    let searchParams = new URLSearchParams(doc.documentURI.split("?")[1]);
-    let cssClass = searchParams.get("s");
-    let error = searchParams.get("e");
+    let {cssClass, error} = this.getParams(doc);
     let technicalInfo = doc.getElementById("badCertTechnicalInfo");
     technicalInfo.textContent = "";
 
@@ -124,7 +134,7 @@ class NetErrorChild extends ActorChild {
             msg1 = "";
             msg1 += gPipNSSBundle.formatStringFromName("certErrorTrust_UnknownIssuer4", [hostString], 1);
             msg1 += "\n\n";
-            msg1 += gPipNSSBundle.formatStringFromName("certErrorTrust_UnknownIssuer5", [brandName, hostString], 2);
+            msg1 += gPipNSSBundle.formatStringFromName("certErrorTrust_UnknownIssuer6", [brandName, hostString], 2);
             msg1 += "\n\n";
           } else {
             msg1 += gPipNSSBundle.GetStringFromName("certErrorTrust_UnknownIssuer") + "\n";
@@ -168,7 +178,7 @@ class NetErrorChild extends ActorChild {
           if (newErrorPagesEnabled) {
             technicalInfo.textContent = "";
             let brandName = gBrandBundle.GetStringFromName("brandShortName");
-            msgPrefix = gPipNSSBundle.formatStringFromName("certErrorMismatchSinglePrefix1", [brandName, hostString], 2) + " ";
+            msgPrefix = gPipNSSBundle.formatStringFromName("certErrorMismatchSinglePrefix2", [brandName, hostString], 2) + " ";
             msgPrefix += gPipNSSBundle.GetStringFromName("certErrorMismatchSinglePrefix");
           } else {
             msgPrefix = gPipNSSBundle.GetStringFromName("certErrorMismatchSinglePrefix");
@@ -242,7 +252,7 @@ class NetErrorChild extends ActorChild {
           if (newErrorPagesEnabled) {
             technicalInfo.textContent = "";
             let brandName = gBrandBundle.GetStringFromName("brandShortName");
-            msg = gPipNSSBundle.formatStringFromName("certErrorMismatchMultiple1", [brandName, hostString], 2) + " ";
+            msg = gPipNSSBundle.formatStringFromName("certErrorMismatchMultiple2", [brandName, hostString], 2) + " ";
           } else {
             msg = gPipNSSBundle.GetStringFromName("certErrorMismatchMultiple") + "\n";
           }
@@ -259,7 +269,7 @@ class NetErrorChild extends ActorChild {
         if (newErrorPagesEnabled) {
           technicalInfo.textContent = "";
           let brandName = gBrandBundle.GetStringFromName("brandShortName");
-          msg = gPipNSSBundle.formatStringFromName("certErrorMismatch1", [brandName, hostString], 2) + " ";
+          msg = gPipNSSBundle.formatStringFromName("certErrorMismatch2", [brandName, hostString], 2) + " ";
         } else {
           msg = gPipNSSBundle.formatStringFromName("certErrorMismatch",
                                                      [hostString], 1);
@@ -277,7 +287,7 @@ class NetErrorChild extends ActorChild {
         if (nowTime > input.data.validity.notAfter) {
           if (newErrorPagesEnabled) {
             technicalInfo.textContent = "";
-            msg += gPipNSSBundle.formatStringFromName("certErrorExpiredNow1",
+            msg += gPipNSSBundle.formatStringFromName("certErrorExpiredNow2",
                                                     [hostString], 1);
             msg += "\n";
           } else {
@@ -289,7 +299,7 @@ class NetErrorChild extends ActorChild {
           // eslint-disable-next-line no-lonely-if
           if (newErrorPagesEnabled) {
             technicalInfo.textContent = "";
-            msg += gPipNSSBundle.formatStringFromName("certErrorNotYetValidNow1",
+            msg += gPipNSSBundle.formatStringFromName("certErrorNotYetValidNow2",
                                                       [hostString], 1);
             msg += "\n";
           } else {
@@ -303,7 +313,7 @@ class NetErrorChild extends ActorChild {
         // eslint-disable-next-line no-lonely-if
           if (newErrorPagesEnabled) {
             technicalInfo.textContent = "";
-            msg += gPipNSSBundle.formatStringFromName("certErrorExpiredNow1",
+            msg += gPipNSSBundle.formatStringFromName("certErrorExpiredNow2",
                                                       [hostString], 1);
             msg += "\n";
           } else {
@@ -322,6 +332,7 @@ class NetErrorChild extends ActorChild {
     detailLink.append(input.data.codeString);
     detailLink.title = input.data.codeString;
     detailLink.id = "errorCode";
+    detailLink.dataset.telemetryId = "error_code_link";
     let fragment = BrowserUtils.getLocalizedFragment(doc, linkPrefix, detailLink);
     technicalInfo.appendChild(fragment);
     var errorCode = doc.getElementById("errorCode");
@@ -352,6 +363,15 @@ class NetErrorChild extends ActorChild {
     let es = doc.getElementById("errorWhatToDoText");
     let errWhatToDoTitle = doc.getElementById("edd_nssBadCert");
     let est = doc.getElementById("errorWhatToDoTitleText");
+
+    // This is set to true later if the user's system clock is at fault for this error.
+    let clockSkew = false;
+
+    doc.body.setAttribute("code", msg.data.codeString);
+
+    // Need to do this here (which is not exactly at load but a few ticks later),
+    // because this is the first time we have access to the error code.
+    this.recordLoadEvent(doc);
 
     switch (msg.data.code) {
       case SSL_ERROR_BAD_CERT_DOMAIN:
@@ -407,7 +427,6 @@ class NetErrorChild extends ActorChild {
       case MOZILLA_PKIX_ERROR_NOT_YET_VALID_ISSUER_CERTIFICATE:
 
         learnMoreLink.href = baseURL + "time-errors";
-        let clockSkew = false;
         // We check against the remote-settings server time first if available, because that allows us
         // to give the user an approximation of what the correct time is.
         let difference = Services.prefs.getIntPref(PREF_SERVICES_SETTINGS_CLOCK_SKEW_SECONDS, 0);
@@ -508,6 +527,22 @@ class NetErrorChild extends ActorChild {
         }
         break;
     }
+
+    // Add slightly more alarming UI unless there are indicators that
+    // show that the error is harmless or can not be skipped anyway.
+    if (newErrorPagesEnabled) {
+      let {cssClass} = this.getParams(doc);
+      // Don't alarm users when they can't continue to the website anyway...
+      if (cssClass != "badStsCert" &&
+          // Errors in iframes can't be skipped either...
+          doc.ownerGlobal.parent == doc.ownerGlobal &&
+          // Also don't bother if it's just the user's clock being off...
+          !clockSkew &&
+          // Symantec distrust is likely harmless as well.
+          msg.data.code != MOZILLA_PKIX_ERROR_ADDITIONAL_POLICY_CONSTRAINT_FAILED) {
+        doc.body.classList.add("caution");
+      }
+    }
   }
 
   handleEvent(aEvent) {
@@ -530,11 +565,13 @@ class NetErrorChild extends ActorChild {
     case "click":
       if (aEvent.button == 0) {
         if (this.isAboutCertError(doc)) {
+          this.recordClick(aEvent.originalTarget);
           this.onCertError(aEvent.originalTarget, doc.defaultView);
         } else {
           this.onClick(aEvent);
         }
       }
+      break;
     }
   }
 
@@ -693,6 +730,38 @@ class NetErrorChild extends ActorChild {
       elementId: target.getAttribute("id"),
       isTopFrame: (win.parent === win),
       securityInfoAsString: getSerializedSecurityInfo(win.docShell),
+    });
+  }
+
+  getCSSClass(doc) {
+    let searchParams = new URL(doc.documentURI).searchParams;
+    return searchParams.get("s");
+  }
+
+  recordLoadEvent(doc) {
+    let cssClass = this.getCSSClass(doc);
+    // Telemetry values for events are max. 80 bytes.
+    let errorCode = doc.body.getAttribute("code").substring(0, 40);
+    Services.telemetry.recordEvent("security.ui.certerror", "load", "aboutcerterror", errorCode, {
+      "has_sts": (cssClass == "badStsCert").toString(),
+      "is_frame": (doc.ownerGlobal.parent != doc.ownerGlobal).toString(),
+    });
+  }
+
+  recordClick(element) {
+    let telemetryId = element.dataset.telemetryId;
+    if (!telemetryId) {
+      return;
+    }
+    let doc = element.ownerDocument;
+    let cssClass = this.getCSSClass(doc);
+    // Telemetry values for events are max. 80 bytes.
+    let errorCode = doc.body.getAttribute("code").substring(0, 40);
+    let panel = doc.getElementById("badCertAdvancedPanel");
+    Services.telemetry.recordEvent("security.ui.certerror", "click", telemetryId, errorCode, {
+      "panel_open": (panel.style.display == "none").toString(),
+      "has_sts": (cssClass == "badStsCert").toString(),
+      "is_frame": (doc.ownerGlobal.parent != doc.ownerGlobal).toString(),
     });
   }
 

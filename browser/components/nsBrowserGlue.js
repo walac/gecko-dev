@@ -11,6 +11,8 @@ ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 ChromeUtils.defineModuleGetter(this, "ActorManagerParent",
                                "resource://gre/modules/ActorManagerParent.jsm");
 
+const PREF_PDFJS_ENABLED_CACHE_STATE = "pdfjs.enabledCache.state";
+
 let ACTORS = {
   AboutReader: {
     child: {
@@ -71,7 +73,6 @@ let ACTORS = {
   ClickHandler: {
     child: {
       module: "resource:///actors/ClickHandlerChild.jsm",
-      group: "browsers",
       events: {
         "click": {capture: true, mozSystemGroup: true},
       },
@@ -261,18 +262,6 @@ let ACTORS = {
     },
   },
 
-  UAWidgets: {
-    child: {
-      module: "resource:///actors/UAWidgetsChild.jsm",
-      group: "browsers",
-      events: {
-        "UAWidgetBindToTree": {},
-        "UAWidgetAttributeChanged": {},
-        "UAWidgetUnbindFromTree": {},
-      },
-    },
-  },
-
   UITour: {
     child: {
       module: "resource:///modules/UITourChild.jsm",
@@ -309,6 +298,12 @@ let ACTORS = {
   if (!Services.prefs.getBoolPref("browser.startup.blankWindow", false))
     return;
 
+  // Until bug 1450626 and bug 1488384 are fixed, skip the blank window when
+  // using a non-default theme.
+  if (Services.prefs.getCharPref("lightweightThemes.selectedThemeID", "") !=
+        "default-theme@mozilla.org")
+    return;
+
   let store = Services.xulStore;
   let getValue = attr =>
     store.getValue(AppConstants.BROWSER_CHROME_URL, "main-window", attr);
@@ -319,12 +314,9 @@ let ACTORS = {
   if (!width || !height)
     return;
 
-  let screenX = getValue("screenX");
-  let screenY = getValue("screenY");
   let browserWindowFeatures =
     "chrome,all,dialog=no,extrachrome,menubar,resizable,scrollbars,status," +
-    "location,toolbar,personalbar," +
-    `left=${screenX},top=${screenY}`;
+    "location,toolbar,personalbar";
   let win = Services.ww.openWindow(null, "about:blank", null,
                                    browserWindowFeatures, null);
 
@@ -333,20 +325,23 @@ let ACTORS = {
     win.windowUtils.setChromeMargin(0, 2, 2, 2);
   }
 
-  if (AppConstants.platform != "macosx") {
-    // On Windows/Linux the position is in device pixels rather than CSS pixels.
-    let scale = win.devicePixelRatio;
-    if (scale > 1)
-      win.moveTo(screenX / scale, screenY / scale);
-  }
+  let docElt = win.document.documentElement;
+  docElt.setAttribute("screenX", getValue("screenX"));
+  docElt.setAttribute("screenY", getValue("screenY"));
 
   // The sizemode="maximized" attribute needs to be set before first paint.
-  let docElt = win.document.documentElement;
   let sizemode = getValue("sizemode");
   if (sizemode == "maximized") {
     docElt.setAttribute("sizemode", sizemode);
 
-    // Needed for when the user leaves the maximized mode.
+    // Set the size to use when the user leaves the maximized mode.
+    // The persisted size is the outer size, but the height/width
+    // attributes set the inner size.
+    let xulWin = win.docShell.treeOwner
+                    .QueryInterface(Ci.nsIInterfaceRequestor)
+                    .getInterface(Ci.nsIXULWindow);
+    height -= xulWin.outerToInnerHeightDifferenceInCSSPixels;
+    width -= xulWin.outerToInnerWidthDifferenceInCSSPixels;
     docElt.setAttribute("height", height);
     docElt.setAttribute("width", width);
   } else {
@@ -407,6 +402,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   L10nRegistry: "resource://gre/modules/L10nRegistry.jsm",
   LanguagePrompt: "resource://gre/modules/LanguagePrompt.jsm",
   LightweightThemeManager: "resource://gre/modules/LightweightThemeManager.jsm",
+  LiveBookmarkMigrator: "resource:///modules/LiveBookmarkMigrator.jsm",
   LoginHelper: "resource://gre/modules/LoginHelper.jsm",
   LoginManagerParent: "resource://gre/modules/LoginManagerParent.jsm",
   NewTabUtils: "resource://gre/modules/NewTabUtils.jsm",
@@ -428,6 +424,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   RemoteSettings: "resource://services-settings/remote-settings.js",
   SafeBrowsing: "resource://gre/modules/SafeBrowsing.jsm",
   Sanitizer: "resource:///modules/Sanitizer.jsm",
+  SaveToPocket: "chrome://pocket/content/SaveToPocket.jsm",
   SessionStartup: "resource:///modules/sessionstore/SessionStartup.jsm",
   SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
   ShellService: "resource:///modules/ShellService.jsm",
@@ -503,7 +500,6 @@ const listeners = {
     "AsyncPrefs:ResetPref": ["AsyncPrefs"],
     // PLEASE KEEP THIS LIST IN SYNC WITH THE LISTENERS ADDED IN AsyncPrefs.init
 
-    "FeedConverter:addLiveBookmark": ["Feeds"],
     "webrtc:UpdateGlobalIndicators": ["webrtcUI"],
     "webrtc:UpdatingIndicators": ["webrtcUI"],
   },
@@ -1000,7 +996,13 @@ BrowserGlue.prototype = {
   _beforeUIStartup: function BG__beforeUIStartup() {
     SessionStartup.init();
 
-    PdfJs.earlyInit();
+    if (Services.prefs.prefHasUserValue(PREF_PDFJS_ENABLED_CACHE_STATE)) {
+      Services.ppmm.sharedData.set(
+        "pdfjs.enabled",
+        Services.prefs.getBoolPref(PREF_PDFJS_ENABLED_CACHE_STATE));
+    } else {
+      PdfJs.earlyInit();
+    }
 
     // check if we're in safe mode
     if (Services.appinfo.inSafeMode) {
@@ -1046,8 +1048,9 @@ BrowserGlue.prototype = {
       toolbar_field_border: "rgba(249, 249, 250, 0.2)",
       ntp_background: "#2A2A2E",
       ntp_text: "rgb(249, 249, 250)",
-      sidebar: "#19191a",
+      sidebar: "#38383D",
       sidebar_text: "rgb(249, 249, 250)",
+      sidebar_border: "rgba(255, 255, 255, 0.1)",
       author: vendorShortName,
     }, {
       useInDarkMode: true,
@@ -1056,13 +1059,14 @@ BrowserGlue.prototype = {
     Normandy.init();
 
     // Initialize the default l10n resource sources for L10nRegistry.
-    let locales = Services.locale.getPackagedLocales();
+    let locales = Services.locale.packagedLocales;
     const greSource = new FileSource("toolkit", locales, "resource://gre/localization/{locale}/");
     L10nRegistry.registerSource(greSource);
 
     const appSource = new FileSource("app", locales, "resource://app/localization/{locale}/");
     L10nRegistry.registerSource(appSource);
 
+    SaveToPocket.init();
     Services.obs.notifyObservers(null, "browser-ui-startup-complete");
   },
 
@@ -1149,7 +1153,7 @@ BrowserGlue.prototype = {
 
   async _calculateProfileAgeInDays() {
     let ProfileAge = ChromeUtils.import("resource://gre/modules/ProfileAge.jsm", {}).ProfileAge;
-    let profileAge = new ProfileAge(null, null);
+    let profileAge = await ProfileAge();
 
     let creationDate = await profileAge.created;
     let resetDate = await profileAge.reset;
@@ -1347,6 +1351,34 @@ BrowserGlue.prototype = {
     PlacesUtils.favicons.setDefaultIconURIPreferredSize(16 * aWindow.devicePixelRatio);
   },
 
+  _recordContentBlockingTelemetry() {
+    let recordIdentityPopupEvents = Services.prefs.getBoolPref("security.identitypopup.recordEventElemetry");
+    Services.telemetry.setEventRecordingEnabled("security.ui.identitypopup", recordIdentityPopupEvents);
+
+    let tpEnabled = Services.prefs.getBoolPref("privacy.trackingprotection.enabled");
+    Services.telemetry.getHistogramById("TRACKING_PROTECTION_ENABLED").add(tpEnabled);
+
+    let tpPBDisabled = Services.prefs.getBoolPref("privacy.trackingprotection.pbmode.enabled");
+    Services.telemetry.getHistogramById("TRACKING_PROTECTION_PBM_DISABLED").add(!tpPBDisabled);
+
+    let cookieBehavior = Services.prefs.getIntPref("network.cookie.cookieBehavior");
+    Services.telemetry.getHistogramById("COOKIE_BEHAVIOR").add(cookieBehavior);
+
+    let fastBlockEnabled = Services.prefs.getBoolPref("browser.fastblock.enabled");
+    Services.telemetry.scalarSet("contentblocking.fastblock_enabled", fastBlockEnabled);
+
+    let contentBlockingEnabled = Services.prefs.getBoolPref("browser.contentblocking.enabled");
+    Services.telemetry.scalarSet("contentblocking.enabled", contentBlockingEnabled);
+
+    let exceptions = 0;
+    for (let permission of Services.perms.enumerator) {
+      if (permission.type == "trackingprotection") {
+        exceptions++;
+      }
+    }
+    Services.telemetry.scalarSet("contentblocking.exceptions", exceptions);
+  },
+
   _sendMediaTelemetry() {
     let win = Services.appShell.hiddenDOMWindow;
     let v = win.document.createElementNS("http://www.w3.org/1999/xhtml", "video");
@@ -1391,6 +1423,7 @@ BrowserGlue.prototype = {
     AboutPrivateBrowsingHandler.uninit();
     AutoCompletePopup.uninit();
     DateTimePickerParent.uninit();
+    SaveToPocket.uninit();
 
     // Browser errors are only collected on Nightly, but telemetry for
     // them is collected on all channels.
@@ -1399,6 +1432,36 @@ BrowserGlue.prototype = {
     }
 
     Normandy.uninit();
+  },
+
+  // Set up a listener to enable/disable the screenshots extension
+  // based on its preference.
+  _monitorScreenshotsPref() {
+    const PREF = "extensions.screenshots.disabled";
+    const ID = "screenshots@mozilla.org";
+    Services.prefs.addObserver(PREF, async () => {
+      let addon = await AddonManager.getAddonByID(ID);
+      let disabled = Services.prefs.getBoolPref(PREF, false);
+      if (disabled) {
+        await addon.disable({allowSystemAddons: true});
+      } else {
+        await addon.enable({allowSystemAddons: true});
+      }
+    });
+  },
+
+  _monitorWebcompatReporterPref() {
+    const PREF = "extensions.webcompat-reporter.enabled";
+    const ID = "webcompat-reporter@mozilla.org";
+    Services.prefs.addObserver(PREF, async () => {
+      let addon = await AddonManager.getAddonByID(ID);
+      let enabled = Services.prefs.getBoolPref(PREF, false);
+      if (enabled && !addon.isActive) {
+        await addon.enable({allowSystemAddons: true});
+      } else if (!enabled && addon.isActive) {
+        await addon.disable({allowSystemAddons: true});
+      }
+    });
   },
 
   // All initial windows have opened.
@@ -1457,6 +1520,9 @@ BrowserGlue.prototype = {
     };
     this._idleService.addIdleObserver(
       this._lateTasksIdleObserver, LATE_TASKS_IDLE_TIME_SEC);
+
+    this._monitorScreenshotsPref();
+    this._monitorWebcompatReporterPref();
   },
 
   /**
@@ -1484,6 +1550,13 @@ BrowserGlue.prototype = {
       ContextualIdentityService.load();
     });
 
+    Services.tm.idleDispatchToMainThread(() => {
+      let enableCertErrorUITelemetry =
+        Services.prefs.getBoolPref("security.certerrors.recordEventTelemetry", false);
+      Services.telemetry.setEventRecordingEnabled("security.ui.certerror",
+        enableCertErrorUITelemetry);
+    });
+
     // Load the Login Manager data from disk off the main thread, some time
     // after startup.  If the data is required before this runs, for example
     // because a restored page contains a password field, it will be loaded on
@@ -1504,6 +1577,11 @@ BrowserGlue.prototype = {
 
     if (AppConstants.MOZ_CRASHREPORTER) {
       UnsubmittedCrashHandler.scheduleCheckForUnsubmittedCrashReports();
+    }
+
+    if (AppConstants.ASAN_REPORTER) {
+      ChromeUtils.import("resource:///modules/AsanReporter.jsm");
+      AsanReporter.init();
     }
 
     if (AppConstants.platform == "win") {
@@ -1555,6 +1633,12 @@ BrowserGlue.prototype = {
     Services.tm.idleDispatchToMainThread(() => {
       Blocklist.loadBlocklistAsync();
     });
+
+    if (Services.prefs.getIntPref("browser.livebookmarks.migrationAttemptsLeft", 0) > 0) {
+      Services.tm.idleDispatchToMainThread(() => {
+        LiveBookmarkMigrator.migrate().catch(Cu.reportError);
+      });
+    }
   },
 
   /**
@@ -1998,6 +2082,10 @@ BrowserGlue.prototype = {
       this._placesBrowserInitComplete = true;
       Services.obs.notifyObservers(null, "places-browser-init-complete");
     });
+
+    Services.tm.idleDispatchToMainThread(() => {
+      this._recordContentBlockingTelemetry();
+    });
   },
 
   /**
@@ -2099,7 +2187,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 73;
+    const UI_VERSION = 76;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     let currentUIVersion;
@@ -2175,11 +2263,6 @@ BrowserGlue.prototype = {
       }
     }
 
-    if (currentUIVersion < 49) {
-      // Annotate that a user haven't seen any onboarding tour
-      Services.prefs.setIntPref("browser.onboarding.seen-tourset-version", 0);
-    }
-
     if (currentUIVersion < 50) {
       try {
         // Transform prefs related to old DevTools Console.
@@ -2228,14 +2311,8 @@ BrowserGlue.prototype = {
       }
     }
 
-    if (currentUIVersion < 54) {
-      // Migrate browser.onboarding.hidden to browser.onboarding.state.
-      if (Services.prefs.prefHasUserValue("browser.onboarding.hidden")) {
-        let state = Services.prefs.getBoolPref("browser.onboarding.hidden") ? "watermark" : "default";
-        Services.prefs.setStringPref("browser.onboarding.state", state);
-        Services.prefs.clearUserPref("browser.onboarding.hidden");
-      }
-    }
+    // currentUIVersion < 49 and < 54 were originally used for onboarding prefs and
+    // have since then been removed and cleared in currentUIVersion < 76
 
     if (currentUIVersion < 55) {
       Services.prefs.clearUserPref("browser.customizemode.tip0.shown");
@@ -2317,13 +2394,13 @@ BrowserGlue.prototype = {
       if (Services.prefs.prefHasUserValue(MATCHOS_LOCALE_PREF) ||
           Services.prefs.prefHasUserValue(SELECTED_LOCALE_PREF)) {
         if (Services.prefs.getBoolPref(MATCHOS_LOCALE_PREF, false)) {
-          Services.locale.setRequestedLocales([]);
+          Services.locale.requestedLocales = [];
         } else {
           let locale = Services.prefs.getComplexValue(SELECTED_LOCALE_PREF,
             Ci.nsIPrefLocalizedString);
           if (locale) {
             try {
-              Services.locale.setRequestedLocales([locale.data]);
+              Services.locale.requestedLocales = [locale.data];
             } catch (e) { /* Don't panic if the value is not a valid locale code. */ }
           }
         }
@@ -2446,6 +2523,28 @@ BrowserGlue.prototype = {
         // Some old versions used to dump without subfolders. Clean them while we are at it.
         const path = OS.Path.join(OS.Constants.Path.profileDir, `blocklists-${filename}`);
         OS.File.remove(path, { ignoreAbsent: true });
+      }
+    }
+
+    if (currentUIVersion < 74) {
+      Services.prefs.clearUserPref("browser.search.region");
+    }
+
+    if (currentUIVersion < 75) {
+      // Ensure we try to migrate any live bookmarks the user might have, trying up to
+      // 5 times. We set this early, and here, to avoid running the migration on
+      // new profile (or, indeed, ever creating the pref there).
+      Services.prefs.setIntPref("browser.livebookmarks.migrationAttemptsLeft", 5);
+    }
+
+    if (currentUIVersion < 76) {
+      // Clear old onboarding prefs from profile (bug 1462415)
+      let onboardingPrefs = Services.prefs.getBranch("browser.onboarding.");
+      if (onboardingPrefs) {
+        let onboardingPrefsArray = onboardingPrefs.getChildList("");
+        for (let item of onboardingPrefsArray) {
+          Services.prefs.clearUserPref("browser.onboarding." + item);
+        }
       }
     }
 

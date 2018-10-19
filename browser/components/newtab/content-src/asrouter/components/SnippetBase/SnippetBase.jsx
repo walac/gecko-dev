@@ -7,8 +7,31 @@ export class SnippetBase extends React.PureComponent {
   }
 
   onBlockClicked() {
-    this.props.sendUserActionTelemetry({event: "BLOCK", id: this.props.UISurface});
+    if (this.props.provider !== "preview") {
+      this.props.sendUserActionTelemetry({event: "BLOCK", id: this.props.UISurface});
+    }
+
     this.props.onBlock();
+  }
+
+  renderDismissButton() {
+    if (this.props.footerDismiss) {
+      return (
+        <div className="footer">
+          <div className="footer-content">
+            <button
+              className="ASRouterButton secondary"
+              onClick={this.props.onDismiss}>
+              {this.props.content.scene2_dismiss_button_text}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <button className="blockButton" title={this.props.content.block_button_text} onClick={this.onBlockClicked} />
+    );
   }
 
   render() {
@@ -20,7 +43,7 @@ export class SnippetBase extends React.PureComponent {
       <div className="innerWrapper">
         {props.children}
       </div>
-      <button className="blockButton" onClick={this.onBlockClicked} />
+      {this.renderDismissButton()}
     </div>);
   }
 }

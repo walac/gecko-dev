@@ -61,13 +61,12 @@ const LOCALIZABLE_ATTRIBUTES = {
   },
   "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul": {
     global: [
-      "accesskey", "aria-label", "aria-valuetext", "aria-moz-hint", "label"
-    ],
+      "accesskey", "aria-label", "aria-valuetext", "aria-moz-hint", "label",
+      "title", "tooltiptext"],
     description: ["value"],
     key: ["key", "keycode"],
     label: ["value"],
     textbox: ["placeholder"],
-    toolbarbutton: ["tooltiptext"],
   }
 };
 
@@ -581,7 +580,7 @@ class DOMLocalization extends Localization {
         // This means that the DOM alternations and directionality
         // are set in the same microtask.
         await this.translateFragment(root);
-        let primaryLocale = Services.locale.getAppLocaleAsBCP47();
+        let primaryLocale = Services.locale.appLocaleAsBCP47;
         let direction = Services.locale.isAppLocaleRTL ? "rtl" : "ltr";
         root.setAttribute("lang", primaryLocale);
         root.setAttribute(root.namespaceURI ===

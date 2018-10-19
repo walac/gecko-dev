@@ -19,6 +19,6 @@ The build fails because of mismatches between includes from the NDK and local on
  0:19.76 typedef struct __user_cap_header_struct {
 ```
 
-I tried to setup the build more manually with the toolchain flags as environment variables in the `build.sh` script. This may be the right path but that doesn't work either yet.
+I tried to setup the build more manually with the toolchain flags as environment variables in the `build-b2g.sh` script. This may be the right path but that doesn't work either yet.
 
 Note that Gecko now builds with clang > 3.8 instead of gcc. It's unclear if it's mandatory for now but it's likely that gcc builds will break sooner or later.

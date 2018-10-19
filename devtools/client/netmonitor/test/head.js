@@ -61,6 +61,7 @@ const JSON_CUSTOM_MIME_URL = EXAMPLE_URL + "html_json-custom-mime-test-page.html
 const JSON_TEXT_MIME_URL = EXAMPLE_URL + "html_json-text-mime-test-page.html";
 const JSON_B64_URL = EXAMPLE_URL + "html_json-b64.html";
 const JSON_BASIC_URL = EXAMPLE_URL + "html_json-basic.html";
+const JSON_EMPTY_URL = EXAMPLE_URL + "html_json-empty.html";
 const SORTING_URL = EXAMPLE_URL + "html_sorting-test-page.html";
 const FILTERING_URL = EXAMPLE_URL + "html_filter-test-page.html";
 const INFINITE_GET_URL = EXAMPLE_URL + "html_infinite-get-page.html";
@@ -136,12 +137,6 @@ function waitForNavigation(target) {
   });
 }
 
-function reconfigureTab(target, options) {
-  return new Promise((resolve) => {
-    target.activeTab.reconfigure(options, resolve);
-  });
-}
-
 function toggleCache(target, disabled) {
   const options = { cacheDisabled: disabled, performReload: true };
   const navigationFinished = waitForNavigation(target);
@@ -149,7 +144,7 @@ function toggleCache(target, disabled) {
   // Disable the cache for any toolbox that it is opened from this point on.
   Services.prefs.setBoolPref("devtools.cache.disabled", disabled);
 
-  return reconfigureTab(target, options).then(() => navigationFinished);
+  return target.activeTab.reconfigure({ options }).then(() => navigationFinished);
 }
 
 /**
@@ -289,10 +284,7 @@ function initNetMonitor(url, enableCache) {
     const tab = await addTab(url);
     info("Net tab added successfully: " + url);
 
-    const target = TargetFactory.forTab(tab);
-
-    await target.makeRemote();
-    info("Target remoted.");
+    const target = await TargetFactory.forTab(tab);
 
     const toolbox = await gDevTools.showToolbox(target, "netmonitor");
     info("Network monitor pane shown successfully.");

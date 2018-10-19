@@ -63,6 +63,7 @@
 #include "vm/JSFunction-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
+#include "vm/ObjectOperations-inl.h"
 #include "vm/Probes-inl.h"
 #include "vm/Stack-inl.h"
 
@@ -304,15 +305,22 @@ js::MakeDefaultConstructor(JSContext* cx, HandleScript script, jsbytecode* pc, H
 
     ctor->setIsConstructor();
     ctor->setIsClassConstructor();
-    MOZ_ASSERT(ctor->infallibleIsDefaultClassConstructor(cx));
 
-    // Create the script now, as the source span needs to be overridden for
-    // toString. Calling toString on a class constructor must not return the
-    // source for just the constructor function.
+    // Create the script now, so we can fix up its source span below.
     JSScript *ctorScript = JSFunction::getOrCreateScript(cx, ctor);
     if (!ctorScript) {
         return nullptr;
     }
+
+    // This function's frames are fine to expose to JS; it should not be treated
+    // as an opaque self-hosted builtin. But the script cloning code naturally
+    // expects to be applied to self-hosted functions, so do the clone first,
+    // and clear this afterwards.
+    ctor->clearIsSelfHosted();
+
+    // Override the source span needs for toString. Calling toString on a class
+    // constructor should return the class declaration, not the source for the
+    // (self-hosted) constructor function.
     uint32_t classStartOffset = GetSrcNoteOffset(classNote, 0);
     uint32_t classEndOffset = GetSrcNoteOffset(classNote, 1);
     unsigned column;
@@ -1235,10 +1243,14 @@ PopEnvironment(JSContext* cx, EnvironmentIter& ei)
             ei.initialFrame().popOffEnvironmentChain<VarEnvironmentObject>();
         }
         break;
+      case ScopeKind::Module:
+        if (MOZ_UNLIKELY(cx->realm()->isDebuggee())) {
+            DebugEnvironments::onPopModule(cx, ei);
+        }
+        break;
       case ScopeKind::Eval:
       case ScopeKind::Global:
       case ScopeKind::NonSyntactic:
-      case ScopeKind::Module:
         break;
       case ScopeKind::WasmInstance:
       case ScopeKind::WasmFunction:
@@ -1302,7 +1314,7 @@ js::UnwindAllEnvironmentsInFrame(JSContext* cx, EnvironmentIter& ei)
 // will have no pc location distinguishing the try block scope from the inner
 // let block scope.
 jsbytecode*
-js::UnwindEnvironmentToTryPc(JSScript* script, JSTryNote* tn)
+js::UnwindEnvironmentToTryPc(JSScript* script, const JSTryNote* tn)
 {
     jsbytecode* pc = script->main() + tn->start;
     if (tn->kind == JSTRY_CATCH || tn->kind == JSTRY_FINALLY) {
@@ -1326,7 +1338,7 @@ ForcedReturn(JSContext* cx, InterpreterRegs& regs)
 }
 
 static void
-SettleOnTryNote(JSContext* cx, JSTryNote* tn, EnvironmentIter& ei, InterpreterRegs& regs)
+SettleOnTryNote(JSContext* cx, const JSTryNote* tn, EnvironmentIter& ei, InterpreterRegs& regs)
 {
     // Unwind the environment to the beginning of the JSOP_TRY.
     UnwindEnvironment(cx, ei, UnwindEnvironmentToTryPc(regs.fp()->script(), tn));
@@ -1362,7 +1374,7 @@ UnwindIteratorsForUncatchableException(JSContext* cx, const InterpreterRegs& reg
     // ProcessTryNotes.
     bool inForOfIterClose = false;
     for (TryNoteIterInterpreter tni(cx, regs); !tni.done(); ++tni) {
-        JSTryNote* tn = *tni;
+        const JSTryNote* tn = *tni;
         switch (tn->kind) {
           case JSTRY_FOR_IN: {
             // See corresponding comment in ProcessTryNotes.
@@ -1402,7 +1414,7 @@ ProcessTryNotes(JSContext* cx, EnvironmentIter& ei, InterpreterRegs& regs)
 {
     bool inForOfIterClose = false;
     for (TryNoteIterInterpreter tni(cx, regs); !tni.done(); ++tni) {
-        JSTryNote* tn = *tni;
+        const JSTryNote* tn = *tni;
 
         switch (tn->kind) {
           case JSTRY_CATCH:
@@ -2699,31 +2711,41 @@ CASE(JSOP_BINDVAR)
 }
 END_CASE(JSOP_BINDVAR)
 
-#define BITWISE_OP(OP)                                                        \
-    JS_BEGIN_MACRO                                                            \
-        int32_t i, j;                                                         \
-        if (!ToInt32(cx, REGS.stackHandleAt(-2), &i))                         \
-            goto error;                                                       \
-        if (!ToInt32(cx, REGS.stackHandleAt(-1), &j))                         \
-            goto error;                                                       \
-        i = i OP j;                                                           \
-        REGS.sp--;                                                            \
-        REGS.sp[-1].setInt32(i);                                              \
-    JS_END_MACRO
-
 CASE(JSOP_BITOR)
-    BITWISE_OP(|);
+{
+    MutableHandleValue lhs = REGS.stackHandleAt(-2);
+    MutableHandleValue rhs = REGS.stackHandleAt(-1);
+    MutableHandleValue res = REGS.stackHandleAt(-2);
+    if (!BitOr(cx, lhs, rhs, res)) {
+        goto error;
+    }
+    REGS.sp--;
+}
 END_CASE(JSOP_BITOR)
 
 CASE(JSOP_BITXOR)
-    BITWISE_OP(^);
+{
+    MutableHandleValue lhs = REGS.stackHandleAt(-2);
+    MutableHandleValue rhs = REGS.stackHandleAt(-1);
+    MutableHandleValue res = REGS.stackHandleAt(-2);
+    if (!BitXor(cx, lhs, rhs, res)) {
+        goto error;
+    }
+    REGS.sp--;
+}
 END_CASE(JSOP_BITXOR)
 
 CASE(JSOP_BITAND)
-    BITWISE_OP(&);
+{
+    MutableHandleValue lhs = REGS.stackHandleAt(-2);
+    MutableHandleValue rhs = REGS.stackHandleAt(-1);
+    MutableHandleValue res = REGS.stackHandleAt(-2);
+    if (!BitAnd(cx, lhs, rhs, res)) {
+        goto error;
+    }
+    REGS.sp--;
+}
 END_CASE(JSOP_BITAND)
-
-#undef BITWISE_OP
 
 CASE(JSOP_EQ)
     if (!LooseEqualityOp<true>(cx, REGS)) {
@@ -2833,34 +2855,36 @@ CASE(JSOP_GE)
 }
 END_CASE(JSOP_GE)
 
-#define SIGNED_SHIFT_OP(OP, TYPE)                                             \
-    JS_BEGIN_MACRO                                                            \
-        int32_t i, j;                                                         \
-        if (!ToInt32(cx, REGS.stackHandleAt(-2), &i))                         \
-            goto error;                                                       \
-        if (!ToInt32(cx, REGS.stackHandleAt(-1), &j))                         \
-            goto error;                                                       \
-        i = TYPE(i) OP (j & 31);                                              \
-        REGS.sp--;                                                            \
-        REGS.sp[-1].setInt32(i);                                              \
-    JS_END_MACRO
-
 CASE(JSOP_LSH)
-    SIGNED_SHIFT_OP(<<, uint32_t);
+{
+    MutableHandleValue lhs = REGS.stackHandleAt(-2);
+    MutableHandleValue rhs = REGS.stackHandleAt(-1);
+    MutableHandleValue res = REGS.stackHandleAt(-2);
+    if (!BitLsh(cx, lhs, rhs, res)) {
+        goto error;
+    }
+    REGS.sp--;
+}
 END_CASE(JSOP_LSH)
 
 CASE(JSOP_RSH)
-    SIGNED_SHIFT_OP(>>, int32_t);
+{
+    MutableHandleValue lhs = REGS.stackHandleAt(-2);
+    MutableHandleValue rhs = REGS.stackHandleAt(-1);
+    MutableHandleValue res = REGS.stackHandleAt(-2);
+    if (!BitRsh(cx, lhs, rhs, res)) {
+        goto error;
+    }
+    REGS.sp--;
+}
 END_CASE(JSOP_RSH)
-
-#undef SIGNED_SHIFT_OP
 
 CASE(JSOP_URSH)
 {
-    HandleValue lval = REGS.stackHandleAt(-2);
-    HandleValue rval = REGS.stackHandleAt(-1);
+    MutableHandleValue lhs = REGS.stackHandleAt(-2);
+    MutableHandleValue rhs = REGS.stackHandleAt(-1);
     MutableHandleValue res = REGS.stackHandleAt(-2);
-    if (!UrshOperation(cx, lval, rval, res)) {
+    if (!UrshOperation(cx, lhs, rhs, res)) {
         goto error;
     }
     REGS.sp--;
@@ -2949,12 +2973,11 @@ END_CASE(JSOP_NOT)
 
 CASE(JSOP_BITNOT)
 {
-    int32_t i;
-    HandleValue value = REGS.stackHandleAt(-1);
-    if (!BitNot(cx, value, &i)) {
+    MutableHandleValue value = REGS.stackHandleAt(-1);
+    MutableHandleValue res = REGS.stackHandleAt(-1);
+    if (!BitNot(cx, value, res)) {
         goto error;
     }
-    REGS.sp[-1].setInt32(i);
 }
 END_CASE(JSOP_BITNOT)
 
@@ -4694,8 +4717,7 @@ CASE(JSOP_IMPORTMETA)
     ReservedRooted<JSObject*> module(&rootObject0, GetModuleObjectForScript(script));
     MOZ_ASSERT(module);
 
-    ReservedRooted<JSScript*> script(&rootScript0, module->as<ModuleObject>().script());
-    JSObject* metaObject = GetOrCreateModuleMetaObject(cx, script);
+    JSObject* metaObject = GetOrCreateModuleMetaObject(cx, module);
     if (!metaObject) {
         goto error;
     }

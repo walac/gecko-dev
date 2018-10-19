@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "gfxPrefs.h"
 #include "gfxUtils.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/Range.h"
@@ -223,6 +224,7 @@ AddBlobFont(WrFontInstanceKey aInstanceKey,
       font.mPlatformOptions = Some(*aPlatformOptions);
     }
     if (aNumVariations) {
+      font.mNumVariations = aNumVariations;
       font.mVariations.reset(new gfx::FontVariation[aNumVariations]);
       PodCopy(font.mVariations.get(), reinterpret_cast<const gfx::FontVariation*>(aVariations), aNumVariations);
     }
@@ -410,12 +412,14 @@ static bool Moz2DRenderCallback(const Range<const uint8_t> aBlob,
 
   };
 
-  MOZ_RELEASE_ASSERT(aBlob.length() > sizeof(size_t));
+  // We try hard to not have empty blobs but we can end up with
+  // them because of CompositorHitTestInfo and merging.
+  MOZ_RELEASE_ASSERT(aBlob.length() >= sizeof(size_t));
   size_t indexOffset = *(size_t*)(aBlob.end().get()-sizeof(size_t));
-  MOZ_RELEASE_ASSERT(indexOffset + sizeof(size_t) <= aBlob.length());
+  MOZ_RELEASE_ASSERT(indexOffset <= aBlob.length() - sizeof(size_t));
   Reader reader(aBlob.begin().get()+indexOffset, aBlob.length()-sizeof(size_t)-indexOffset);
 
-  bool ret;
+  bool ret = true;
   size_t offset = 0;
   auto absBounds = IntRectAbsolute::FromRect(bounds);
   while (reader.pos < reader.len) {
@@ -445,13 +449,13 @@ static bool Moz2DRenderCallback(const Range<const uint8_t> aBlob,
     offset = extra_end;
   }
 
-#if 0
-  dt->SetTransform(gfx::Matrix());
-  float r = float(rand()) / RAND_MAX;
-  float g = float(rand()) / RAND_MAX;
-  float b = float(rand()) / RAND_MAX;
-  dt->FillRect(gfx::Rect(0, 0, aSize.width, aSize.height), gfx::ColorPattern(gfx::Color(r, g, b, 0.5)));
-#endif
+  if (gfxPrefs::WebRenderBlobPaintFlashing()) {
+    dt->SetTransform(gfx::Matrix());
+    float r = float(rand()) / RAND_MAX;
+    float g = float(rand()) / RAND_MAX;
+    float b = float(rand()) / RAND_MAX;
+    dt->FillRect(gfx::Rect(origin.x, origin.y, aSize.width, aSize.height), gfx::ColorPattern(gfx::Color(r, g, b, 0.5)));
+  }
 
   if (aDirtyRect) {
     dt->PopClip();

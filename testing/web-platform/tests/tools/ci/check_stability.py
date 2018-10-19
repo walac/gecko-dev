@@ -119,6 +119,7 @@ def call(*args):
         logger.critical(e.output)
         raise
 
+
 def fetch_wpt(user, *args):
     git = get_git_cmd(wpt_root)
     git("fetch", "https://github.com/%s/web-platform-tests.git" % user, *args)
@@ -266,13 +267,15 @@ def run(venv, wpt_args, **kwargs):
         do_delayed_imports()
 
         wpt_kwargs["prompt"] = False
-        wpt_kwargs["install_browser"] = True
-        wpt_kwargs["install"] = wpt_kwargs["product"].split(":")[0] == "firefox"
+        wpt_kwargs["install_browser"] = wpt_kwargs["product"].split(":")[0] == "firefox"
 
         wpt_kwargs["pause_after_test"] = False
         wpt_kwargs["verify_log_full"] = False
         if wpt_kwargs["repeat"] == 1:
             wpt_kwargs["repeat"] = 10
+        wpt_kwargs["headless"] = False
+
+        wpt_kwargs["log_tbpl"] = [sys.stdout]
 
         wpt_kwargs = setup_wptrunner(venv, **wpt_kwargs)
 

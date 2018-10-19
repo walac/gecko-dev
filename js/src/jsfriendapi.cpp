@@ -346,6 +346,12 @@ js::GetBuiltinClass(JSContext* cx, HandleObject obj, ESClass* cls)
     return true;
 }
 
+JS_FRIEND_API(bool)
+js::IsArgumentsObject(HandleObject obj)
+{
+    return obj->is<ArgumentsObject>();
+}
+
 JS_FRIEND_API(const char*)
 js::ObjectClassName(JSContext* cx, HandleObject obj)
 {
@@ -918,7 +924,11 @@ FormatFrame(JSContext* cx, const FrameIter& iter, Sprinter& sp, int num,
         for (unsigned i = 0; i < iter.numActualArgs(); i++) {
             RootedValue arg(cx);
             if (i < iter.numFormalArgs() && fi.closedOver()) {
-                arg = iter.callObj(cx).aliasedBinding(fi);
+                if (iter.hasInitialEnvironment(cx)) {
+                    arg = iter.callObj(cx).aliasedBinding(fi);
+                } else {
+                    arg = MagicValue(JS_OPTIMIZED_OUT);
+                }
             } else if (iter.hasUsableAbstractFramePtr()) {
                 if (script->analyzedArgsUsage() &&
                     script->argsObjAliasesFormals() &&

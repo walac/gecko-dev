@@ -23,7 +23,6 @@
 #include "nsIDeprecationWarner.h"
 
 class nsICacheEntry;
-class nsIAssociatedContentSecurity;
 
 #define HTTP_CHANNEL_PARENT_IID \
   { 0x982b2372, 0x7aa5, 0x4e8a, \
@@ -174,7 +173,7 @@ protected:
               const uint64_t&            aChannelId,
               const nsString&            aIntegrityMetadata,
               const uint64_t&            aContentWindowId,
-              const nsCString&           aPreferredAlternativeType,
+              const ArrayOfStringPairs&  aPreferredAlternativeTypes,
               const uint64_t&            aTopLevelOuterContentWindowId,
               const TimeStamp&           aLaunchServiceWorkerStart,
               const TimeStamp&           aLaunchServiceWorkerEnd,
@@ -200,8 +199,6 @@ protected:
                                                       const OptionalURIParams& apiRedirectUri,
                                                       const OptionalCorsPreflightArgs& aCorsPreflightArgs,
                                                       const bool& aChooseAppcache) override;
-  virtual mozilla::ipc::IPCResult RecvUpdateAssociatedContentSecurity(const int32_t& broken,
-                                                   const int32_t& no) override;
   virtual mozilla::ipc::IPCResult RecvDocumentChannelCleanup(const bool& clearCacheEntry) override;
   virtual mozilla::ipc::IPCResult RecvMarkOfflineCacheEntryAsForeign() override;
   virtual mozilla::ipc::IPCResult RecvDivertOnDataAvailable(const nsCString& data,
@@ -213,6 +210,7 @@ protected:
   virtual mozilla::ipc::IPCResult RecvRemoveCorsPreflightCacheEntry(const URIParams& uri,
                                                                     const mozilla::ipc::PrincipalInfo& requestingPrincipal) override;
   virtual mozilla::ipc::IPCResult RecvBytesRead(const int32_t& aCount) override;
+  virtual mozilla::ipc::IPCResult RecvOpenOriginalCacheInputStream() override;
   virtual void ActorDestroy(ActorDestroyReason why) override;
 
   // Supporting function for ADivertableParentChannel.
@@ -279,7 +277,6 @@ private:
 
   RefPtr<HttpBaseChannel>       mChannel;
   nsCOMPtr<nsICacheEntry>       mCacheEntry;
-  nsCOMPtr<nsIAssociatedContentSecurity>  mAssociatedContentSecurity;
 
   nsCOMPtr<nsIChannel> mRedirectChannel;
   nsCOMPtr<nsIAsyncVerifyRedirectCallback> mRedirectCallback;

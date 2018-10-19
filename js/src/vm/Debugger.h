@@ -571,7 +571,9 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     uint32_t traceLoggerScriptedCallsLastDrainedSize;
     uint32_t traceLoggerScriptedCallsLastDrainedIteration;
 
+    class QueryBase;
     class ScriptQuery;
+    class SourceQuery;
     class ObjectQuery;
 
     MOZ_MUST_USE bool addDebuggeeGlobal(JSContext* cx, Handle<GlobalObject*> obj);
@@ -723,6 +725,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     static bool getNewestFrame(JSContext* cx, unsigned argc, Value* vp);
     static bool clearAllBreakpoints(JSContext* cx, unsigned argc, Value* vp);
     static bool findScripts(JSContext* cx, unsigned argc, Value* vp);
+    static bool findSources(JSContext* cx, unsigned argc, Value* vp);
     static bool findObjects(JSContext* cx, unsigned argc, Value* vp);
     static bool findAllGlobals(JSContext* cx, unsigned argc, Value* vp);
     static bool makeGlobalObjectReference(JSContext* cx, unsigned argc, Value* vp);
@@ -1476,6 +1479,11 @@ class DebuggerObject : public NativeObject
                                           bool& result);
     static MOZ_MUST_USE bool isSealed(JSContext* cx, HandleDebuggerObject object, bool& result);
     static MOZ_MUST_USE bool isFrozen(JSContext* cx, HandleDebuggerObject object, bool& result);
+    static MOZ_MUST_USE bool getProperty(JSContext* cx, HandleDebuggerObject object,
+                                         HandleId id, MutableHandleValue result);
+    static MOZ_MUST_USE bool setProperty(JSContext* cx, HandleDebuggerObject object,
+                                         HandleId id, HandleValue value,
+                                         MutableHandleValue result);
     static MOZ_MUST_USE bool getPrototypeOf(JSContext* cx, HandleDebuggerObject object,
                                             MutableHandleDebuggerObject result);
     static MOZ_MUST_USE bool getOwnPropertyNames(JSContext* cx, HandleDebuggerObject object,
@@ -1593,6 +1601,8 @@ class DebuggerObject : public NativeObject
     static MOZ_MUST_USE bool isExtensibleMethod(JSContext* cx, unsigned argc, Value* vp);
     static MOZ_MUST_USE bool isSealedMethod(JSContext* cx, unsigned argc, Value* vp);
     static MOZ_MUST_USE bool isFrozenMethod(JSContext* cx, unsigned argc, Value* vp);
+    static MOZ_MUST_USE bool getPropertyMethod(JSContext* cx, unsigned argc, Value* vp);
+    static MOZ_MUST_USE bool setPropertyMethod(JSContext* cx, unsigned argc, Value* vp);
     static MOZ_MUST_USE bool getOwnPropertyNamesMethod(JSContext* cx, unsigned argc, Value* vp);
     static MOZ_MUST_USE bool getOwnPropertySymbolsMethod(JSContext* cx, unsigned argc, Value* vp);
     static MOZ_MUST_USE bool getOwnPropertyDescriptorMethod(JSContext* cx, unsigned argc, Value* vp);

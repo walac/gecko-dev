@@ -400,7 +400,7 @@ struct BaselineScript
     ICEntry& icEntryFromPCOffset(uint32_t pcOffset);
     ICEntry& icEntryFromPCOffset(uint32_t pcOffset, ICEntry* prevLookedUpEntry);
     ICEntry& callVMEntryFromPCOffset(uint32_t pcOffset);
-    ICEntry& stackCheckICEntry(bool earlyCheck);
+    ICEntry& stackCheckICEntry();
     ICEntry& warmupCountICEntry();
     ICEntry& icEntryFromReturnAddress(uint8_t* returnAddr);
     uint8_t* returnAddressForIC(const ICEntry& ent);
@@ -549,7 +549,8 @@ IsBaselineEnabled(JSContext* cx)
 #ifdef JS_CODEGEN_NONE
     return false;
 #else
-    return cx->options().baseline();
+    return cx->options().baseline() &&
+           cx->runtime()->jitSupportsFloatingPoint;
 #endif
 }
 

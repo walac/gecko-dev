@@ -159,6 +159,14 @@ a more complex example like:
 The above, of course, is a particular selection of complex strings intended to exemplify
 the new features and concepts introduced by Fluent.
 
+.. important::
+
+  While in Fluent it’s possible to use both lowercase and uppercase characters in message
+  identifiers, the naming convention in Gecko is to use lowercase and hyphens, avoiding
+  CamelCase and underscores. For example, `allow-button` should be preferred to
+  `allow_button` or `allowButton`, unless there are technically constraints – like
+  identifiers generated at run-time from external sources – that make this impractical.
+
 In order to ensure the quality of the output, a lot of new checks and tooling
 has been added to the build system.
 `Pontoon`_, the main localization tool used to translate Firefox, has been rebuilding
@@ -648,6 +656,7 @@ select the strategy to be used:
 
    This strategy replaces all Latin characters with their 180 degree rotated versions
    and enforces right to left text flow using Unicode UAX#9 `Explicit Directional Embeddings`__.
+   In this mode, the UI directionality will also be set to right-to-left.
 
 __ https://www.unicode.org/reports/tr9/#Explicit_Directional_Embeddings
 

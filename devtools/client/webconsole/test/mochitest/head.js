@@ -19,6 +19,12 @@ Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/shared/test/shared-head.js",
   this);
 
+// Import helpers for the new debugger
+/* import-globals-from ../../../debugger/new/test/mochitest/helpers/context.js */
+Services.scriptloader.loadSubScript(
+  "chrome://mochitests/content/browser/devtools/client/debugger/new/test/mochitest/helpers/context.js",
+  this);
+
 var {HUDService} = require("devtools/client/webconsole/hudservice");
 var WCUL10n = require("devtools/client/webconsole/webconsole-l10n");
 const DOCS_GA_PARAMS = `?${new URLSearchParams({
@@ -103,8 +109,10 @@ function logAllStoreChanges(hud) {
  *        - messages: Array[Object]. An array of messages to match.
             Current supported options:
  *            - text: Partial text match in .message-body
+ *        - selector: {String} a selector that should match the message node. Defaults to
+ *                             ".message".
  */
-function waitForMessages({ hud, messages }) {
+function waitForMessages({ hud, messages, selector = ".message" }) {
   return new Promise(resolve => {
     const matchedMessages = [];
     hud.ui.on("new-messages",
@@ -115,8 +123,13 @@ function waitForMessages({ hud, messages }) {
           }
 
           for (const newMessage of newMessages) {
-            const messageBody = newMessage.node.querySelector(".message-body");
-            if (messageBody.textContent.includes(message.text)) {
+            const messageBody =
+              newMessage.node.querySelector(`.message-body`);
+            if (
+              messageBody &&
+              newMessage.node.matches(selector) &&
+              messageBody.textContent.includes(message.text)
+            ) {
               matchedMessages.push(newMessage);
               message.matched = true;
               const messagesLeft = messages.length - matchedMessages.length;
@@ -168,10 +181,30 @@ function waitForRepeatedMessage(hud, text, repeat) {
  *
  * @param {Object} hud : the webconsole
  * @param {String} text : text included in .message-body
+ * @param {String} selector : A selector that should match the message node.
  */
-async function waitForMessage(hud, text) {
-  const messages = await waitForMessages({hud, messages: [{text}]});
+async function waitForMessage(hud, text, selector) {
+  const messages = await waitForMessages({
+    hud,
+    messages: [{text}],
+    selector,
+  });
   return messages[0];
+}
+
+/**
+ * Execute an input expression and wait for a message with the expected text (and an
+ * optional selector) to be displayed in the output.
+ *
+ * @param {Object} hud : The webconsole.
+ * @param {String} input : The input expression to execute.
+ * @param {String} matchingText : A string that should match the message body content.
+ * @param {String} selector : A selector that should match the message node.
+ */
+function executeAndWaitForMessage(hud, input, matchingText, selector = ".message") {
+  const onMessage = waitForMessage(hud, matchingText, selector);
+  hud.jsterm.execute(input);
+  return onMessage;
 }
 
 /**
@@ -518,7 +551,7 @@ async function openDebugger(options = {}) {
     options.tab = gBrowser.selectedTab;
   }
 
-  const target = TargetFactory.forTab(options.tab);
+  const target = await TargetFactory.forTab(options.tab);
   let toolbox = gDevTools.getToolbox(target);
   const dbgPanelAlreadyOpen = toolbox && toolbox.getPanel("jsdebugger");
   if (dbgPanelAlreadyOpen) {
@@ -535,9 +568,17 @@ async function openDebugger(options = {}) {
   const panel = toolbox.getCurrentPanel();
 
   // Do not clear VariableView lazily so it doesn't disturb test ending.
-  panel._view.Variables.lazyEmpty = false;
+  if (panel._view) {
+    panel._view.Variables.lazyEmpty = false;
+  }
 
-  await panel.panelWin.DebuggerController.waitForSourcesLoaded();
+  // Old debugger
+  if (panel.panelWin && panel.panelWin.DebuggerController) {
+    await panel.panelWin.DebuggerController.waitForSourcesLoaded();
+  } else {
+    // New debugger
+    await toolbox.threadClient.getSources();
+  }
   return {target, toolbox, panel};
 }
 
@@ -546,7 +587,7 @@ async function openInspector(options = {}) {
     options.tab = gBrowser.selectedTab;
   }
 
-  const target = TargetFactory.forTab(options.tab);
+  const target = await TargetFactory.forTab(options.tab);
   const toolbox = await gDevTools.showToolbox(target, "inspector");
 
   return toolbox.getCurrentPanel();
@@ -562,7 +603,7 @@ async function openInspector(options = {}) {
  *         A promise that is resolved with the console hud once the web console is open.
  */
 async function openConsole(tab) {
-  const target = TargetFactory.forTab(tab || gBrowser.selectedTab);
+  const target = await TargetFactory.forTab(tab || gBrowser.selectedTab);
   const toolbox = await gDevTools.showToolbox(target, "webconsole");
   return toolbox.getCurrentPanel().hud;
 }
@@ -577,7 +618,7 @@ async function openConsole(tab) {
  *         A promise that is resolved once the web console is closed.
  */
 async function closeConsole(tab = gBrowser.selectedTab) {
-  const target = TargetFactory.forTab(tab);
+  const target = await TargetFactory.forTab(tab);
   const toolbox = gDevTools.getToolbox(target);
   if (toolbox) {
     await toolbox.destroy();

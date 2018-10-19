@@ -321,11 +321,14 @@ HTMLEditor::DoInsertHTMLWithContext(const nsAString& aInputString,
     // Delete whole cells: we will replace with new table content.
 
     // Braces for artificial block to scope AutoSelectionRestorer.
-    // Save current selection since DeleteTableCell() perturbs it.
+    // Save current selection since DeleteTableCellWithTransaction() perturbs
+    // it.
     {
       AutoSelectionRestorer selectionRestorer(selection, this);
-      rv = DeleteTableCell(1);
-      NS_ENSURE_SUCCESS(rv, rv);
+      rv = DeleteTableCellWithTransaction(1);
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        return rv;
+      }
     }
     // collapse selection to beginning of deleted table content
     selection->CollapseToStart(IgnoreErrors());
@@ -956,7 +959,24 @@ ImgFromData(const nsACString& aType, const nsACString& aData, nsString& aOutput)
   return NS_OK;
 }
 
-NS_IMPL_ISUPPORTS(HTMLEditor::BlobReader, nsIEditorBlobListener)
+NS_IMPL_CYCLE_COLLECTION_CLASS(HTMLEditor::BlobReader)
+
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(HTMLEditor::BlobReader)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mBlob)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mHTMLEditor)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mSourceDoc)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDestinationNode)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(HTMLEditor::BlobReader)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mBlob)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mHTMLEditor)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSourceDoc)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDestinationNode)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(HTMLEditor::BlobReader, AddRef)
+NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(HTMLEditor::BlobReader, Release)
 
 HTMLEditor::BlobReader::BlobReader(BlobImpl* aBlob,
                                    HTMLEditor* aHTMLEditor,
@@ -978,7 +998,7 @@ HTMLEditor::BlobReader::BlobReader(BlobImpl* aBlob,
   MOZ_ASSERT(mDestinationNode);
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::BlobReader::OnResult(const nsACString& aResult)
 {
   nsString blobType;
@@ -1000,7 +1020,7 @@ HTMLEditor::BlobReader::OnResult(const nsACString& aResult)
   return rv;
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::BlobReader::OnError(const nsAString& aError)
 {
   const nsPromiseFlatString& flat = PromiseFlatString(aError);
@@ -1020,7 +1040,7 @@ public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_CLASS(SlurpBlobEventListener)
 
-  explicit SlurpBlobEventListener(nsIEditorBlobListener* aListener)
+  explicit SlurpBlobEventListener(HTMLEditor::BlobReader* aListener)
     : mListener(aListener)
   { }
 
@@ -1029,7 +1049,7 @@ public:
 private:
   ~SlurpBlobEventListener() = default;
 
-  RefPtr<nsIEditorBlobListener> mListener;
+  RefPtr<HTMLEditor::BlobReader> mListener;
 };
 
 NS_IMPL_CYCLE_COLLECTION(SlurpBlobEventListener, mListener)
@@ -1439,9 +1459,10 @@ HTMLEditor::HavePrivateHTMLFlavor(nsIClipboard* aClipboard)
 }
 
 nsresult
-HTMLEditor::PasteInternal(int32_t aClipboardType)
+HTMLEditor::PasteInternal(int32_t aClipboardType,
+                          bool aDispatchPasteEvent)
 {
-  if (!FireClipboardEvent(ePaste, aClipboardType)) {
+  if (aDispatchPasteEvent && !FireClipboardEvent(ePaste, aClipboardType)) {
     return NS_OK;
   }
 
@@ -1669,23 +1690,15 @@ HTMLEditor::CanPasteTransferable(nsITransferable* aTransferable)
   return false;
 }
 
-NS_IMETHODIMP
-HTMLEditor::PasteAsQuotation(int32_t aClipboardType)
-{
-  if (NS_WARN_IF(aClipboardType != nsIClipboard::kGlobalClipboard &&
-                 aClipboardType != nsIClipboard::kSelectionClipboard)) {
-    return NS_ERROR_INVALID_ARG;
-  }
-  return HTMLEditor::PasteAsQuotationAsAction(aClipboardType);
-}
-
 nsresult
-HTMLEditor::PasteAsQuotationAsAction(int32_t aClipboardType)
+HTMLEditor::PasteAsQuotationAsAction(int32_t aClipboardType,
+                                     bool aDispatchPasteEvent)
 {
   MOZ_ASSERT(aClipboardType == nsIClipboard::kGlobalClipboard ||
              aClipboardType == nsIClipboard::kSelectionClipboard);
 
   if (IsPlaintextEditor()) {
+    // XXX In this case, we don't dispatch ePaste event.  Why?
     return PasteAsPlaintextQuotation(aClipboardType);
   }
 
@@ -1733,7 +1746,11 @@ HTMLEditor::PasteAsQuotationAsAction(int32_t aClipboardType)
   }
 
   // XXX Why don't we call HTMLEditRules::DidDoAction() after Paste()?
-  rv = PasteInternal(aClipboardType);
+  // XXX If ePaste event has not been dispatched yet but selected content
+  //     has already been removed and created a <blockquote> element.
+  //     So, web apps cannot prevent the default of ePaste event which
+  //     will be dispatched by PasteInternal().
+  rv = PasteInternal(aClipboardType, aDispatchPasteEvent);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -1790,7 +1807,7 @@ HTMLEditor::PasteAsPlaintextQuotation(int32_t aSelectionType)
   return rv;
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::InsertTextWithQuotations(const nsAString& aStringToInsert)
 {
   // The whole operation should be undoable in one transaction:
@@ -1895,7 +1912,7 @@ HTMLEditor::InsertTextWithQuotationsInternal(const nsAString& aStringToInsert)
   return rv;
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::InsertAsQuotation(const nsAString& aQuotedText,
                               nsINode** aNodeInserted)
 {

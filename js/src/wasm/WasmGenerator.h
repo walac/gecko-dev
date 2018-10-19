@@ -199,9 +199,10 @@ class MOZ_STACK_CLASS ModuleGenerator
     bool finishTask(CompileTask* task);
     bool launchBatchCompile();
     bool finishOutstandingTask();
-    bool finishCode();
-    bool finishMetadata(const ShareableBytes& bytecode);
-    UniqueModuleSegment finish(const ShareableBytes& bytecode);
+    bool finishCodegen();
+    bool finishMetadataTier();
+    UniqueCodeTier finishCodeTier();
+    bool finishMetadata(const Bytes& bytecode);
 
     bool isAsmJS() const { return env_->isAsmJS(); }
     Tier tier() const { return env_->tier(); }
@@ -230,8 +231,10 @@ class MOZ_STACK_CLASS ModuleGenerator
     // a new Module. Otherwise, if env->mode is Tier2, finishTier2() must be
     // called to augment the given Module with tier 2 code.
 
-    SharedModule finishModule(const ShareableBytes& bytecode, UniqueLinkData* linkData = nullptr);
-    MOZ_MUST_USE bool finishTier2(Module& module);
+    SharedModule finishModule(const ShareableBytes& bytecode,
+                              JS::OptimizedEncodingListener* maybeTier2Listener = nullptr,
+                              UniqueLinkData* maybeLinkDataOut = nullptr);
+    MOZ_MUST_USE bool finishTier2(const Module& module);
 
     ExclusiveDeferredValidationState& deferredValidationState() {
         return deferredValidationState_;

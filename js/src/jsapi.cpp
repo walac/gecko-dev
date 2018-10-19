@@ -21,7 +21,6 @@
 #endif
 #include <stdarg.h>
 #include <string.h>
-#include <sys/stat.h>
 
 #include "jsdate.h"
 #include "jsexn.h"
@@ -46,8 +45,6 @@
 # include "builtin/TypedObject.h"
 #endif
 #include "frontend/BytecodeCompiler.h"
-#include "frontend/FullParseHandler.h"  // for JS_BufferIsCompileableUnit
-#include "frontend/Parser.h" // for JS_BufferIsCompileableUnit
 #include "gc/FreeOp.h"
 #include "gc/Marking.h"
 #include "gc/Policy.h"
@@ -70,6 +67,7 @@
 #include "js/StructuredClone.h"
 #include "js/Utility.h"
 #include "js/Wrapper.h"
+#include "util/CompleteFile.h"
 #include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "vm/AsyncFunction.h"
@@ -1093,8 +1091,9 @@ JS_EnumerateStandardClasses(JSContext* cx, HandleObject obj)
 }
 
 static bool
-EnumerateUnresolvedStandardClasses(JSContext* cx, Handle<GlobalObject*> global,
-                                   AutoIdVector& properties, const JSStdName* table)
+EnumerateStandardClassesInTable(JSContext* cx, Handle<GlobalObject*> global,
+                                AutoIdVector& properties, const JSStdName* table,
+                                bool includeResolved)
 {
     for (unsigned i = 0; !table[i].isSentinel(); i++) {
         if (table[i].isDummy()) {
@@ -1105,7 +1104,7 @@ EnumerateUnresolvedStandardClasses(JSContext* cx, Handle<GlobalObject*> global,
 
         // If the standard class has been resolved, the properties have been
         // defined on the global so we don't need to add them here.
-        if (global->isStandardClassResolved(key)) {
+        if (!includeResolved && global->isStandardClassResolved(key)) {
             continue;
         }
 
@@ -1131,12 +1130,13 @@ EnumerateUnresolvedStandardClasses(JSContext* cx, Handle<GlobalObject*> global,
     return true;
 }
 
-JS_PUBLIC_API(bool)
-JS_NewEnumerateStandardClasses(JSContext* cx, JS::HandleObject obj, JS::AutoIdVector& properties,
-                               bool enumerableOnly)
+static bool
+EnumerateStandardClasses(JSContext* cx, JS::HandleObject obj, JS::AutoIdVector& properties,
+                         bool enumerableOnly, bool includeResolved)
 {
     if (enumerableOnly) {
-        // There are no enumerable lazy properties.
+        // There are no enumerable standard classes and "undefined" is
+        // not enumerable.
         return true;
     }
 
@@ -1148,14 +1148,31 @@ JS_NewEnumerateStandardClasses(JSContext* cx, JS::HandleObject obj, JS::AutoIdVe
         return false;
     }
 
-    if (!EnumerateUnresolvedStandardClasses(cx, global, properties, standard_class_names)) {
+    if (!EnumerateStandardClassesInTable(cx, global, properties, standard_class_names,
+                                         includeResolved)) {
         return false;
     }
-    if (!EnumerateUnresolvedStandardClasses(cx, global, properties, builtin_property_names)) {
+    if (!EnumerateStandardClassesInTable(cx, global, properties, builtin_property_names,
+                                         includeResolved)) {
         return false;
     }
 
     return true;
+}
+
+JS_PUBLIC_API(bool)
+JS_NewEnumerateStandardClasses(JSContext* cx, JS::HandleObject obj, JS::AutoIdVector& properties,
+                               bool enumerableOnly)
+{
+    return EnumerateStandardClasses(cx, obj, properties, enumerableOnly, false);
+}
+
+JS_PUBLIC_API(bool)
+JS_NewEnumerateStandardClassesIncludingResolved(JSContext* cx, JS::HandleObject obj,
+                                                JS::AutoIdVector& properties,
+                                                bool enumerableOnly)
+{
+    return EnumerateStandardClasses(cx, obj, properties, enumerableOnly, true);
 }
 
 JS_PUBLIC_API(bool)
@@ -1267,15 +1284,6 @@ JS::GetNonCCWObjectGlobal(JSObject* obj)
     AssertHeapIsIdleOrIterating();
     MOZ_DIAGNOSTIC_ASSERT(!IsCrossCompartmentWrapper(obj));
     return &obj->nonCCWGlobal();
-}
-
-JS_PUBLIC_API(JSObject*)
-JS::GetScriptGlobal(JSScript* script)
-{
-    AssertHeapIsIdleOrIterating();
-    JSObject* global = script->realm()->maybeGlobal();
-    MOZ_ASSERT(global);
-    return global;
 }
 
 JS_PUBLIC_API(bool)
@@ -1699,9 +1707,9 @@ JS::GetFirstArgumentAsTypeHint(JSContext* cx, CallArgs args, JSType *result)
         return false;
     }
 
-    JS_ReportErrorNumberLatin1(cx, GetErrorMessage, nullptr, JSMSG_NOT_EXPECTED_TYPE,
-                               "Symbol.toPrimitive",
-                               "\"string\", \"number\", or \"default\"", source);
+    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_NOT_EXPECTED_TYPE,
+                             "Symbol.toPrimitive",
+                             "\"string\", \"number\", or \"default\"", source);
     return false;
 }
 
@@ -2079,10 +2087,10 @@ JS_GetOwnPropertyDescriptor(JSContext* cx, HandleObject obj, const char* name,
 }
 
 JS_PUBLIC_API(bool)
-JS_GetOwnUCPropertyDescriptor(JSContext* cx, HandleObject obj, const char16_t* name,
+JS_GetOwnUCPropertyDescriptor(JSContext* cx, HandleObject obj, const char16_t* name, size_t namelen,
                               MutableHandle<PropertyDescriptor> desc)
 {
-    JSAtom* atom = AtomizeChars(cx, name, js_strlen(name));
+    JSAtom* atom = AtomizeChars(cx, name, namelen);
     if (!atom) {
         return false;
     }
@@ -2107,7 +2115,19 @@ JS_GetPropertyDescriptor(JSContext* cx, HandleObject obj, const char* name,
         return false;
     }
     RootedId id(cx, AtomToId(atom));
-    return atom && JS_GetPropertyDescriptorById(cx, obj, id, desc);
+    return JS_GetPropertyDescriptorById(cx, obj, id, desc);
+}
+
+JS_PUBLIC_API(bool)
+JS_GetUCPropertyDescriptor(JSContext* cx, HandleObject obj, const char16_t* name, size_t namelen,
+                           MutableHandle<PropertyDescriptor> desc)
+{
+    JSAtom* atom = AtomizeChars(cx, name, namelen);
+    if (!atom) {
+        return false;
+    }
+    RootedId id(cx, AtomToId(atom));
+    return JS_GetPropertyDescriptorById(cx, obj, id, desc);
 }
 
 static bool
@@ -3614,51 +3634,6 @@ JS::NewFunctionFromSpec(JSContext* cx, const JSFunctionSpec* fs, HandleId id)
 }
 
 static bool
-CreateNonSyntacticEnvironmentChain(JSContext* cx, AutoObjectVector& envChain,
-                                   MutableHandleObject env, MutableHandleScope scope)
-{
-    RootedObject globalLexical(cx, &cx->global()->lexicalEnvironment());
-    if (!js::CreateObjectsForEnvironmentChain(cx, envChain, globalLexical, env)) {
-        return false;
-    }
-
-    if (!envChain.empty()) {
-        scope.set(GlobalScope::createEmpty(cx, ScopeKind::NonSyntactic));
-        if (!scope) {
-            return false;
-        }
-
-        // The XPConnect subscript loader, which may pass in its own
-        // environments to load scripts in, expects the environment chain to
-        // be the holder of "var" declarations. In SpiderMonkey, such objects
-        // are called "qualified varobjs", the "qualified" part meaning the
-        // declaration was qualified by "var". There is only sadness.
-        //
-        // See JSObject::isQualifiedVarObj.
-        if (!JSObject::setQualifiedVarObj(cx, env)) {
-            return false;
-        }
-
-        // Also get a non-syntactic lexical environment to capture 'let' and
-        // 'const' bindings. To persist lexical bindings, we have a 1-1
-        // mapping with the final unwrapped environment object (the
-        // environment that stores the 'var' bindings) and the lexical
-        // environment.
-        //
-        // TODOshu: disallow the subscript loader from using non-distinguished
-        // objects as dynamic scopes.
-        env.set(ObjectRealm::get(env).getOrCreateNonSyntacticLexicalEnvironment(cx, env));
-        if (!env) {
-            return false;
-        }
-    } else {
-        scope.set(&cx->global()->emptyGlobalScope());
-    }
-
-    return true;
-}
-
-static bool
 IsFunctionCloneable(HandleFunction fun)
 {
     // If a function was compiled with non-global syntactic environments on
@@ -3872,104 +3847,10 @@ JS_DefineFunctionById(JSContext* cx, HandleObject obj, HandleId id, JSNative cal
     return DefineFunction(cx, obj, id, call, nargs, attrs);
 }
 
-/* Use the fastest available getc. */
-#if defined(HAVE_GETC_UNLOCKED)
-# define fast_getc getc_unlocked
-#elif defined(HAVE__GETC_NOLOCK)
-# define fast_getc _getc_nolock
-#else
-# define fast_getc getc
-#endif
-
-using FileContents = Vector<uint8_t, 8, TempAllocPolicy>;
-
-static bool
-ReadCompleteFile(JSContext* cx, FILE* fp, FileContents& buffer)
-{
-    /* Get the complete length of the file, if possible. */
-    struct stat st;
-    int ok = fstat(fileno(fp), &st);
-    if (ok != 0) {
-        return false;
-    }
-    if (st.st_size > 0) {
-        if (!buffer.reserve(st.st_size)) {
-            return false;
-        }
-    }
-
-    // Read in the whole file. Note that we can't assume the data's length
-    // is actually st.st_size, because 1) some files lie about their size
-    // (/dev/zero and /dev/random), and 2) reading files in text mode on
-    // Windows collapses "\r\n" pairs to single \n characters.
-    for (;;) {
-        int c = fast_getc(fp);
-        if (c == EOF) {
-            break;
-        }
-        if (!buffer.append(c)) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-namespace {
-
-class AutoFile
-{
-    FILE* fp_;
-  public:
-    AutoFile()
-      : fp_(nullptr)
-    {}
-    ~AutoFile()
-    {
-        if (fp_ && fp_ != stdin) {
-            fclose(fp_);
-        }
-    }
-    FILE* fp() const { return fp_; }
-    bool open(JSContext* cx, const char* filename);
-    bool readAll(JSContext* cx, FileContents& buffer)
-    {
-        MOZ_ASSERT(fp_);
-        return ReadCompleteFile(cx, fp_, buffer);
-    }
-};
-
-} /* anonymous namespace */
-
-/*
- * Open a source file for reading. Supports "-" and nullptr to mean stdin. The
- * return value must be fclosed unless it is stdin.
- */
-bool
-AutoFile::open(JSContext* cx, const char* filename)
-{
-    if (!filename || strcmp(filename, "-") == 0) {
-        fp_ = stdin;
-    } else {
-        fp_ = fopen(filename, "r");
-        if (!fp_) {
-            /*
-             * Use Latin1 variant here because the encoding of filename is
-             * platform dependent.
-             */
-            JS_ReportErrorNumberLatin1(cx, GetErrorMessage, nullptr, JSMSG_CANT_OPEN,
-                                       filename, "No such file or directory");
-            return false;
-        }
-    }
-    return true;
-}
-
 void
 JS::TransitiveCompileOptions::copyPODTransitiveOptions(const TransitiveCompileOptions& rhs)
 {
     mutedErrors_ = rhs.mutedErrors_;
-    utf8 = rhs.utf8;
     selfHostingMode = rhs.selfHostingMode;
     canLazilyParse = rhs.canLazilyParse;
     strictOption = rhs.strictOption;
@@ -4120,127 +4001,6 @@ JS::CompileOptions::CompileOptions(JSContext* cx)
     throwOnAsmJSValidationFailureOption = cx->options().throwOnAsmJSValidationFailure();
 }
 
-static bool
-Compile(JSContext* cx, const ReadOnlyCompileOptions& options,
-        SourceBufferHolder& srcBuf, MutableHandleScript script)
-{
-    ScopeKind scopeKind = options.nonSyntacticScope ? ScopeKind::NonSyntactic : ScopeKind::Global;
-
-    MOZ_ASSERT(!cx->zone()->isAtomsZone());
-    AssertHeapIsIdle();
-    CHECK_THREAD(cx);
-
-    script.set(frontend::CompileGlobalScript(cx, cx->tempLifoAlloc(), scopeKind, options, srcBuf));
-    return !!script;
-}
-
-static bool
-Compile(JSContext* cx, const ReadOnlyCompileOptions& options,
-        const char* bytes, size_t length, MutableHandleScript script)
-{
-    char16_t* chars;
-    if (options.utf8) {
-        chars = UTF8CharsToNewTwoByteCharsZ(cx, UTF8Chars(bytes, length), &length).get();
-    } else {
-        chars = InflateString(cx, bytes, length);
-    }
-    if (!chars) {
-        return false;
-    }
-
-    SourceBufferHolder source(chars, length, SourceBufferHolder::GiveOwnership);
-    return ::Compile(cx, options, source, script);
-}
-
-static bool
-Compile(JSContext* cx, const ReadOnlyCompileOptions& options,
-        FILE* fp, MutableHandleScript script)
-{
-    FileContents buffer(cx);
-    if (!ReadCompleteFile(cx, fp, buffer)) {
-        return false;
-    }
-
-    return ::Compile(cx, options, reinterpret_cast<const char*>(buffer.begin()), buffer.length(), script);
-}
-
-static bool
-Compile(JSContext* cx, const ReadOnlyCompileOptions& optionsArg,
-        const char* filename, MutableHandleScript script)
-{
-    AutoFile file;
-    if (!file.open(cx, filename)) {
-        return false;
-    }
-    CompileOptions options(cx, optionsArg);
-    options.setFileAndLine(filename, 1);
-    return ::Compile(cx, options, file.fp(), script);
-}
-
-bool
-JS::Compile(JSContext* cx, const ReadOnlyCompileOptions& options,
-            SourceBufferHolder& srcBuf, JS::MutableHandleScript script)
-{
-    return ::Compile(cx, options, srcBuf, script);
-}
-
-bool
-JS::Compile(JSContext* cx, const ReadOnlyCompileOptions& options,
-            const char* bytes, size_t length, JS::MutableHandleScript script)
-{
-    return ::Compile(cx, options, bytes, length, script);
-}
-
-bool
-JS::Compile(JSContext* cx, const ReadOnlyCompileOptions& options,
-            FILE* file, JS::MutableHandleScript script)
-{
-    return ::Compile(cx, options, file, script);
-}
-
-bool
-JS::Compile(JSContext* cx, const ReadOnlyCompileOptions& options,
-            const char* filename, JS::MutableHandleScript script)
-{
-    return ::Compile(cx, options, filename, script);
-}
-
-bool
-JS::CompileForNonSyntacticScope(JSContext* cx, const ReadOnlyCompileOptions& optionsArg,
-                                SourceBufferHolder& srcBuf, JS::MutableHandleScript script)
-{
-    CompileOptions options(cx, optionsArg);
-    options.setNonSyntacticScope(true);
-    return ::Compile(cx, options, srcBuf, script);
-}
-
-bool
-JS::CompileForNonSyntacticScope(JSContext* cx, const ReadOnlyCompileOptions& optionsArg,
-                                const char* bytes, size_t length, JS::MutableHandleScript script)
-{
-    CompileOptions options(cx, optionsArg);
-    options.setNonSyntacticScope(true);
-    return ::Compile(cx, options, bytes, length, script);
-}
-
-bool
-JS::CompileForNonSyntacticScope(JSContext* cx, const ReadOnlyCompileOptions& optionsArg,
-                                FILE* file, JS::MutableHandleScript script)
-{
-    CompileOptions options(cx, optionsArg);
-    options.setNonSyntacticScope(true);
-    return ::Compile(cx, options, file, script);
-}
-
-bool
-JS::CompileForNonSyntacticScope(JSContext* cx, const ReadOnlyCompileOptions& optionsArg,
-                                const char* filename, JS::MutableHandleScript script)
-{
-    CompileOptions options(cx, optionsArg);
-    options.setNonSyntacticScope(true);
-    return ::Compile(cx, options, filename, script);
-}
-
 #if defined(JS_BUILD_BINAST)
 
 JSScript*
@@ -4280,255 +4040,7 @@ JS::FinishOffThreadBinASTDecode(JSContext* cx, JS::OffThreadToken* token)
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
     return HelperThreadState().finishBinASTDecodeTask(cx, token);
 }
-
-#endif /* JS_BUILD_BINAST */
-
-enum class OffThread {
-    Compile, Decode, DecodeBinAST
-};
-
-static bool
-CanDoOffThread(JSContext* cx, const ReadOnlyCompileOptions& options, size_t length, OffThread what)
-{
-    static const size_t TINY_LENGTH = 5 * 1000;
-    static const size_t HUGE_SRC_LENGTH = 100 * 1000;
-    static const size_t HUGE_BC_LENGTH = 367 * 1000;
-    static const size_t HUGE_BINAST_LENGTH = 70 * 1000;
-
-    // TODO: We can't decode BinAST off main thread until bug 1459555 is fixed.
-    if (what == OffThread::DecodeBinAST) {
-        return false;
-    }
-
-    // These are heuristics which the caller may choose to ignore (e.g., for
-    // testing purposes).
-    if (!options.forceAsync) {
-        // Compiling off the main thread inolves creating a new Zone and other
-        // significant overheads.  Don't bother if the script is tiny.
-        if (length < TINY_LENGTH) {
-            return false;
-        }
-
-        // If the parsing task would have to wait for GC to complete, it'll probably
-        // be faster to just start it synchronously on the main thread unless the
-        // script is huge.
-        if (OffThreadParsingMustWaitForGC(cx->runtime())) {
-            if (what == OffThread::Compile && length < HUGE_SRC_LENGTH) {
-                return false;
-            }
-            if (what == OffThread::Decode && length < HUGE_BC_LENGTH) {
-                return false;
-            }
-            if (what == OffThread::DecodeBinAST && length < HUGE_BINAST_LENGTH) {
-                return false;
-            }
-        }
-    }
-
-    return cx->runtime()->canUseParallelParsing() &&
-           CanUseExtraThreads() &&
-           !mozilla::recordreplay::IsRecordingOrReplaying();
-}
-
-JS_PUBLIC_API(bool)
-JS::CanCompileOffThread(JSContext* cx, const ReadOnlyCompileOptions& options, size_t length)
-{
-    return CanDoOffThread(cx, options, length, OffThread::Compile);
-}
-
-JS_PUBLIC_API(bool)
-JS::CanDecodeOffThread(JSContext* cx, const ReadOnlyCompileOptions& options, size_t length)
-{
-    return CanDoOffThread(cx, options, length, OffThread::Decode);
-}
-
-#ifdef JS_BUILD_BINAST
-JS_PUBLIC_API(bool)
-JS::CanDecodeBinASTOffThread(JSContext* cx, const ReadOnlyCompileOptions& options, size_t length)
-{
-    return CanDoOffThread(cx, options, length, OffThread::DecodeBinAST);
-}
 #endif
-
-JS_PUBLIC_API(bool)
-JS::CompileOffThread(JSContext* cx, const ReadOnlyCompileOptions& options,
-                     JS::SourceBufferHolder& srcBuf,
-                     OffThreadCompileCallback callback, void* callbackData)
-{
-    MOZ_ASSERT(CanCompileOffThread(cx, options, srcBuf.length()));
-    return StartOffThreadParseScript(cx, options, srcBuf, callback, callbackData);
-}
-
-JS_PUBLIC_API(JSScript*)
-JS::FinishOffThreadScript(JSContext* cx, JS::OffThreadToken* token)
-{
-    MOZ_ASSERT(cx);
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
-    return HelperThreadState().finishScriptParseTask(cx, token);
-}
-
-JS_PUBLIC_API(void)
-JS::CancelOffThreadScript(JSContext* cx, JS::OffThreadToken* token)
-{
-    MOZ_ASSERT(cx);
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
-    HelperThreadState().cancelParseTask(cx->runtime(), ParseTaskKind::Script, token);
-}
-
-JS_PUBLIC_API(bool)
-JS::CompileOffThreadModule(JSContext* cx, const ReadOnlyCompileOptions& options,
-                           JS::SourceBufferHolder& srcBuf,
-                           OffThreadCompileCallback callback, void* callbackData)
-{
-    MOZ_ASSERT(CanCompileOffThread(cx, options, srcBuf.length()));
-    return StartOffThreadParseModule(cx, options, srcBuf, callback, callbackData);
-}
-
-JS_PUBLIC_API(JSScript*)
-JS::FinishOffThreadModule(JSContext* cx, JS::OffThreadToken* token)
-{
-    MOZ_ASSERT(cx);
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
-    return HelperThreadState().finishModuleParseTask(cx, token);
-}
-
-JS_PUBLIC_API(void)
-JS::CancelOffThreadModule(JSContext* cx, JS::OffThreadToken* token)
-{
-    MOZ_ASSERT(cx);
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
-    HelperThreadState().cancelParseTask(cx->runtime(), ParseTaskKind::Module, token);
-}
-
-JS_PUBLIC_API(bool)
-JS::DecodeOffThreadScript(JSContext* cx, const ReadOnlyCompileOptions& options,
-                          mozilla::Vector<uint8_t>& buffer /* TranscodeBuffer& */, size_t cursor,
-                          OffThreadCompileCallback callback, void* callbackData)
-{
-    JS::TranscodeRange range(buffer.begin() + cursor, buffer.length() - cursor);
-    MOZ_ASSERT(CanDecodeOffThread(cx, options, range.length()));
-    return StartOffThreadDecodeScript(cx, options, range, callback, callbackData);
-}
-
-JS_PUBLIC_API(bool)
-JS::DecodeOffThreadScript(JSContext* cx, const ReadOnlyCompileOptions& options,
-                          const mozilla::Range<uint8_t>& range /* TranscodeRange& */,
-                          OffThreadCompileCallback callback, void* callbackData)
-{
-    MOZ_ASSERT(CanDecodeOffThread(cx, options, range.length()));
-    return StartOffThreadDecodeScript(cx, options, range, callback, callbackData);
-}
-
-JS_PUBLIC_API(bool)
-JS::DecodeMultiOffThreadScripts(JSContext* cx, const ReadOnlyCompileOptions& options,
-                                TranscodeSources& sources,
-                                OffThreadCompileCallback callback, void* callbackData)
-{
-#ifdef DEBUG
-    size_t length = 0;
-    for (auto& source : sources) {
-        length += source.range.length();
-    }
-    MOZ_ASSERT(CanCompileOffThread(cx, options, length));
-#endif
-    return StartOffThreadDecodeMultiScripts(cx, options, sources, callback, callbackData);
-}
-
-JS_PUBLIC_API(JSScript*)
-JS::FinishOffThreadScriptDecoder(JSContext* cx, JS::OffThreadToken* token)
-{
-    MOZ_ASSERT(cx);
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
-    return HelperThreadState().finishScriptDecodeTask(cx, token);
-}
-
-JS_PUBLIC_API(void)
-JS::CancelOffThreadScriptDecoder(JSContext* cx, JS::OffThreadToken* token)
-{
-    MOZ_ASSERT(cx);
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
-    HelperThreadState().cancelParseTask(cx->runtime(), ParseTaskKind::ScriptDecode, token);
-}
-
-JS_PUBLIC_API(bool)
-JS::FinishMultiOffThreadScriptsDecoder(JSContext* cx, JS::OffThreadToken* token, MutableHandle<ScriptVector> scripts)
-{
-    MOZ_ASSERT(cx);
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
-    return HelperThreadState().finishMultiScriptsDecodeTask(cx, token, scripts);
-}
-
-JS_PUBLIC_API(void)
-JS::CancelMultiOffThreadScriptsDecoder(JSContext* cx, JS::OffThreadToken* token)
-{
-    MOZ_ASSERT(cx);
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
-    HelperThreadState().cancelParseTask(cx->runtime(), ParseTaskKind::MultiScriptsDecode, token);
-}
-
-JS_PUBLIC_API(bool)
-JS_CompileScript(JSContext* cx, const char* ascii, size_t length,
-                 const JS::CompileOptions& options, MutableHandleScript script)
-{
-    return ::Compile(cx, options, ascii, length, script);
-}
-
-JS_PUBLIC_API(bool)
-JS_CompileUCScript(JSContext* cx, JS::SourceBufferHolder& srcBuf,
-                   const JS::CompileOptions& options, MutableHandleScript script)
-{
-    return ::Compile(cx, options, srcBuf, script);
-}
-
-JS_PUBLIC_API(bool)
-JS_BufferIsCompilableUnit(JSContext* cx, HandleObject obj, const char* utf8, size_t length)
-{
-    AssertHeapIsIdle();
-    CHECK_THREAD(cx);
-    cx->check(obj);
-
-    cx->clearPendingException();
-
-    UniqueTwoByteChars chars
-        { JS::UTF8CharsToNewTwoByteCharsZ(cx, JS::UTF8Chars(utf8, length), &length).get() };
-    if (!chars) {
-        return true;
-    }
-
-    // Return true on any out-of-memory error or non-EOF-related syntax error, so our
-    // caller doesn't try to collect more buffered source.
-    bool result = true;
-
-    CompileOptions options(cx);
-    frontend::UsedNameTracker usedNames(cx);
-
-    RootedScriptSourceObject sourceObject(cx, frontend::CreateScriptSourceObject(cx, options,
-                                                                                 mozilla::Nothing()));
-    if (!sourceObject) {
-        return false;
-    }
-
-    frontend::Parser<frontend::FullParseHandler, char16_t> parser(cx, cx->tempLifoAlloc(),
-                                                                  options, chars.get(), length,
-                                                                  /* foldConstants = */ true,
-                                                                  usedNames, nullptr, nullptr,
-                                                                  sourceObject,
-                                                                  frontend::ParseGoal::Script);
-    JS::WarningReporter older = JS::SetWarningReporter(cx, nullptr);
-    if (!parser.checkOptions() || !parser.parse()) {
-        // We ran into an error. If it was because we ran out of source, we
-        // return false so our caller knows to try to collect more buffered
-        // source.
-        if (parser.isUnexpectedEOF()) {
-            result = false;
-        }
-
-        cx->clearPendingException();
-    }
-    JS::SetWarningReporter(cx, older);
-
-    return result;
-}
 
 JS_PUBLIC_API(JSObject*)
 JS_GetGlobalFromScript(JSScript* script)
@@ -4569,191 +4081,6 @@ JS_GetFunctionScript(JSContext* cx, HandleFunction fun)
     return fun->nonLazyScript();
 }
 
-/*
- * enclosingScope is a scope, if any (e.g. a WithScope).  If the scope is the
- * global scope, this must be null.
- *
- * enclosingEnv is an environment to use, if it's not the global.
- */
-static bool
-CompileFunction(JSContext* cx, const ReadOnlyCompileOptions& optionsArg,
-                HandleAtom name, bool isInvalidName,
-                SourceBufferHolder& srcBuf, uint32_t parameterListEnd,
-                HandleObject enclosingEnv, HandleScope enclosingScope,
-                MutableHandleFunction fun)
-{
-    MOZ_ASSERT(!cx->zone()->isAtomsZone());
-    AssertHeapIsIdle();
-    CHECK_THREAD(cx);
-    cx->check(enclosingEnv);
-    RootedAtom funAtom(cx);
-
-    fun.set(NewScriptedFunction(cx, 0, JSFunction::INTERPRETED_NORMAL,
-                                isInvalidName ? nullptr : name,
-                                /* proto = */ nullptr,
-                                gc::AllocKind::FUNCTION, TenuredObject,
-                                enclosingEnv));
-    if (!fun) {
-        return false;
-    }
-
-    // Make sure the static scope chain matches up when we have a
-    // non-syntactic scope.
-    MOZ_ASSERT_IF(!IsGlobalLexicalEnvironment(enclosingEnv),
-                  enclosingScope->hasOnChain(ScopeKind::NonSyntactic));
-
-    if (!frontend::CompileStandaloneFunction(cx, fun, optionsArg, srcBuf,
-                                             Some(parameterListEnd), enclosingScope))
-    {
-        return false;
-    }
-
-    // When function name is not valid identifier, generated function source
-    // in srcBuf doesn't have function name.  Set it here.
-    if (isInvalidName) {
-        fun->setAtom(name);
-    }
-
-    return true;
-}
-
-static MOZ_MUST_USE bool
-BuildFunctionString(const char* name, size_t nameLen,
-                    unsigned nargs, const char* const* argnames,
-                    const SourceBufferHolder& srcBuf, StringBuffer* out,
-                    uint32_t* parameterListEnd)
-{
-    MOZ_ASSERT(out);
-    MOZ_ASSERT(parameterListEnd);
-
-    if (!out->ensureTwoByteChars()) {
-       return false;
-    }
-    if (!out->append("function ")) {
-        return false;
-    }
-    if (name) {
-        if (!out->append(name, nameLen)) {
-            return false;
-        }
-    }
-    if (!out->append("(")) {
-        return false;
-    }
-    for (unsigned i = 0; i < nargs; i++) {
-        if (i != 0) {
-            if (!out->append(", ")) {
-                return false;
-            }
-        }
-        if (!out->append(argnames[i], strlen(argnames[i]))) {
-            return false;
-        }
-    }
-
-    // Remember the position of ")".
-    *parameterListEnd = out->length();
-    MOZ_ASSERT(FunctionConstructorMedialSigils[0] == ')');
-
-    if (!out->append(FunctionConstructorMedialSigils)) {
-        return false;
-    }
-    if (!out->append(srcBuf.get(), srcBuf.length())) {
-        return false;
-    }
-    if (!out->append(FunctionConstructorFinalBrace)) {
-        return false;
-    }
-
-    return true;
-}
-
-JS_PUBLIC_API(bool)
-JS::CompileFunction(JSContext* cx, AutoObjectVector& envChain,
-                    const ReadOnlyCompileOptions& options,
-                    const char* name, unsigned nargs, const char* const* argnames,
-                    SourceBufferHolder& srcBuf, MutableHandleFunction fun)
-{
-    RootedObject env(cx);
-    RootedScope scope(cx);
-    if (!CreateNonSyntacticEnvironmentChain(cx, envChain, &env, &scope)) {
-        return false;
-    }
-
-    size_t nameLen = 0;
-    bool isInvalidName = false;
-    RootedAtom nameAtom(cx);
-    if (name) {
-        nameLen = strlen(name);
-        nameAtom = Atomize(cx, name, nameLen);
-        if (!nameAtom) {
-            return false;
-        }
-
-        // If name is not valid identifier
-        if (!js::frontend::IsIdentifier(name, nameLen)) {
-            isInvalidName = true;
-        }
-    }
-
-    uint32_t parameterListEnd;
-    StringBuffer funStr(cx);
-    if (!BuildFunctionString(isInvalidName ? nullptr : name, nameLen, nargs, argnames, srcBuf,
-                             &funStr, &parameterListEnd))
-    {
-        return false;
-    }
-
-    size_t newLen = funStr.length();
-    SourceBufferHolder newSrcBuf(funStr.stealChars(), newLen, SourceBufferHolder::GiveOwnership);
-
-    return CompileFunction(cx, options, nameAtom, isInvalidName, newSrcBuf, parameterListEnd, env,
-                           scope, fun);
-}
-
-JS_PUBLIC_API(bool)
-JS::CompileFunction(JSContext* cx, AutoObjectVector& envChain,
-                    const ReadOnlyCompileOptions& options,
-                    const char* name, unsigned nargs, const char* const* argnames,
-                    const char* bytes, size_t length, MutableHandleFunction fun)
-{
-    char16_t* chars;
-    if (options.utf8) {
-        chars = UTF8CharsToNewTwoByteCharsZ(cx, UTF8Chars(bytes, length), &length).get();
-    } else {
-        chars = InflateString(cx, bytes, length);
-    }
-    if (!chars) {
-        return false;
-    }
-
-    SourceBufferHolder source(chars, length, SourceBufferHolder::GiveOwnership);
-    return CompileFunction(cx, envChain, options, name, nargs, argnames,
-                           source, fun);
-}
-
-JS_PUBLIC_API(bool)
-JS::InitScriptSourceElement(JSContext* cx, HandleScript script,
-                            HandleObject element, HandleString elementAttrName)
-{
-    MOZ_ASSERT(cx);
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
-
-    RootedScriptSourceObject sso(cx, &script->sourceObject()->as<ScriptSourceObject>());
-    return ScriptSourceObject::initElementProperties(cx, sso, element, elementAttrName);
-}
-
-JS_PUBLIC_API(void)
-JS::ExposeScriptToDebugger(JSContext* cx, HandleScript script)
-{
-    MOZ_ASSERT(cx);
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
-
-    MOZ_ASSERT(script->hideScriptFromDebugger());
-    script->clearHideScriptFromDebugger();
-    Debugger::onNewScript(cx, script);
-}
-
 JS_PUBLIC_API(JSString*)
 JS_DecompileScript(JSContext* cx, HandleScript script)
 {
@@ -4766,7 +4093,7 @@ JS_DecompileScript(JSContext* cx, HandleScript script)
     if (fun) {
         return JS_DecompileFunction(cx, fun);
     }
-    bool haveSource = script->scriptSource()->hasSourceData();
+    bool haveSource = script->scriptSource()->hasSourceText();
     if (!haveSource && !JSScript::loadSource(cx, script->scriptSource(), &haveSource)) {
         return nullptr;
     }
@@ -4782,197 +4109,6 @@ JS_DecompileFunction(JSContext* cx, HandleFunction fun)
     CHECK_THREAD(cx);
     cx->check(fun);
     return FunctionToString(cx, fun, /* isToSource = */ false);
-}
-
-MOZ_NEVER_INLINE static bool
-ExecuteScript(JSContext* cx, HandleObject scope, HandleScript script, Value* rval)
-{
-    MOZ_ASSERT(!cx->zone()->isAtomsZone());
-    AssertHeapIsIdle();
-    CHECK_THREAD(cx);
-    cx->check(scope, script);
-    MOZ_ASSERT_IF(!IsGlobalLexicalEnvironment(scope), script->hasNonSyntacticScope());
-    return Execute(cx, script, *scope, rval);
-}
-
-static bool
-ExecuteScript(JSContext* cx, AutoObjectVector& envChain, HandleScript scriptArg, Value* rval)
-{
-    RootedObject env(cx);
-    RootedScope dummy(cx);
-    if (!CreateNonSyntacticEnvironmentChain(cx, envChain, &env, &dummy)) {
-        return false;
-    }
-
-    RootedScript script(cx, scriptArg);
-    if (!script->hasNonSyntacticScope() && !IsGlobalLexicalEnvironment(env)) {
-        script = CloneGlobalScript(cx, ScopeKind::NonSyntactic, script);
-        if (!script) {
-            return false;
-        }
-        js::Debugger::onNewScript(cx, script);
-    }
-
-    return ExecuteScript(cx, env, script, rval);
-}
-
-MOZ_NEVER_INLINE JS_PUBLIC_API(bool)
-JS_ExecuteScript(JSContext* cx, HandleScript scriptArg, MutableHandleValue rval)
-{
-    RootedObject globalLexical(cx, &cx->global()->lexicalEnvironment());
-    return ExecuteScript(cx, globalLexical, scriptArg, rval.address());
-}
-
-MOZ_NEVER_INLINE JS_PUBLIC_API(bool)
-JS_ExecuteScript(JSContext* cx, HandleScript scriptArg)
-{
-    RootedObject globalLexical(cx, &cx->global()->lexicalEnvironment());
-    return ExecuteScript(cx, globalLexical, scriptArg, nullptr);
-}
-
-MOZ_NEVER_INLINE JS_PUBLIC_API(bool)
-JS_ExecuteScript(JSContext* cx, AutoObjectVector& envChain,
-                 HandleScript scriptArg, MutableHandleValue rval)
-{
-    return ExecuteScript(cx, envChain, scriptArg, rval.address());
-}
-
-MOZ_NEVER_INLINE JS_PUBLIC_API(bool)
-JS_ExecuteScript(JSContext* cx, AutoObjectVector& envChain, HandleScript scriptArg)
-{
-    return ExecuteScript(cx, envChain, scriptArg, nullptr);
-}
-
-JS_PUBLIC_API(bool)
-JS::CloneAndExecuteScript(JSContext* cx, HandleScript scriptArg,
-                          JS::MutableHandleValue rval)
-{
-    CHECK_THREAD(cx);
-    RootedScript script(cx, scriptArg);
-    RootedObject globalLexical(cx, &cx->global()->lexicalEnvironment());
-    if (script->realm() != cx->realm()) {
-        script = CloneGlobalScript(cx, ScopeKind::Global, script);
-        if (!script) {
-            return false;
-        }
-
-        js::Debugger::onNewScript(cx, script);
-    }
-    return ExecuteScript(cx, globalLexical, script, rval.address());
-}
-
-JS_PUBLIC_API(bool)
-JS::CloneAndExecuteScript(JSContext* cx, JS::AutoObjectVector& envChain,
-                          HandleScript scriptArg,
-                          JS::MutableHandleValue rval)
-{
-    CHECK_THREAD(cx);
-    RootedScript script(cx, scriptArg);
-    if (script->realm() != cx->realm()) {
-        script = CloneGlobalScript(cx, ScopeKind::NonSyntactic, script);
-        if (!script) {
-            return false;
-        }
-
-        js::Debugger::onNewScript(cx, script);
-    }
-    return ExecuteScript(cx, envChain, script, rval.address());
-}
-
-static bool
-Evaluate(JSContext* cx, ScopeKind scopeKind, HandleObject env,
-         const ReadOnlyCompileOptions& optionsArg,
-         SourceBufferHolder& srcBuf, MutableHandleValue rval)
-{
-    CompileOptions options(cx, optionsArg);
-    MOZ_ASSERT(!cx->zone()->isAtomsZone());
-    AssertHeapIsIdle();
-    CHECK_THREAD(cx);
-    cx->check(env);
-    MOZ_ASSERT_IF(!IsGlobalLexicalEnvironment(env), scopeKind == ScopeKind::NonSyntactic);
-
-    options.setIsRunOnce(true);
-    RootedScript script(cx, frontend::CompileGlobalScript(cx, cx->tempLifoAlloc(),
-                                                          scopeKind, options, srcBuf));
-    if (!script) {
-        return false;
-    }
-
-    bool result = Execute(cx, script, *env,
-                          options.noScriptRval ? nullptr : rval.address());
-
-    return result;
-}
-
-static bool
-Evaluate(JSContext* cx, AutoObjectVector& envChain, const ReadOnlyCompileOptions& optionsArg,
-         SourceBufferHolder& srcBuf, MutableHandleValue rval)
-{
-    RootedObject env(cx);
-    RootedScope scope(cx);
-    if (!CreateNonSyntacticEnvironmentChain(cx, envChain, &env, &scope)) {
-        return false;
-    }
-    return ::Evaluate(cx, scope->kind(), env, optionsArg, srcBuf, rval);
-}
-
-extern JS_PUBLIC_API(bool)
-JS::Evaluate(JSContext* cx, const ReadOnlyCompileOptions& options,
-             const char* bytes, size_t length, MutableHandleValue rval)
-{
-    char16_t* chars;
-    if (options.utf8) {
-        chars = UTF8CharsToNewTwoByteCharsZ(cx, JS::UTF8Chars(bytes, length), &length).get();
-    } else {
-        chars = InflateString(cx, bytes, length);
-    }
-    if (!chars) {
-        return false;
-    }
-
-    SourceBufferHolder srcBuf(chars, length, SourceBufferHolder::GiveOwnership);
-    RootedObject globalLexical(cx, &cx->global()->lexicalEnvironment());
-    bool ok = ::Evaluate(cx, ScopeKind::Global, globalLexical, options, srcBuf, rval);
-    return ok;
-}
-
-static bool
-Evaluate(JSContext* cx, const ReadOnlyCompileOptions& optionsArg,
-         const char* filename, MutableHandleValue rval)
-{
-    FileContents buffer(cx);
-    {
-        AutoFile file;
-        if (!file.open(cx, filename) || !file.readAll(cx, buffer)) {
-            return false;
-        }
-    }
-
-    CompileOptions options(cx, optionsArg);
-    options.setFileAndLine(filename, 1);
-    return Evaluate(cx, options, reinterpret_cast<const char*>(buffer.begin()), buffer.length(), rval);
-}
-
-JS_PUBLIC_API(bool)
-JS::Evaluate(JSContext* cx, const ReadOnlyCompileOptions& optionsArg,
-             SourceBufferHolder& srcBuf, MutableHandleValue rval)
-{
-    RootedObject globalLexical(cx, &cx->global()->lexicalEnvironment());
-    return ::Evaluate(cx, ScopeKind::Global, globalLexical, optionsArg, srcBuf, rval);
-}
-
-JS_PUBLIC_API(bool)
-JS::Evaluate(JSContext* cx, AutoObjectVector& envChain, const ReadOnlyCompileOptions& optionsArg,
-             SourceBufferHolder& srcBuf, MutableHandleValue rval)
-{
-    return ::Evaluate(cx, envChain, optionsArg, srcBuf, rval);
-}
-
-JS_PUBLIC_API(bool)
-JS::Evaluate(JSContext* cx, const ReadOnlyCompileOptions& optionsArg,
-             const char* filename, MutableHandleValue rval)
-{
-    return ::Evaluate(cx, optionsArg, filename, rval);
 }
 
 JS_PUBLIC_API(JS::ModuleResolveHook)
@@ -5005,61 +4141,65 @@ JS::SetModuleMetadataHook(JSRuntime* rt, JS::ModuleMetadataHook func)
 
 JS_PUBLIC_API(bool)
 JS::CompileModule(JSContext* cx, const ReadOnlyCompileOptions& options,
-                  SourceBufferHolder& srcBuf, JS::MutableHandleScript script)
+                  SourceBufferHolder& srcBuf, JS::MutableHandleObject module)
 {
     MOZ_ASSERT(!cx->zone()->isAtomsZone());
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
 
-    script.set(frontend::CompileModule(cx, options, srcBuf));
-    return !!script;
+    module.set(frontend::CompileModule(cx, options, srcBuf));
+    return !!module;
 }
 
 JS_PUBLIC_API(void)
-JS::SetTopLevelScriptPrivate(JSScript* script, void* value)
+JS::SetModulePrivate(JSObject* module, const JS::Value& value)
 {
-    MOZ_ASSERT(script);
-    script->setTopLevelPrivate(value);
+    module->as<ModuleObject>().scriptSourceObject()->setPrivate(value);
 }
 
-JS_PUBLIC_API(void*)
-JS::GetTopLevelScriptPrivate(JSScript* script)
+JS_PUBLIC_API(JS::Value)
+JS::GetModulePrivate(JSObject* module)
 {
-    MOZ_ASSERT(script);
-    return script->maybeTopLevelPrivate();
+    return module->as<ModuleObject>().scriptSourceObject()->getPrivate();
+}
+
+JS_PUBLIC_API(void)
+JS::SetScriptPrivate(JSScript* script, const JS::Value& value)
+{
+    script->scriptSourceUnwrap().setPrivate(value);
+}
+
+JS_PUBLIC_API(JS::Value)
+JS::GetScriptPrivate(JSScript* script)
+{
+    return script->scriptSourceUnwrap().getPrivate();
 }
 
 JS_PUBLIC_API(bool)
-JS::ModuleInstantiate(JSContext* cx, JS::HandleScript script)
+JS::ModuleInstantiate(JSContext* cx, JS::HandleObject moduleArg)
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(script);
-    RootedModuleObject module(cx, script->module());
-    MOZ_ASSERT(module);
-    return ModuleObject::Instantiate(cx, module);
+    cx->check(moduleArg);
+    return ModuleObject::Instantiate(cx, moduleArg.as<ModuleObject>());
 }
 
 JS_PUBLIC_API(bool)
-JS::ModuleEvaluate(JSContext* cx, JS::HandleScript script)
+JS::ModuleEvaluate(JSContext* cx, JS::HandleObject moduleArg)
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(script);
-    RootedModuleObject module(cx, script->module());
-    MOZ_ASSERT(module);
-    return ModuleObject::Evaluate(cx, module);
+    cx->check(moduleArg);
+    return ModuleObject::Evaluate(cx, moduleArg.as<ModuleObject>());
 }
 
 JS_PUBLIC_API(JSObject*)
-JS::GetRequestedModules(JSContext* cx, JS::HandleScript script)
+JS::GetRequestedModules(JSContext* cx, JS::HandleObject moduleArg)
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(script);
-    RootedModuleObject module(cx, script->module());
-    MOZ_ASSERT(module);
-    return &module->requestedModules();
+    cx->check(moduleArg);
+    return &moduleArg->as<ModuleObject>().requestedModules();
 }
 
 JS_PUBLIC_API(JSString*)
@@ -5084,6 +4224,13 @@ JS::GetRequestedModuleSourcePos(JSContext* cx, JS::HandleValue value,
     auto& requested = value.toObject().as<RequestedModuleObject>();
     *lineNumber = requested.lineNumber();
     *columnNumber = requested.columnNumber();
+}
+
+JS_PUBLIC_API(JSScript*)
+JS::GetModuleScript(JS::HandleObject moduleRecord)
+{
+    AssertHeapIsIdle();
+    return moduleRecord->as<ModuleObject>().script();
 }
 
 JS_PUBLIC_API(JSObject*)
@@ -5355,42 +4502,18 @@ CallOriginalPromiseThenImpl(JSContext* cx, JS::HandleObject promiseObj,
 
     MOZ_ASSERT_IF(onResolvedObj_, IsCallable(onResolvedObj_));
     MOZ_ASSERT_IF(onRejectedObj_, IsCallable(onRejectedObj_));
+    RootedObject onResolvedObj(cx, onResolvedObj_);
+    RootedObject onRejectedObj(cx, onRejectedObj_);
 
-    {
-        mozilla::Maybe<AutoRealm> ar;
-        Rooted<PromiseObject*> promise(cx);
-        RootedObject onResolvedObj(cx, onResolvedObj_);
-        RootedObject onRejectedObj(cx, onRejectedObj_);
-        if (IsWrapper(promiseObj)) {
-            JSObject* unwrappedPromiseObj = CheckedUnwrap(promiseObj);
-            if (!unwrappedPromiseObj) {
-                ReportAccessDenied(cx);
-                return false;
-            }
-            promise = &unwrappedPromiseObj->as<PromiseObject>();
-            ar.emplace(cx, promise);
-            if (!cx->compartment()->wrap(cx, &onResolvedObj) ||
-                !cx->compartment()->wrap(cx, &onRejectedObj))
-            {
-                return false;
-            }
-        } else {
-            promise = promiseObj.as<PromiseObject>();
-        }
-
-        RootedValue onFulfilled(cx, ObjectOrNullValue(onResolvedObj));
-        RootedValue onRejected(cx, ObjectOrNullValue(onRejectedObj));
-        if (!OriginalPromiseThen(cx, promise, onFulfilled, onRejected, resultObj, createDependent)) {
-            return false;
-        }
+    if (IsWrapper(promiseObj) && !CheckedUnwrap(promiseObj)) {
+        ReportAccessDenied(cx);
+        return false;
     }
+    MOZ_ASSERT(CheckedUnwrap(promiseObj)->is<PromiseObject>());
 
-    if (resultObj) {
-        if (!cx->compartment()->wrap(cx, resultObj)) {
-            return false;
-        }
-    }
-    return true;
+    RootedValue onFulfilled(cx, ObjectOrNullValue(onResolvedObj));
+    RootedValue onRejected(cx, ObjectOrNullValue(onRejectedObj));
+    return OriginalPromiseThen(cx, promiseObj, onFulfilled, onRejected, resultObj, createDependent);
 }
 
 JS_PUBLIC_API(JSObject*)
@@ -5417,6 +4540,57 @@ JS::AddPromiseReactions(JSContext* cx, JS::HandleObject promiseObj,
     return result;
 }
 
+JS_PUBLIC_API(JS::PromiseUserInputEventHandlingState)
+JS::GetPromiseUserInputEventHandlingState(JS::HandleObject promiseObj_)
+{
+    JSObject* promiseObj = CheckedUnwrap(promiseObj_);
+    if (!promiseObj || !promiseObj->is<PromiseObject>()) {
+        return JS::PromiseUserInputEventHandlingState::DontCare;
+    }
+
+    auto& promise = promiseObj->as<PromiseObject>();
+    if (!promise.requiresUserInteractionHandling()) {
+      return JS::PromiseUserInputEventHandlingState::DontCare;
+    }
+    if (promise.hadUserInteractionUponCreation()) {
+      return JS::PromiseUserInputEventHandlingState::HadUserInteractionAtCreation;
+    }
+    return JS::PromiseUserInputEventHandlingState::DidntHaveUserInteractionAtCreation;
+}
+
+JS_PUBLIC_API(bool)
+JS::SetPromiseUserInputEventHandlingState(JS::HandleObject promiseObj_,
+                                          JS::PromiseUserInputEventHandlingState state)
+{
+    JSObject* promiseObj = CheckedUnwrap(promiseObj_);
+    if (!promiseObj || !promiseObj->is<PromiseObject>()) {
+        return false;
+    }
+
+    auto& promise = promiseObj->as<PromiseObject>();
+    if (promise.state() != JS::PromiseState::Pending) {
+      return false;
+    }
+
+    switch (state) {
+      case JS::PromiseUserInputEventHandlingState::DontCare:
+        promise.setRequiresUserInteractionHandling(false);
+        break;
+      case JS::PromiseUserInputEventHandlingState::HadUserInteractionAtCreation:
+        promise.setRequiresUserInteractionHandling(true);
+        promise.setHadUserInteractionUponCreation(true);
+        break;
+      case JS::PromiseUserInputEventHandlingState::DidntHaveUserInteractionAtCreation:
+        promise.setRequiresUserInteractionHandling(true);
+        promise.setHadUserInteractionUponCreation(false);
+        break;
+      default:
+        MOZ_ASSERT_UNREACHABLE("Invalid PromiseUserInputEventHandlingState enum value");
+        return false;
+    }
+    return true;
+}
+
 /**
  * Unforgeable version of Promise.all for internal use.
  *
@@ -5434,52 +4608,6 @@ JS::GetWaitForAllPromise(JSContext* cx, const JS::AutoObjectVector& promises)
     CHECK_THREAD(cx);
 
     return js::GetWaitForAllPromise(cx, promises);
-}
-
-JS_PUBLIC_API(JSObject*)
-JS::NewReadableDefaultStreamObject(JSContext* cx,
-                                   JS::HandleObject underlyingSource /* = nullptr */,
-                                   JS::HandleFunction size /* = nullptr */,
-                                   double highWaterMark /* = 1 */,
-                                   JS::HandleObject proto /* = nullptr */)
-{
-    MOZ_ASSERT(!cx->zone()->isAtomsZone());
-    AssertHeapIsIdle();
-    CHECK_THREAD(cx);
-
-    RootedObject source(cx, underlyingSource);
-    if (!source) {
-        source = NewBuiltinClassInstance<PlainObject>(cx);
-        if (!source) {
-            return nullptr;
-        }
-    }
-    RootedValue sourceVal(cx, ObjectValue(*source));
-    RootedValue sizeVal(cx, size ? ObjectValue(*size) : UndefinedValue());
-    RootedValue highWaterMarkVal(cx, NumberValue(highWaterMark));
-    return ReadableStream::createDefaultStream(cx, sourceVal, sizeVal, highWaterMarkVal, proto);
-}
-
-JS_PUBLIC_API(JSObject*)
-JS::NewReadableByteStreamObject(JSContext* cx,
-                                JS::HandleObject underlyingSource /* = nullptr */,
-                                double highWaterMark /* = 1 */,
-                                JS::HandleObject proto /* = nullptr */)
-{
-    MOZ_ASSERT(!cx->zone()->isAtomsZone());
-    AssertHeapIsIdle();
-    CHECK_THREAD(cx);
-
-    RootedObject source(cx, underlyingSource);
-    if (!source) {
-        source = NewBuiltinClassInstance<PlainObject>(cx);
-        if (!source) {
-            return nullptr;
-        }
-    }
-    RootedValue sourceVal(cx, ObjectValue(*source));
-    RootedValue highWaterMarkVal(cx, NumberValue(highWaterMark));
-    return ReadableStream::createByteStream(cx, sourceVal, highWaterMarkVal, proto);
 }
 
 extern JS_PUBLIC_API(void)
@@ -5522,6 +4650,29 @@ JS::HasReadableStreamCallbacks(JSContext* cx)
 }
 
 JS_PUBLIC_API(JSObject*)
+JS::NewReadableDefaultStreamObject(JSContext* cx,
+                                   JS::HandleObject underlyingSource /* = nullptr */,
+                                   JS::HandleFunction size /* = nullptr */,
+                                   double highWaterMark /* = 1 */,
+                                   JS::HandleObject proto /* = nullptr */)
+{
+    MOZ_ASSERT(!cx->zone()->isAtomsZone());
+    AssertHeapIsIdle();
+    CHECK_THREAD(cx);
+
+    RootedObject source(cx, underlyingSource);
+    if (!source) {
+        source = NewBuiltinClassInstance<PlainObject>(cx);
+        if (!source)
+            return nullptr;
+    }
+    RootedValue sourceVal(cx, ObjectValue(*source));
+    RootedValue sizeVal(cx, size ? ObjectValue(*size) : UndefinedValue());
+    RootedValue highWaterMarkVal(cx, NumberValue(highWaterMark));
+    return ReadableStream::createDefaultStream(cx, sourceVal, sizeVal, highWaterMarkVal, proto);
+}
+
+JS_PUBLIC_API(JSObject*)
 JS::NewReadableExternalSourceStreamObject(JSContext* cx, void* underlyingSource,
                                           uint8_t flags /* = 0 */,
                                           HandleObject proto /* = nullptr */)
@@ -5529,7 +4680,8 @@ JS::NewReadableExternalSourceStreamObject(JSContext* cx, void* underlyingSource,
     MOZ_ASSERT(!cx->zone()->isAtomsZone());
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-
+    MOZ_ASSERT((uintptr_t(underlyingSource) & 1) == 0,
+               "external underlying source pointers must be aligned");
 #ifdef DEBUG
     JSRuntime* rt = cx->runtime();
     MOZ_ASSERT(rt->readableStreamDataRequestCallback);
@@ -5543,52 +4695,87 @@ JS::NewReadableExternalSourceStreamObject(JSContext* cx, void* underlyingSource,
     return ReadableStream::createExternalSourceStream(cx, underlyingSource, flags, proto);
 }
 
-JS_PUBLIC_API(uint8_t)
-JS::ReadableStreamGetEmbeddingFlags(const JSObject* stream)
-{
-    return stream->as<ReadableStream>().embeddingFlags();
-}
-
 JS_PUBLIC_API(bool)
 JS::IsReadableStream(const JSObject* obj)
 {
-    return obj->is<ReadableStream>();
+    if (IsWrapper(const_cast<JSObject*>(obj)))
+        obj = CheckedUnwrap(const_cast<JSObject*>(obj));
+    return obj && obj->is<ReadableStream>();
 }
 
 JS_PUBLIC_API(bool)
 JS::IsReadableStreamReader(const JSObject* obj)
 {
-    return obj->is<ReadableStreamDefaultReader>() || obj->is<ReadableStreamBYOBReader>();
+    if (IsWrapper(const_cast<JSObject*>(obj)))
+        obj = CheckedUnwrap(const_cast<JSObject*>(obj));
+    return obj && obj->is<ReadableStreamDefaultReader>();
 }
 
 JS_PUBLIC_API(bool)
 JS::IsReadableStreamDefaultReader(const JSObject* obj)
 {
-    return obj->is<ReadableStreamDefaultReader>();
+    if (IsWrapper(const_cast<JSObject*>(obj)))
+        obj = CheckedUnwrap(const_cast<JSObject*>(obj));
+    return obj && obj->is<ReadableStreamDefaultReader>();
+}
+
+template<class T>
+static MOZ_MUST_USE T*
+ToUnwrapped(JSContext* cx, JSObject* obj)
+{
+    cx->check(obj);
+    if (IsWrapper(obj)) {
+        obj = CheckedUnwrap(obj);
+        if (!obj) {
+            ReportAccessDenied(cx);
+            return nullptr;
+        }
+    }
+    return &obj->as<T>();
 }
 
 JS_PUBLIC_API(bool)
-JS::IsReadableStreamBYOBReader(const JSObject* obj)
+JS::ReadableStreamIsReadable(JSContext* cx, const JSObject* streamObj, bool* result)
 {
-    return obj->is<ReadableStreamBYOBReader>();
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, const_cast<JSObject*>(streamObj));
+    if (!stream)
+        return false;
+
+    *result = stream->readable();
+    return true;
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamIsReadable(const JSObject* stream)
+JS::ReadableStreamIsLocked(JSContext* cx, const JSObject* streamObj, bool* result)
 {
-    return stream->as<ReadableStream>().readable();
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, const_cast<JSObject*>(streamObj));
+    if (!stream)
+        return false;
+
+    *result = stream->locked();
+    return true;
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamIsLocked(const JSObject* stream)
+JS::ReadableStreamIsDisturbed(JSContext* cx, const JSObject* streamObj, bool* result)
 {
-    return stream->as<ReadableStream>().locked();
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, const_cast<JSObject*>(streamObj));
+    if (!stream)
+        return false;
+
+    *result = stream->disturbed();
+    return true;
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamIsDisturbed(const JSObject* stream)
+JS::ReadableStreamGetEmbeddingFlags(JSContext* cx, const JSObject* streamObj, uint8_t* flags)
 {
-    return stream->as<ReadableStream>().disturbed();
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, const_cast<JSObject*>(streamObj));
+    if (!stream)
+        return false;
+
+    *flags = stream->embeddingFlags();
+    return true;
 }
 
 JS_PUBLIC_API(JSObject*)
@@ -5596,17 +4783,24 @@ JS::ReadableStreamCancel(JSContext* cx, HandleObject streamObj, HandleValue reas
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(streamObj);
     cx->check(reason);
 
-    Rooted<ReadableStream*> stream(cx, &streamObj->as<ReadableStream>());
+    Rooted<ReadableStream*> stream(cx, ToUnwrapped<ReadableStream>(cx, streamObj));
+    if (!stream)
+        return nullptr;
+
     return ReadableStream::cancel(cx, stream, reason);
 }
 
-JS_PUBLIC_API(JS::ReadableStreamMode)
-JS::ReadableStreamGetMode(const JSObject* stream)
+JS_PUBLIC_API(bool)
+JS::ReadableStreamGetMode(JSContext* cx, const JSObject* streamObj, JS::ReadableStreamMode* mode)
 {
-    return stream->as<ReadableStream>().mode();
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, const_cast<JSObject*>(streamObj));
+    if (!stream)
+        return false;
+
+    *mode = stream->mode();
+    return true;
 }
 
 JS_PUBLIC_API(JSObject*)
@@ -5614,10 +4808,14 @@ JS::ReadableStreamGetReader(JSContext* cx, HandleObject streamObj, ReadableStrea
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(streamObj);
 
-    Rooted<ReadableStream*> stream(cx, &streamObj->as<ReadableStream>());
-    return ReadableStream::getReader(cx, stream, mode);
+    Rooted<ReadableStream*> stream(cx, ToUnwrapped<ReadableStream>(cx, streamObj));
+    if (!stream)
+        return nullptr;
+
+    JSObject* result = ReadableStream::getReader(cx, stream, mode);
+    MOZ_ASSERT_IF(result, IsObjectInContextCompartment(result, cx));
+    return result;
 }
 
 JS_PUBLIC_API(bool)
@@ -5625,16 +4823,23 @@ JS::ReadableStreamGetExternalUnderlyingSource(JSContext* cx, HandleObject stream
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(streamObj);
 
-    Rooted<ReadableStream*> stream(cx, &streamObj->as<ReadableStream>());
+    Rooted<ReadableStream*> stream(cx, ToUnwrapped<ReadableStream>(cx, streamObj));
+    if (!stream)
+        return false;
+
     return ReadableStream::getExternalSource(cx, stream, source);
 }
 
-JS_PUBLIC_API(void)
-JS::ReadableStreamReleaseExternalUnderlyingSource(JSObject* stream)
+JS_PUBLIC_API(bool)
+JS::ReadableStreamReleaseExternalUnderlyingSource(JSContext* cx, JSObject* streamObj)
 {
-    stream->as<ReadableStream>().releaseExternalSource();
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, const_cast<JSObject*>(streamObj));
+    if (!stream)
+        return false;
+
+    stream->releaseExternalSource();
+    return true;
 }
 
 JS_PUBLIC_API(bool)
@@ -5643,9 +4848,11 @@ JS::ReadableStreamUpdateDataAvailableFromSource(JSContext* cx, JS::HandleObject 
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(streamObj);
 
-    Rooted<ReadableStream*> stream(cx, &streamObj->as<ReadableStream>());
+    Rooted<ReadableStream*> stream(cx, ToUnwrapped<ReadableStream>(cx, streamObj));
+    if (!stream)
+        return false;
+
     return ReadableStream::updateDataAvailableFromSource(cx, stream, availableData);
 }
 
@@ -5655,9 +4862,11 @@ JS::ReadableStreamTee(JSContext* cx, HandleObject streamObj,
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(streamObj);
 
-    Rooted<ReadableStream*> stream(cx, &streamObj->as<ReadableStream>());
+    Rooted<ReadableStream*> stream(cx, ToUnwrapped<ReadableStream>(cx, streamObj));
+    if (!stream)
+        return false;
+
     Rooted<ReadableStream*> branch1Stream(cx);
     Rooted<ReadableStream*> branch2Stream(cx);
 
@@ -5671,10 +4880,15 @@ JS::ReadableStreamTee(JSContext* cx, HandleObject streamObj,
     return true;
 }
 
-JS_PUBLIC_API(void)
-JS::ReadableStreamGetDesiredSize(JSObject* streamObj, bool* hasValue, double* value)
+JS_PUBLIC_API(bool)
+JS::ReadableStreamGetDesiredSize(JSContext* cx, JSObject* streamObj, bool* hasValue, double* value)
 {
-    streamObj->as<ReadableStream>().desiredSize(hasValue, value);
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, streamObj);
+    if (!stream)
+        return false;
+
+    stream->desiredSize(hasValue, value);
+    return true;
 }
 
 JS_PUBLIC_API(bool)
@@ -5682,9 +4896,11 @@ JS::ReadableStreamClose(JSContext* cx, HandleObject streamObj)
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(streamObj);
 
-    Rooted<ReadableStream*> stream(cx, &streamObj->as<ReadableStream>());
+    Rooted<ReadableStream*> stream(cx, ToUnwrapped<ReadableStream>(cx, streamObj));
+    if (!stream)
+        return false;
+
     return ReadableStream::close(cx, stream);
 }
 
@@ -5693,10 +4909,12 @@ JS::ReadableStreamEnqueue(JSContext* cx, HandleObject streamObj, HandleValue chu
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(streamObj);
     cx->check(chunk);
 
-    Rooted<ReadableStream*> stream(cx, &streamObj->as<ReadableStream>());
+    Rooted<ReadableStream*> stream(cx, ToUnwrapped<ReadableStream>(cx, streamObj));
+    if (!stream)
+        return false;
+
     if (stream->mode() != JS::ReadableStreamMode::Default) {
         JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                   JSMSG_READABLESTREAM_NOT_DEFAULT_CONTROLLER,
@@ -5707,72 +4925,53 @@ JS::ReadableStreamEnqueue(JSContext* cx, HandleObject streamObj, HandleValue chu
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableByteStreamEnqueueBuffer(JSContext* cx, HandleObject streamObj, HandleObject chunkObj)
-{
-    AssertHeapIsIdle();
-    CHECK_THREAD(cx);
-    cx->check(streamObj);
-    cx->check(chunkObj);
-
-    Rooted<ReadableStream*> stream(cx, &streamObj->as<ReadableStream>());
-    if (stream->mode() != JS::ReadableStreamMode::Byte) {
-        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                  JSMSG_READABLESTREAM_NOT_BYTE_STREAM_CONTROLLER,
-                                  "JS::ReadableByteStreamEnqueueBuffer");
-        return false;
-    }
-
-    Rooted<ArrayBufferObject*> buffer(cx);
-    if (chunkObj->is<ArrayBufferViewObject>()) {
-        bool dummy;
-        buffer = &JS_GetArrayBufferViewBuffer(cx, chunkObj, &dummy)->as<ArrayBufferObject>();
-    } else if (chunkObj->is<ArrayBufferObject>()) {
-        buffer = &chunkObj->as<ArrayBufferObject>();
-    } else {
-        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                  JSMSG_READABLEBYTESTREAMCONTROLLER_BAD_CHUNK,
-                                  "JS::ReadableByteStreamEnqueueBuffer");
-        return false;
-    }
-
-    return ReadableStream::enqueueBuffer(cx, stream, buffer);
-}
-
-JS_PUBLIC_API(bool)
 JS::ReadableStreamError(JSContext* cx, HandleObject streamObj, HandleValue error)
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(streamObj);
     cx->check(error);
 
-    Rooted<ReadableStream*> stream(cx, &streamObj->as<ReadableStream>());
+    Rooted<ReadableStream*> stream(cx, ToUnwrapped<ReadableStream>(cx, streamObj));
+    if (!stream)
+        return false;
+
     return js::ReadableStream::error(cx, stream, error);
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamReaderIsClosed(const JSObject* reader)
+JS::ReadableStreamReaderIsClosed(JSContext* cx, const JSObject* reader, bool* result)
 {
-    return js::ReadableStreamReaderIsClosed(reader);
+    reader = ToUnwrapped<NativeObject>(cx, const_cast<JSObject*>(reader));
+    if (!reader)
+        return false;
+
+    *result = js::ReadableStreamReaderIsClosed(reader);
+    return true;
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamReaderCancel(JSContext* cx, HandleObject reader, HandleValue reason)
+JS::ReadableStreamReaderCancel(JSContext* cx, HandleObject readerObj, HandleValue reason)
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(reader);
     cx->check(reason);
+
+    RootedNativeObject reader(cx, ToUnwrapped<NativeObject>(cx, readerObj));
+    if (!reader)
+        return false;
 
     return js::ReadableStreamReaderCancel(cx, reader, reason);
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamReaderReleaseLock(JSContext* cx, HandleObject reader)
+JS::ReadableStreamReaderReleaseLock(JSContext* cx, HandleObject readerObj)
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(reader);
+
+    RootedNativeObject reader(cx, ToUnwrapped<NativeObject>(cx, readerObj));
+    if (!reader)
+        return false;
 
     return js::ReadableStreamReaderReleaseLock(cx, reader);
 }
@@ -5782,23 +4981,13 @@ JS::ReadableStreamDefaultReaderRead(JSContext* cx, HandleObject readerObj)
 {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
-    cx->check(readerObj);
 
-    Rooted<ReadableStreamDefaultReader*> reader(cx, &readerObj->as<ReadableStreamDefaultReader>());
+    Rooted<ReadableStreamDefaultReader*> reader(cx);
+    reader = ToUnwrapped<ReadableStreamDefaultReader>(cx, readerObj);
+    if (!reader)
+        return nullptr;
+
     return js::ReadableStreamDefaultReader::read(cx, reader);
-}
-
-JS_PUBLIC_API(JSObject*)
-JS::ReadableStreamBYOBReaderRead(JSContext* cx, HandleObject readerObj, HandleObject viewObj)
-{
-    AssertHeapIsIdle();
-    CHECK_THREAD(cx);
-    cx->check(readerObj);
-    cx->check(viewObj);
-
-    Rooted<ReadableStreamBYOBReader*> reader(cx, &readerObj->as<ReadableStreamBYOBReader>());
-    Rooted<ArrayBufferViewObject*> view(cx, &viewObj->as<ArrayBufferViewObject>());
-    return js::ReadableStreamBYOBReader::read(cx, reader, view);
 }
 
 JS_PUBLIC_API(void)
@@ -5811,6 +5000,12 @@ JS_PUBLIC_API(void)
 JS::ShutdownAsyncTasks(JSContext* cx)
 {
     cx->runtime()->offThreadPromiseState.ref().shutdown(cx);
+}
+
+JS_PUBLIC_API(bool)
+JS::GetOptimizedEncodingBuildId(JS::BuildIdCharVector* buildId)
+{
+    return wasm::GetOptimizedEncodingBuildId(buildId);
 }
 
 JS_PUBLIC_API(void)
@@ -6265,6 +5460,15 @@ JS_DecodeBytes(JSContext* cx, const char* src, size_t srclen, char16_t* dst, siz
     CopyAndInflateChars(dst, src, srclen);
     *dstlenp = srclen;
     return true;
+}
+
+JS_PUBLIC_API(JS::UniqueChars)
+JS_EncodeStringToASCII(JSContext* cx, JSString* str)
+{
+    AssertHeapIsIdle();
+    CHECK_THREAD(cx);
+
+    return js::EncodeAscii(cx, str);
 }
 
 JS_PUBLIC_API(JS::UniqueChars)
@@ -7288,6 +6492,12 @@ JS_SetGCZeal(JSContext* cx, uint8_t zeal, uint32_t frequency)
 }
 
 JS_PUBLIC_API(void)
+JS_UnsetGCZeal(JSContext* cx, uint8_t zeal)
+{
+    cx->runtime()->gc.unsetZeal(zeal);
+}
+
+JS_PUBLIC_API(void)
 JS_ScheduleGC(JSContext* cx, uint32_t count)
 {
     cx->runtime()->gc.setNextScheduled(count);
@@ -7363,6 +6573,13 @@ JS_SetGlobalJitCompilerOption(JSContext* cx, JSJitCompilerOption opt, uint32_t v
             JS::ContextOptionsRef(cx).setIon(false);
             JitSpew(js::jit::JitSpew_IonScripts, "Disable ion");
         }
+        break;
+        case JSJITCOMPILER_ION_FREQUENT_BAILOUT_THRESHOLD:
+            if (value == uint32_t(-1)) {
+                jit::DefaultJitOptions defaultValues;
+                value = defaultValues.frequentBailoutThreshold;
+            }
+            jit::JitOptions.frequentBailoutThreshold = value;
         break;
       case JSJITCOMPILER_BASELINE_ENABLE:
         if (value == 1) {
@@ -7450,6 +6667,9 @@ JS_GetGlobalJitCompilerOption(JSContext* cx, JSJitCompilerOption opt, uint32_t* 
         break;
       case JSJITCOMPILER_ION_ENABLE:
         *valueOut = JS::ContextOptionsRef(cx).ion();
+        break;
+      case JSJITCOMPILER_ION_FREQUENT_BAILOUT_THRESHOLD:
+        *valueOut = jit::JitOptions.frequentBailoutThreshold;
         break;
       case JSJITCOMPILER_BASELINE_ENABLE:
         *valueOut = JS::ContextOptionsRef(cx).baseline();
@@ -7884,7 +7104,7 @@ JS_PUBLIC_API(RefPtr<JS::WasmModule>)
 JS::GetWasmModule(HandleObject obj)
 {
     MOZ_ASSERT(JS::IsWasmModuleObject(obj));
-    return &CheckedUnwrap(obj)->as<WasmModuleObject>().module();
+    return const_cast<wasm::Module*>(&CheckedUnwrap(obj)->as<WasmModuleObject>().module());
 }
 
 JS_PUBLIC_API(RefPtr<JS::WasmModule>)

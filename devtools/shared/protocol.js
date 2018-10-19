@@ -826,6 +826,10 @@ Pool.prototype = extend(EventEmitter.prototype, {
     return this.conn.poolFor(this.actorID);
   },
 
+  poolFor: function(actorID) {
+    return this.conn.poolFor(actorID);
+  },
+
   /**
    * Override this if you want actors returned by this actor
    * to belong to a different actor by default.
@@ -855,8 +859,18 @@ Pool.prototype = extend(EventEmitter.prototype, {
   manage: function(actor) {
     if (!actor.actorID) {
       actor.actorID = this.conn.allocID(actor.actorPrefix || actor.typeName);
-    }
+    } else {
+      // If the actor is already registerd in a pool, remove it without destroying it.
+      // This happens for example when an addon is reloaded. To see this behavior, take a
+      // look at devtools/server/tests/unit/test_addon_reload.js
 
+      // TODO: not all actors have been moved to protocol.js, so they do not all have
+      // a parent field. Remove the check for the parent once the conversion is finished
+      const parent = this.poolFor(actor.actorID);
+      if (parent) {
+        parent.unmanage(actor);
+      }
+    }
     this._poolMap.set(actor.actorID, actor);
     return actor;
   },
@@ -875,13 +889,19 @@ Pool.prototype = extend(EventEmitter.prototype, {
 
   // The actor for a given actor id stored in this pool
   actor: function(actorID) {
-    return this.__poolMap ? this._poolMap.get(actorID) : null;
+    if (this.__poolMap) {
+      return this._poolMap.get(actorID);
+    }
+    return null;
   },
 
   // Same as actor, should update debugger connection to use 'actor'
   // and then remove this.
   get: function(actorID) {
-    return this.__poolMap ? this._poolMap.get(actorID) : null;
+    if (this.__poolMap) {
+      return this._poolMap.get(actorID);
+    }
+    return null;
   },
 
   // True if this pool has no children.
@@ -1332,7 +1352,10 @@ Front.prototype = extend(Pool.prototype, {
     } else {
       this.actor().then(actorID => {
         packet.to = actorID;
-        this.conn._transport.send(packet);
+        // The connection might be closed during the promise resolution
+        if (this.conn._transport) {
+          this.conn._transport.send(packet);
+        }
       }).catch(console.error);
     }
   },
@@ -1581,7 +1604,13 @@ var FrontClassWithSpec = function(actorSpec, frontProto) {
   // Existing Fronts are relying on the initialize instead of constructor methods.
   const cls = function() {
     const instance = Object.create(cls.prototype);
-    instance.initialize.apply(instance, arguments);
+    const initializer = instance.initialize.apply(instance, arguments);
+
+    // Async Initialization
+    // return a promise that resolves with the instance if the initializer is async
+    if (initializer && typeof initializer.then === "function") {
+      return initializer.then(resolve => instance);
+    }
     return instance;
   };
   cls.prototype = extend(Front.prototype, generateRequestMethods(actorSpec, frontProto));

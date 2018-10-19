@@ -118,7 +118,7 @@ JSContext::init(ContextKind kind)
         }
 
 #ifdef JS_SIMULATOR
-        simulator_ = jit::Simulator::Create(this);
+        simulator_ = jit::Simulator::Create();
         if (!simulator_) {
             return false;
         }
@@ -1001,13 +1001,15 @@ js::ReportIsNullOrUndefinedForPropertyAccess(JSContext* cx, HandleValue v, Handl
     if (strcmp(bytes.get(), js_undefined_str) == 0 || strcmp(bytes.get(), js_null_str) == 0) {
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_PROPERTY_FAIL,
                                  keyBytes.get(), bytes.get());
-    } else if (v.isUndefined()) {
-        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_PROPERTY_FAIL_EXPR,
-                                 bytes.get(), js_undefined_str, keyBytes.get());
     } else {
-        MOZ_ASSERT(v.isNull());
-        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_PROPERTY_FAIL_EXPR,
-                                 bytes.get(), js_null_str, keyBytes.get());
+        const char* actual = v.isUndefined() ? js_undefined_str : js_null_str;
+        if (JSID_IS_INT(key)) {
+            JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_ELEMENT_FAIL_EXPR,
+                                     bytes.get(), actual, keyBytes.get());
+        } else {
+            JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_PROPERTY_FAIL_EXPR,
+                                     bytes.get(), actual, keyBytes.get());
+        }
     }
 }
 
@@ -1134,7 +1136,8 @@ JSContext::recoverFromOutOfMemory()
 }
 
 static bool
-InternalEnqueuePromiseJobCallback(JSContext* cx, JS::HandleObject job,
+InternalEnqueuePromiseJobCallback(JSContext* cx, JS::HandleObject promise,
+                                  JS::HandleObject job,
                                   JS::HandleObject allocationSite,
                                   JS::HandleObject incumbentGlobal, void* data)
 {
@@ -1674,11 +1677,24 @@ AutoEnterOOMUnsafeRegion::crash(size_t size, const char* reason)
 }
 
 #ifdef DEBUG
-AutoUnsafeCallWithABI::AutoUnsafeCallWithABI()
+AutoUnsafeCallWithABI::AutoUnsafeCallWithABI(UnsafeABIStrictness strictness)
   : cx_(TlsContext.get()),
     nested_(cx_->hasAutoUnsafeCallWithABI),
     nogc(cx_)
 {
+    switch(strictness) {
+      case UnsafeABIStrictness::NoExceptions:
+        MOZ_ASSERT(!JS_IsExceptionPending(cx_));
+        checkForPendingException_ = true;
+        break;
+      case UnsafeABIStrictness::AllowPendingExceptions:
+        checkForPendingException_ = !JS_IsExceptionPending(cx_);
+        break;
+      case UnsafeABIStrictness::AllowThrownExceptions:
+        checkForPendingException_ = false;
+        break;
+    }
+
     cx_->hasAutoUnsafeCallWithABI = true;
 }
 
@@ -1689,5 +1705,6 @@ AutoUnsafeCallWithABI::~AutoUnsafeCallWithABI()
         cx_->hasAutoUnsafeCallWithABI = false;
         cx_->inUnsafeCallWithABI = false;
     }
+    MOZ_ASSERT_IF(checkForPendingException_, !JS_IsExceptionPending(cx_));
 }
 #endif

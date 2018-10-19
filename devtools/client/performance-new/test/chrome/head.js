@@ -106,7 +106,11 @@ class MockPerfFront extends EventEmitter {
     this._isActive = false;
     this.emit("profiler-stopped");
     // Return a fake profile.
-    return {};
+    return { meta: {}, libs: [], threads: [], processes: [] };
+  }
+
+  async getSymbolTable() {
+    throw new Error("unimplemented");
   }
 
   stopProfilerAndDiscardProfile() {
@@ -169,13 +173,12 @@ function createPerfComponent() {
   const selectors = require("devtools/client/performance-new/store/selectors");
 
   const perfFrontMock = new MockPerfFront();
-  const toolboxMock = {};
   const store = createStore(reducers);
   const container = document.querySelector("#container");
   const receiveProfileCalls = [];
   const recordingPreferencesCalls = [];
 
-  function receiveProfileMock(profile) {
+  function receiveProfileMock(profile, getSymbolTableCallback) {
     receiveProfileCalls.push(profile);
   }
 
@@ -185,7 +188,6 @@ function createPerfComponent() {
 
   function mountComponent() {
     store.dispatch(actions.initializeStore({
-      toolbox: toolboxMock,
       perfFront: perfFrontMock,
       receiveProfile: receiveProfileMock,
       recordingSettingsFromPreferences: selectors.getRecordingSettings(store.getState()),

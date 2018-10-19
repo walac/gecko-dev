@@ -52,6 +52,8 @@ extern crate hyper;
 #[cfg(feature = "servo")]
 extern crate hyper_serde;
 #[cfg(feature = "servo")]
+extern crate keyboard_types;
+#[cfg(feature = "servo")]
 extern crate mozjs as js;
 extern crate selectors;
 #[cfg(feature = "servo")]
@@ -59,6 +61,8 @@ extern crate serde;
 #[cfg(feature = "servo")]
 extern crate serde_bytes;
 extern crate servo_arc;
+#[cfg(feature = "servo")]
+extern crate servo_channel;
 extern crate smallbitvec;
 extern crate smallvec;
 #[cfg(feature = "servo")]
@@ -913,8 +917,6 @@ malloc_size_of_is_0!(webrender_api::BorderRadius);
 #[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::BorderStyle);
 #[cfg(feature = "webrender_api")]
-malloc_size_of_is_0!(webrender_api::BorderWidths);
-#[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::BoxShadowClipMode);
 #[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::ClipAndScrollInfo);
@@ -954,6 +956,19 @@ malloc_size_of_is_0!(webrender_api::ScrollSensitivity);
 malloc_size_of_is_0!(webrender_api::StickyOffsetBounds);
 #[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::TransformStyle);
+
+#[cfg(feature = "servo")]
+impl MallocSizeOf for keyboard_types::Key {
+    fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
+        match self {
+            keyboard_types::Key::Character(ref s) => s.size_of(ops),
+            _ => 0,
+        }
+    }
+}
+
+#[cfg(feature = "servo")]
+malloc_size_of_is_0!(keyboard_types::Modifiers);
 
 #[cfg(feature = "servo")]
 impl MallocSizeOf for xml5ever::QualName {
@@ -1023,7 +1038,8 @@ where
 
 // Placeholder for unique case where internals of Sender cannot be measured.
 // malloc size of is 0 macro complains about type supplied!
-impl<T> MallocSizeOf for std::sync::mpsc::Sender<T> {
+#[cfg(feature = "servo")]
+impl<T> MallocSizeOf for servo_channel::Sender<T> {
     fn size_of(&self, _ops: &mut MallocSizeOfOps) -> usize {
         0
     }

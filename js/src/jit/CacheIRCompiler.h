@@ -46,6 +46,7 @@ namespace jit {
     _(GuardAndGetNumberFromString)        \
     _(GuardAndGetIndexFromString)         \
     _(GuardIndexIsNonNegative)            \
+    _(GuardIndexGreaterThanDenseInitLength) \
     _(GuardTagNotEqual)                   \
     _(GuardXrayExpandoShapeAndDefaultProto)\
     _(GuardNoAllocationMetadataBuilder)   \
@@ -112,6 +113,8 @@ namespace jit {
     _(MegamorphicStoreSlot)               \
     _(MegamorphicHasPropResult)           \
     _(CallObjectHasSparseElementResult)   \
+    _(CallInt32ToString)                  \
+    _(CallNumberToString)                 \
     _(WrapResult)
 
 // Represents a Value on the Baseline frame's expression stack. Slot 0 is the

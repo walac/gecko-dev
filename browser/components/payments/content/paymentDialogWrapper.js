@@ -128,7 +128,7 @@ var paymentDialogWrapper = {
     let addressData = this.temporaryStore.addresses.get(guid) ||
                       await formAutofillStorage.addresses.get(guid);
     if (!addressData) {
-      throw new Error(`Shipping address not found: ${guid}`);
+      throw new Error(`Address not found: ${guid}`);
     }
 
     let address = this.createPaymentAddress({
@@ -136,6 +136,7 @@ var paymentDialogWrapper = {
       addressLines: addressData["street-address"].split("\n"),
       region: addressData["address-level1"],
       city: addressData["address-level2"],
+      dependentLocality: addressData["address-level3"],
       postalCode: addressData["postal-code"],
       organization: addressData.organization,
       recipient: addressData.name,
@@ -266,6 +267,7 @@ var paymentDialogWrapper = {
     country = "",
     addressLines = [],
     region = "",
+    regionCode = "",
     city = "",
     dependentLocality = "",
     postalCode = "",
@@ -285,6 +287,7 @@ var paymentDialogWrapper = {
     paymentAddress.init(country,
                         addressLine,
                         region,
+                        regionCode,
                         city,
                         dependentLocality,
                         postalCode,
@@ -430,7 +433,7 @@ var paymentDialogWrapper = {
     }
     // Structures: Arrays
     if (Array.isArray(value)) {
-      let items = value.map(item => { this._serializeRequest(item); })
+      let items = value.map(item => this._serializeRequest(item))
                        .filter(item => item !== undefined);
       return items;
     }
@@ -478,6 +481,13 @@ var paymentDialogWrapper = {
     gDevToolsBrowser.openContentProcessToolbox({
       selectedBrowser: chromeWindow.document.getElementById("paymentRequestFrame").frameLoader,
     });
+  },
+
+  onOpenPreferences() {
+    let prefsURL = Cc["@mozilla.org/supports-string;1"].createInstance(Ci.nsISupportsString);
+    prefsURL.data = "about:preferences#privacy-form-autofill";
+    Services.ww.openWindow(null, AppConstants.BROWSER_CHROME_URL, "_blank", "chrome,all,dialog=no",
+                           prefsURL);
   },
 
   onPaymentCancel() {
@@ -657,6 +667,10 @@ var paymentDialogWrapper = {
       }
       case "closeDialog": {
         this.onCloseDialogMessage();
+        break;
+      }
+      case "openPreferences": {
+        this.onOpenPreferences();
         break;
       }
       case "paymentCancel": {

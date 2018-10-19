@@ -41,14 +41,13 @@ function getWorkerContainers(doc) {
 }
 
 function navigate(target, url, waitForTargetEvent = "navigate") {
-  executeSoon(() => target.activeTab.navigateTo(url));
+  executeSoon(() => target.activeTab.navigateTo({ url }));
   return once(target, waitForTargetEvent);
 }
 
 async function openNewTabAndApplicationPanel(url) {
   const tab = await addTab(url);
-  const target = TargetFactory.forTab(tab);
-  await target.makeRemote();
+  const target = await TargetFactory.forTab(tab);
 
   const toolbox = await gDevTools.showToolbox(target, "application");
   const panel = toolbox.getCurrentPanel();

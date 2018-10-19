@@ -28,7 +28,6 @@
 #include "nsIResumableChannel.h"
 #include "nsIProxiedChannel.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
-#include "nsIAssociatedContentSecurity.h"
 #include "nsIChildChannel.h"
 #include "nsIHttpChannelChild.h"
 #include "nsIDivertableChannel.h"
@@ -60,7 +59,6 @@ class HttpChannelChild final : public PHttpChannelChild
                              , public nsIProxiedChannel
                              , public nsIApplicationCacheChannel
                              , public nsIAsyncVerifyRedirectCallback
-                             , public nsIAssociatedContentSecurity
                              , public nsIChildChannel
                              , public nsIHttpChannelChild
                              , public nsIDivertableChannel
@@ -75,7 +73,6 @@ public:
   NS_DECL_NSIAPPLICATIONCACHECONTAINER
   NS_DECL_NSIAPPLICATIONCACHECHANNEL
   NS_DECL_NSIASYNCVERIFYREDIRECTCALLBACK
-  NS_DECL_NSIASSOCIATEDCONTENTSECURITY
   NS_DECL_NSICHILDCHANNEL
   NS_DECL_NSIHTTPCHANNELCHILD
   NS_DECL_NSIDIVERTABLECHANNEL
@@ -185,10 +182,10 @@ protected:
 
   mozilla::ipc::IPCResult RecvCancelRedirected() override;
 
+  mozilla::ipc::IPCResult RecvOriginalCacheInputStreamAvailable(const OptionalIPCStream& aStream) override;
+
   virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 
-  MOZ_MUST_USE bool
-  GetAssociatedContentSecurity(nsIAssociatedContentSecurity** res = nullptr);
   virtual void DoNotifyListenerCleanup() override;
 
   virtual void DoAsyncAbort(nsresult aStatus) override;
@@ -331,6 +328,8 @@ private:
   nsCOMPtr<nsIInterceptedBodyCallback> mSynthesizedCallback;
   nsCOMPtr<nsICacheInfoChannel> mSynthesizedCacheInfo;
   RefPtr<ChannelEventQueue> mEventQ;
+
+  nsCOMPtr<nsIInputStreamReceiver> mInputStreamReceiver;
 
   // Used to ensure atomicity of mBgChild and mBgInitFailCallback
   Mutex mBgChildMutex;

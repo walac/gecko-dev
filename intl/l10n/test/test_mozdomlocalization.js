@@ -10,7 +10,7 @@ const fs = {
   "/localization/en-US/browser/menu.ftl": "key = [en] Value",
 };
 const originalLoad = L10nRegistry.load;
-const originalRequested = Services.locale.getRequestedLocales();
+const originalRequested = Services.locale.requestedLocales;
 
 // Variable used to test for `L10nRegistry.load`
 // execution count.
@@ -27,6 +27,7 @@ L10nRegistry.registerSource(source);
 add_task(function test_methods_presence() {
   equal(typeof domLocalization.addResourceIds, "function");
   equal(typeof domLocalization.removeResourceIds, "function");
+  equal(typeof domLocalization.registerObservers, "function");
 
   equal(typeof domLocalization.formatMessages, "function");
   equal(typeof domLocalization.formatValues, "function");
@@ -91,5 +92,5 @@ add_task(async function test_ready() {
 add_task(function cleanup() {
   L10nRegistry.sources.clear();
   L10nRegistry.load = originalLoad;
-  Services.locale.setRequestedLocales(originalRequested);
+  Services.locale.requestedLocales = originalRequested;
 });

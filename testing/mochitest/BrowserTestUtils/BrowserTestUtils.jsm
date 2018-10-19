@@ -633,7 +633,9 @@ var BrowserTestUtils = {
    */
   async loadURI(browser, uri) {
     // Load the new URI.
-    browser.loadURI(uri);
+    browser.loadURI(uri, {
+      triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+    });
 
     // Nothing to do in non-e10s mode.
     if (!browser.ownerGlobal.gMultiProcessBrowser) {
@@ -724,19 +726,22 @@ var BrowserTestUtils = {
     }
     let win = currentWin.OpenBrowserWindow(options);
 
+    let promises = [this.waitForEvent(win, "focus"), this.waitForEvent(win, "activate")];
+
     // Wait for browser-delayed-startup-finished notification, it indicates
     // that the window has loaded completely and is ready to be used for
     // testing.
-    let startupPromise =
+    promises.push(
       TestUtils.topicObserved("browser-delayed-startup-finished",
-                              subject => subject == win).then(() => win);
+                              subject => subject == win).then(() => win)
+    );
 
-    let loadPromise = this.firstBrowserLoaded(win, !options.waitForTabURL, browser => {
+
+    promises.push(this.firstBrowserLoaded(win, !options.waitForTabURL, browser => {
       return !options.waitForTabURL || options.waitForTabURL == browser.currentURI.spec;
-    });
+    }));
 
-    await startupPromise;
-    await loadPromise;
+    await Promise.all(promises);
 
     return win;
   },

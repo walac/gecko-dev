@@ -19,7 +19,6 @@
 # overrides for toolkit l10n, also for en-US
 relativesrcdir toolkit/locales:
 #  locale/@AB_CD@/b2g-l10n/overrides/about.dtd                       (%chrome/global/about.dtd)
-  locale/@AB_CD@/b2g-l10n/overrides/aboutAbout.dtd                  (%chrome/global/aboutAbout.dtd)
   locale/@AB_CD@/b2g-l10n/overrides/aboutRights.dtd                 (%chrome/global/aboutRights.dtd)
   locale/@AB_CD@/b2g-l10n/overrides/commonDialogs.properties        (%chrome/global/commonDialogs.properties)
   locale/@AB_CD@/b2g-l10n/overrides/handling/handling.properties    (%chrome/mozapps/handling/handling.properties)
@@ -43,7 +42,6 @@ relativesrcdir toolkit/locales:
   locale/@AB_CD@/b2g-l10n/overrides/global/aboutWebrtc.properties  (%chrome/global/aboutWebrtc.properties)
 
 % override chrome://global/locale/about.dtd chrome://b2g-l10n/locale/overrides/about.dtd
-% override chrome://global/locale/aboutAbout.dtd chrome://b2g-l10n/locale/overrides/aboutAbout.dtd
 % override chrome://global/locale/aboutRights.dtd chrome://b2g-l10n/locale/overrides/aboutRights.dtd
 % override chrome://global/locale/commonDialogs.properties chrome://b2g-l10n/locale/overrides/commonDialogs.properties
 % override chrome://mozapps/locale/handling/handling.properties chrome://b2g-l10n/locale/overrides/handling/handling.properties

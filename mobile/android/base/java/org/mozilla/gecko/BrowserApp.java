@@ -118,7 +118,6 @@ import org.mozilla.gecko.overlays.ui.ShareDialog;
 import org.mozilla.gecko.permissions.Permissions;
 import org.mozilla.gecko.preferences.ClearOnShutdownPref;
 import org.mozilla.gecko.preferences.GeckoPreferences;
-import org.mozilla.gecko.promotion.AddToHomeScreenPromotion;
 import org.mozilla.gecko.promotion.ReaderViewBookmarkPromotion;
 import org.mozilla.gecko.prompts.Prompt;
 import org.mozilla.gecko.reader.ReaderModeUtils;
@@ -183,6 +182,7 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 import static org.mozilla.gecko.mma.MmaDelegate.NEW_TAB;
+import static org.mozilla.gecko.util.JavaUtil.getBundleSizeInBytes;
 
 public class BrowserApp extends GeckoApp
                         implements ActionModePresenter,
@@ -212,6 +212,8 @@ public class BrowserApp extends GeckoApp
     private static final String STATE_ABOUT_HOME_TOP_PADDING = "abouthome_top_padding";
 
     private static final String BROWSER_SEARCH_TAG = "browser_search";
+
+    private static final int MAX_BUNDLE_SIZE = 300000; // 300 kilobytes
 
     // Request ID for startActivityForResult.
     public static final int ACTIVITY_REQUEST_PREFERENCES = 1001;
@@ -315,7 +317,6 @@ public class BrowserApp extends GeckoApp
     private final TelemetryCorePingDelegate mTelemetryCorePingDelegate = new TelemetryCorePingDelegate();
 
     private final List<BrowserAppDelegate> delegates = Collections.unmodifiableList(Arrays.asList(
-            new AddToHomeScreenPromotion(),
             new ScreenshotDelegate(),
             new BookmarkStateChangeDelegate(),
             new ReaderViewBookmarkPromotion(),
@@ -712,6 +713,8 @@ public class BrowserApp extends GeckoApp
             GuestSession.onNotificationIntentReceived(this);
         } else if (TabQueueHelper.LOAD_URLS_ACTION.equals(action)) {
             Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, TelemetryContract.Method.NOTIFICATION, "tabqueue");
+        } else if (NotificationHelper.HELPER_BROADCAST_ACTION.equals(action)) {
+            NotificationHelper.getInstance(getApplicationContext()).handleNotificationIntent(safeStartingIntent);
         }
 
         if (HardwareUtils.isTablet()) {
@@ -1035,6 +1038,8 @@ public class BrowserApp extends GeckoApp
 
     @Override
     public void onPause() {
+        dismissTabHistoryFragment();
+
         super.onPause();
         if (mIsAbortingAppLaunch) {
             return;
@@ -1744,7 +1749,7 @@ public class BrowserApp extends GeckoApp
                 break;
 
             case "GeckoView:AccessibilityEnabled":
-                mDynamicToolbar.setAccessibilityEnabled(message.getBoolean("enabled"));
+                mDynamicToolbar.setAccessibilityEnabled(message.getBoolean("touchEnabled"));
                 break;
 
             case "Menu:Open":
@@ -2267,6 +2272,15 @@ public class BrowserApp extends GeckoApp
         super.onSaveInstanceState(outState);
         mDynamicToolbar.onSaveInstanceState(outState);
         outState.putInt(STATE_ABOUT_HOME_TOP_PADDING, mHomeScreenContainer.getPaddingTop());
+
+        // Under key “android:viewHierarchyState” the OS stores another object of type Bundle.
+        // This bundle stores the state of the view which is in a SparseArray that can grow pretty big.
+        // This in some cases can lead to TransactionTooLargeException as per
+        // [https://developer.android.com/reference/android/os/TransactionTooLargeException] it's
+        // specified that the limit is fixed to 1MB per process.
+        if (getBundleSizeInBytes(outState) > MAX_BUNDLE_SIZE) {
+            outState.remove("android:viewHierarchyState");
+        }
     }
 
     /**
@@ -3106,10 +3120,7 @@ public class BrowserApp extends GeckoApp
             return false;
 
         // Hide the tab history panel when hardware menu button is pressed.
-        TabHistoryFragment frag = (TabHistoryFragment) getSupportFragmentManager().findFragmentByTag(TAB_HISTORY_FRAGMENT_TAG);
-        if (frag != null) {
-            frag.dismiss();
-        }
+        dismissTabHistoryFragment();
 
         if (!GeckoThread.isRunning()) {
             aMenu.findItem(R.id.settings).setEnabled(false);
@@ -4126,6 +4137,13 @@ public class BrowserApp extends GeckoApp
     public void onFinishedOnboarding(final boolean showBrowserHint) {
         if (showBrowserHint && !Tabs.hasHomepage(this)) {
             enterEditingMode();
+        }
+    }
+
+    private void dismissTabHistoryFragment() {
+        TabHistoryFragment frag = (TabHistoryFragment) getSupportFragmentManager().findFragmentByTag(TAB_HISTORY_FRAGMENT_TAG);
+        if (frag != null) {
+            frag.dismiss();
         }
     }
 }

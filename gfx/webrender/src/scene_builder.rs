@@ -3,13 +3,18 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use api::{AsyncBlobImageRasterizer, BlobImageRequest, BlobImageParams, BlobImageResult};
-use api::{DocumentId, PipelineId, ApiMsg, FrameMsg, ResourceUpdate, Epoch};
-use api::{BuiltDisplayList, ColorF, LayoutSize};
+use api::{DocumentId, PipelineId, ApiMsg, FrameMsg, ResourceUpdate, ExternalEvent, Epoch};
+use api::{BuiltDisplayList, ColorF, LayoutSize, NotificationRequest, Checkpoint, IdNamespace};
 use api::channel::MsgSender;
+#[cfg(feature = "capture")]
+use capture::CaptureConfig;
 use frame_builder::{FrameBuilderConfig, FrameBuilder};
+use clip::{ClipDataInterner, ClipDataUpdateList};
 use clip_scroll_tree::ClipScrollTree;
 use display_list_flattener::DisplayListFlattener;
 use internal_types::{FastHashMap, FastHashSet};
+use picture::PictureIdGenerator;
+use prim_store::{PrimitiveDataInterner, PrimitiveDataUpdateList};
 use resource_cache::FontInstanceMap;
 use render_backend::DocumentView;
 use renderer::{PipelineInfo, SceneBuilderHooks};
@@ -17,6 +22,14 @@ use scene::Scene;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::mem::replace;
 use time::precise_time_ns;
+use util::drain_filter;
+use std::thread;
+use std::time::Duration;
+
+pub struct DocumentResourceUpdates {
+    pub clip_updates: ClipDataUpdateList,
+    pub prim_updates: PrimitiveDataUpdateList,
+}
 
 /// Represents the work associated to a transaction before scene building.
 pub struct Transaction {
@@ -30,9 +43,10 @@ pub struct Transaction {
     pub rasterized_blobs: Vec<(BlobImageRequest, BlobImageResult)>,
     pub resource_updates: Vec<ResourceUpdate>,
     pub frame_ops: Vec<FrameMsg>,
+    pub notifications: Vec<NotificationRequest>,
     pub set_root_pipeline: Option<PipelineId>,
-    pub build_frame: bool,
     pub render_frame: bool,
+    pub invalidate_rendered_frame: bool,
 }
 
 impl Transaction {
@@ -61,10 +75,12 @@ pub struct BuiltTransaction {
     pub blob_rasterizer: Option<Box<AsyncBlobImageRasterizer>>,
     pub frame_ops: Vec<FrameMsg>,
     pub removed_pipelines: Vec<PipelineId>,
+    pub notifications: Vec<NotificationRequest>,
+    pub doc_resource_updates: Option<DocumentResourceUpdates>,
     pub scene_build_start_time: u64,
     pub scene_build_end_time: u64,
-    pub build_frame: bool,
     pub render_frame: bool,
+    pub invalidate_rendered_frame: bool,
 }
 
 pub struct DisplayListUpdate {
@@ -94,6 +110,7 @@ pub struct LoadScene {
     pub view: DocumentView,
     pub config: FrameBuilderConfig,
     pub build_frame: bool,
+    pub doc_resources: DocumentResources,
 }
 
 pub struct BuiltScene {
@@ -105,11 +122,17 @@ pub struct BuiltScene {
 // Message from render backend to scene builder.
 pub enum SceneBuilderRequest {
     Transaction(Box<Transaction>),
+    ExternalEvent(ExternalEvent),
     DeleteDocument(DocumentId),
     WakeUp,
     Flush(MsgSender<()>),
+    ClearNamespace(IdNamespace),
     SetFrameBuilderConfig(FrameBuilderConfig),
+    SimulateLongSceneBuild(u32),
+    SimulateLongLowPrioritySceneBuild(u32),
     Stop,
+    #[cfg(feature = "capture")]
+    SaveScene(CaptureConfig),
     #[cfg(feature = "replay")]
     LoadScenes(Vec<LoadScene>),
 }
@@ -117,7 +140,9 @@ pub enum SceneBuilderRequest {
 // Message from scene builder to render backend.
 pub enum SceneBuilderResult {
     Transaction(Box<BuiltTransaction>, Option<Sender<SceneSwapResult>>),
+    ExternalEvent(ExternalEvent),
     FlushComplete(MsgSender<()>),
+    ClearNamespace(IdNamespace),
     Stopped,
 }
 
@@ -129,13 +154,55 @@ pub enum SceneSwapResult {
     Aborted,
 }
 
+// This struct contains all items that can be shared between
+// display lists. We want to intern and share the same clips,
+// primitives and other things between display lists so that:
+// - GPU cache handles remain valid, reducing GPU cache updates.
+// - Comparison of primitives and pictures between two
+//   display lists is (a) fast (b) done during scene building.
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub struct DocumentResources {
+    pub clip_interner: ClipDataInterner,
+    pub prim_interner: PrimitiveDataInterner,
+}
+
+impl DocumentResources {
+    fn new() -> Self {
+        DocumentResources {
+            clip_interner: ClipDataInterner::new(),
+            prim_interner: PrimitiveDataInterner::new(),
+        }
+    }
+}
+
+// A document in the scene builder contains the current scene,
+// as well as a persistent clip interner. This allows clips
+// to be de-duplicated, and persisted in the GPU cache between
+// display lists.
+struct Document {
+    scene: Scene,
+    resources: DocumentResources,
+}
+
+impl Document {
+    fn new(scene: Scene) -> Self {
+        Document {
+            scene,
+            resources: DocumentResources::new(),
+        }
+    }
+}
+
 pub struct SceneBuilder {
-    documents: FastHashMap<DocumentId, Scene>,
+    documents: FastHashMap<DocumentId, Document>,
     rx: Receiver<SceneBuilderRequest>,
     tx: Sender<SceneBuilderResult>,
     api_tx: MsgSender<ApiMsg>,
     config: FrameBuilderConfig,
     hooks: Option<Box<SceneBuilderHooks + Send>>,
+    picture_id_generator: PictureIdGenerator,
+    simulate_slow_ms: u32,
 }
 
 impl SceneBuilder {
@@ -154,10 +221,21 @@ impl SceneBuilder {
                 api_tx,
                 config,
                 hooks,
+                picture_id_generator: PictureIdGenerator::new(),
+                simulate_slow_ms: 0,
             },
             in_tx,
             out_rx,
         )
+    }
+
+    /// Send a message to the render backend thread.
+    ///
+    /// We first put something in the result queue and then send a wake-up
+    /// message to the api queue that the render backend is blocking on.
+    pub fn send(&self, msg: SceneBuilderResult) {
+        self.tx.send(msg).unwrap();
+        let _ = self.api_tx.send(ApiMsg::WakeUp);
     }
 
     /// The scene builder thread's event loop.
@@ -170,8 +248,7 @@ impl SceneBuilder {
             match self.rx.recv() {
                 Ok(SceneBuilderRequest::WakeUp) => {}
                 Ok(SceneBuilderRequest::Flush(tx)) => {
-                    self.tx.send(SceneBuilderResult::FlushComplete(tx)).unwrap();
-                    let _ = self.api_tx.send(ApiMsg::WakeUp);
+                    self.send(SceneBuilderResult::FlushComplete(tx));
                 }
                 Ok(SceneBuilderRequest::Transaction(mut txn)) => {
                     let built_txn = self.process_transaction(&mut txn);
@@ -183,9 +260,20 @@ impl SceneBuilder {
                 Ok(SceneBuilderRequest::SetFrameBuilderConfig(cfg)) => {
                     self.config = cfg;
                 }
+                Ok(SceneBuilderRequest::ClearNamespace(id)) => {
+                    self.documents.retain(|doc_id, _doc| doc_id.0 != id);
+                    self.send(SceneBuilderResult::ClearNamespace(id));
+                }
                 #[cfg(feature = "replay")]
                 Ok(SceneBuilderRequest::LoadScenes(msg)) => {
                     self.load_scenes(msg);
+                }
+                #[cfg(feature = "capture")]
+                Ok(SceneBuilderRequest::SaveScene(config)) => {
+                    self.save_scene(config);
+                }
+                Ok(SceneBuilderRequest::ExternalEvent(evt)) => {
+                    self.send(SceneBuilderResult::ExternalEvent(evt));
                 }
                 Ok(SceneBuilderRequest::Stop) => {
                     self.tx.send(SceneBuilderResult::Stopped).unwrap();
@@ -193,6 +281,10 @@ impl SceneBuilder {
                     // get the Stop when the RenderBackend loop is exiting.
                     break;
                 }
+                Ok(SceneBuilderRequest::SimulateLongSceneBuild(time_ms)) => {
+                    self.simulate_slow_ms = time_ms
+                }
+                Ok(SceneBuilderRequest::SimulateLongLowPrioritySceneBuild(_)) => {}
                 Err(_) => {
                     break;
                 }
@@ -208,20 +300,29 @@ impl SceneBuilder {
         }
     }
 
+    #[cfg(feature = "capture")]
+    fn save_scene(&mut self, config: CaptureConfig) {
+        for (id, doc) in &self.documents {
+            let doc_resources_name = format!("doc-resources-{}-{}", (id.0).0, id.1);
+            config.serialize(&doc.resources, doc_resources_name);
+        }
+    }
+
     #[cfg(feature = "replay")]
     fn load_scenes(&mut self, scenes: Vec<LoadScene>) {
-        for item in scenes {
+        for mut item in scenes {
             self.config = item.config;
 
             let scene_build_start_time = precise_time_ns();
 
             let mut built_scene = None;
+            let mut doc_resource_updates = None;
+
             if item.scene.has_root_pipeline() {
                 let mut clip_scroll_tree = ClipScrollTree::new();
                 let mut new_scene = Scene::new();
 
                 let frame_builder = DisplayListFlattener::create_frame_builder(
-                    FrameBuilder::empty(),
                     &item.scene,
                     &mut clip_scroll_tree,
                     item.font_instances,
@@ -230,6 +331,25 @@ impl SceneBuilder {
                     &self.config,
                     &mut new_scene,
                     item.scene_id,
+                    &mut self.picture_id_generator,
+                    &mut item.doc_resources,
+                );
+
+                let clip_updates = item
+                    .doc_resources
+                    .clip_interner
+                    .end_frame_and_get_pending_updates();
+
+                let prim_updates = item
+                    .doc_resources
+                    .prim_interner
+                    .end_frame_and_get_pending_updates();
+
+                doc_resource_updates = Some(
+                    DocumentResourceUpdates {
+                        clip_updates,
+                        prim_updates,
+                    }
                 );
 
                 built_scene = Some(BuiltScene {
@@ -239,20 +359,28 @@ impl SceneBuilder {
                 });
             }
 
-            self.documents.insert(item.document_id, item.scene);
+            self.documents.insert(
+                item.document_id,
+                Document {
+                    scene: item.scene,
+                    resources: item.doc_resources,
+                },
+            );
 
             let txn = Box::new(BuiltTransaction {
                 document_id: item.document_id,
-                build_frame: true,
                 render_frame: item.build_frame,
+                invalidate_rendered_frame: false,
                 built_scene,
                 resource_updates: Vec::new(),
                 rasterized_blobs: Vec::new(),
                 blob_rasterizer: None,
                 frame_ops: Vec::new(),
                 removed_pipelines: Vec::new(),
+                notifications: Vec::new(),
                 scene_build_start_time,
                 scene_build_end_time: precise_time_ns(),
+                doc_resource_updates,
             });
 
             self.forward_built_transaction(txn);
@@ -264,7 +392,10 @@ impl SceneBuilder {
 
         let scene_build_start_time = precise_time_ns();
 
-        let scene = self.documents.entry(txn.document_id).or_insert(Scene::new());
+        let doc = self.documents
+                      .entry(txn.document_id)
+                      .or_insert(Document::new(Scene::new()));
+        let scene = &mut doc.scene;
 
         for update in txn.display_list_updates.drain(..) {
             scene.set_display_list(
@@ -290,13 +421,13 @@ impl SceneBuilder {
         }
 
         let mut built_scene = None;
+        let mut doc_resource_updates = None;
         if scene.has_root_pipeline() {
             if let Some(request) = txn.request_scene_build.take() {
                 let mut clip_scroll_tree = ClipScrollTree::new();
                 let mut new_scene = Scene::new();
 
                 let frame_builder = DisplayListFlattener::create_frame_builder(
-                    FrameBuilder::empty(),
                     &scene,
                     &mut clip_scroll_tree,
                     request.font_instances,
@@ -305,6 +436,26 @@ impl SceneBuilder {
                     &self.config,
                     &mut new_scene,
                     request.scene_id,
+                    &mut self.picture_id_generator,
+                    &mut doc.resources,
+                );
+
+                // Retrieve the list of updates from the clip interner.
+                let clip_updates = doc
+                    .resources
+                    .clip_interner
+                    .end_frame_and_get_pending_updates();
+
+                let prim_updates = doc
+                    .resources
+                    .prim_interner
+                    .end_frame_and_get_pending_updates();
+
+                doc_resource_updates = Some(
+                    DocumentResourceUpdates {
+                        clip_updates,
+                        prim_updates,
+                    }
                 );
 
                 built_scene = Some(BuiltScene {
@@ -315,23 +466,36 @@ impl SceneBuilder {
             }
         }
 
+        let is_low_priority = false;
         let blob_requests = replace(&mut txn.blob_requests, Vec::new());
         let mut rasterized_blobs = txn.blob_rasterizer.as_mut().map_or(
             Vec::new(),
-            |rasterizer| rasterizer.rasterize(&blob_requests),
+            |rasterizer| rasterizer.rasterize(&blob_requests, is_low_priority),
         );
         rasterized_blobs.append(&mut txn.rasterized_blobs);
 
+        drain_filter(
+            &mut txn.notifications,
+            |n| { n.when() == Checkpoint::SceneBuilt },
+            |n| { n.notify(); },
+        );
+
+        if self.simulate_slow_ms > 0 {
+            thread::sleep(Duration::from_millis(self.simulate_slow_ms as u64));
+        }
+
         Box::new(BuiltTransaction {
             document_id: txn.document_id,
-            build_frame: txn.build_frame || built_scene.is_some(),
             render_frame: txn.render_frame,
+            invalidate_rendered_frame: txn.invalidate_rendered_frame,
             built_scene,
             rasterized_blobs,
             resource_updates: replace(&mut txn.resource_updates, Vec::new()),
             blob_rasterizer: replace(&mut txn.blob_rasterizer, None),
             frame_ops: replace(&mut txn.frame_ops, Vec::new()),
             removed_pipelines: replace(&mut txn.removed_pipelines, Vec::new()),
+            notifications: replace(&mut txn.notifications, Vec::new()),
+            doc_resource_updates,
             scene_build_start_time,
             scene_build_end_time: precise_time_ns(),
         })
@@ -394,6 +558,7 @@ impl SceneBuilder {
 pub struct LowPrioritySceneBuilder {
     pub rx: Receiver<SceneBuilderRequest>,
     pub tx: Sender<SceneBuilderRequest>,
+    pub simulate_slow_ms: u32,
 }
 
 impl LowPrioritySceneBuilder {
@@ -411,6 +576,9 @@ impl LowPrioritySceneBuilder {
                     self.tx.send(SceneBuilderRequest::Stop).unwrap();
                     break;
                 }
+                Ok(SceneBuilderRequest::SimulateLongLowPrioritySceneBuild(time_ms)) => {
+                    self.simulate_slow_ms = time_ms;
+                }
                 Ok(other) => {
                     self.tx.send(other).unwrap();
                 }
@@ -423,11 +591,16 @@ impl LowPrioritySceneBuilder {
 
     fn process_transaction(&mut self, mut txn: Box<Transaction>) -> Box<Transaction> {
         let blob_requests = replace(&mut txn.blob_requests, Vec::new());
+        let is_low_priority = true;
         let mut more_rasterized_blobs = txn.blob_rasterizer.as_mut().map_or(
             Vec::new(),
-            |rasterizer| rasterizer.rasterize(&blob_requests),
+            |rasterizer| rasterizer.rasterize(&blob_requests, is_low_priority),
         );
         txn.rasterized_blobs.append(&mut more_rasterized_blobs);
+
+        if self.simulate_slow_ms > 0 {
+            thread::sleep(Duration::from_millis(self.simulate_slow_ms as u64));
+        }
 
         txn
     }

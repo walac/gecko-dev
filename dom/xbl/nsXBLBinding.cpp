@@ -346,9 +346,11 @@ nsXBLBinding::GenerateAnonymousContent()
           point->AppendInsertedChild(child, false);
         } else {
           NodeInfo *ni = child->NodeInfo();
-          if (ni->NamespaceID() != kNameSpaceID_XUL ||
-              (!ni->Equals(nsGkAtoms::_template) &&
-               !ni->Equals(nsGkAtoms::observes))) {
+          if (!child->TextIsOnlyWhitespace() &&
+              (ni->NamespaceID() != kNameSpaceID_XUL ||
+               (!ni->Equals(nsGkAtoms::_template) &&
+                !ni->Equals(nsGkAtoms::observes)))
+          ) {
             // Compatibility hack. For some reason the original XBL
             // implementation dropped the content of a binding if any child of
             // the bound element didn't match any of the <children> in the
@@ -982,7 +984,8 @@ nsXBLBinding::DoInitJSClass(JSContext *cx,
   // to create and define it.
   JS::Rooted<JSObject*> proto(cx);
   JS::Rooted<JS::PropertyDescriptor> desc(cx);
-  if (!JS_GetOwnUCPropertyDescriptor(cx, holder, aClassName.get(), &desc)) {
+  if (!JS_GetOwnUCPropertyDescriptor(cx, holder, aClassName.get(),
+                                     aClassName.Length(), &desc)) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
   *aNew = !desc.object();

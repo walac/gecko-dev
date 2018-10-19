@@ -21,9 +21,9 @@ class nsDisplayItem;
 class nsDisplayListBuilder;
 class nsDisplayTableItem;
 class nsDisplayThemedBackground;
-class nsDisplaySVGEffects;
-class nsDisplayMask;
-class nsDisplayFilter;
+class nsDisplayEffectsBase;
+class nsDisplayMasksAndClipPaths;
+class nsDisplayFilters;
 
 namespace mozilla {
 namespace gfx {
@@ -125,6 +125,9 @@ public:
   static void UpdateDrawResult(nsDisplayItem* aItem,
                                mozilla::image::ImgDrawResult aResult)
   {
+    MOZ_ASSERT(aResult != mozilla::image::ImgDrawResult::NOT_SUPPORTED,
+               "ImgDrawResult::NOT_SUPPORTED should be handled already!");
+
     auto lastGeometry =
       static_cast<T*>(mozilla::FrameLayerBuilder::GetMostRecentGeometry(aItem));
     if (lastGeometry) {
@@ -291,7 +294,7 @@ public:
 class nsDisplaySVGEffectGeometry : public nsDisplayItemGeometry
 {
 public:
-  nsDisplaySVGEffectGeometry(nsDisplaySVGEffects* aItem,
+  nsDisplaySVGEffectGeometry(nsDisplayEffectsBase* aItem,
                              nsDisplayListBuilder* aBuilder);
 
   void MoveBy(const nsPoint& aOffset) override;
@@ -299,14 +302,17 @@ public:
   gfxRect mBBox;
   gfxPoint mUserSpaceOffset;
   nsPoint mFrameOffsetToReferenceFrame;
+  float mOpacity;
+  bool mHandleOpacity;
 };
 
-class nsDisplayMaskGeometry
+class nsDisplayMasksAndClipPathsGeometry
   : public nsDisplaySVGEffectGeometry
-  , public nsImageGeometryMixin<nsDisplayMaskGeometry>
+  , public nsImageGeometryMixin<nsDisplayMasksAndClipPathsGeometry>
 {
 public:
-  nsDisplayMaskGeometry(nsDisplayMask* aItem, nsDisplayListBuilder* aBuilder);
+  nsDisplayMasksAndClipPathsGeometry(nsDisplayMasksAndClipPaths* aItem,
+                                     nsDisplayListBuilder* aBuilder);
 
   bool InvalidateForSyncDecodeImages() const override
   {
@@ -314,17 +320,15 @@ public:
   }
 
   nsTArray<nsRect> mDestRects;
-  float mOpacity;
-  bool mHandleOpacity;
 };
 
-class nsDisplayFilterGeometry
+class nsDisplayFiltersGeometry
   : public nsDisplaySVGEffectGeometry
-  , public nsImageGeometryMixin<nsDisplayFilterGeometry>
+  , public nsImageGeometryMixin<nsDisplayFiltersGeometry>
 {
 public:
-  nsDisplayFilterGeometry(nsDisplayFilter* aItem,
-                          nsDisplayListBuilder* aBuilder);
+  nsDisplayFiltersGeometry(nsDisplayFilters* aItem,
+                           nsDisplayListBuilder* aBuilder);
 
   bool InvalidateForSyncDecodeImages() const override
   {

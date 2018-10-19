@@ -50,7 +50,7 @@ AddonTargetActor.prototype = {
     return !this._addon;
   },
 
-  get id() {
+  get addonId() {
     return this._addon.id;
   },
 
@@ -83,7 +83,7 @@ AddonTargetActor.prototype = {
 
     return {
       actor: this.actorID,
-      id: this.id,
+      id: this.addonId,
       name: this._addon.name,
       url: this.url,
       iconURL: this._addon.iconURL,
@@ -96,7 +96,6 @@ AddonTargetActor.prototype = {
       consoleActor: this._consoleActor.actorID,
 
       traits: {
-        highlightable: false,
         networkMonitor: false,
       },
     };
@@ -208,14 +207,14 @@ AddonTargetActor.prototype = {
       // This will fail for non-Sandbox objects, hence the try-catch block.
       const metadata = Cu.getSandboxMetadata(global);
       if (metadata) {
-        return metadata.addonID === this.id;
+        return metadata.addonID === this.addonId;
       }
     } catch (e) {
       // ignore
     }
 
     if (global instanceof Ci.nsIDOMWindow) {
-      return global.document.nodePrincipal.addonId == this.id;
+      return global.document.nodePrincipal.addonId == this.addonId;
     }
 
     return false;

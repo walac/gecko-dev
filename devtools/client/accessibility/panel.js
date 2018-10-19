@@ -59,11 +59,6 @@ AccessibilityPanel.prototype = {
       resolver = resolve;
     });
 
-    // Local monitoring needs to make the target remote.
-    if (!this.target.isRemote) {
-      await this.target.makeRemote();
-    }
-
     this._telemetry = new Telemetry();
     this.panelWin.gTelemetry = this._telemetry;
 
@@ -82,11 +77,9 @@ AccessibilityPanel.prototype = {
 
     await this._toolbox.initInspector();
     await this.startup.initAccessibility();
-    if (this.supportsLatestAccessibility) {
+    if (this.supports.enableDisable) {
       this.picker = new Picker(this);
     }
-
-    this.startup.updatePanelPromoteCount();
 
     this.updateA11YServiceDurationTimer();
     this.front.on("init", this.updateA11YServiceDurationTimer);
@@ -140,16 +133,14 @@ AccessibilityPanel.prototype = {
     }
     // Alright reset the flag we are about to refresh the panel.
     this.shouldRefresh = false;
-    this.postContentMessage("initialize", this.front,
-                                          this.walker,
-                                          this.supportsLatestAccessibility);
+    this.postContentMessage("initialize", this.front, this.walker, this.supports);
   },
 
   updateA11YServiceDurationTimer() {
     if (this.front.enabled) {
-      this._telemetry.start(A11Y_SERVICE_DURATION, this, true);
+      this._telemetry.start(A11Y_SERVICE_DURATION, this);
     } else {
-      this._telemetry.finish(A11Y_SERVICE_DURATION, this, true);
+      this._telemetry.finish(A11Y_SERVICE_DURATION, this);
     }
   },
 
@@ -215,8 +206,8 @@ AccessibilityPanel.prototype = {
     return this.startup.walker;
   },
 
-  get supportsLatestAccessibility() {
-    return this.startup._supportsLatestAccessibility;
+  get supports() {
+    return this.startup._supports;
   },
 
   /**

@@ -719,6 +719,17 @@ js::Int32ToString<CanGC>(JSContext* cx, int32_t si);
 template JSFlatString*
 js::Int32ToString<NoGC>(JSContext* cx, int32_t si);
 
+JSFlatString*
+js::Int32ToStringHelperPure(JSContext* cx, int32_t si)
+{
+    AutoUnsafeCallWithABI unsafe;
+    JSFlatString* res = Int32ToString<NoGC>(cx, si);
+    if (!res) {
+        cx->recoverFromOutOfMemory();
+    }
+    return res;
+}
+
 JSAtom*
 js::Int32ToAtom(JSContext* cx, int32_t si)
 {
@@ -842,7 +853,7 @@ num_toLocaleString_impl(JSContext* cx, const CallArgs& args)
      * Create the string, move back to bytes to make string twiddling
      * a bit easier and so we can insert platform charset seperators.
      */
-    UniqueChars numBytes = JS_EncodeStringToLatin1(cx, str);
+    UniqueChars numBytes = EncodeAscii(cx, str);
     if (!numBytes) {
         return false;
     }
@@ -1194,6 +1205,7 @@ num_toPrecision(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static const JSFunctionSpec number_methods[] = {
+    // clang-format off
     JS_FN(js_toSource_str,       num_toSource,          0, 0),
     JS_FN(js_toString_str,       num_toString,          1, 0),
 #if EXPOSE_INTL_API
@@ -1206,6 +1218,7 @@ static const JSFunctionSpec number_methods[] = {
     JS_FN("toExponential",       num_toExponential,     1, 0),
     JS_FN("toPrecision",         num_toPrecision,       1, 0),
     JS_FS_END
+    // clang-format on
 };
 
 bool
@@ -1322,6 +1335,7 @@ js::InitNumberClass(JSContext* cx, Handle<GlobalObject*> global)
      * encoding for our value representation.  See Value.h.
      */
     static const JSConstDoubleSpec number_constants[] = {
+        // clang-format off
         {"NaN",               GenericNaN()               },
         {"POSITIVE_INFINITY", mozilla::PositiveInfinity<double>() },
         {"NEGATIVE_INFINITY", mozilla::NegativeInfinity<double>() },
@@ -1334,6 +1348,7 @@ js::InitNumberClass(JSContext* cx, Handle<GlobalObject*> global)
         /* ES6 (May 2013 draft) 15.7.3.7 */
         {"EPSILON", 2.2204460492503130808472633361816e-16},
         {0,0}
+        // clang-format on
     };
 
     /* Add numeric constants (MAX_VALUE, NaN, &c.) to the Number constructor. */
@@ -1518,6 +1533,17 @@ js::NumberToString<CanGC>(JSContext* cx, double d);
 template JSString*
 js::NumberToString<NoGC>(JSContext* cx, double d);
 
+JSString*
+js::NumberToStringHelperPure(JSContext* cx, double d)
+{
+    AutoUnsafeCallWithABI unsafe;
+    JSString* res = NumberToString<NoGC>(cx, d);
+    if (!res) {
+        cx->recoverFromOutOfMemory();
+    }
+    return res;
+}
+
 JSAtom*
 js::NumberToAtom(JSContext* cx, double d)
 {
@@ -1692,7 +1718,7 @@ js::StringToNumber(JSContext* cx, JSString* str, double* result)
 }
 
 bool
-js::StringToNumberDontReportOOM(JSContext* cx, JSString* str, double* result)
+js::StringToNumberPure(JSContext* cx, JSString* str, double* result)
 {
     // IC Code calls this directly.
     AutoUnsafeCallWithABI unsafe;
@@ -1904,6 +1930,29 @@ js::ToInt32Slow(JSContext* cx, const HandleValue v, int32_t* out)
         }
     }
     *out = ToInt32(d);
+    return true;
+}
+
+bool
+js::ToInt32OrBigIntSlow(JSContext* cx, MutableHandleValue vp)
+{
+    MOZ_ASSERT(!vp.isInt32());
+    if (vp.isDouble()) {
+        vp.setInt32(ToInt32(vp.toDouble()));
+        return true;
+    }
+
+    if (!ToNumeric(cx, vp)) {
+        return false;
+    }
+
+#ifdef ENABLE_BIGINT
+    if (vp.isBigInt()) {
+        return true;
+    }
+#endif
+
+    vp.setInt32(ToInt32(vp.toNumber()));
     return true;
 }
 

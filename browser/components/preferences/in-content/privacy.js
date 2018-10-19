@@ -405,10 +405,7 @@ var gPrivacyPane = {
       }
     }
 
-    if (!contentBlockingUiEnabled) {
-      // If content blocking UI is enabled, this has been handled by initContentBlocking.
-      this.initSiteDataControls();
-    }
+    this.initSiteDataControls();
     setEventListener("clearSiteDataButton", "command",
       gPrivacyPane.clearSiteData);
     setEventListener("siteDataSettings", "command",
@@ -535,28 +532,6 @@ var gPrivacyPane = {
     if (contentBlockingRejectTrackersRecommended) {
       document.l10n.setAttributes(blockCookiesFromTrackers, "content-blocking-reject-trackers-block-trackers-option-recommended");
     }
-
-    // Reorder the privacy pane to put the Content Blocking section first and the
-    // Cookies & Site Data section right after it.
-    let trackingGroup = document.getElementById("trackingGroup");
-    let siteDataGroup = document.getElementById("siteDataGroup");
-    let browserPrivacyCategory = document.getElementById("browserPrivacyCategory");
-
-    // If we do this without a timeout, trackingProtectionReadPrefs will set the checked
-    // attribute on our checkbox element before the XBL binding has had a chance to have
-    // been re-applied to it.
-    setTimeout(() => {
-      browserPrivacyCategory.parentNode.insertBefore(siteDataGroup,
-                                                     browserPrivacyCategory.nextSibling);
-      browserPrivacyCategory.parentNode.insertBefore(trackingGroup,
-                                                     browserPrivacyCategory.nextSibling);
-
-      // We do this after having moved the elements in the DOM above, in order to avoid
-      // a race condition with this timeout handler reapplying the XBL bindings to the
-      // elements in this subtree and the observe() method attempting to set the disabled
-      // attribute on the site data controls.
-      this.initSiteDataControls();
-    }, 0);
   },
 
   /**
@@ -613,12 +588,16 @@ var gPrivacyPane = {
       document.getElementById(id).hidden = contentBlockingUiEnabled != visibleState[id];
     }
 
-    // Update the Do Not Track section to not mention "Tracking Protection".
     if (contentBlockingUiEnabled) {
+      // Update the Do Not Track section to not mention "Tracking Protection".
       let dntDefaultRadioItem =
         document.querySelector("#doNotTrackRadioGroup > radio[value=false]");
       document.l10n.setAttributes(
         dntDefaultRadioItem, "do-not-track-option-default-content-blocking");
+
+      // Potentially hide the global toggle.
+      document.getElementById("contentBlockingCheckboxContainer").hidden =
+        !Services.prefs.getBoolPref("browser.contentblocking.global-toggle.enabled", true);
     }
 
     // Allow turning off the "(recommended)" label using a pref

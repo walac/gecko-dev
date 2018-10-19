@@ -197,8 +197,8 @@ function WorkerDispatcher() {
    * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 WorkerDispatcher.prototype = {
-  start(url) {
-    this.worker = new Worker(url);
+  start(url, win = window) {
+    this.worker = new win.Worker(url);
     this.worker.onerror = () => {
       console.error(`Error in worker ${url}`);
     };
@@ -270,6 +270,10 @@ WorkerDispatcher.prototype = {
     };
 
     return (...args) => push(args);
+  },
+
+  invoke(method, ...args) {
+    return this.task(method)(...args);
   }
 };
 

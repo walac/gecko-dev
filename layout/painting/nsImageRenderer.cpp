@@ -170,31 +170,16 @@ nsImageRenderer::PrepareImage()
       mPrepareResult = ImgDrawResult::SUCCESS;
       break;
     case eStyleImageType_Element: {
-      nsAutoString elementId =
-        NS_LITERAL_STRING("#") + nsDependentAtomString(mImage->GetElementId());
-      nsCOMPtr<nsIURI> targetURI;
-      nsCOMPtr<nsIURI> base = mForFrame->GetContent()->GetBaseURI();
-      nsContentUtils::NewURIWithDocumentCharset(
-        getter_AddRefs(targetURI),
-        elementId,
-        mForFrame->GetContent()->GetUncomposedDoc(),
-        base);
-      nsSVGPaintingProperty* property =
-        SVGObserverUtils::GetPaintingPropertyForURI(
-          targetURI,
-          mForFrame->FirstContinuation(),
-          SVGObserverUtils::BackgroundImageProperty());
-      if (!property) {
-        mPrepareResult = ImgDrawResult::BAD_IMAGE;
-        return false;
-      }
-
+      Element* paintElement = // may be null
+        SVGObserverUtils::GetAndObserveBackgroundImage(
+          mForFrame->FirstContinuation(), mImage->GetElementId());
       // If the referenced element is an <img>, <canvas>, or <video> element,
       // prefer SurfaceFromElement as it's more reliable.
-      mImageElementSurface =
-        nsLayoutUtils::SurfaceFromElement(property->GetReferencedElement());
+      mImageElementSurface = nsLayoutUtils::SurfaceFromElement(paintElement);
+
       if (!mImageElementSurface.GetSourceSurface()) {
-        nsIFrame* paintServerFrame = property->GetReferencedFrame();
+        nsIFrame* paintServerFrame =
+          paintElement ? paintElement->GetPrimaryFrame() : nullptr;
         // If there's no referenced frame, or the referenced frame is
         // non-displayable SVG, then we have nothing valid to paint.
         if (!paintServerFrame ||
@@ -602,6 +587,7 @@ nsImageRenderer::BuildWebRenderDisplayItems(
     return ImgDrawResult::SUCCESS;
   }
 
+  ImgDrawResult drawResult = ImgDrawResult::SUCCESS;
   switch (mType) {
     case eStyleImageType_Gradient: {
       nsCSSGradientRenderer renderer = nsCSSGradientRenderer::Create(
@@ -641,12 +627,13 @@ nsImageRenderer::BuildWebRenderDisplayItems(
                                                               aSc,
                                                               containerFlags,
                                                               svgContext);
-      RefPtr<layers::ImageContainer> container =
-        mImageContainer->GetImageContainerAtSize(
-          aManager, decodeSize, svgContext, containerFlags);
+
+      RefPtr<layers::ImageContainer> container;
+      drawResult = mImageContainer->GetImageContainerAtSize(aManager, decodeSize, svgContext,
+                                                            containerFlags, getter_AddRefs(container));
       if (!container) {
         NS_WARNING("Failed to get image container");
-        return ImgDrawResult::NOT_READY;
+        break;
       }
 
       mozilla::wr::ImageRendering rendering = wr::ToImageRendering(
@@ -663,7 +650,7 @@ nsImageRenderer::BuildWebRenderDisplayItems(
                                                   Nothing());
 
       if (key.isNothing()) {
-        return ImgDrawResult::NOT_READY;
+        break;
       }
 
       nsPoint firstTilePos = nsLayoutUtils::GetBackgroundFirstTilePos(
@@ -721,8 +708,10 @@ nsImageRenderer::BuildWebRenderDisplayItems(
       break;
   }
 
-  return mImage->IsComplete() ? ImgDrawResult::SUCCESS
-                              : ImgDrawResult::SUCCESS_NOT_COMPLETE;
+  if (!mImage->IsComplete() && drawResult == ImgDrawResult::SUCCESS) {
+    return ImgDrawResult::SUCCESS_NOT_COMPLETE;
+  }
+  return drawResult;
 }
 
 already_AddRefed<gfxDrawable>

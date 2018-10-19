@@ -1,8 +1,3 @@
-if [ "x$IS_NIGHTLY" = "xyes" ]; then
-  # Some nightlies (eg: Mulet) don't want these set.
-  MOZ_AUTOMATION_UPDATE_PACKAGING=${MOZ_AUTOMATION_UPDATE_PACKAGING-1}
-fi
-
 . "$topsrcdir/build/mozconfig.common"
 
 TOOLTOOL_DIR=${TOOLTOOL_DIR:-$topsrcdir}
@@ -20,7 +15,9 @@ else
     export ENABLE_CLANG_PLUGIN=1
 
     if [ -n "$MOZ_PGO" ]; then
-        ac_add_options --enable-lto
+        if [ -z "$USE_ARTIFACT" ]; then
+            ac_add_options --enable-lto
+        fi
         export LLVM_PROFDATA="$TOOLTOOL_DIR/clang/bin/llvm-profdata"
         export AR="$topsrcdir/clang/bin/llvm-ar"
         export NM="$topsrcdir/clang/bin/llvm-nm"

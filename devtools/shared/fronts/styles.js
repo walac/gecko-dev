@@ -218,10 +218,6 @@ const StyleRuleFront = FrontClassWithSpec(styleRuleSpec, {
     return sheet ? sheet.nodeHref : "";
   },
 
-  get supportsModifySelectorUnmatched() {
-    return this._form.traits && this._form.traits.modifySelectorUnmatched;
-  },
-
   get canSetRuleText() {
     return this._form.traits && this._form.traits.canSetRuleText;
   },
@@ -270,15 +266,10 @@ const StyleRuleFront = FrontClassWithSpec(styleRuleSpec, {
 
   modifySelector: custom(async function(node, value) {
     let response;
-    if (this.supportsModifySelectorUnmatched) {
-      // If the debugee supports adding unmatched rules (post FF41)
-      if (this.canSetRuleText) {
-        response = await this.modifySelector2(node, value, true);
-      } else {
-        response = await this.modifySelector2(node, value);
-      }
+    if (this.canSetRuleText) {
+      response = await this._modifySelector(node, value, true);
     } else {
-      response = await this._modifySelector(value);
+      response = await this._modifySelector(node, value);
     }
 
     if (response.ruleProps) {
@@ -289,9 +280,9 @@ const StyleRuleFront = FrontClassWithSpec(styleRuleSpec, {
     impl: "_modifySelector"
   }),
 
-  setRuleText: custom(function(newText) {
+  setRuleText: custom(function(newText, modifications) {
     this._form.authoredText = newText;
-    return this._setRuleText(newText);
+    return this._setRuleText(newText, modifications);
   }, {
     impl: "_setRuleText"
   })
@@ -344,12 +335,7 @@ class RuleModificationList {
    *                          string or "important"
    */
   setProperty(index, name, value, priority) {
-    this.modifications.push({
-      type: "set",
-      name: name,
-      value: value,
-      priority: priority
-    });
+    this.modifications.push({ type: "set", index, name, value, priority });
   }
 
   /**
@@ -363,10 +349,7 @@ class RuleModificationList {
    * @param {String} name the name of the property to remove
    */
   removeProperty(index, name) {
-    this.modifications.push({
-      type: "remove",
-      name: name
-    });
+    this.modifications.push({ type: "remove", index, name });
   }
 
   /**

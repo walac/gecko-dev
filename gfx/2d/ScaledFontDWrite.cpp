@@ -481,7 +481,7 @@ ScaledFontDWrite::GetWRFontInstanceOptions(Maybe<wr::FontInstanceOptions>* aOutO
 {
   wr::FontInstanceOptions options;
   options.render_mode = wr::ToFontRenderMode(GetDefaultAAMode());
-  options.flags = wr::FontInstanceFlags::SUBPIXEL_POSITION;
+  options.flags = 0;
   if (mFontFace->GetSimulations() & DWRITE_FONT_SIMULATIONS_BOLD) {
     options.flags |= wr::FontInstanceFlags::SYNTHETIC_BOLD;
   }
@@ -490,6 +490,8 @@ ScaledFontDWrite::GetWRFontInstanceOptions(Maybe<wr::FontInstanceOptions>* aOutO
   }
   if (ForceGDIMode()) {
     options.flags |= wr::FontInstanceFlags::FORCE_GDI;
+  } else {
+    options.flags |= wr::FontInstanceFlags::SUBPIXEL_POSITION;
   }
   options.bg_color = wr::ToColorU(Color());
   options.synthetic_italics = wr::DegreesToSyntheticItalics(GetSyntheticObliqueAngle());
@@ -500,6 +502,9 @@ ScaledFontDWrite::GetWRFontInstanceOptions(Maybe<wr::FontInstanceOptions>* aOutO
 
   *aOutOptions = Some(options);
   *aOutPlatformOptions = Some(platformOptions);
+
+  GetVariationsFromFontFace(mFontFace, aOutVariations);
+
   return true;
 }
 

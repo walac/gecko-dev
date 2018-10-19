@@ -21,6 +21,9 @@ def test_find_slow_status():
         "longest_duration": {"CRASH": 10},
         "timeout": 10}) is None
     assert stability.find_slow_status({
+        "longest_duration": {"ERROR": 10},
+        "timeout": 10}) is None
+    assert stability.find_slow_status({
         "longest_duration": {"PASS": 1},
         "timeout": 10}) is None
     assert stability.find_slow_status({
@@ -29,3 +32,5 @@ def test_find_slow_status():
     assert stability.find_slow_status({
         "longest_duration": {"TIMEOUT": 10, "FAIL": 81},
         "timeout": 100}) == "FAIL"
+    assert stability.find_slow_status({
+        "longest_duration": {"SKIP": 0}}) is None

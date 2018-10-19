@@ -31,6 +31,7 @@
 #include "jsfriendapi.h"
 #include "js/LocaleSensitive.h"
 #include "mozilla/AbstractThread.h"
+#include "mozilla/AntiTrackingCommon.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/Atomics.h"
@@ -298,6 +299,9 @@ LoadContextOptions(const char* aPrefName, void* /* aClosure */)
                 .setWasm(GetWorkerPref<bool>(NS_LITERAL_CSTRING("wasm")))
                 .setWasmBaseline(GetWorkerPref<bool>(NS_LITERAL_CSTRING("wasm_baselinejit")))
                 .setWasmIon(GetWorkerPref<bool>(NS_LITERAL_CSTRING("wasm_ionjit")))
+#ifdef ENABLE_WASM_CRANELIFT
+                .setWasmForceCranelift(GetWorkerPref<bool>(NS_LITERAL_CSTRING("wasm_cranelift")))
+#endif
 #ifdef ENABLE_WASM_GC
                 .setWasmGc(GetWorkerPref<bool>(NS_LITERAL_CSTRING("wasm_gc")))
 #endif
@@ -311,7 +315,6 @@ LoadContextOptions(const char* aPrefName, void* /* aClosure */)
 #ifdef FUZZING
                 .setFuzzing(GetWorkerPref<bool>(NS_LITERAL_CSTRING("fuzzing.enabled")))
 #endif
-                .setStreams(GetWorkerPref<bool>(NS_LITERAL_CSTRING("streams")))
                 .setExtraWarnings(GetWorkerPref<bool>(NS_LITERAL_CSTRING("strict")));
 
   nsCOMPtr<nsIXULRuntime> xr = do_GetService("@mozilla.org/xre/runtime;1");
@@ -912,7 +915,7 @@ InitJSContextForWorker(WorkerPrivate* aWorkerPrivate, JSContext* aWorkerCx)
 }
 
 static bool
-PreserveWrapper(JSContext *cx, JSObject *obj)
+PreserveWrapper(JSContext *cx, JS::HandleObject obj)
 {
     MOZ_ASSERT(cx);
     MOZ_ASSERT(obj);
@@ -2272,7 +2275,7 @@ RuntimeService::PropagateFirstPartyStorageAccessGranted(nsPIDOMWindowInner* aWin
   MOZ_ASSERT(aWindow);
   MOZ_ASSERT(StaticPrefs::network_cookie_cookieBehavior() ==
                nsICookieService::BEHAVIOR_REJECT_TRACKER &&
-             StaticPrefs::browser_contentblocking_enabled());
+             AntiTrackingCommon::ShouldHonorContentBlockingCookieRestrictions());
 
   nsTArray<WorkerPrivate*> workers;
   GetWorkersForWindow(aWindow, workers);
@@ -2884,7 +2887,7 @@ PropagateFirstPartyStorageAccessGrantedToWorkers(nsPIDOMWindowInner* aWindow)
   AssertIsOnMainThread();
   MOZ_ASSERT(StaticPrefs::network_cookie_cookieBehavior() ==
                nsICookieService::BEHAVIOR_REJECT_TRACKER &&
-             StaticPrefs::browser_contentblocking_enabled());
+             AntiTrackingCommon::ShouldHonorContentBlockingCookieRestrictions());
 
   RuntimeService* runtime = RuntimeService::GetService();
   if (runtime) {

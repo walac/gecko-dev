@@ -1,4 +1,4 @@
-52891
+52926
 0/nm
 0th/pt
 1/n1
@@ -7048,6 +7048,7 @@ Latham/M
 Latin/MRS
 Latina
 Latino/SM
+Latinx
 Latisha/M
 Latonya/M
 Latoya/M
@@ -13627,7 +13628,7 @@ accordion/MS
 accordionist/MS
 accost/GMDS
 account/MDSBG
-accountability/M
+accountability/MS
 accountable/U
 accountancy/M
 accountant/MS
@@ -13668,6 +13669,8 @@ acerbate/DSG
 acerbic
 acerbically
 acerbity/M
+acetabular
+acetabulum
 acetaminophen/M
 acetate/MS
 acetic
@@ -13885,6 +13888,7 @@ adoption/SM
 adorableness/M
 adorably
 adoration/M
+adorbs
 adore/BZGDRS
 adorer/M
 adoring/Y
@@ -14026,6 +14030,7 @@ affluent/Y
 afford/GDSB
 affordability
 affordably
+affordance/S
 afforest/EGSD
 afforestation/M
 affray/MS
@@ -15243,6 +15248,7 @@ arras/MS
 array/EGMDS
 arrears/M
 arrest/AGMDS
+arrestee/S
 arrhythmia/M
 arrhythmic
 arrhythmical
@@ -15271,6 +15277,7 @@ artful/PY
 artfulness/M
 arthritic/MS
 arthritis/M
+arthroplasty
 arthropod/MS
 arthroscope/SM
 arthroscopic
@@ -15737,6 +15744,7 @@ avidity/M
 avionic/S
 avionics/M
 avitaminosis/M
+avo/S
 avocado/SM
 avocation/MS
 avocational
@@ -16788,6 +16796,7 @@ bindery/SM
 binding/MS
 bindweed/M
 binge/MGDS
+bingeable
 bingeing
 bingo/M
 binman
@@ -16813,6 +16822,8 @@ biographer/SM
 biographic
 biographical/Y
 biography/SM
+biohacker/MS
+biohacking
 bioinformatic/MS
 biol
 biologic
@@ -17322,6 +17333,7 @@ bonito/MS
 bonk/SZGD
 bonnet/MS
 bonny/TR
+bono
 bonobo/MS
 bonsai/M
 bonus/MS
@@ -17457,6 +17469,7 @@ bougainvillea/MS
 bough/M
 boughs
 bought
+bougie/S
 bouillabaisse/SM
 bouillon/MS
 boulder/SM
@@ -21957,7 +21970,7 @@ customary/U
 customer/M
 customhouse/SM
 customization/M
-customize/DSG
+customize/DSGB
 cut/TSMR
 cutaneous
 cutaway/MS
@@ -22317,6 +22330,7 @@ decimeter/MS
 decipherable/UI
 decision/IM
 decisions
+decisis
 decisive/IPY
 decisiveness/IM
 deck/SGMD
@@ -25115,6 +25129,8 @@ erelong
 eremite/MS
 erg/SM
 ergo
+ergodic
+ergodicity
 ergonomic/S
 ergonomically
 ergonomics/M
@@ -26038,6 +26054,7 @@ fauna/SM
 fauvism/M
 fauvist/SM
 faux
+fav/S
 fave/S
 favor/ESMDG
 favorable/U
@@ -26389,6 +26406,8 @@ finite/IY
 fink/MDGS
 finned
 finny
+fintech
+fintechs
 fir/ZGSJMDRH
 fire/MS
 firearm/SM
@@ -28261,6 +28280,7 @@ goblet/SM
 goblin/SM
 gobsmacked
 gobstopper/S
+gochujang
 god/SM
 godawful
 godchild/M
@@ -28746,6 +28766,7 @@ grungy/RT
 grunion/SM
 grunt/SGMD
 gt
+guac
 guacamole/M
 guanine/M
 guano/M
@@ -30018,6 +30039,7 @@ hopeful/PSMY
 hopefulness/M
 hopeless/YP
 hopelessness/M
+hophead/S
 hopped
 hopper/MS
 hopping
@@ -30483,6 +30505,8 @@ iamb/MS
 iambi
 iambic/SM
 iambus/MS
+iatrogenesis
+iatrogenic
 ibex/MS
 ibid
 ibidem
@@ -30567,6 +30591,7 @@ idyllically
 if/SM
 iffiness/M
 iffy/RTP
+iftar/S
 igloo/SM
 igneous
 ignite/ZGNBXDRS
@@ -34422,6 +34447,7 @@ masquerader/M
 mass/MDSGV
 massacre/MGDS
 massage/DSMG
+masse
 masseur/SM
 masseuse/MS
 massif/MS
@@ -34777,6 +34803,7 @@ merchandise/MZGDRS
 merchandiser/M
 merchandising/M
 merchant/MBSG
+merchantability
 merchantman/M
 merchantmen
 merciful/UY
@@ -35265,6 +35292,7 @@ misdo/JG
 misdoes
 misdoing/M
 misdone
+mise/S
 miser/SBMY
 miserableness/M
 miserably
@@ -35429,6 +35457,7 @@ mocker/M
 mockery/SM
 mocking/Y
 mockingbird/SM
+mocktail/S
 mod/STM
 modal/SM
 modality/S
@@ -37986,6 +38015,7 @@ overbook/DGS
 overbore
 overborne
 overbought
+overbroad
 overbuild/SG
 overbuilt
 overburden/GSD
@@ -41889,6 +41919,7 @@ rancor/M
 rancorous/Y
 rand/M
 randiness/M
+rando/S
 random/PSY
 randomization/M
 randomize/DSG
@@ -42930,6 +42961,7 @@ ribald
 ribaldry/M
 ribbed
 ribber/SM
+ribbie/S
 ribbing
 ribbon/SM
 riboflavin/M
@@ -43499,6 +43531,7 @@ saith
 sake/M
 saki/M
 salaam/SMDG
+salability
 salable/U
 salacious/PY
 salaciousness/M
@@ -47461,6 +47494,7 @@ suck/MDRZGS
 sucker/GMD
 suckle/DSJG
 suckling/M
+sucky
 sucrose/M
 suction/SMDG
 sudden/PY
@@ -52878,6 +52912,7 @@ zorch
 zoster
 zounds
 zucchini/MS
+zuke/S
 zwieback/M
 zydeco/M
 zygote/SM

@@ -237,8 +237,8 @@ var PreferenceObserver = {
     this._initialized = true;
   },
 
-  observe: async function PO_observe(aMessage, aTopic, aData) {
-    if (aTopic != "nsPref:changed") {
+  async observe(message, topic, data) {
+    if (topic != "nsPref:changed") {
       return;
     }
 
@@ -327,7 +327,7 @@ function test() {
     openScratchpad(startTest);
   });
 
-  gBrowser.loadURI("data:text/html,<p>test recent files in Scratchpad");
+  BrowserTestUtils.loadURI(gBrowser, "data:text/html,<p>test recent files in Scratchpad");
 }
 
 function finishTest() {

@@ -543,10 +543,11 @@ task_description_schema = Schema({
         Optional('product'): basestring,
         Optional('platforms'): [basestring],
         Optional('release-eta'): basestring,
-        Optional('channel-names'): optionally_keyed_by('project', [basestring]),
+        Optional('channel-names'): optionally_keyed_by('release-type', [basestring]),
         Optional('require-mirrors'): bool,
-        Optional('publish-rules'): optionally_keyed_by('project', [int]),
-        Optional('rules-to-update'): optionally_keyed_by('project', [basestring]),
+        Optional('publish-rules'): optionally_keyed_by('release-type', 'release-level', [int]),
+        Optional('rules-to-update'): optionally_keyed_by(
+            'release-type', 'release-level', [basestring]),
         Optional('archive-domain'): optionally_keyed_by('release-level', basestring),
         Optional('download-domain'): optionally_keyed_by('release-level', basestring),
         Optional('blob-suffix'): basestring,
@@ -594,7 +595,7 @@ task_description_schema = Schema({
         }],
 
         # "Invalid" is a noop for try and other non-supported branches
-        Required('google-play-track'): Any('production', 'beta', 'alpha', 'rollout', 'invalid'),
+        Required('google-play-track'): Any('production', 'beta', 'alpha', 'rollout', 'internal'),
         Required('commit'): bool,
         Optional('rollout-percentage'): Any(int, None),
     }, {
@@ -615,6 +616,12 @@ task_description_schema = Schema({
     }, {
         Required('implementation'): 'shipit-shipped',
         Required('release-name'): basestring,
+    }, {
+        Required('implementation'): 'shipit-started',
+        Required('release-name'): basestring,
+        Required('product'): basestring,
+        Required('branch'): basestring,
+        Required('locales'): basestring,
     }, {
         Required('implementation'): 'treescript',
         Required('tags'): [Any('buildN', 'release', None)],
@@ -690,10 +697,8 @@ SUPERSEDER_URL = 'https://coalesce.mozilla-releng.net/v1/list/{age}/{size}/{key}
 DEFAULT_BRANCH_PRIORITY = 'low'
 BRANCH_PRIORITIES = {
     'mozilla-release': 'highest',
-    'comm-esr45': 'highest',
-    'comm-esr52': 'highest',
-    'mozilla-esr45': 'very-high',
-    'mozilla-esr52': 'very-high',
+    'comm-esr60': 'highest',
+    'mozilla-esr60': 'very-high',
     'mozilla-beta': 'high',
     'comm-beta': 'high',
     'mozilla-central': 'medium',
@@ -1159,7 +1164,7 @@ def build_balrog_payload(config, task, task_def):
                 resolve_keyed_by(
                     worker, prop, task['description'],
                     **{
-                        'project': config.params['project'],
+                        'release-type': config.params['release_type'],
                         'release-level': config.params.release_level(),
                     }
                 )
@@ -1249,6 +1254,23 @@ def build_ship_it_shipped_payload(config, task, task_def):
 
     task_def['payload'] = {
         'release_name': worker['release-name']
+    }
+
+
+@payload_builder('shipit-started')
+def build_ship_it_started_payload(config, task, task_def):
+    worker = task['worker']
+    release_config = get_release_config(config)
+
+    task_def['payload'] = {
+        'release_name': worker['release-name'],
+        'product': worker['product'],
+        'version': release_config['version'],
+        'build_number': release_config['build_number'],
+        'branch': worker['branch'],
+        'revision': get_branch_rev(config),
+        'partials': release_config.get('partial_versions', ""),
+        'l10n_changesets': worker['locales'],
     }
 
 

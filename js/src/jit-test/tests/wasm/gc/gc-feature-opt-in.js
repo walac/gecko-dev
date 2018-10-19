@@ -1,6 +1,4 @@
-if (!wasmGcEnabled()) {
-    quit(0);
-}
+// |jit-test| skip-if: !wasmGcEnabled()
 
 // Encoding.  If the section is present it must be first.
 
@@ -116,5 +114,35 @@ assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
 assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
     `(module
       (func ref.is_null))`)),
+                   WebAssembly.CompileError,
+                   /unrecognized opcode/);
+
+assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
+    `(module
+      (func ref.eq))`)),
+                   WebAssembly.CompileError,
+                   /unrecognized opcode/);
+
+assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
+    `(module
+      (func (struct.new 0)))`)),
+                   WebAssembly.CompileError,
+                   /unrecognized opcode/);
+
+assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
+    `(module
+      (func (struct.get 0 0)))`)),
+                   WebAssembly.CompileError,
+                   /unrecognized opcode/);
+
+assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
+    `(module
+      (func (struct.set 0 0)))`)),
+                   WebAssembly.CompileError,
+                   /unrecognized opcode/);
+
+assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
+    `(module
+      (func (struct.narrow anyref anyref)))`)),
                    WebAssembly.CompileError,
                    /unrecognized opcode/);

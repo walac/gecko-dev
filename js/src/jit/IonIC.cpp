@@ -62,7 +62,7 @@ IonIC::scratchRegisterForEntryJump()
       case CacheKind::BinaryArith:
         return asBinaryArithIC()->output().scratchReg();
       case CacheKind::Compare:
-        return asCompareIC()->output().scratchReg();
+        return asCompareIC()->output();
       case CacheKind::Call:
       case CacheKind::TypeOf:
       case CacheKind::ToBool:
@@ -480,7 +480,7 @@ IonHasOwnIC::update(JSContext* cx, HandleScript outerScript, IonHasOwnIC* ic,
     if (ic->state().canAttachStub()) {
         bool attached = false;
         RootedScript script(cx, ic->script());
-        HasPropIRGenerator gen(cx, script, pc, CacheKind::HasOwn, ic->state().mode(), idVal, val);
+        HasPropIRGenerator gen(cx, script, pc, ic->state().mode(), CacheKind::HasOwn, idVal, val);
         if (gen.tryAttachStub()) {
             ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript, &attached);
         }
@@ -514,7 +514,7 @@ IonInIC::update(JSContext* cx, HandleScript outerScript, IonInIC* ic,
         RootedScript script(cx, ic->script());
         RootedValue objV(cx, ObjectValue(*obj));
         jsbytecode* pc = ic->pc();
-        HasPropIRGenerator gen(cx, script, pc, CacheKind::In, ic->state().mode(), key, objV);
+        HasPropIRGenerator gen(cx, script, pc, ic->state().mode(), CacheKind::In, key, objV);
         if (gen.tryAttachStub()) {
             ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript, &attached);
         }
@@ -567,11 +567,10 @@ IonUnaryArithIC::update(JSContext* cx, HandleScript outerScript, IonUnaryArithIC
 
     switch (op) {
       case JSOP_BITNOT: {
-        int32_t result;
-        if (!BitNot(cx, val, &result)) {
+        RootedValue valCopy(cx, val);
+        if (!BitNot(cx, &valCopy, res)) {
             return false;
         }
-        res.setInt32(result);
         break;
       }
       case JSOP_NEG: {
@@ -649,27 +648,21 @@ IonBinaryArithIC::update(JSContext* cx, HandleScript outerScript, IonBinaryArith
         }
         break;
       case JSOP_BITOR: {
-        int32_t result;
-        if (!BitOr(cx, lhs, rhs, &result)) {
+        if (!BitOr(cx, &lhsCopy, &rhsCopy, ret)) {
             return false;
         }
-        ret.setInt32(result);
         break;
       }
       case JSOP_BITXOR: {
-        int32_t result;
-        if (!BitXor(cx, lhs, rhs, &result)) {
+        if (!BitXor(cx, &lhsCopy, &rhsCopy, ret)) {
             return false;
         }
-        ret.setInt32(result);
         break;
       }
       case JSOP_BITAND: {
-        int32_t result;
-        if (!BitAnd(cx, lhs, rhs, &result)) {
+        if (!BitAnd(cx, &lhsCopy, &rhsCopy, ret)) {
             return false;
         }
-        ret.setInt32(result);
         break;
       }
      default:
@@ -696,8 +689,12 @@ IonBinaryArithIC::update(JSContext* cx, HandleScript outerScript, IonBinaryArith
 }
 
 /* static */ bool
-IonCompareIC::update(JSContext* cx, HandleScript outerScript, IonCompareIC* ic,
-                                    HandleValue lhs, HandleValue rhs, MutableHandleValue res)
+IonCompareIC::update(JSContext* cx,
+                     HandleScript outerScript,
+                     IonCompareIC* ic,
+                     HandleValue lhs,
+                     HandleValue rhs,
+                     bool* res)
 {
     IonScript* ionScript = outerScript->ionScript();
     RootedScript script(cx, ic->script());
@@ -715,45 +712,44 @@ IonCompareIC::update(JSContext* cx, HandleScript outerScript, IonCompareIC* ic,
     RootedValue rhsCopy(cx, rhs);
 
     // Perform the compare operation.
-    bool out;
     switch (op) {
       case JSOP_LT:
-        if (!LessThan(cx, &lhsCopy, &rhsCopy, &out)) {
+        if (!LessThan(cx, &lhsCopy, &rhsCopy, res)) {
             return false;
         }
         break;
       case JSOP_LE:
-        if (!LessThanOrEqual(cx, &lhsCopy, &rhsCopy, &out)) {
+        if (!LessThanOrEqual(cx, &lhsCopy, &rhsCopy, res)) {
             return false;
         }
         break;
       case JSOP_GT:
-        if (!GreaterThan(cx, &lhsCopy, &rhsCopy, &out)) {
+        if (!GreaterThan(cx, &lhsCopy, &rhsCopy, res)) {
             return false;
         }
         break;
       case JSOP_GE:
-        if (!GreaterThanOrEqual(cx, &lhsCopy, &rhsCopy, &out)) {
+        if (!GreaterThanOrEqual(cx, &lhsCopy, &rhsCopy, res)) {
             return false;
         }
         break;
       case JSOP_EQ:
-        if (!LooselyEqual<true>(cx, &lhsCopy, &rhsCopy, &out)) {
+        if (!LooselyEqual<true>(cx, &lhsCopy, &rhsCopy, res)) {
             return false;
         }
         break;
       case JSOP_NE:
-        if (!LooselyEqual<false>(cx, &lhsCopy, &rhsCopy, &out)) {
+        if (!LooselyEqual<false>(cx, &lhsCopy, &rhsCopy, res)) {
             return false;
         }
         break;
       case JSOP_STRICTEQ:
-        if (!StrictlyEqual<true>(cx, &lhsCopy, &rhsCopy, &out)) {
+        if (!StrictlyEqual<true>(cx, &lhsCopy, &rhsCopy, res)) {
             return false;
         }
         break;
       case JSOP_STRICTNE:
-        if (!StrictlyEqual<false>(cx, &lhsCopy, &rhsCopy, &out)) {
+        if (!StrictlyEqual<false>(cx, &lhsCopy, &rhsCopy, res)) {
             return false;
         }
         break;
@@ -761,8 +757,6 @@ IonCompareIC::update(JSContext* cx, HandleScript outerScript, IonCompareIC* ic,
         MOZ_ASSERT_UNREACHABLE("Unhandled ion compare op");
         return false;
     }
-
-    res.setBoolean(out);
 
     if (ic->state().maybeTransition()) {
         ic->discardStubs(cx->zone());

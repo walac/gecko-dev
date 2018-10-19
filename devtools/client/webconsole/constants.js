@@ -38,6 +38,7 @@ const actionTypes = {
   REVERSE_SEARCH_INPUT_CHANGE: "REVERSE_SEARCH_INPUT_CHANGE",
   REVERSE_SEARCH_NEXT: "REVERSE_SEARCH_NEXT",
   REVERSE_SEARCH_BACK: "REVERSE_SEARCH_BACK",
+  PAUSED_EXCECUTION_POINT: "PAUSED_EXCECUTION_POINT"
 };
 
 const prefs = {
@@ -133,6 +134,7 @@ const chromeRDPEnums = {
     // Undocumented in Chrome RDP, but is used for messages that should not
     // output anything (e.g. `console.time()` calls).
     NULL_MESSAGE: "nullMessage",
+    NAVIGATION_MARKER: "navigationMarker"
   },
   MESSAGE_LEVEL: {
     LOG: "log",
