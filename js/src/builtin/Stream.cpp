@@ -160,14 +160,14 @@ enum BYOBRequestSlots {
 };
 
 template<class T>
-MOZ_ALWAYS_INLINE bool
+bool
 Is(const HandleValue v)
 {
     return v.isObject() && v.toObject().is<T>();
 }
 
 template<class T>
-MOZ_ALWAYS_INLINE bool
+bool
 IsMaybeWrapped(const HandleValue v)
 {
     if (!v.isObject()) {
@@ -305,7 +305,7 @@ JSObject::is<ReadableStreamReader>() const
  * unwrap is the only possible source of exceptions.
  */
 template<class T>
-static MOZ_ALWAYS_INLINE T*
+static T*
 ToUnwrapped(JSContext* cx, JSObject* obj)
 {
     if (IsWrapper(obj)) {
@@ -323,7 +323,7 @@ ToUnwrapped(JSContext* cx, JSObject* obj)
  * Checks that |obj| is an unwrapped instance of T or throws an error.
  */
 template<class T>
-static MOZ_ALWAYS_INLINE T*
+static T*
 ToUnwrapped(JSContext* cx, JSObject* obj, const char* description)
 {
     if (IsWrapper(obj)) {
@@ -351,7 +351,7 @@ ToUnwrapped(JSContext* cx, JSObject* obj, const char* description)
  * source of exceptions, it may omit the error messages.
  */
 template<class T>
-static MOZ_ALWAYS_INLINE T*
+static T*
 ToUnwrapped(JSContext* cx, JSObject* obj, const char* className, const char* methodName)
 {
     if (IsWrapper(obj)) {
@@ -382,7 +382,7 @@ ToUnwrapped(JSContext* cx, JSObject* obj, const char* className, const char* met
  * source of exceptions, it may omit the error messages.
  */
 template<class T>
-static MOZ_ALWAYS_INLINE T*
+static T*
 ToUnwrapped(JSContext* cx,
             HandleValue val,
             const char* className = "",
@@ -409,7 +409,7 @@ ToUnwrapped(JSContext* cx,
  * use easier for call sites that don't otherwise need a JSContext and can
  * provide useful defaults in case the stream is a dead wrapper.
  */
-MOZ_ALWAYS_INLINE static MOZ_MUST_USE ReadableStream*
+static MOZ_MUST_USE ReadableStream*
 StreamFromReader(JSContext *maybeCx, const ReadableStreamReader* reader)
 {
     MOZ_ASSERT(ReaderHasStream(reader));
@@ -444,7 +444,7 @@ StreamFromReader(JSContext *maybeCx, const ReadableStreamReader* reader)
  * easier for call sites that don't otherwise need a JSContext and can provide
  * useful defaults in case the reader is a dead object wrapper.
  */
-MOZ_ALWAYS_INLINE static MOZ_MUST_USE ReadableStreamReader*
+static MOZ_MUST_USE ReadableStreamReader*
 ReaderFromStream(JSContext* maybeCx, const ReadableStream* stream)
 {
     JSObject* readerObj = &stream->getFixedSlot(StreamSlot_Reader).toObject();
@@ -521,16 +521,6 @@ ReportArgTypeError(JSContext* cx, const char* funName, const char* expectedType,
 
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_NOT_EXPECTED_TYPE, funName,
                              expectedType, bytes.get());
-}
-
-static MOZ_MUST_USE bool
-RejectWithPendingError(JSContext* cx, Handle<PromiseObject*> promise) {
-    // Not much we can do about uncatchable exceptions, just bail.
-    RootedValue exn(cx);
-    if (!GetAndClearException(cx, &exn)) {
-        return false;
-    }
-    return PromiseObject::reject(cx, promise, exn);
 }
 
 static MOZ_MUST_USE bool
@@ -1461,7 +1451,7 @@ ReadableStreamTee_Cancel(JSContext* cx, Handle<TeeState*> teeState,
         {
             AutoRealm ar(cx, promise);
             if (!cancelResult) {
-                if (!RejectWithPendingError(cx, promise)) {
+                if (!RejectPromiseWithPendingError(cx, promise)) {
                     return nullptr;
                 }
             } else {

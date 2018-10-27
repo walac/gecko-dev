@@ -207,6 +207,7 @@ NS_IMETHODIMP
 nsXPCComponents_Interfaces::NewEnumerate(nsIXPConnectWrappedNative* wrapper,
                                          JSContext* cx, JSObject* obj,
                                          JS::AutoIdVector& properties,
+                                         bool enumerableOnly,
                                          bool* _retval)
 {
 
@@ -394,6 +395,7 @@ NS_IMETHODIMP
 nsXPCComponents_InterfacesByID::NewEnumerate(nsIXPConnectWrappedNative* wrapper,
                                              JSContext* cx, JSObject* obj,
                                              JS::AutoIdVector& properties,
+                                             bool enumerableOnly,
                                              bool* _retval)
 {
 
@@ -589,6 +591,7 @@ NS_IMETHODIMP
 nsXPCComponents_Classes::NewEnumerate(nsIXPConnectWrappedNative* wrapper,
                                       JSContext* cx, JSObject* obj,
                                       JS::AutoIdVector& properties,
+                                      bool enumerableOnly,
                                       bool* _retval)
 {
     nsCOMPtr<nsIComponentRegistrar> compMgr;
@@ -784,6 +787,7 @@ NS_IMETHODIMP
 nsXPCComponents_ClassesByID::NewEnumerate(nsIXPConnectWrappedNative* wrapper,
                                           JSContext* cx, JSObject* obj,
                                           JS::AutoIdVector& properties,
+                                          bool enumerableOnly,
                                           bool* _retval)
 {
 
@@ -993,6 +997,7 @@ NS_IMETHODIMP
 nsXPCComponents_Results::NewEnumerate(nsIXPConnectWrappedNative* wrapper,
                                       JSContext* cx, JSObject* obj,
                                       JS::AutoIdVector& properties,
+                                      bool enumerableOnly,
                                       bool* _retval)
 {
     const char* name;
@@ -3268,6 +3273,34 @@ nsXPCComponents_Utils::CreatePersistentProperties(nsIPersistentProperties** aPer
     nsCOMPtr<nsIPersistentProperties> props = new nsPersistentProperties();
     props.forget(aPersistentProperties);
     return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXPCComponents_Utils::GetLoadedModules(nsTArray<nsCString>& aLoadedModules)
+{
+    mozJSComponentLoader::Get()->GetLoadedModules(aLoadedModules);
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXPCComponents_Utils::GetLoadedComponents(nsTArray<nsCString>& aLoadedComponents)
+{
+    mozJSComponentLoader::Get()->GetLoadedComponents(aLoadedComponents);
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXPCComponents_Utils::GetModuleImportStack(const nsACString& aLocation,
+                                            nsACString& aRetval)
+{
+    return mozJSComponentLoader::Get()->GetModuleImportStack(aLocation, aRetval);
+}
+
+NS_IMETHODIMP
+nsXPCComponents_Utils::GetComponentLoadStack(const nsACString& aLocation,
+                                             nsACString& aRetval)
+{
+    return mozJSComponentLoader::Get()->GetComponentLoadStack(aLocation, aRetval);
 }
 
 /***************************************************************************/

@@ -26,6 +26,7 @@ const SUPPORTED_HEADERS = [
   "Allow",
   "Authorization",
   "Cache-Control",
+  "Clear-Site-Data",
   "Connection",
   "Content-Disposition",
   "Content-Encoding",
@@ -41,8 +42,11 @@ const SUPPORTED_HEADERS = [
   "DNT",
   "Date",
   "ETag",
+  "Early-Data",
   "Expect",
+  "Expect-CT",
   "Expires",
+  "Feature-Policy",
   "Forwarded",
   "From",
   "Host",
@@ -66,10 +70,13 @@ const SUPPORTED_HEADERS = [
   "Referrer-Policy",
   "Retry-After",
   "Server",
+  "Server-Timing",
   "Set-Cookie",
   "Set-Cookie2",
+  "SourceMap",
   "Strict-Transport-Security",
   "TE",
+  "Timing-Allow-Origin",
   "Tk",
   "Trailer",
   "Transfer-Encoding",
@@ -85,7 +92,7 @@ const SUPPORTED_HEADERS = [
   "X-Forwarded-Host",
   "X-Forwarded-Proto",
   "X-Frame-Options",
-  "X-XSS-Protection"
+  "X-XSS-Protection",
 ];
 
 /**
@@ -127,6 +134,8 @@ const SUPPORTED_HTTP_CODES = [
     "416",
     "417",
     "418",
+    "422",
+    "425",
     "426",
     "428",
     "429",
@@ -138,7 +147,7 @@ const SUPPORTED_HTTP_CODES = [
     "503",
     "504",
     "505",
-    "511"
+    "511",
 ];
 
 const MDN_URL = "https://developer.mozilla.org/docs/";

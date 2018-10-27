@@ -12,7 +12,6 @@ const { Cu } = require("chrome");
 loader.lazyGetter(this, "OptionsPanel", () => require("devtools/client/framework/toolbox-options").OptionsPanel);
 loader.lazyGetter(this, "InspectorPanel", () => require("devtools/client/inspector/panel").InspectorPanel);
 loader.lazyGetter(this, "WebConsolePanel", () => require("devtools/client/webconsole/panel").WebConsolePanel);
-loader.lazyGetter(this, "DebuggerPanel", () => require("devtools/client/debugger/panel").DebuggerPanel);
 loader.lazyGetter(this, "NewDebuggerPanel", () => require("devtools/client/debugger/new/panel").DebuggerPanel);
 loader.lazyGetter(this, "StyleEditorPanel", () => require("devtools/client/styleeditor/panel").StyleEditorPanel);
 loader.lazyGetter(this, "CanvasDebuggerPanel", () => require("devtools/client/canvasdebugger/panel").CanvasDebuggerPanel);
@@ -62,7 +61,7 @@ Tools.options = {
 
   build: function(iframeWindow, toolbox) {
     return new OptionsPanel(iframeWindow, toolbox);
-  }
+  },
 };
 
 Tools.inspector = {
@@ -95,7 +94,7 @@ Tools.inspector = {
 
   build: function(iframeWindow, toolbox) {
     return new InspectorPanel(iframeWindow, toolbox);
-  }
+  },
 };
 Tools.webConsole = {
   id: "webconsole",
@@ -128,7 +127,7 @@ Tools.webConsole = {
   },
   build: function(iframeWindow, toolbox) {
     return new WebConsolePanel(iframeWindow, toolbox);
-  }
+  },
 };
 
 Tools.jsdebugger = {
@@ -136,7 +135,7 @@ Tools.jsdebugger = {
   accesskey: l10n("debuggerMenu.accesskey"),
   ordinal: 3,
   icon: "chrome://devtools/skin/images/tool-debugger.svg",
-  url: "chrome://devtools/content/debugger/index.xul",
+  url: "chrome://devtools/content/debugger/new/index.html",
   label: l10n("ToolboxDebugger.label"),
   panelLabel: l10n("ToolboxDebugger.panelLabel"),
   get tooltip() {
@@ -148,31 +147,10 @@ Tools.jsdebugger = {
   isTargetSupported: function() {
     return true;
   },
-
   build: function(iframeWindow, toolbox) {
-    return new DebuggerPanel(iframeWindow, toolbox);
-  }
+    return new NewDebuggerPanel(iframeWindow, toolbox);
+  },
 };
-
-function switchDebugger() {
-  if (Services.prefs.getBoolPref("devtools.debugger.new-debugger-frontend")) {
-    Tools.jsdebugger.url = "chrome://devtools/content/debugger/new/index.html";
-    Tools.jsdebugger.build = function(iframeWindow, toolbox) {
-      return new NewDebuggerPanel(iframeWindow, toolbox);
-    };
-  } else {
-    Tools.jsdebugger.url = "chrome://devtools/content/debugger/index.xul";
-    Tools.jsdebugger.build = function(iframeWindow, toolbox) {
-      return new DebuggerPanel(iframeWindow, toolbox);
-    };
-  }
-}
-switchDebugger();
-
-Services.prefs.addObserver(
-  "devtools.debugger.new-debugger-frontend",
-  { observe: switchDebugger }
-);
 
 Tools.styleEditor = {
   id: "styleeditor",
@@ -194,7 +172,7 @@ Tools.styleEditor = {
 
   build: function(iframeWindow, toolbox) {
     return new StyleEditorPanel(iframeWindow, toolbox);
-  }
+  },
 };
 
 Tools.shaderEditor = {
@@ -215,11 +193,11 @@ Tools.shaderEditor = {
     const { BrowserLoader } = Cu.import("resource://devtools/client/shared/browser-loader.js", {});
     const browserRequire = BrowserLoader({
       baseURI: "resource://devtools/client/shadereditor/",
-      window: iframeWindow
+      window: iframeWindow,
     }).require;
     const { ShaderEditorPanel } = browserRequire("devtools/client/shadereditor/panel");
     return new ShaderEditorPanel(toolbox);
-  }
+  },
 };
 
 Tools.canvasDebugger = {
@@ -240,7 +218,7 @@ Tools.canvasDebugger = {
 
   build: function(iframeWindow, toolbox) {
     return new CanvasDebuggerPanel(iframeWindow, toolbox);
-  }
+  },
 };
 
 Tools.performance = {
@@ -306,7 +284,7 @@ Tools.memory = {
 
   build: function(frame, target) {
     return new MemoryPanel(frame, target);
-  }
+  },
 };
 
 Tools.netMonitor = {
@@ -331,7 +309,7 @@ Tools.netMonitor = {
 
   build: function(iframeWindow, toolbox) {
     return new NetMonitorPanel(iframeWindow, toolbox);
-  }
+  },
 };
 
 Tools.storage = {
@@ -357,7 +335,7 @@ Tools.storage = {
 
   build: function(iframeWindow, toolbox) {
     return new StoragePanel(iframeWindow, toolbox);
-  }
+  },
 };
 
 Tools.webAudioEditor = {
@@ -376,7 +354,7 @@ Tools.webAudioEditor = {
 
   build: function(iframeWindow, toolbox) {
     return new WebAudioEditorPanel(iframeWindow, toolbox);
-  }
+  },
 };
 
 Tools.scratchpad = {
@@ -394,7 +372,7 @@ Tools.scratchpad = {
   },
   build: function(iframeWindow, toolbox) {
     return new ScratchpadPanel(iframeWindow, toolbox);
-  }
+  },
 };
 
 Tools.dom = {
@@ -419,7 +397,7 @@ Tools.dom = {
 
   build: function(iframeWindow, toolbox) {
     return new DomPanel(iframeWindow, toolbox);
-  }
+  },
 };
 
 Tools.accessibility = {
@@ -448,7 +426,7 @@ Tools.accessibility = {
 
   buildToolStartup(toolbox) {
     return new AccessibilityStartup(toolbox);
-  }
+  },
 };
 
 Tools.application = {
@@ -469,7 +447,7 @@ Tools.application = {
 
   build: function(iframeWindow, toolbox) {
     return new ApplicationPanel(iframeWindow, toolbox);
-  }
+  },
 };
 
 var defaultTools = [
@@ -526,14 +504,14 @@ exports.ToolboxButtons = [
     },
     isChecked(toolbox) {
       return toolbox.isPaintFlashing;
-    }
+    },
   },
   { id: "command-button-scratchpad",
     description: l10n("toolbox.buttons.scratchpad"),
     isTargetSupported: target => target.isLocalTab,
     onClick(event, toolbox) {
       ScratchpadManager.openScratchpad();
-    }
+    },
   },
   {
     id: "command-button-replay",
@@ -543,7 +521,7 @@ exports.ToolboxButtons = [
       && !target.canRewind
       && target.isLocalTab,
     onClick: () => reloadAndRecordTab(),
-    isChecked: () => false
+    isChecked: () => false,
   },
   {
     id: "command-button-stop-replay",
@@ -553,7 +531,7 @@ exports.ToolboxButtons = [
       && target.canRewind
       && target.isLocalTab,
     onClick: () => reloadAndStopRecordingTab(),
-    isChecked: () => true
+    isChecked: () => true,
   },
   { id: "command-button-responsive",
     description: l10n("toolbox.buttons.responsive",
@@ -577,7 +555,7 @@ exports.ToolboxButtons = [
     teardown(toolbox, onChange) {
       ResponsiveUIManager.off("on", onChange);
       ResponsiveUIManager.off("off", onChange);
-    }
+    },
   },
   { id: "command-button-screenshot",
     description: l10n("toolbox.buttons.screenshot"),
@@ -592,7 +570,7 @@ exports.ToolboxButtons = [
       }
       const screenshotFront = toolbox.target.getFront("screenshot");
       await screenshotFront.captureAndSave(toolbox.win, args);
-    }
+    },
   },
   createHighlightButton("RulersHighlighter", "rulers"),
   createHighlightButton("MeasuringToolHighlighter", "measure"),
@@ -617,7 +595,7 @@ function createHighlightButton(highlighterName, id) {
     isChecked(toolbox) {
       const highlighter = toolbox.highlighterUtils.getKnownHighlighter(highlighterName);
       return highlighter && highlighter.isShown();
-    }
+    },
   };
 }
 

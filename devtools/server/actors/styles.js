@@ -9,6 +9,7 @@ const protocol = require("devtools/shared/protocol");
 const {getCSSLexer} = require("devtools/shared/css/lexer");
 const {LongStringActor} = require("devtools/server/actors/string");
 const InspectorUtils = require("InspectorUtils");
+const TrackChangeEmitter = require("devtools/server/actors/utils/track-change-emitter");
 
 // This will also add the "stylesheet" actor type for protocol.js to recognize
 
@@ -26,7 +27,10 @@ loader.lazyRequireGetter(this, "UPDATE_PRESERVING_RULES",
   "devtools/server/actors/stylesheets", true);
 loader.lazyRequireGetter(this, "UPDATE_GENERAL",
   "devtools/server/actors/stylesheets", true);
-loader.lazyRequireGetter(this, "findCssSelector", "devtools/shared/inspector/css-logic", true);
+loader.lazyRequireGetter(this, "findCssSelector",
+  "devtools/shared/inspector/css-logic", true);
+loader.lazyRequireGetter(this, "CSSRuleTypeName",
+  "devtools/shared/inspector/css-logic", true);
 
 loader.lazyGetter(this, "PSEUDO_ELEMENTS", () => {
   return InspectorUtils.getCSSPseudoElementNames();
@@ -138,7 +142,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
         // expected support of font-stretch at CSS Fonts Level 4.
         fontWeightLevel4: CSS.supports("font-weight: 1") &&
           CSS.supports("font-stretch: 100%"),
-      }
+      },
     };
   },
 
@@ -235,7 +239,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
       }
       ret[name] = {
         value: computed.getPropertyValue(name),
-        priority: computed.getPropertyPriority(name) || undefined
+        priority: computed.getPropertyPriority(name) || undefined,
       };
     });
 
@@ -307,7 +311,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
         URI: font.URI,
         format: font.format,
         localName: font.localName,
-        metadata: font.metadata
+        metadata: font.metadata,
       };
 
       // If this font comes from a @font-face rule
@@ -338,13 +342,13 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
           previewText: options.previewText,
           previewFontSize: options.previewFontSize,
           fontStyle: weight + " " + style,
-          fillStyle: options.previewFillStyle
+          fillStyle: options.previewFillStyle,
         };
         const { dataURL, size } = getFontPreviewData(font.CSSFamilyName,
                                                    contentDocument, opts);
         fontFace.preview = {
           data: LongStringActor(this.conn, dataURL),
-          size: size
+          size: size,
         };
       }
 
@@ -434,7 +438,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
         selector: selectorInfo.selector.text,
         name: selectorInfo.property,
         value: selectorInfo.value,
-        status: selectorInfo.status
+        status: selectorInfo.status,
       });
     }
 
@@ -443,7 +447,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
     return {
       matched: matched,
       rules: [...rules],
-      sheets: [...sheets]
+      sheets: [...sheets],
     };
   },
 
@@ -547,7 +551,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
       rule: elementStyle,
       pseudoElement: null,
       isSystem: false,
-      inherited: false
+      inherited: false,
     };
 
     // First any inline styles
@@ -632,7 +636,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
         rule: ruleActor,
         inherited: inherited,
         isSystem: isSystem,
-        pseudoElement: pseudo
+        pseudoElement: pseudo,
       });
     }
     return rules;
@@ -730,7 +734,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
             for (const rule of keyframesRule.cssRules) {
               entries.push({
                 rule: this._styleRef(rule),
-                keyframes: this._styleRef(keyframesRule)
+                keyframes: this._styleRef(keyframesRule),
               });
             }
           }
@@ -746,7 +750,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
     return {
       entries: entries,
       rules: [...rules],
-      sheets: [...sheets]
+      sheets: [...sheets],
     };
   },
 
@@ -830,7 +834,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
       "box-sizing",
       "display",
       "float",
-      "line-height"
+      "line-height",
     ]) {
       layout[prop] = style.getPropertyValue(prop);
     }
@@ -958,7 +962,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
     }
 
     return this.getNewAppliedProps(node, sheet.cssRules.item(index));
-  }
+  },
 });
 exports.PageStyleActor = PageStyleActor;
 
@@ -985,13 +989,13 @@ var StyleRuleActor = protocol.ActorClassWithSpec(styleRuleSpec, {
     if (CSSRule.isInstance(item)) {
       this.type = item.type;
       this.rawRule = item;
+      this._computeRuleIndex();
       if ((this.type === CSSRule.STYLE_RULE ||
            this.type === CSSRule.KEYFRAME_RULE) &&
           this.rawRule.parentStyleSheet) {
         this.line = InspectorUtils.getRelativeRuleLine(this.rawRule);
         this.column = InspectorUtils.getRuleColumn(this.rawRule);
         this._parentSheet = this.rawRule.parentStyleSheet;
-        this._computeRuleIndex();
         this.sheetActor = this.pageStyle._sheetRef(this._parentSheet);
         this.sheetActor.on("style-applied", this._onStyleApplied);
       }
@@ -1003,7 +1007,7 @@ var StyleRuleActor = protocol.ActorClassWithSpec(styleRuleSpec, {
         style: item.style,
         toString: function() {
           return "[element rule " + this.style + "]";
-        }
+        },
       };
     }
   },
@@ -1048,6 +1052,25 @@ var StyleRuleActor = protocol.ActorClassWithSpec(styleRuleSpec, {
             this._parentSheet.href !== "about:PreferenceStyleSheet");
   },
 
+  /**
+   * Return an array with StyleRuleActor instances for each of this rule's ancestor rules
+   * (@media, @supports, @keyframes, etc) obtained by recursively reading rule.parentRule.
+   * If the rule has no ancestors, return an empty array.
+   *
+   * @return {Array}
+   */
+  get ancestorRules() {
+    const ancestors = [];
+    let rule = this.rawRule;
+
+    while (rule.parentRule) {
+      ancestors.push(this.pageStyle._styleRef(rule.parentRule));
+      rule = rule.parentRule;
+    }
+
+    return ancestors;
+  },
+
   getDocument: function(sheet) {
     if (sheet.ownerNode) {
       return sheet.ownerNode.nodeType == sheet.ownerNode.DOCUMENT_NODE ?
@@ -1076,7 +1099,7 @@ var StyleRuleActor = protocol.ActorClassWithSpec(styleRuleSpec, {
         // Whether the style rule actor implements the setRuleText
         // method.
         canSetRuleText: this.canSetRuleText,
-      }
+      },
     };
 
     if (this.rawRule.parentRule) {
@@ -1185,10 +1208,10 @@ var StyleRuleActor = protocol.ActorClassWithSpec(styleRuleSpec, {
     const result = [];
 
     while (rule) {
-      let cssRules;
+      let cssRules = [];
       if (rule.parentRule) {
         cssRules = rule.parentRule.cssRules;
-      } else {
+      } else if (rule.parentStyleSheet) {
         cssRules = rule.parentStyleSheet.cssRules;
       }
 
@@ -1466,28 +1489,69 @@ var StyleRuleActor = protocol.ActorClassWithSpec(styleRuleSpec, {
    *        Data about a modification to a rule. @see |modifyProperties()|
    */
   logChange(change) {
-    const prevValue = this._declarations[change.index]
-      ? this._declarations[change.index].value
-      : null;
-    const prevName = this._declarations[change.index]
-      ? this._declarations[change.index].name
-      : null;
+    // Destructure properties from the previous CSS declaration at this index, if any,
+    // to new variable names to indicate the previous state.
+    let {
+      value: prevValue,
+      name: prevName,
+      priority: prevPriority,
+      commentOffsets,
+    } = this._declarations[change.index] || {};
+    // A declaration is disabled if it has a `commentOffsets` array.
+    // Here we type coerce the value to a boolean with double-bang (!!)
+    const prevDisabled = !!commentOffsets;
+    // Append the "!important" string if defined in the previous priority flag.
+    prevValue = (prevValue && prevPriority) ? `${prevValue} !important` : prevValue;
 
     // Metadata about a change.
     const data = {};
-    data.type = change.type;
-    data.selector = this.rawRule.selectorText;
+    // Collect information about the rule's ancestors (@media, @supports, @keyframes).
+    // Used to show context for this change in the UI and to match the rule for undo/redo.
+    data.ancestors = this.ancestorRules.map(rule => {
+      return {
+        // Rule type as number defined by CSSRule.type (ex: 4, 7, 12)
+        // @see https://developer.mozilla.org/en-US/docs/Web/API/CSSRule
+        type: rule.rawRule.type,
+        // Rule type as human-readable string (ex: "@media", "@supports", "@keyframes")
+        typeName: CSSRuleTypeName[rule.rawRule.type],
+        // Conditions of @media and @supports rules (ex: "min-width: 1em")
+        conditionText: rule.rawRule.conditionText,
+        // Name of @keyframes rule; refrenced by the animation-name CSS property.
+        name: rule.rawRule.name,
+        // Selector of individual @keyframe rule within a @keyframes rule (ex: 0%, 100%).
+        keyText: rule.rawRule.keyText,
+        // Array with the indexes of this rule and its ancestors within the CSS rule tree.
+        ruleIndex: rule._ruleIndex,
+      };
+    });
 
-    // For inline style changes, generate a unique selector and pass the node tag.
+    // For changes in element style attributes, generate a unique selector.
     if (this.type === ELEMENT_STYLE) {
-      data.tag = this.rawNode.tagName;
-      data.href = "inline";
       // findCssSelector() fails on XUL documents. Catch and silently ignore that error.
       try {
         data.selector = findCssSelector(this.rawNode);
       } catch (err) {}
+
+      data.source = {
+        type: "element",
+        // Used to differentiate between elements which match the same generated selector
+        // but live in different documents (ex: host document and iframe).
+        href: this.rawNode.baseURI,
+        // Element style attributes don't have a rule index; use the generated selector.
+        index: data.selector,
+      };
+      data.ruleIndex = 0;
     } else {
-      data.href = this._parentSheet.href || "inline stylesheet";
+      data.selector = (this.type === CSSRule.KEYFRAME_RULE)
+        ? this.rawRule.keyText
+        : this.rawRule.selectorText;
+      data.source = {
+        type: "stylesheet",
+        href: this.sheetActor.href,
+        index: this.sheetActor.styleSheetIndex,
+      };
+      // Used to differentiate between changes to rules with identical selectors.
+      data.ruleIndex = this._ruleIndex;
     }
 
     switch (change.type) {
@@ -1496,14 +1560,26 @@ var StyleRuleActor = protocol.ActorClassWithSpec(styleRuleSpec, {
         // Otherwise, a new declaration is being created or the value of an existing
         // declaration is being updated. In that case, use the provided `change.name`.
         const name = change.newName ? change.newName : change.name;
-        // Reuse the previous value when the property is being renamed.
-        const value = change.newName ? prevValue : change.value;
+        // Append the "!important" string if defined in the incoming priority flag.
+        const newValue = change.priority ? `${change.value} !important` : change.value;
+        // Reuse the previous value string, when the property is renamed.
+        // Otherwise, use the incoming value string.
+        const value = change.newName ? prevValue : newValue;
 
         data.add = { property: name, value };
         // If there is a previous value, log its removal together with the previous
         // property name. Using the previous name handles the case for renaming a property
         // and is harmless when updating an existing value (the name stays the same).
         data.remove = prevValue ? { property: prevName, value: prevValue } : null;
+
+        // When toggling a declaration from OFF to ON, if not renaming the property,
+        // do not mark the previous declaration for removal, otherwise the add and
+        // remove operations will cancel each other out when tracked. Tracked changes
+        // have no context of "disabled", only "add" or remove, like diffs.
+        if (prevDisabled && !change.newName && prevValue === newValue) {
+          data.remove = null;
+        }
+
         break;
 
       case "remove":
@@ -1512,15 +1588,7 @@ var StyleRuleActor = protocol.ActorClassWithSpec(styleRuleSpec, {
         break;
     }
 
-    // Do not track non-changes. This can occur when typing a value in the Rule view
-    // inline editor, then committing it by pressing the Enter key.
-    if (data.add && data.remove &&
-        data.add.property === data.remove.property &&
-        data.add.value === data.remove.value) {
-      return;
-    }
-
-    this.emit("track-change", data);
+    TrackChangeEmitter.trackChange(data);
   },
 
   /**
@@ -1593,7 +1661,7 @@ var StyleRuleActor = protocol.ActorClassWithSpec(styleRuleSpec, {
 
       return { ruleProps, isMatching };
     });
-  }
+  },
 });
 
 /**
@@ -1643,7 +1711,7 @@ function getFontPreviewData(font, doc, options) {
 
   return {
     dataURL: dataURL,
-    size: textWidth + FONT_PREVIEW_OFFSET * 2
+    size: textWidth + FONT_PREVIEW_OFFSET * 2,
   };
 }
 

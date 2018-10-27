@@ -27,11 +27,14 @@ class App extends PureComponent {
       // From that point, components are responsible for forwarding the dispatch
       // property to all components who need to dispatch actions.
       dispatch: PropTypes.func.isRequired,
-      messageContexts: PropTypes.arrayOf(PropTypes.object).isRequired,
+      fluentBundles: PropTypes.arrayOf(PropTypes.object).isRequired,
+      isScanningUsb: PropTypes.bool.isRequired,
+      networkEnabled: PropTypes.bool.isRequired,
       networkLocations: PropTypes.arrayOf(PropTypes.string).isRequired,
       networkRuntimes: PropTypes.arrayOf(Types.runtime).isRequired,
       selectedPage: PropTypes.string,
       usbRuntimes: PropTypes.arrayOf(Types.runtime).isRequired,
+      wifiEnabled: PropTypes.bool.isRequired,
     };
   }
 
@@ -39,8 +42,10 @@ class App extends PureComponent {
     const {
       adbAddonStatus,
       dispatch,
+      networkEnabled,
       networkLocations,
-      selectedPage
+      selectedPage,
+      wifiEnabled,
     } = this.props;
 
     if (!selectedPage) {
@@ -53,7 +58,9 @@ class App extends PureComponent {
         return ConnectPage({
           adbAddonStatus,
           dispatch,
-          networkLocations
+          networkEnabled,
+          networkLocations,
+          wifiEnabled,
         });
       default:
         // All pages except for the CONNECT page are RUNTIME pages.
@@ -65,14 +72,15 @@ class App extends PureComponent {
     const {
       adbAddonStatus,
       dispatch,
-      messageContexts,
+      fluentBundles,
+      isScanningUsb,
       networkRuntimes,
       selectedPage,
       usbRuntimes,
     } = this.props;
 
     return LocalizationProvider(
-      { messages: messageContexts },
+      { messages: fluentBundles },
       dom.div(
         { className: "app" },
         Sidebar(
@@ -80,6 +88,7 @@ class App extends PureComponent {
             adbAddonStatus,
             className: "app__sidebar",
             dispatch,
+            isScanningUsb,
             networkRuntimes,
             selectedPage,
             usbRuntimes,
@@ -97,10 +106,13 @@ class App extends PureComponent {
 const mapStateToProps = state => {
   return {
     adbAddonStatus: state.ui.adbAddonStatus,
+    isScanningUsb: state.ui.isScanningUsb,
+    networkEnabled: state.ui.networkEnabled,
     networkLocations: state.ui.networkLocations,
     networkRuntimes: state.runtimes.networkRuntimes,
     selectedPage: state.ui.selectedPage,
     usbRuntimes: state.runtimes.usbRuntimes,
+    wifiEnabled: state.ui.wifiEnabled,
   };
 };
 

@@ -72,7 +72,7 @@ var openInspectorSidebarTab = async function(id) {
   return {
     toolbox,
     inspector,
-    testActor
+    testActor,
   };
 };
 
@@ -121,6 +121,24 @@ function openComputedView() {
 }
 
 /**
+ * Open the toolbox, with the inspector tool visible, and the changes view
+ * sidebar tab selected.
+ *
+ * @return a promise that resolves when the inspector is ready and the changes
+ * view is visible and ready
+ */
+function openChangesView() {
+  return openInspectorSidebarTab("changesview").then(data => {
+    return {
+      toolbox: data.toolbox,
+      inspector: data.inspector,
+      testActor: data.testActor,
+      view: data.inspector.changesView,
+    };
+  });
+}
+
+/**
  * Open the toolbox, with the inspector tool visible, and the layout view
  * sidebar tab selected to display the box model view with properties.
  *
@@ -148,7 +166,7 @@ function openLayoutView() {
       gridInspector: data.inspector.layoutview.gridInspector,
       flexboxInspector: data.inspector.layoutview.flexboxInspector,
       layoutView: data.inspector.layoutview,
-      testActor: data.testActor
+      testActor: data.testActor,
     };
   });
 }
@@ -174,6 +192,18 @@ function selectRuleView(inspector) {
 function selectComputedView(inspector) {
   inspector.sidebar.select("computedview");
   return inspector.getPanel("computedview").computedView;
+}
+
+/**
+ * Select the changes view sidebar tab on an already opened inspector panel.
+ *
+ * @param {InspectorPanel} inspector
+ *        The opened inspector panel
+ * @return {ChangesView} the changes view
+ */
+function selectChangesView(inspector) {
+  inspector.sidebar.select("changesview");
+  return inspector.changesView;
 }
 
 /**

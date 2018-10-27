@@ -1640,8 +1640,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleText
 
   uint8_t mTextAlign;                   // NS_STYLE_TEXT_ALIGN_*
   uint8_t mTextAlignLast;               // NS_STYLE_TEXT_ALIGN_*
-  bool mTextAlignTrue : 1;
-  bool mTextAlignLastTrue : 1;
   mozilla::StyleTextJustify mTextJustify;
   uint8_t mTextTransform;               // NS_STYLE_TEXT_TRANSFORM_*
   mozilla::StyleWhiteSpace mWhiteSpace;
@@ -1805,7 +1803,7 @@ struct StyleAnimation
   nsAtom* GetName() const { return mName; }
   dom::PlaybackDirection GetDirection() const { return mDirection; }
   dom::FillMode GetFillMode() const { return mFillMode; }
-  uint8_t GetPlayState() const { return mPlayState; }
+  StyleAnimationPlayState GetPlayState() const { return mPlayState; }
   float GetIterationCount() const { return mIterationCount; }
 
   void SetName(already_AddRefed<nsAtom> aName) { mName = aName; }
@@ -1822,7 +1820,7 @@ private:
   RefPtr<nsAtom> mName; // nsGkAtoms::_empty for 'none'
   dom::PlaybackDirection mDirection;
   dom::FillMode mFillMode;
-  uint8_t mPlayState;
+  StyleAnimationPlayState mPlayState;
   float mIterationCount; // mozilla::PositiveInfinity<float>() means infinite
 };
 
@@ -2194,7 +2192,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay
   {
     return mAnimations[aIndex % mAnimationFillModeCount].GetFillMode();
   }
-  uint8_t GetAnimationPlayState(uint32_t aIndex) const
+  mozilla::StyleAnimationPlayState GetAnimationPlayState(uint32_t aIndex) const
   {
     return mAnimations[aIndex % mAnimationPlayStateCount].GetPlayState();
   }

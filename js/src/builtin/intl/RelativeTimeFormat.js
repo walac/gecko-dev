@@ -186,6 +186,12 @@ function Intl_RelativeTimeFormat_format(value, unit) {
     // Step 4.
     let u = ToString(unit);
 
+    // PartitionRelativeTimePattern, step 4.
+    if (!Number_isFinite(t)) {
+        ThrowRangeError(JSMSG_DATE_NOT_FINITE, "RelativeTimeFormat");
+    }
+
+    // PartitionRelativeTimePattern, step 5.
     switch (u) {
       case "second":
       case "seconds":
@@ -213,7 +219,7 @@ function Intl_RelativeTimeFormat_format(value, unit) {
 }
 
 /**
- * Returns the resolved options for a PluralRules object.
+ * Returns the resolved options for a RelativeTimeFormat object.
  *
  * Spec: ECMAScript 402 API, RelativeTimeFormat, 1.4.4.
  */

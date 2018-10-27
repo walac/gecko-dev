@@ -63,7 +63,6 @@ BaselineCompiler::BaselineCompiler(JSContext* cx, TempAllocator& alloc, JSScript
     profilerExitFrameToggleOffset_(),
     traceLoggerToggleOffsets_(cx),
     traceLoggerScriptTextIdOffset_(),
-    yieldAndAwaitOffsets_(cx),
     modifiesArguments_(false)
 {
 #ifdef JS_CODEGEN_NONE
@@ -236,19 +235,23 @@ BaselineCompiler::compile()
         return Method_Error;
     }
 
-    // Note: There is an extra entry in the bytecode type map for the search hint, see below.
+    // Note: There is an extra entry in the bytecode type map for the search
+    // hint, see below.
     size_t bytecodeTypeMapEntries = script->nTypeSets() + 1;
+    size_t yieldAndAwaitEntries =
+        script->hasYieldAndAwaitOffsets() ? script->yieldAndAwaitOffsets().size() : 0;
     UniquePtr<BaselineScript> baselineScript(
-        BaselineScript::New(script, prologueOffset_.offset(),
-                            epilogueOffset_.offset(),
+        BaselineScript::New(script, bailoutPrologueOffset_.offset(),
+                            debugOsrPrologueOffset_.offset(),
+                            debugOsrEpilogueOffset_.offset(),
                             profilerEnterFrameToggleOffset_.offset(),
                             profilerExitFrameToggleOffset_.offset(),
-                            postDebugPrologueOffset_.offset(),
                             icEntries_.length(),
+                            retAddrEntries_.length(),
                             pcMappingIndexEntries.length(),
                             pcEntries.length(),
                             bytecodeTypeMapEntries,
-                            yieldAndAwaitOffsets_.length(),
+                            yieldAndAwaitEntries,
                             traceLoggerToggleOffsets_.length()),
         JS::DeletePolicy<BaselineScript>(cx->runtime()));
     if (!baselineScript) {
@@ -269,9 +272,12 @@ BaselineCompiler::compile()
     MOZ_ASSERT(pcEntries.length() > 0);
     baselineScript->copyPCMappingEntries(pcEntries);
 
-    // Copy IC entries
-    if (icEntries_.length()) {
+    // Copy ICEntries and RetAddrEntries.
+    if (icEntries_.length() > 0) {
         baselineScript->copyICEntries(script, &icEntries_[0]);
+    }
+    if (retAddrEntries_.length() > 0) {
+        baselineScript->copyRetAddrEntries(script, &retAddrEntries_[0]);
     }
 
     // Adopt fallback stubs from the compiler into the baseline script.
@@ -311,7 +317,8 @@ BaselineCompiler::compile()
     // searches for the sought entry when queries are in linear order.
     bytecodeMap[script->nTypeSets()] = 0;
 
-    baselineScript->copyYieldAndAwaitEntries(script, yieldAndAwaitOffsets_);
+    // Compute yield/await native resume addresses.
+    baselineScript->computeYieldAndAwaitNativeOffsets(script);
 
     if (compileDebugInstrumentation_) {
         baselineScript->setHasDebugInstrumentation();
@@ -482,7 +489,7 @@ BaselineCompiler::emitPrologue()
 
     // Record the offset of the prologue, because Ion can bailout before
     // the env chain is initialized.
-    prologueOffset_ = CodeOffset(masm.currentOffset());
+    bailoutPrologueOffset_ = CodeOffset(masm.currentOffset());
 
     // When compiling with Debugger instrumentation, set the debuggeeness of
     // the frame before any operation that can call into the VM.
@@ -521,7 +528,7 @@ BaselineCompiler::emitEpilogue()
 {
     // Record the offset of the epilogue, so we can do early return from
     // Debugger handlers during on-stack recompile.
-    epilogueOffset_ = CodeOffset(masm.currentOffset());
+    debugOsrEpilogueOffset_ = CodeOffset(masm.currentOffset());
 
     masm.bind(&return_);
 
@@ -578,16 +585,28 @@ BaselineCompiler::emitOutOfLinePostBarrierSlot()
 }
 
 bool
-BaselineCompiler::emitIC(ICStub* stub, ICEntry::Kind kind)
+BaselineCompiler::emitIC(ICStub* stub, bool isForOp)
 {
-    ICEntry* entry = allocateICEntry(stub, kind);
-    if (!entry) {
+    if (!stub) {
         return false;
     }
 
-    CodeOffset patchOffset;
-    EmitCallIC(&patchOffset, masm);
-    entry->setReturnOffset(CodeOffset(masm.currentOffset()));
+    CodeOffset patchOffset, callOffset;
+    EmitCallIC(masm, &patchOffset, &callOffset);
+
+    // ICs need both an ICEntry and a RetAddrEntry.
+
+    RetAddrEntry::Kind kind = isForOp ? RetAddrEntry::Kind::IC : RetAddrEntry::Kind::NonOpIC;
+    if (!retAddrEntries_.emplaceBack(script->pcToOffset(pc), kind, callOffset)) {
+        ReportOutOfMemory(cx);
+        return false;
+    }
+
+    if (!icEntries_.emplaceBack(stub, script->pcToOffset(pc), isForOp)) {
+        ReportOutOfMemory(cx);
+        return false;
+    }
+
     if (!addICLoadLabel(patchOffset)) {
         return false;
     }
@@ -686,9 +705,7 @@ BaselineCompiler::callVM(const VMFunction& fun, CallVMPhase phase)
     }
 #endif
 
-    // Add a fake ICEntry (without stubs), so that the return offset to
-    // pc mapping works.
-    return appendICEntry(ICEntry::Kind_CallVM, callOffset);
+    return appendRetAddrEntry(RetAddrEntry::Kind::CallVM, callOffset);
 }
 
 typedef bool (*CheckOverRecursedBaselineFn)(JSContext*, BaselineFrame*);
@@ -735,7 +752,7 @@ BaselineCompiler::emitStackCheck()
         return false;
     }
 
-    icEntries_.back().setFakeKind(ICEntry::Kind_StackCheck);
+    retAddrEntries_.back().setKind(RetAddrEntry::Kind::StackCheck);
 
     masm.bind(&skipCall);
     return true;
@@ -772,8 +789,8 @@ BaselineCompiler::emitDebugPrologue()
             return false;
         }
 
-        // Fix up the fake ICEntry appended by callVM for on-stack recompilation.
-        icEntries_.back().setFakeKind(ICEntry::Kind_DebugPrologue);
+        // Fix up the RetAddrEntry appended by callVM for on-stack recompilation.
+        retAddrEntries_.back().setKind(RetAddrEntry::Kind::DebugPrologue);
 
         // If the stub returns |true|, we have to return the value stored in the
         // frame's return value slot.
@@ -786,7 +803,7 @@ BaselineCompiler::emitDebugPrologue()
         masm.bind(&done);
     }
 
-    postDebugPrologueOffset_ = CodeOffset(masm.currentOffset());
+    debugOsrPrologueOffset_ = CodeOffset(masm.currentOffset());
 
     return true;
 }
@@ -945,8 +962,8 @@ BaselineCompiler::emitWarmUpCounterIncrement(bool allowOsr)
             return false;
         }
 
-        // Annotate the ICEntry as warmup counter.
-        icEntries_.back().setFakeKind(ICEntry::Kind_WarmupCounter);
+        // Annotate the RetAddrEntry as warmup counter.
+        retAddrEntries_.back().setKind(RetAddrEntry::Kind::WarmupCounter);
     }
     masm.bind(&skipCall);
 
@@ -1010,8 +1027,8 @@ BaselineCompiler::emitDebugTrap()
     MOZ_ASSERT((&offset)->offset() == entry.nativeOffset);
 #endif
 
-    // Add an IC entry for the return offset -> pc mapping.
-    return appendICEntry(ICEntry::Kind_DebugTrap, masm.currentOffset());
+    // Add a RetAddrEntry for the return offset -> pc mapping.
+    return appendRetAddrEntry(RetAddrEntry::Kind::DebugTrap, masm.currentOffset());
 }
 
 #ifdef JS_TRACE_LOGGING
@@ -4207,8 +4224,8 @@ BaselineCompiler::emitReturn()
             return false;
         }
 
-        // Fix up the fake ICEntry appended by callVM for on-stack recompilation.
-        icEntries_.back().setFakeKind(ICEntry::Kind_DebugEpilogue);
+        // Fix up the RetAddrEntry appended by callVM for on-stack recompilation.
+        retAddrEntries_.back().setKind(RetAddrEntry::Kind::DebugEpilogue);
 
         masm.loadValue(frame.addressOfReturnValue(), JSReturnOperand);
     }
@@ -4808,32 +4825,8 @@ BaselineCompiler::emit_JSOP_GENERATOR()
 }
 
 bool
-BaselineCompiler::addYieldAndAwaitOffset()
-{
-    MOZ_ASSERT(*pc == JSOP_INITIALYIELD || *pc == JSOP_YIELD || *pc == JSOP_AWAIT);
-
-    uint32_t yieldAndAwaitIndex = GET_UINT24(pc);
-
-    while (yieldAndAwaitIndex >= yieldAndAwaitOffsets_.length()) {
-        if (!yieldAndAwaitOffsets_.append(0)) {
-            return false;
-        }
-    }
-
-    static_assert(JSOP_INITIALYIELD_LENGTH == JSOP_YIELD_LENGTH &&
-                  JSOP_INITIALYIELD_LENGTH == JSOP_AWAIT_LENGTH,
-                  "code below assumes INITIALYIELD and YIELD and AWAIT have same length");
-    yieldAndAwaitOffsets_[yieldAndAwaitIndex] = script->pcToOffset(pc + JSOP_YIELD_LENGTH);
-    return true;
-}
-
-bool
 BaselineCompiler::emit_JSOP_INITIALYIELD()
 {
-    if (!addYieldAndAwaitOffset()) {
-        return false;
-    }
-
     frame.syncStack(0);
     MOZ_ASSERT(frame.stackDepth() == 1);
 
@@ -4871,10 +4864,6 @@ static const VMFunction NormalSuspendInfo =
 bool
 BaselineCompiler::emit_JSOP_YIELD()
 {
-    if (!addYieldAndAwaitOffset()) {
-        return false;
-    }
-
     // Store generator in R0.
     frame.popRegsAndSync(1);
 
@@ -4946,7 +4935,7 @@ BaselineCompiler::emit_JSOP_DEBUGAFTERYIELD()
         return false;
     }
 
-    icEntries_.back().setFakeKind(ICEntry::Kind_DebugAfterYield);
+    retAddrEntries_.back().setKind(RetAddrEntry::Kind::DebugAfterYield);
 
     Label done;
     masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, &done);
@@ -5068,8 +5057,8 @@ BaselineCompiler::emit_JSOP_RESUME()
     masm.callAndPushReturnAddress(&genStart);
 #endif
 
-    // Add an IC entry so the return offset -> pc mapping works.
-    if (!appendICEntry(ICEntry::Kind_Op, masm.currentOffset())) {
+    // Add a RetAddrEntry so the return offset -> pc mapping works.
+    if (!appendRetAddrEntry(RetAddrEntry::Kind::IC, masm.currentOffset())) {
         return false;
     }
 
@@ -5177,16 +5166,23 @@ BaselineCompiler::emit_JSOP_RESUME()
 
         TrampolinePtr code = cx->runtime()->jitRuntime()->getVMWrapper(GeneratorThrowOrReturnInfo);
 
-        // Create the frame descriptor.
+        // Create and push the frame descriptor.
         masm.subStackPtrFrom(scratch1);
         masm.makeFrameDescriptor(scratch1, FrameType::BaselineJS, ExitFrameLayout::Size());
-
-        // Push the frame descriptor and a dummy return address (it doesn't
-        // matter what we push here, frame iterators will use the frame pc
-        // set in jit::GeneratorThrowOrReturn).
         masm.push(scratch1);
 
-        // On ARM64, the callee will push the return address.
+        // We have created a baseline frame as if we were the
+        // callee. However, if we just did a regular call at this
+        // point, our return address would be bogus: it would point at
+        // self-hosted code, instead of the generator code that we are
+        // pretending we are already executing. Instead, we push a
+        // dummy return address. In jit::GeneratorThrowOrReturn,
+        // we will set the baseline frame's overridePc. Frame iterators
+        // will use the override pc instead of relying on the return
+        // address.
+
+        // On ARM64, the callee will push a bogus return address. On
+        // other architectures, we push a null return address.
 #ifndef JS_CODEGEN_ARM64
         masm.push(ImmWord(0));
 #endif
@@ -5437,6 +5433,31 @@ BaselineCompiler::emit_JSOP_IMPORTMETA()
     prepareVMCall();
     pushArg(ImmGCPtr(module));
     if (!callVM(GetOrCreateModuleMetaObjectInfo)) {
+        return false;
+    }
+
+    masm.tagValue(JSVAL_TYPE_OBJECT, ReturnReg, R0);
+    frame.push(R0);
+    return true;
+}
+
+typedef JSObject* (*StartDynamicModuleImportFn)(JSContext*, HandleValue, HandleValue);
+static const VMFunction StartDynamicModuleImportInfo =
+    FunctionInfo<StartDynamicModuleImportFn>(js::StartDynamicModuleImport,
+                                                "StartDynamicModuleImport");
+
+bool
+BaselineCompiler::emit_JSOP_DYNAMIC_IMPORT()
+{
+    RootedValue referencingPrivate(cx, FindScriptOrModulePrivateForScript(script));
+
+    // Put specifier value in R0.
+    frame.popRegsAndSync(1);
+
+    prepareVMCall();
+    pushArg(R0);
+    pushArg(referencingPrivate);
+    if (!callVM(StartDynamicModuleImportInfo)) {
         return false;
     }
 

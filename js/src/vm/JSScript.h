@@ -33,6 +33,8 @@
 #include "js/UbiNode.h"
 #include "js/UniquePtr.h"
 #include "js/Utility.h"
+#include "vm/BytecodeIterator.h"
+#include "vm/BytecodeLocation.h"
 #include "vm/BytecodeUtil.h"
 #include "vm/JSAtom.h"
 #include "vm/NativeObject.h"
@@ -109,8 +111,8 @@ enum JSTryNoteKind {
 struct JSTryNote {
     uint8_t         kind;       /* one of JSTryNoteKind */
     uint32_t        stackDepth; /* stack depth upon exception handler entry */
-    uint32_t        start;      /* start of the try statement or loop
-                                   relative to script->main */
+    uint32_t        start;      /* start of the try statement or loop relative
+                                   to script->code() */
     uint32_t        length;     /* length of the try statement or loop */
 };
 
@@ -139,8 +141,8 @@ struct ScopeNote {
     uint32_t        index;      // Index of Scope in the scopes array, or
                                 // NoScopeIndex if there is no block scope in
                                 // this range.
-    uint32_t        start;      // Bytecode offset at which this scope starts,
-                                // from script->main().
+    uint32_t        start;      // Bytecode offset at which this scope starts
+                                // relative to script->code().
     uint32_t        length;     // Bytecode length of scope.
     uint32_t        parent;     // Index of parent block scope in notes, or NoScopeNote.
 };
@@ -1748,6 +1750,15 @@ class JSScript : public js::gc::TenuredCell
         }
         return scriptData_->code();
     }
+
+    js::AllBytecodesIterable allLocations() {
+        return js::AllBytecodesIterable(this);
+    }
+
+    js::BytecodeLocation location() {
+        return js::BytecodeLocation(this, code());
+    }
+
     bool isUncompleted() const {
         // code() becomes non-null only if this script is complete.
         // See the comment in JSScript::fullyInitFromEmitter.
@@ -1769,6 +1780,10 @@ class JSScript : public js::gc::TenuredCell
 
     bool containsPC(const jsbytecode* pc) const {
         return pc >= code() && pc < codeEnd();
+    }
+
+    bool contains(const js::BytecodeLocation& loc) const {
+        return containsPC(loc.toRawBytecode());
     }
 
     size_t pcToOffset(const jsbytecode* pc) const {
@@ -2357,6 +2372,14 @@ class JSScript : public js::gc::TenuredCell
 
     jsbytecode* main() const {
         return code() + mainOffset();
+    }
+
+    js::BytecodeLocation mainLocation() const {
+        return js::BytecodeLocation(this, main());
+    }
+
+    js::BytecodeLocation endLocation() const {
+        return js::BytecodeLocation(this, codeEnd());
     }
 
     /*

@@ -216,6 +216,15 @@ GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp)
         return false;
     }
 
+#ifdef JS_CODEGEN_ARM64
+    value = BooleanValue(true);
+#else
+    value = BooleanValue(false);
+#endif
+    if (!JS_SetProperty(cx, info, "arm64", value)) {
+        return false;
+    }
+
 #ifdef JS_SIMULATOR_ARM64
     value = BooleanValue(true);
 #else
@@ -1796,7 +1805,8 @@ SetupOOMFailure(JSContext* cx, bool failAlways, unsigned argc, Value* vp)
         return false;
     }
 
-    js::oom::SimulateOOMAfter(count, targetThread, failAlways);
+    js::oom::simulator.simulateFailureAfter(js::oom::FailureSimulator::Kind::OOM,
+                                            count, targetThread, failAlways);
     args.rval().setUndefined();
     return true;
 }
@@ -1823,7 +1833,7 @@ ResetOOMFailure(JSContext* cx, unsigned argc, Value* vp)
     }
 
     args.rval().setBoolean(js::oom::HadSimulatedOOM());
-    js::oom::ResetSimulatedOOM();
+    js::oom::simulator.reset();
     return true;
 }
 
@@ -1873,6 +1883,10 @@ RunIterativeFailureTest(JSContext* cx, const IterativeFailureTestParams& params,
 {
     if (disableOOMFunctions) {
         return true;
+    }
+
+    if (!CheckCanSimulateOOM(cx)) {
+        return false;
     }
 
     // Disallow nested tests.
@@ -2035,22 +2049,15 @@ ParseIterativeFailureTestParams(JSContext* cx, const CallArgs& args,
         params->expectExceptionOnFailure = false;
     }
 
-    // Test all threads by default except worker threads, except if we are
-    // running in a worker thread in which case only the worker thread which
-    // requested the simulation is tested.
-    if (js::oom::GetThreadType() == js::THREAD_TYPE_WORKER) {
-        params->threadStart = oom::WorkerFirstThreadTypeToTest;
-        params->threadEnd = oom::WorkerLastThreadTypeToTest;
-    } else {
-        params->threadStart = oom::FirstThreadTypeToTest;
-        params->threadEnd = oom::LastThreadTypeToTest;
-    }
+    // Test all threads by default except worker threads.
+    params->threadStart = oom::FirstThreadTypeToTest;
+    params->threadEnd = oom::LastThreadTypeToTest;
 
     // Test a single thread type if specified by the OOM_THREAD environment variable.
     int threadOption = 0;
     if (EnvVarAsInt("OOM_THREAD", &threadOption)) {
-        if (threadOption < oom::FirstThreadTypeToTest || threadOption > oom::LastThreadTypeToTest ||
-            threadOption != js::THREAD_TYPE_CURRENT)
+        if (threadOption < oom::FirstThreadTypeToTest ||
+            threadOption > oom::LastThreadTypeToTest)
         {
             JS_ReportErrorASCII(cx, "OOM_THREAD value out of range.");
             return false;
@@ -2073,12 +2080,13 @@ struct OOMSimulator : public IterativeFailureSimulator
 
     void startSimulating(JSContext* cx, unsigned i, unsigned thread, bool keepFailing) override {
         MOZ_ASSERT(!cx->runtime()->hadOutOfMemory);
-        js::oom::SimulateOOMAfter(i, thread, keepFailing);
+        js::oom::simulator.simulateFailureAfter(js::oom::FailureSimulator::Kind::OOM,
+                                                i, thread, keepFailing);
     }
 
     bool stopSimulating() override {
         bool handledOOM = js::oom::HadSimulatedOOM();
-        js::oom::ResetSimulatedOOM();
+        js::oom::simulator.reset();
         return handledOOM;
     }
 
@@ -2109,12 +2117,13 @@ OOMTest(JSContext* cx, unsigned argc, Value* vp)
 struct StackOOMSimulator : public IterativeFailureSimulator
 {
     void startSimulating(JSContext* cx, unsigned i, unsigned thread, bool keepFailing) override {
-        js::oom::SimulateStackOOMAfter(i, thread, keepFailing);
+        js::oom::simulator.simulateFailureAfter(js::oom::FailureSimulator::Kind::StackOOM,
+                                                i, thread, keepFailing);
     }
 
     bool stopSimulating() override {
         bool handledOOM = js::oom::HadSimulatedStackOOM();
-        js::oom::ResetSimulatedStackOOM();
+        js::oom::simulator.reset();
         return handledOOM;
     }
 };
@@ -2157,12 +2166,13 @@ struct FailingIterruptSimulator : public IterativeFailureSimulator
     }
 
     void startSimulating(JSContext* cx, unsigned i, unsigned thread, bool keepFailing) override {
-        js::oom::SimulateInterruptAfter(i, thread, keepFailing);
+        js::oom::simulator.simulateFailureAfter(js::oom::FailureSimulator::Kind::Interrupt,
+                                                i, thread, keepFailing);
     }
 
     bool stopSimulating() override {
         bool handledInterrupt = js::oom::HadSimulatedInterrupt();
-        js::oom::ResetSimulatedInterrupt();
+        js::oom::simulator.reset();
         return handledInterrupt;
     }
 };

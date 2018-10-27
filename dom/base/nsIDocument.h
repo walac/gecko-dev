@@ -3684,6 +3684,10 @@ protected:
 private:
   void InitializeLocalization(nsTArray<nsString>& aResourceIds);
 
+  void ParseWidthAndHeightInMetaViewport(const nsAString& aWidthString,
+                                         const nsAString& aHeightString,
+                                         const nsAString& aScaleString);
+
   nsTArray<nsString> mL10nResources;
 
 public:
@@ -4314,9 +4318,6 @@ protected:
 
   // These member variables cache information about the viewport so we don't
   // have to recalculate it each time.
-  bool mValidWidth: 1;
-  bool mValidHeight: 1;
-  bool mAutoSize: 1;
   bool mAllowZoom: 1;
   bool mValidScaleFloat: 1;
   bool mValidMaxScale: 1;
@@ -4708,7 +4709,11 @@ protected:
   mozilla::LayoutDeviceToScreenScale mScaleMaxFloat;
   mozilla::LayoutDeviceToScreenScale mScaleFloat;
   mozilla::CSSToLayoutDeviceScale mPixelRatio;
-  mozilla::CSSSize mViewportSize;
+
+  mozilla::CSSCoord mMinWidth;
+  mozilla::CSSCoord mMaxWidth;
+  mozilla::CSSCoord mMinHeight;
+  mozilla::CSSCoord mMaxHeight;
 
   RefPtr<mozilla::EventListenerManager> mListenerManager;
 
@@ -4763,6 +4768,9 @@ protected:
   // document lightweight theme for use with :-moz-lwtheme, :-moz-lwtheme-brighttext
   // and :-moz-lwtheme-darktext
   DocumentTheme                         mDocLWTheme;
+
+  // Pres shell resolution saved before entering fullscreen mode.
+  float mSavedResolution;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsIDocument, NS_IDOCUMENT_IID)

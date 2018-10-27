@@ -116,7 +116,7 @@ pref("devtools.performance.memory.max-log-length", 125000);
 pref("devtools.performance.timeline.hidden-markers",
   "[\"Composite\",\"CompositeForwardTransaction\"]");
 pref("devtools.performance.profiler.buffer-size", 10000000);
-pref("devtools.performance.profiler.sample-frequency-khz", 1);
+pref("devtools.performance.profiler.sample-frequency-hz", 1000);
 pref("devtools.performance.ui.invert-call-tree", true);
 pref("devtools.performance.ui.invert-flame-graph", false);
 pref("devtools.performance.ui.flatten-tree-recursion", true);
@@ -139,6 +139,13 @@ pref("devtools.performance.ui.experimental", true);
 #else
 pref("devtools.performance.ui.experimental", false);
 #endif
+
+// Preferences for the new performance panel
+// This pref configures the base URL for the perf.html instance to use. This is
+// useful so that a developer can change it while working on perf.html, or in
+// tests.
+// This isn't exposed directly to the user.
+pref("devtools.performance.recording.ui-base-url", "https://perf-html.io");
 
 // The default cache UI setting
 pref("devtools.cache.disabled", false);

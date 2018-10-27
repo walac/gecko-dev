@@ -193,6 +193,7 @@ enum GlobalAppSlot
     GlobalAppSlotModuleLoadHook,           // Shell-specific; load a module graph
     GlobalAppSlotModuleResolveHook,        // HostResolveImportedModule
     GlobalAppSlotModuleMetadataHook,       // HostPopulateImportMeta
+    GlobalAppSlotModuleDynamicImportHook,  // HostImportModuleDynamically
     GlobalAppSlotCount
 };
 static_assert(GlobalAppSlotCount <= JSCLASS_GLOBAL_APPLICATION_SLOTS,
@@ -850,6 +851,32 @@ EnvironmentPreparer::invoke(HandleObject global, Closure& closure)
     }
 }
 
+static bool
+RegisterScriptPathWithModuleLoader(JSContext* cx, HandleScript script, const char* filename)
+{
+    // Set the private value associated with a script to a object containing the
+    // script's filename so that the module loader can use it to resolve
+    // relative imports.
+
+    RootedString path(cx, JS_NewStringCopyZ(cx, filename));
+    if (!path) {
+        return false;
+    }
+
+    RootedObject infoObject(cx, JS_NewPlainObject(cx));
+    if (!infoObject) {
+        return false;
+    }
+
+    RootedValue pathValue(cx, StringValue(path));
+    if (!JS_DefineProperty(cx, infoObject, "path", pathValue, 0)) {
+        return false;
+    }
+
+    JS::SetScriptPrivate(script, ObjectValue(*infoObject));
+    return true;
+}
+
 static MOZ_MUST_USE bool
 RunFile(JSContext* cx, const char* filename, FILE* file, bool compileOnly)
 {
@@ -881,6 +908,10 @@ RunFile(JSContext* cx, const char* filename, FILE* file, bool compileOnly)
             return false;
         }
         MOZ_ASSERT(script);
+    }
+
+    if (!RegisterScriptPathWithModuleLoader(cx, script, filename)) {
+        return false;
     }
 
     #ifdef DEBUG
@@ -919,6 +950,10 @@ RunBinAST(JSContext* cx, const char* filename, FILE* file)
         }
     }
 
+    if (!RegisterScriptPathWithModuleLoader(cx, script, filename)) {
+        return false;
+    }
+
     return JS_ExecuteScript(cx, script);
 }
 
@@ -927,7 +962,6 @@ RunBinAST(JSContext* cx, const char* filename, FILE* file)
 static bool
 InitModuleLoader(JSContext* cx)
 {
-
     // Decompress and evaluate the embedded module loader source to initialize
     // the module loader for the current compartment.
 
@@ -2242,6 +2276,17 @@ js::shell::FileAsString(JSContext* cx, JS::HandleString pathnameStr)
 
     AutoCloseFile autoClose(file);
 
+    struct stat st;
+    if (fstat(fileno(file), &st) != 0) {
+        JS_ReportErrorUTF8(cx, "can't stat %s", pathname.get());
+        return nullptr;
+    }
+
+    if ((st.st_mode & S_IFMT) != S_IFREG) {
+        JS_ReportErrorUTF8(cx, "can't read non-regular file %s", pathname.get());
+        return nullptr;
+    }
+
     if (fseek(file, 0, SEEK_END) != 0) {
         pathname = JS_EncodeStringToUTF8(cx, pathnameStr);
         if (!pathname) {
@@ -2251,7 +2296,13 @@ js::shell::FileAsString(JSContext* cx, JS::HandleString pathnameStr)
         return nullptr;
     }
 
-    size_t len = ftell(file);
+    long endPos = ftell(file);
+    if (endPos < 0) {
+        JS_ReportErrorUTF8(cx, "can't read length of %s", pathname.get());
+        return nullptr;
+    }
+
+    size_t len = endPos;
     if (fseek(file, 0, SEEK_SET) != 0) {
         pathname = JS_EncodeStringToUTF8(cx, pathnameStr);
         if (!pathname) {
@@ -2263,6 +2314,7 @@ js::shell::FileAsString(JSContext* cx, JS::HandleString pathnameStr)
 
     UniqueChars buf(js_pod_malloc<char>(len + 1));
     if (!buf) {
+        JS_ReportErrorUTF8(cx, "out of memory reading %s", pathname.get());
         return nullptr;
     }
 
@@ -3068,10 +3120,9 @@ TryNotes(JSContext* cx, HandleScript script, Sprinter* sp)
     }
 
     for (const JSTryNote& tn : script->trynotes()) {
-        uint32_t startOff = script->pcToOffset(script->main()) + tn.start;
         if (!sp->jsprintf(" %-16s %6u %8u %8u\n",
                           TryNoteName(static_cast<JSTryNoteKind>(tn.kind)),
-                          tn.stackDepth, startOff, startOff + tn.length))
+                          tn.stackDepth, tn.start, tn.start + tn.length))
         {
             return false;
         }
@@ -4723,7 +4774,7 @@ SetModuleResolveHook(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static JSObject*
-CallModuleResolveHook(JSContext* cx, HandleValue referencingPrivate, HandleString specifier)
+ShellModuleResolveHook(JSContext* cx, HandleValue referencingPrivate, HandleString specifier)
 {
     Handle<GlobalObject*> global = cx->global();
     RootedValue hookValue(cx, global->getReservedSlot(GlobalAppSlotModuleResolveHook));
@@ -4836,6 +4887,109 @@ ShellGetModulePrivate(JSContext* cx, unsigned argc, Value* vp)
     }
 
     args.rval().set(JS::GetModulePrivate(&args[0].toObject()));
+    return true;
+}
+
+static bool
+SetModuleDynamicImportHook(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (args.length() != 1) {
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_MORE_ARGS_NEEDED,
+                                  "setModuleDynamicImportHook", "0", "s");
+        return false;
+    }
+
+    if (!args[0].isObject() || !args[0].toObject().is<JSFunction>()) {
+        const char* typeName = InformalValueTypeName(args[0]);
+        JS_ReportErrorASCII(cx, "expected hook function, got %s", typeName);
+        return false;
+    }
+
+    Handle<GlobalObject*> global = cx->global();
+    global->setReservedSlot(GlobalAppSlotModuleDynamicImportHook, args[0]);
+
+    args.rval().setUndefined();
+    return true;
+}
+
+static bool
+FinishDynamicModuleImport(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (args.length() != 3) {
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_MORE_ARGS_NEEDED,
+                                  "finishDynamicModuleImport", "0", "s");
+        return false;
+    }
+
+    if (!args[1].isString()) {
+        return ReportArgumentTypeError(cx, args[1], "String");
+    }
+
+    if (!args[2].isObject() || !args[2].toObject().is<PromiseObject>()) {
+        return ReportArgumentTypeError(cx, args[2], "PromiseObject");
+    }
+
+    RootedString specifier(cx, args[1].toString());
+    Rooted<PromiseObject*> promise(cx, &args[2].toObject().as<PromiseObject>());
+
+    return js::FinishDynamicModuleImport(cx, args[0], specifier, promise);
+}
+
+static bool
+AbortDynamicModuleImport(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (args.length() != 4) {
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_MORE_ARGS_NEEDED,
+                                  "abortDynamicModuleImport", "0", "s");
+        return false;
+    }
+
+    if (!args[1].isString()) {
+        return ReportArgumentTypeError(cx, args[1], "String");
+    }
+
+    if (!args[2].isObject() || !args[2].toObject().is<PromiseObject>()) {
+        return ReportArgumentTypeError(cx, args[2], "PromiseObject");
+    }
+
+    if (!args[3].isObject() || !args[3].toObject().is<ErrorObject>()) {
+        return ReportArgumentTypeError(cx, args[3], "ErrorObject");
+    }
+
+    RootedString specifier(cx, args[1].toString());
+    Rooted<PromiseObject*> promise(cx, &args[2].toObject().as<PromiseObject>());
+    Rooted<ErrorObject*> error(cx, &args[3].toObject().as<ErrorObject>());
+
+    Rooted<Value> value(cx, ObjectValue(*error));
+    cx->setPendingException(value);
+    return js::FinishDynamicModuleImport(cx, args[0], specifier, promise);
+}
+
+static bool
+ShellModuleDynamicImportHook(JSContext* cx, HandleValue referencingPrivate, HandleString specifier,
+                             HandleObject promise)
+{
+    Handle<GlobalObject*> global = cx->global();
+    RootedValue hookValue(cx, global->getReservedSlot(GlobalAppSlotModuleDynamicImportHook));
+    if (hookValue.isUndefined()) {
+        JS_ReportErrorASCII(cx, "Module resolve hook not set");
+        return false;
+    }
+    MOZ_ASSERT(hookValue.toObject().is<JSFunction>());
+
+    JS::AutoValueArray<3> args(cx);
+    args[0].set(referencingPrivate);
+    args[1].setString(specifier);
+    args[2].setObject(*promise);
+
+    RootedValue result(cx);
+    if (!JS_CallFunctionValue(cx, nullptr, hookValue, args, &result)) {
+        return false;
+    }
+
     return true;
 }
 
@@ -8059,7 +8213,7 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "  module loader."),
 
     JS_FN_HELP("setModuleResolveHook", SetModuleResolveHook, 1, 0,
-"setModuleResolveHook(function(module, specifier) {})",
+"setModuleResolveHook(function(referrer, specifier))",
 "  Set the HostResolveImportedModule hook to |function|.\n"
 "  This hook is used to look up a previously loaded module object.  It should\n"
 "  be implemented by the module loader."),
@@ -8069,6 +8223,22 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "  Set the HostPopulateImportMeta hook to |function|.\n"
 "  This hook is used to create the metadata object returned by import.meta for\n"
 "  a module.  It should be implemented by the module loader."),
+
+    JS_FN_HELP("setModuleDynamicImportHook", SetModuleDynamicImportHook, 1, 0,
+"setModuleDynamicImportHook(function(referrer, specifier, promise))",
+"  Set the HostImportModuleDynamically hook to |function|.\n"
+"  This hook is used to dynamically import a module.  It should\n"
+"  be implemented by the module loader."),
+
+    JS_FN_HELP("finishDynamicModuleImport", FinishDynamicModuleImport, 3, 0,
+"finishDynamicModuleImport(referrer, specifier, promise)",
+"  The module loader's dynamic import hook should call this when the module has"
+"  been loaded successfully."),
+
+    JS_FN_HELP("abortDynamicModuleImport", AbortDynamicModuleImport, 4, 0,
+"abortDynamicModuleImport(referrer, specifier, promise, error)",
+"  The module loader's dynamic import hook should call this when the module "
+"  import has failed."),
 
     JS_FN_HELP("setModulePrivate", ShellSetModulePrivate, 2, 0,
 "setModulePrivate(scriptObject, privateValue)",
@@ -9874,7 +10044,7 @@ SetContextOptions(JSContext* cx, const OptionParser& op)
 #endif
     enableTestWasmAwaitTier2 = op.getBoolOption("test-wasm-await-tier2");
     enableAsyncStacks = !op.getBoolOption("no-async-stacks");
-    enableStreams = op.getBoolOption("enable-streams");
+    enableStreams = !op.getBoolOption("no-streams");
 
 #if defined ENABLE_WASM_GC && defined ENABLE_WASM_CRANELIFT
     // Note, once we remove --wasm-gc this test will no longer make any sense
@@ -10499,7 +10669,8 @@ main(int argc, char** argv, char** envp)
 #endif
         || !op.addBoolOption('\0', "no-native-regexp", "Disable native regexp compilation")
         || !op.addBoolOption('\0', "no-unboxed-objects", "Disable creating unboxed plain objects")
-        || !op.addBoolOption('\0', "enable-streams", "Enable WHATWG Streams")
+        || !op.addBoolOption('\0', "enable-streams", "Enable WHATWG Streams (default)")
+        || !op.addBoolOption('\0', "no-streams", "Disable WHATWG Streams")
 #ifdef ENABLE_SHARED_ARRAY_BUFFER
         || !op.addStringOption('\0', "shared-memory", "on/off",
                                "SharedArrayBuffer and Atomics "
@@ -10788,14 +10959,15 @@ main(int argc, char** argv, char** envp)
 
     js::SetPreserveWrapperCallback(cx, DummyPreserveWrapperCallback);
 
-    JS::SetModuleResolveHook(cx->runtime(), CallModuleResolveHook);
+    JS::SetModuleResolveHook(cx->runtime(), ShellModuleResolveHook);
+    JS::SetModuleDynamicImportHook(cx->runtime(), ShellModuleDynamicImportHook);
     JS::SetModuleMetadataHook(cx->runtime(), CallModuleMetadataHook);
 
     result = Shell(cx, &op, envp);
 
 #ifdef DEBUG
     if (OOM_printAllocationCount) {
-        printf("OOM max count: %" PRIu64 "\n", js::oom::counter);
+        printf("OOM max count: %" PRIu64 "\n", js::oom::simulator.counter());
     }
 #endif
 

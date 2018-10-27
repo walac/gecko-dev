@@ -6421,6 +6421,21 @@ nsHttpChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *context)
     mListener = listener;
     mListenerContext = context;
 
+    // PauseTask/DelayHttpChannel queuing
+    if (!DelayHttpChannelQueue::AttemptQueueChannel(this)) {
+        // If fuzzyfox is disabled; or adding to the queue failed, the channel must continue.
+        AsyncOpenFinal(TimeStamp::Now());
+    }
+
+    return NS_OK;
+}
+
+nsresult
+nsHttpChannel::AsyncOpenFinal(TimeStamp aTimeStamp)
+{
+    // Added due to PauseTask/DelayHttpChannel
+    nsresult rv;
+
     if (mLoadGroup)
         mLoadGroup->AddRequest(this, nullptr);
 
@@ -6429,7 +6444,7 @@ nsHttpChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *context)
     // that to complete would mean we don't include proxy resolution in the
     // timing.
     if (!mAsyncOpenTimeOverriden) {
-      mAsyncOpenTime = TimeStamp::Now();
+      mAsyncOpenTime = aTimeStamp;
     }
 
     // Remember we have Authorization header set here.  We need to check on it
@@ -6536,6 +6551,11 @@ nsHttpChannel::BeginConnect()
     OriginAttributes originAttributes;
     NS_GetOriginAttributes(this, originAttributes);
 
+    RefPtr<nsHttpConnectionInfo> connInfo =
+        new nsHttpConnectionInfo(host, port, EmptyCString(), mUsername,
+                                 proxyInfo, originAttributes, isHttps);
+    mAllowAltSvc = (mAllowAltSvc && !gHttpHandler->IsSpdyBlacklisted(connInfo));
+
     RefPtr<AltSvcMapping> mapping;
     if (!mConnectionInfo && mAllowAltSvc && // per channel
         !(mLoadFlags & LOAD_FRESH_CONNECTION) &&
@@ -6589,9 +6609,16 @@ nsHttpChannel::BeginConnect()
     } else {
         LOG(("nsHttpChannel %p Using default connection info", this));
 
-        mConnectionInfo = new nsHttpConnectionInfo(host, port, EmptyCString(), mUsername, proxyInfo,
-                                                   originAttributes, isHttps);
+        mConnectionInfo = connInfo;
         Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_USE_ALTSVC, false);
+    }
+
+    // Need to re-ask the handler, since mConnectionInfo may not be the connInfo
+    // we used earlier
+    if (gHttpHandler->IsSpdyBlacklisted(mConnectionInfo)) {
+        mAllowSpdy = 0;
+        mCaps |= NS_HTTP_DISALLOW_SPDY;
+        mConnectionInfo->SetNoSpdy(true);
     }
 
     mAuthProvider = new nsHttpChannelAuthProvider();

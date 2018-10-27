@@ -26,7 +26,7 @@ add_task(async function getPost() {
       search: alias,
       searchParam: "enable-actions",
       matches: [
-        makeSearchMatch(alias, {
+        makeSearchMatch(`${alias} `, {
           engineName: `Aliased${alias.toUpperCase()}MozSearch`,
           searchQuery: "",
           alias,
@@ -115,10 +115,10 @@ add_task(async function engineWithSuggestions() {
     engine.alias = alias;
 
     await check_autocomplete({
-      search: `${alias}`,
+      search: alias,
       searchParam: "enable-actions",
       matches: [
-        makeSearchMatch(alias, {
+        makeSearchMatch(`${alias} `, {
           engineName: SUGGESTIONS_ENGINE_NAME,
           alias,
           searchQuery: "",
@@ -150,19 +150,61 @@ add_task(async function engineWithSuggestions() {
           searchQuery: "fire",
           heuristic: true,
         }),
-        makeSearchMatch(`fire foo`, {
+        makeSearchMatch(`${alias} fire foo`, {
           engineName: SUGGESTIONS_ENGINE_NAME,
+          alias,
           searchQuery: "fire",
           searchSuggestion: "fire foo",
         }),
-        makeSearchMatch(`fire bar`, {
+        makeSearchMatch(`${alias} fire bar`, {
           engineName: SUGGESTIONS_ENGINE_NAME,
+          alias,
           searchQuery: "fire",
           searchSuggestion: "fire bar",
         }),
       ],
     });
   }
+
+  engine.alias = "";
+  await cleanup();
+});
+
+
+// When the search is simply "@", the results should be a list of all the "@"
+// alias engines.
+add_task(async function tokenAliasEngines() {
+  let tokenEngines = [];
+  for (let engine of Services.search.getEngines()) {
+    let aliases = [];
+    if (engine.alias) {
+      aliases.push(engine.alias);
+    }
+    aliases.push(...engine.wrappedJSObject._internalAliases);
+    let tokenAliases = aliases.filter(a => a.startsWith("@"));
+    if (tokenAliases.length) {
+      tokenEngines.push({ engine, tokenAliases });
+    }
+  }
+  if (!tokenEngines.length) {
+    Assert.ok(true, "No token alias engines, skipping task.");
+    return;
+  }
+  info("Got token alias engines: " +
+       tokenEngines.map(({ engine }) => engine.name));
+
+  await check_autocomplete({
+    search: "@",
+    searchParam: "enable-actions",
+    matches: tokenEngines.map(({ engine, tokenAliases }) => {
+      let alias = tokenAliases[0];
+      return makeSearchMatch(alias + " ", {
+        engineName: engine.name,
+        alias,
+        searchQuery: "",
+      });
+    }),
+  });
 
   await cleanup();
 });

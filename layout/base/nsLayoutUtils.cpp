@@ -3606,6 +3606,12 @@ nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext, nsIFrame* aFrame,
     builder.IgnorePaintSuppression();
   }
 
+  if (nsIDocShell* doc = presContext->GetDocShell()) {
+    bool isActive = false;
+    doc->GetIsActive(&isActive);
+    builder.SetInActiveDocShell(isActive);
+  }
+
   nsIFrame* rootScrollFrame = presShell->GetRootScrollFrame();
   if (rootScrollFrame && !aFrame->GetParent()) {
     nsIScrollableFrame* rootScrollableFrame = presShell->GetRootScrollFrameAsScrollable();
@@ -3809,7 +3815,9 @@ nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext, nsIFrame* aFrame,
   Telemetry::AccumulateTimeDelta(Telemetry::PAINT_BUILD_DISPLAYLIST_TIME,
                                  startBuildDisplayList);
 
-  bool consoleNeedsDisplayList = gfxUtils::DumpDisplayList() || gfxEnv::DumpPaint();
+  bool consoleNeedsDisplayList =
+      (gfxUtils::DumpDisplayList() || gfxEnv::DumpPaint()) &&
+      builder.IsInActiveDocShell();
 #ifdef MOZ_DUMP_PAINTING
   FILE* savedDumpFile = gfxUtils::sDumpPaintFile;
 #endif
@@ -9171,7 +9179,7 @@ nsLayoutUtils::ComputeScrollMetadata(nsIFrame* aForFrame,
                                      const nsRect& aViewport,
                                      const Maybe<nsRect>& aClipRect,
                                      bool aIsRootContent,
-                                     const ContainerLayerParameters& aContainerParameters)
+                                     const Maybe<ContainerLayerParameters>& aContainerParameters)
 {
   nsPresContext* presContext = aForFrame->PresContext();
   int32_t auPerDevPixel = presContext->AppUnitsPerDevPixel();
@@ -9221,7 +9229,9 @@ nsLayoutUtils::ComputeScrollMetadata(nsIFrame* aForFrame,
 
   if (scrollableFrame) {
     CSSPoint scrollPosition = CSSPoint::FromAppUnits(scrollableFrame->GetScrollPosition());
+    CSSPoint apzScrollPosition = CSSPoint::FromAppUnits(scrollableFrame->GetApzScrollPosition());
     metrics.SetScrollOffset(scrollPosition);
+    metrics.SetBaseScrollOffset(apzScrollPosition);
 
     CSSRect viewport = metrics.GetViewport();
     viewport.MoveTo(scrollPosition);
@@ -9235,12 +9245,17 @@ nsLayoutUtils::ComputeScrollMetadata(nsIFrame* aForFrame,
     // its scroll offset. We want to distinguish the case where the scroll offset
     // was "restored" because in that case the restored scroll position should
     // not overwrite a user-driven scroll.
-    if (scrollableFrame->LastScrollOrigin() == nsGkAtoms::restore) {
-      metrics.SetScrollOffsetRestored(scrollableFrame->CurrentScrollGeneration());
-    } else if (CanScrollOriginClobberApz(scrollableFrame->LastScrollOrigin())) {
-      metrics.SetScrollOffsetUpdated(scrollableFrame->CurrentScrollGeneration());
+    nsAtom* lastOrigin = scrollableFrame->LastScrollOrigin();
+    if (lastOrigin == nsGkAtoms::restore) {
+      metrics.SetScrollGeneration(scrollableFrame->CurrentScrollGeneration());
+      metrics.SetScrollOffsetUpdateType(FrameMetrics::eRestore);
+    } else if (CanScrollOriginClobberApz(lastOrigin)) {
+      if (lastOrigin == nsGkAtoms::relative) {
+        metrics.SetIsRelative(true);
+      }
+      metrics.SetScrollGeneration(scrollableFrame->CurrentScrollGeneration());
+      metrics.SetScrollOffsetUpdateType(FrameMetrics::eMainThread);
     }
-    scrollableFrame->AllowScrollOriginDowngrade();
 
     nsAtom* lastSmoothScrollOrigin = scrollableFrame->LastSmoothScrollOrigin();
     if (lastSmoothScrollOrigin) {
@@ -9333,8 +9348,13 @@ nsLayoutUtils::ComputeScrollMetadata(nsIFrame* aForFrame,
   // content is actually rendered. It includes the pres shell resolutions of
   // all the pres shells from here up to the root, as well as any css-driven
   // resolution. We don't need to compute it as it's already stored in the
-  // container parameters.
-  metrics.SetCumulativeResolution(aContainerParameters.Scale());
+  // container parameters... except if we're in WebRender in which case we
+  // don't have a aContainerParameters. In that case we're also not rasterizing
+  // in Gecko anyway, so the only resolution we care about here is the presShell
+  // resolution which we need to propagate to WebRender.
+  metrics.SetCumulativeResolution(aContainerParameters
+      ? aContainerParameters->Scale()
+      : LayoutDeviceToLayerScale2D(LayoutDeviceToLayerScale(presShell->GetCumulativeResolution())));
 
   LayoutDeviceToScreenScale2D resolutionToScreen(
       presShell->GetCumulativeResolution()
@@ -9502,7 +9522,7 @@ nsLayoutUtils::GetRootMetadata(nsDisplayListBuilder* aBuilder,
                            rootScrollFrame, content,
                            aBuilder->FindReferenceFrameFor(frame),
                            aLayerManager, FrameMetrics::NULL_SCROLL_ID, viewport, Nothing(),
-                           isRootContent, aContainerParameters));
+                           isRootContent, Some(aContainerParameters)));
   }
 
   return Nothing();
@@ -9724,7 +9744,7 @@ GetPresShell(const nsIContent* aContent)
   return result.forget();
 }
 
-static void UpdateDisplayPortMarginsForPendingMetrics(FrameMetrics& aMetrics) {
+static void UpdateDisplayPortMarginsForPendingMetrics(const RepaintRequest& aMetrics) {
   nsIContent* content = nsLayoutUtils::FindContentFor(aMetrics.GetScrollId());
   if (!content) {
     return;
@@ -9765,10 +9785,10 @@ static void UpdateDisplayPortMarginsForPendingMetrics(FrameMetrics& aMetrics) {
   }
 
   CSSPoint frameScrollOffset = CSSPoint::FromAppUnits(frame->GetScrollPosition());
-  APZCCallbackHelper::AdjustDisplayPortForScrollDelta(aMetrics, frameScrollOffset);
+  ScreenMargin displayPortMargins = APZCCallbackHelper::AdjustDisplayPortForScrollDelta(aMetrics, frameScrollOffset);
 
   nsLayoutUtils::SetDisplayPortMargins(content, shell,
-                                       aMetrics.GetDisplayPortMargins(), 0);
+                                       displayPortMargins, 0);
 }
 
 /* static */ void
@@ -9781,13 +9801,13 @@ nsLayoutUtils::UpdateDisplayPortMarginsFromPendingMessages()
       [](const IPC::Message& aMsg) -> bool {
         if (aMsg.type() == mozilla::layers::PAPZ::Msg_RequestContentRepaint__ID) {
           PickleIterator iter(aMsg);
-          FrameMetrics frame;
-          if (!IPC::ReadParam(&aMsg, &iter, &frame)) {
+          RepaintRequest request;
+          if (!IPC::ReadParam(&aMsg, &iter, &request)) {
             MOZ_ASSERT(false);
             return true;
           }
 
-          UpdateDisplayPortMarginsForPendingMetrics(frame);
+          UpdateDisplayPortMarginsForPendingMetrics(request);
         }
         return true;
       });

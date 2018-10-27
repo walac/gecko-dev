@@ -713,7 +713,7 @@ BrowserGlue.prototype = {
   observe: async function BG_observe(subject, topic, data) {
     switch (topic) {
       case "notifications-open-settings":
-        this._openPreferences("privacy", { origin: "notifOpenSettings" });
+        this._openPreferences("privacy-permissions", { origin: "notifOpenSettings" });
         break;
       case "final-ui-startup":
         this._beforeUIStartup();
@@ -1364,9 +1364,6 @@ BrowserGlue.prototype = {
     let cookieBehavior = Services.prefs.getIntPref("network.cookie.cookieBehavior");
     Services.telemetry.getHistogramById("COOKIE_BEHAVIOR").add(cookieBehavior);
 
-    let fastBlockEnabled = Services.prefs.getBoolPref("browser.fastblock.enabled");
-    Services.telemetry.scalarSet("contentblocking.fastblock_enabled", fastBlockEnabled);
-
     let contentBlockingEnabled = Services.prefs.getBoolPref("browser.contentblocking.enabled");
     Services.telemetry.scalarSet("contentblocking.enabled", contentBlockingEnabled);
 
@@ -1782,7 +1779,7 @@ BrowserGlue.prototype = {
       tabSubstring = PluralForm.get(pagecount, tabSubstring).replace(/#1/, pagecount);
       let windowString = gTabbrowserBundle.GetStringFromName("tabs.closeWarningMultipleWindows");
       windowString = PluralForm.get(windowcount, windowString).replace(/#1/, windowcount);
-      windowString = windowString.replace(/%(?:1$)?S/i, tabSubstring);
+      windowString = windowString.replace(/%(?:1\$)?S/i, tabSubstring);
       aCancelQuit.data =
         !win.gBrowser.warnAboutClosingTabs(pagecount, win.gBrowser.closingTabsEnum.ALL, windowString);
     }
@@ -2187,7 +2184,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 76;
+    const UI_VERSION = 77;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     let currentUIVersion;
@@ -2545,6 +2542,14 @@ BrowserGlue.prototype = {
         for (let item of onboardingPrefsArray) {
           Services.prefs.clearUserPref("browser.onboarding." + item);
         }
+      }
+    }
+
+    if (currentUIVersion < 77) {
+      // Remove currentset from all the toolbars
+      let toolbars = ["nav-bar", "PersonalToolbar", "TabsToolbar", "toolbar-menubar"];
+      for (let toolbarId of toolbars) {
+        xulStore.removeValue(BROWSER_DOCURL, toolbarId, "currentset");
       }
     }
 

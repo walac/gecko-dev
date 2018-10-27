@@ -52,6 +52,7 @@ class UrlbarInput {
     this.valueIsTyped = false;
     this.userInitiatedFocus = false;
     this.isPrivate = PrivateBrowsingUtils.isWindowPrivate(this.window);
+    this._untrimmedValue = "";
 
     // Forward textbox methods and properties.
     const METHODS = ["addEventListener", "removeEventListener",
@@ -63,7 +64,7 @@ class UrlbarInput {
 
     for (let method of METHODS) {
       this[method] = (...args) => {
-        this.textbox[method](...args);
+        return this.textbox[method](...args);
       };
     }
 
@@ -229,8 +230,25 @@ class UrlbarInput {
    * @param {UrlbarMatch} result The result that was selected.
    */
   resultSelected(event, result) {
-    // TODO: Set the input value to the target url.
+    this.setValueFromResult(result);
     this.controller.resultSelected(event, result);
+  }
+
+  /**
+   * Called by the view when moving through results with the keyboard.
+   *
+   * @param {UrlbarMatch} result The result that was selected.
+   */
+  setValueFromResult(result) {
+    let val = result.url;
+    let uri;
+    try {
+      uri = Services.io.newURI(val);
+    } catch (ex) {}
+    if (uri) {
+      val = this.window.losslessDecodeURI(uri);
+    }
+    this.value = val;
   }
 
   // Getters and Setters below.
@@ -244,11 +262,17 @@ class UrlbarInput {
       "urlbar-go-button");
   }
 
-  get value() {
+  get textValue() {
     return this.inputField.value;
   }
 
+  get value() {
+    return this._untrimmedValue;
+  }
+
   set value(val) {
+    this._untrimmedValue = val;
+
     val = this.trimValue(val);
 
     this.valueIsTyped = false;
@@ -427,11 +451,20 @@ class UrlbarInput {
   }
 
   _on_input(event) {
+    let value = event.target.value;
     this.valueIsTyped = true;
+    this._untrimmedValue = value;
+    this.window.gBrowser.userTypedValue = value;
+
+    if (value) {
+      this.setAttribute("usertyping", "true");
+    } else {
+      this.removeAttribute("usertyping");
+    }
 
     // XXX Fill in lastKey, and add anything else we need.
     this.controller.startQuery(new QueryContext({
-      searchString: event.target.value,
+      searchString: value,
       lastKey: "",
       maxResults: UrlbarPrefs.get("maxRichResults"),
       isPrivate: this.isPrivate,

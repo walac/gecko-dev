@@ -1142,6 +1142,18 @@ nsNativeThemeGTK::GetExtraSizeForWidget(nsIFrame* aFrame,
   return true;
 }
 
+bool
+nsNativeThemeGTK::IsWidgetVisible(WidgetType aWidgetType)
+{
+  switch (aWidgetType) {
+  case StyleAppearance::MozWindowButtonBox:
+    return false;
+  default:
+    break;
+  }
+  return true;
+}
+
 NS_IMETHODIMP
 nsNativeThemeGTK::DrawWidgetBackground(gfxContext* aContext,
                                        nsIFrame* aFrame,
@@ -1153,9 +1165,12 @@ nsNativeThemeGTK::DrawWidgetBackground(gfxContext* aContext,
   WidgetNodeType gtkWidgetType;
   GtkTextDirection direction = GetTextDirection(aFrame);
   gint flags;
-  if (!GetGtkWidgetAndState(aWidgetType, aFrame, gtkWidgetType, &state,
-                            &flags))
+
+  if (!IsWidgetVisible(aWidgetType) ||
+      !GetGtkWidgetAndState(aWidgetType, aFrame, gtkWidgetType, &state,
+                            &flags)) {
     return NS_OK;
+  }
 
   gfxContext* ctx = aContext;
   nsPresContext *presContext = aFrame->PresContext();
@@ -1741,6 +1756,7 @@ nsNativeThemeGTK::GetMinimumWidgetSize(nsPresContext* aPresContext,
     }
     break;
 #ifdef MOZ_WIDGET_GTK
+  case StyleAppearance::MenulistTextfield:
   case StyleAppearance::NumberInput:
   case StyleAppearance::Textfield:
     {
@@ -1927,7 +1943,6 @@ nsNativeThemeGTK::ThemeSupportsWidget(nsPresContext* aPresContext,
   // Combobox dropdowns don't support native theming in vertical mode.
   case StyleAppearance::Menulist:
   case StyleAppearance::MenulistText:
-  case StyleAppearance::MenulistTextfield:
     if (aFrame && aFrame->GetWritingMode().IsVertical()) {
       return false;
     }
@@ -1989,6 +2004,7 @@ nsNativeThemeGTK::ThemeSupportsWidget(nsPresContext* aPresContext,
   case StyleAppearance::ScrollbartrackVertical:
   case StyleAppearance::ScrollbarthumbHorizontal:
   case StyleAppearance::ScrollbarthumbVertical:
+  case StyleAppearance::MenulistTextfield:
   case StyleAppearance::NumberInput:
   case StyleAppearance::Textfield:
   case StyleAppearance::TextfieldMultiline:

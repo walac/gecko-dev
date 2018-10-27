@@ -364,6 +364,10 @@ richlistbox.list > richlistitem.addon {
   cursor: pointer;
 }
 
+.relnotes-container {
+  cursor: auto;
+}
+
 .addon-view[type="theme"] .icon {
   list-style-image: url("chrome://mozapps/skin/extensions/themeGeneric.svg");
 }
@@ -422,9 +426,8 @@ richlistbox.list > richlistitem.addon {
 }
 
 .description-container {
-  margin-inline-start: 6px;
   -moz-box-align: center;
-  font-size: 1.25rem;
+  font-size: 1rem;
 }
 
 .description {

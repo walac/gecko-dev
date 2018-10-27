@@ -54,6 +54,7 @@ struct ComputedFlexItemInfo
   nscoord mMainMaxSize;
   nscoord mCrossMinSize;
   nscoord mCrossMaxSize;
+  mozilla::dom::FlexItemClampState mClampState;
 };
 
 struct ComputedFlexLineInfo
@@ -63,11 +64,7 @@ struct ComputedFlexLineInfo
   nscoord mCrossSize;
   nscoord mFirstBaselineOffset;
   nscoord mLastBaselineOffset;
-  enum GrowthState {
-    UNCHANGED,
-    SHRINKING,
-    GROWING,
-  } mGrowthState;
+  mozilla::dom::FlexLineGrowthState mGrowthState;
 };
 
 struct ComputedFlexContainerInfo
@@ -231,6 +228,11 @@ public:
    */
   static bool IsUsedFlexBasisContent(const nsStyleCoord* aFlexBasis,
                                      const nsStyleCoord* aMainSize);
+
+  /**
+   * Callback for nsFrame::MarkIntrinsicISizesDirty() on a flex item.
+   */
+  static void MarkCachedFlexMeasurementsDirty(nsIFrame* aItemFrame);
 
 protected:
   // Protected constructor & destructor

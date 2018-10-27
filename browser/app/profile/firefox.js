@@ -312,10 +312,6 @@ pref("browser.urlbar.timesBeforeHidingSuggestionsHint", 4);
 // suggestions.
 pref("browser.urlbar.maxCharsForSearchSuggestions", 20);
 
-// Restrictions to current suggestions can also be applied (intersection).
-// Typed suggestion works only if history is set to true.
-pref("browser.urlbar.suggest.history.onlyTyped",    false);
-
 pref("browser.urlbar.formatting.enabled", true);
 pref("browser.urlbar.trimURLs", true);
 
@@ -1023,6 +1019,12 @@ pref("security.sandbox.gpu.level", 0);
 pref("security.sandbox.gmp.win32k-disable", false);
 #endif
 
+#if defined(NIGHTLY_BUILD) && defined(XP_MACOSX) && defined(MOZ_SANDBOX)
+// Start the Mac sandbox immediately during child process startup instead
+// of when messaged by the parent after the message loop is running.
+pref("security.sandbox.content.mac.earlyinit", false);
+#endif
+
 #if defined(XP_MACOSX) && defined(MOZ_SANDBOX) && defined(MOZ_CONTENT_SANDBOX)
 // This pref is discussed in bug 1083344, the naming is inspired from its
 // Windows counterpart, but on Mac it's an integer which means:
@@ -1166,7 +1168,6 @@ pref("services.sync.prefs.sync.browser.urlbar.matchBuckets", true);
 pref("services.sync.prefs.sync.browser.urlbar.maxRichResults", true);
 pref("services.sync.prefs.sync.browser.urlbar.suggest.bookmark", true);
 pref("services.sync.prefs.sync.browser.urlbar.suggest.history", true);
-pref("services.sync.prefs.sync.browser.urlbar.suggest.history.onlyTyped", true);
 pref("services.sync.prefs.sync.browser.urlbar.suggest.openpage", true);
 pref("services.sync.prefs.sync.browser.urlbar.suggest.searches", true);
 pref("services.sync.prefs.sync.dom.disable_open_during_load", true);
@@ -1196,6 +1197,8 @@ pref("services.sync.prefs.sync.privacy.clearOnShutdown.offlineApps", true);
 pref("services.sync.prefs.sync.privacy.clearOnShutdown.sessions", true);
 pref("services.sync.prefs.sync.privacy.clearOnShutdown.siteSettings", true);
 pref("services.sync.prefs.sync.privacy.donottrackheader.enabled", true);
+pref("services.sync.prefs.sync.privacy.fuzzyfox.enabled", true);
+pref("services.sync.prefs.sync.privacy.fuzzyfox.clockgrainus", true);
 pref("services.sync.prefs.sync.privacy.sanitize.sanitizeOnShutdown", true);
 pref("services.sync.prefs.sync.privacy.trackingprotection.enabled", true);
 pref("services.sync.prefs.sync.privacy.trackingprotection.pbmode.enabled", true);
@@ -1506,8 +1509,9 @@ pref("browser.ping-centre.production.endpoint", "https://tiles.services.mozilla.
 // Enable GMP support in the addon manager.
 pref("media.gmp-provider.enabled", true);
 
-// Enable blocking access to storage from tracking resources by default on Nightly
-#ifdef NIGHTLY_BUILD
+// Enable blocking access to storage from tracking resources by default on
+// Nightly and Beta
+#ifdef EARLY_BETA_OR_EARLIER
 pref("network.cookie.cookieBehavior", 4 /* BEHAVIOR_REJECT_TRACKER */);
 #endif
 
@@ -1519,9 +1523,10 @@ pref("browser.contentblocking.global-toggle.enabled", true);
 pref("browser.contentblocking.global-toggle.enabled", false);
 #endif
 
-// Disable the UI for FastBlock in product.
-pref("browser.contentblocking.fastblock.ui.enabled", false);
-pref("browser.contentblocking.fastblock.control-center.ui.enabled", false);
+#ifdef NIGHTLY_BUILD
+// Enable the Storage Access API in Nightly
+pref("dom.storage_access.enabled", true);
+#endif
 
 // Define a set of default features for the Content Blocking UI.
 pref("browser.contentblocking.trackingprotection.ui.enabled", true);
@@ -1543,11 +1548,8 @@ pref("browser.contentblocking.rejecttrackers.reportBreakage.enabled", true);
 
 pref("browser.contentblocking.reportBreakage.url", "https://tracking-protection-issues.herokuapp.com/new");
 
-// Content Blocking has a separate pref for the intro count, since the former TP intro
-// was updated when we introduced content blocking and we want people to see it again.
 pref("browser.contentblocking.introCount", 0);
 
-pref("privacy.trackingprotection.introCount", 0);
 pref("privacy.trackingprotection.introURL", "https://www.mozilla.org/%LOCALE%/firefox/%VERSION%/tracking-protection/start/");
 
 // Always enable newtab segregation using containers
@@ -1753,6 +1755,12 @@ pref("app.shield.optoutstudies.enabled", false);
 
 // Multi-lingual preferences
 pref("intl.multilingual.enabled", false);
+// AMO only serves language packs for release versions, so this feature only works on release.
+#ifdef RELEASE
+pref("intl.multilingual.downloadEnabled", true);
+#else
+pref("intl.multilingual.downloadEnabled", false);
+#endif
 
 // Simulate conditions that will happen when the browser
 // is running with Fission enabled. This is meant to assist
@@ -1771,6 +1779,9 @@ pref("prio.publicKeyA", "35AC1C7576C7C6EDD7FED6BCFC337B34D48CB4EE45C86BEEFB40BD8
 pref("prio.publicKeyB", "26E6674E65425B823F1F1D5F96E3BB3EF9E406EC7FBA7DEF8B08A35DD135AF50");
 #endif
 
+// Coverage ping is disabled by default.
+pref("toolkit.coverage.enabled", false);
+pref("toolkit.coverage.endpoint.base", "https://coverage.mozilla.org");
 // Whether or not Prio-encoded Telemetry will be sent along with the main ping.
 #if defined(NIGHTLY_BUILD) && defined(MOZ_LIBPRIO)
 pref("prio.enabled", true);

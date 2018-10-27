@@ -104,6 +104,9 @@ Preferences.addAll([
   { id: "browser.sessionstore.restore_on_demand", type: "bool" },
   { id: "browser.ctrlTab.recentlyUsedOrder", type: "bool" },
 
+  // CFR
+  {id: "browser.newtabpage.activity-stream.asrouter.userprefs.cfr", type: "bool"},
+
   // Fonts
   { id: "font.language.group", type: "wstring" },
 
@@ -194,13 +197,13 @@ function getBundleForLocales(newLocales) {
     ...Services.locale.requestedLocales,
     Services.locale.lastFallbackLocale,
   ]));
-  function generateContexts(resourceIds) {
-    return L10nRegistry.generateContexts(locales, resourceIds);
+  function generateBundles(resourceIds) {
+    return L10nRegistry.generateBundles(locales, resourceIds);
   }
   return new Localization([
     "browser/preferences/preferences.ftl",
     "branding/brand.ftl",
-  ], generateContexts);
+  ], generateBundles);
 }
 
 var gNodeToObjectMap = new WeakMap();
@@ -311,6 +314,10 @@ var gMainPane = {
     if (Services.prefs.getBoolPref("intl.multilingual.enabled")) {
       gMainPane.initBrowserLocale();
     }
+
+    let cfrLearnMoreLink = document.getElementById("cfrLearnMore");
+    let cfrLearnMoreUrl = Services.urlFormatter.formatURLPref("app.support.baseURL") + "extensionrecommendations";
+    cfrLearnMoreLink.setAttribute("href", cfrLearnMoreUrl);
 
     if (AppConstants.platform == "win") {
       // Functionality for "Show tabs in taskbar" on Windows 7 and up.
@@ -748,15 +755,18 @@ var gMainPane = {
       fragment.appendChild(menuitem);
     }
 
-    // Add an option to search for more languages.
-    let menuitem = document.createXULElement("menuitem");
-    menuitem.id = "defaultBrowserLanguageSearch";
-    menuitem.setAttribute(
-      "label", await document.l10n.formatValue("browser-languages-search"));
-    menuitem.addEventListener("command", () => {
-      gMainPane.showBrowserLanguages({search: true});
-    });
-    fragment.appendChild(menuitem);
+    // Add an option to search for more languages if downloading is supported.
+    if (Services.prefs.getBoolPref("intl.multilingual.downloadEnabled")) {
+      let menuitem = document.createXULElement("menuitem");
+      menuitem.id = "defaultBrowserLanguageSearch";
+      menuitem.setAttribute(
+        "label", await document.l10n.formatValue("browser-languages-search"));
+      menuitem.setAttribute("value", "search");
+      menuitem.addEventListener("command", () => {
+        gMainPane.showBrowserLanguages({search: true});
+      });
+      fragment.appendChild(menuitem);
+    }
 
     let menulist = document.getElementById("defaultBrowserLanguage");
     let menupopup = menulist.querySelector("menupopup");
@@ -2104,9 +2114,9 @@ var gMainPane = {
     if (providerDisplayName) {
       // Show cloud storage radio button with provider name in label
       let saveToCloudRadio = document.getElementById("saveToCloud");
-      let cloudStrings = Services.strings.createBundle("resource://cloudstorage/preferences.properties");
-      saveToCloudRadio.label = cloudStrings.formatStringFromName("saveFilesToCloudStorage",
-        [providerDisplayName], 1);
+      document.l10n.setAttributes(saveToCloudRadio, "save-files-to-cloud-storage", {
+        "service-name": providerDisplayName,
+      });
       saveToCloudRadio.hidden = false;
 
       let useDownloadDirPref = Preferences.get("browser.download.useDownloadDir");

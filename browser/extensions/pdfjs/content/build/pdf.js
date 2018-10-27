@@ -123,8 +123,8 @@ return /******/ (function(modules) { // webpackBootstrap
 "use strict";
 
 
-var pdfjsVersion = '2.0.928';
-var pdfjsBuild = 'e41c50c3';
+var pdfjsVersion = '2.0.943';
+var pdfjsBuild = 'dc98bf76';
 var pdfjsSharedUtil = __w_pdfjs_require__(1);
 var pdfjsDisplayAPI = __w_pdfjs_require__(7);
 var pdfjsDisplayTextLayer = __w_pdfjs_require__(19);
@@ -148,6 +148,8 @@ exports.InvalidPDFException = pdfjsSharedUtil.InvalidPDFException;
 exports.MissingPDFException = pdfjsSharedUtil.MissingPDFException;
 exports.SVGGraphics = pdfjsDisplaySVG.SVGGraphics;
 exports.NativeImageDecoding = pdfjsSharedUtil.NativeImageDecoding;
+exports.CMapCompressionType = pdfjsSharedUtil.CMapCompressionType;
+exports.PermissionFlag = pdfjsSharedUtil.PermissionFlag;
 exports.UnexpectedResponseException = pdfjsSharedUtil.UnexpectedResponseException;
 exports.OPS = pdfjsSharedUtil.OPS;
 exports.VerbosityLevel = pdfjsSharedUtil.VerbosityLevel;
@@ -4224,7 +4226,7 @@ function _fetchDocument(worker, source, pdfDataRangeTransport, docId) {
   }
   return worker.messageHandler.sendWithPromise('GetDocRequest', {
     docId,
-    apiVersion: '2.0.928',
+    apiVersion: '2.0.943',
     source: {
       data: source.data,
       url: source.url,
@@ -4281,8 +4283,8 @@ var PDFDocumentLoadingTask = function PDFDocumentLoadingTaskClosure() {
   };
   return PDFDocumentLoadingTask;
 }();
-var PDFDataRangeTransport = function pdfDataRangeTransportClosure() {
-  function PDFDataRangeTransport(length, initialData) {
+class PDFDataRangeTransport {
+  constructor(length, initialData) {
     this.length = length;
     this.initialData = initialData;
     this._rangeListeners = [];
@@ -4290,48 +4292,42 @@ var PDFDataRangeTransport = function pdfDataRangeTransportClosure() {
     this._progressiveReadListeners = [];
     this._readyCapability = (0, _util.createPromiseCapability)();
   }
-  PDFDataRangeTransport.prototype = {
-    addRangeListener: function PDFDataRangeTransport_addRangeListener(listener) {
-      this._rangeListeners.push(listener);
-    },
-    addProgressListener: function PDFDataRangeTransport_addProgressListener(listener) {
-      this._progressListeners.push(listener);
-    },
-    addProgressiveReadListener: function PDFDataRangeTransport_addProgressiveReadListener(listener) {
-      this._progressiveReadListeners.push(listener);
-    },
-    onDataRange: function PDFDataRangeTransport_onDataRange(begin, chunk) {
-      var listeners = this._rangeListeners;
-      for (var i = 0, n = listeners.length; i < n; ++i) {
-        listeners[i](begin, chunk);
+  addRangeListener(listener) {
+    this._rangeListeners.push(listener);
+  }
+  addProgressListener(listener) {
+    this._progressListeners.push(listener);
+  }
+  addProgressiveReadListener(listener) {
+    this._progressiveReadListeners.push(listener);
+  }
+  onDataRange(begin, chunk) {
+    for (const listener of this._rangeListeners) {
+      listener(begin, chunk);
+    }
+  }
+  onDataProgress(loaded) {
+    this._readyCapability.promise.then(() => {
+      for (const listener of this._progressListeners) {
+        listener(loaded);
       }
-    },
-    onDataProgress: function PDFDataRangeTransport_onDataProgress(loaded) {
-      this._readyCapability.promise.then(() => {
-        var listeners = this._progressListeners;
-        for (var i = 0, n = listeners.length; i < n; ++i) {
-          listeners[i](loaded);
-        }
-      });
-    },
-    onDataProgressiveRead: function PDFDataRangeTransport_onDataProgress(chunk) {
-      this._readyCapability.promise.then(() => {
-        var listeners = this._progressiveReadListeners;
-        for (var i = 0, n = listeners.length; i < n; ++i) {
-          listeners[i](chunk);
-        }
-      });
-    },
-    transportReady: function PDFDataRangeTransport_transportReady() {
-      this._readyCapability.resolve();
-    },
-    requestDataRange: function PDFDataRangeTransport_requestDataRange(begin, end) {
-      (0, _util.unreachable)('Abstract method PDFDataRangeTransport.requestDataRange');
-    },
-    abort: function PDFDataRangeTransport_abort() {}
-  };
-  return PDFDataRangeTransport;
-}();
+    });
+  }
+  onDataProgressiveRead(chunk) {
+    this._readyCapability.promise.then(() => {
+      for (const listener of this._progressiveReadListeners) {
+        listener(chunk);
+      }
+    });
+  }
+  transportReady() {
+    this._readyCapability.resolve();
+  }
+  requestDataRange(begin, end) {
+    (0, _util.unreachable)('Abstract method PDFDataRangeTransport.requestDataRange');
+  }
+  abort() {}
+}
 class PDFDocumentProxy {
   constructor(pdfInfo, transport, loadingTask) {
     this.loadingTask = loadingTask;
@@ -4999,10 +4995,8 @@ class WorkerTransport {
       const fullReader = this._fullReader;
       fullReader.headersReady.then(() => {
         if (!fullReader.isStreamingSupported || !fullReader.isRangeSupported) {
-          if (this._lastProgress) {
-            if (loadingTask.onProgress) {
-              loadingTask.onProgress(this._lastProgress);
-            }
+          if (this._lastProgress && loadingTask.onProgress) {
+            loadingTask.onProgress(this._lastProgress);
           }
           fullReader.onProgress = evt => {
             if (loadingTask.onProgress) {
@@ -5077,6 +5071,12 @@ class WorkerTransport {
       loadingTask._capability.reject(new _util.UnknownErrorException(exception.message, exception.details));
     }, this);
     messageHandler.on('DataLoaded', function (data) {
+      if (loadingTask.onProgress) {
+        loadingTask.onProgress({
+          loaded: data.length,
+          total: data.length
+        });
+      }
       this.downloadInfoCapability.resolve(data);
     }, this);
     messageHandler.on('StartRenderPage', function (data) {
@@ -5555,8 +5555,8 @@ var InternalRenderTask = function InternalRenderTaskClosure() {
 }();
 var version, build;
 {
-  exports.version = version = '2.0.928';
-  exports.build = build = 'e41c50c3';
+  exports.version = version = '2.0.943';
+  exports.build = build = 'dc98bf76';
 }
 exports.getDocument = getDocument;
 exports.LoopbackPort = LoopbackPort;

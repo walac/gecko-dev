@@ -21,6 +21,7 @@
 #include "jit/Lowering.h"
 #include "jit/MIRGraph.h"
 #include "vm/ArgumentsObject.h"
+#include "vm/EnvironmentObject.h"
 #include "vm/Opcodes.h"
 #include "vm/RegExpStatics.h"
 #include "vm/TraceLogging.h"
@@ -778,6 +779,14 @@ IonBuilder::init()
 AbortReasonOr<Ok>
 IonBuilder::build()
 {
+    // Spew IC info for inlined script, but only when actually compiling,
+    // not when analyzing it.
+#ifdef JS_JITSPEW
+    if (!info().isAnalysis()) {
+        JitSpewBaselineICStats(script(), "To-Be-Compiled");
+    }
+#endif
+
     MOZ_TRY(init());
 
     if (script()->hasBaselineScript()) {
@@ -970,6 +979,14 @@ IonBuilder::buildInline(IonBuilder* callerBuilder, MResumePoint* callerResumePoi
                         CallInfo& callInfo)
 {
     inlineCallInfo_ = &callInfo;
+
+    // Spew IC info for inlined script, but only when actually compiling,
+    // not when analyzing it.
+#ifdef JS_JITSPEW
+    if (!info().isAnalysis()) {
+        JitSpewBaselineICStats(script(), "To-Be-Inlined");
+    }
+#endif
 
     MOZ_TRY(init());
 
@@ -2488,6 +2505,9 @@ IonBuilder::inspectOpcode(JSOp op)
 
       case JSOP_IMPORTMETA:
         return jsop_importmeta();
+
+      case JSOP_DYNAMIC_IMPORT:
+        return jsop_dynamic_import();
 
       case JSOP_LOOPENTRY:
         return jsop_loopentry();
@@ -5352,6 +5372,14 @@ IonBuilder::jsop_funcall(uint32_t argc)
     TemporaryTypeSet* funTypes = current->peek(funcDepth)->resultTypeSet();
     JSFunction* target = getSingleCallTarget(funTypes);
 
+    CallInfo callInfo(alloc(), pc, /* constructing = */ false,
+                      /* ignoresReturnValue = */ BytecodeIsPopped(pc));
+
+    // Save prior call stack in case we need to resolve during bailout
+    // recovery of inner inlined function. This includes the JSFunction and the
+    // 'call' native function.
+    MOZ_TRY(callInfo.savePriorCallStack(this, current, argc + 2));
+
     // Shimmy the slots down to remove the native 'call' function.
     current->shimmySlots(funcDepth - 1);
 
@@ -5366,8 +5394,6 @@ IonBuilder::jsop_funcall(uint32_t argc)
         argc -= 1;
     }
 
-    CallInfo callInfo(alloc(), pc, /* constructing = */ false,
-                      /* ignoresReturnValue = */ BytecodeIsPopped(pc));
     if (!callInfo.init(current, argc)) {
         return abort(AbortReason::Alloc);
     }
@@ -13826,6 +13852,20 @@ IonBuilder::jsop_importmeta()
     current->add(meta);
     current->push(meta);
     return resumeAfter(meta);
+}
+
+AbortReasonOr<Ok>
+IonBuilder::jsop_dynamic_import()
+{
+    Value referencingPrivate = FindScriptOrModulePrivateForScript(script());
+    MConstant* ref = constant(referencingPrivate);
+
+    MDefinition* specifier = current->pop();
+
+    MDynamicImport* ins = MDynamicImport::New(alloc(), ref, specifier);
+    current->add(ins);
+    current->push(ins);
+    return resumeAfter(ins);
 }
 
 MInstruction*

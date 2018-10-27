@@ -981,6 +981,11 @@ struct JSRuntime : public js::MallocProvider<JSRuntime>
     // HostGetImportMetaProperties and HostFinalizeImportMeta.
     js::MainThreadData<JS::ModuleMetadataHook> moduleMetadataHook;
 
+    // A hook that implements the abstract operation
+    // HostImportModuleDynamically. This is also used to enable/disable dynamic
+    // module import and can accessed by off-thread parsing.
+    mozilla::Atomic<JS::ModuleDynamicImportHook> moduleDynamicImportHook;
+
   public:
 #if defined(JS_BUILD_BINAST)
     js::BinaryASTSupport& binast() {

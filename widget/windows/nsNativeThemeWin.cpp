@@ -142,6 +142,14 @@ GetCheckboxMargins(HANDLE theme, HDC hdc)
     return checkboxContent;
 }
 
+static COLORREF
+GetTextfieldFillColor(HANDLE theme, int32_t part, int32_t state)
+{
+    COLORREF color = {0};
+    GetThemeColor(theme, part, state, TMT_FILLCOLOR, &color);
+    return color;
+}
+
 static SIZE
 GetCheckboxBGSize(HANDLE theme, HDC hdc)
 {
@@ -730,6 +738,7 @@ mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(WidgetType aWidge
     case StyleAppearance::Checkbox:
     case StyleAppearance::Groupbox:
       return Some(eUXButton);
+    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield:
     case StyleAppearance::TextfieldMultiline:
@@ -951,6 +960,7 @@ nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame, WidgetType aWidgetType,
       // same as GBS_NORMAL don't bother supporting GBS_DISABLED.
       return NS_OK;
     }
+    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield:
     case StyleAppearance::TextfieldMultiline: {
@@ -1869,11 +1879,24 @@ RENDER_AGAIN:
     DrawThemeBGRTLAware(theme, hdc, part, state,
                         &widgetRect, &clipRect, IsFrameRTL(aFrame));
   }
-  else if (aWidgetType == StyleAppearance::NumberInput ||
+  else if (aWidgetType == StyleAppearance::MenulistTextfield ||
+           aWidgetType == StyleAppearance::NumberInput ||
            aWidgetType == StyleAppearance::Textfield ||
            aWidgetType == StyleAppearance::TextfieldMultiline) {
-    DrawThemeBackground(theme, hdc, part, state, &widgetRect, &clipRect);
-     if (state == TFS_EDITBORDER_DISABLED) {
+    if (aWidgetType == StyleAppearance::MenulistTextfield &&
+        state != TFS_EDITBORDER_FOCUSED) {
+      // We want 'menulist-textfield' to behave like 'textfield', except we
+      // don't want a border unless it's focused.  We have to handle the
+      // non-focused case manually here.
+      COLORREF color = GetTextfieldFillColor(theme, part, state);
+      HBRUSH brush = CreateSolidBrush(color);
+      ::FillRect(hdc, &widgetRect, brush);
+      DeleteObject(brush);
+    } else {
+      DrawThemeBackground(theme, hdc, part, state, &widgetRect, &clipRect);
+    }
+
+    if (state == TFS_EDITBORDER_DISABLED) {
       InflateRect(&widgetRect, -1, -1);
       ::FillRect(hdc, &widgetRect, reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1));
     }
@@ -1982,41 +2005,6 @@ RENDER_AGAIN:
   return NS_OK;
 }
 
-static nscolor
-GetScrollbarFaceColorForAuto(ComputedStyle* aStyle)
-{
-  return NS_RGB(205, 205, 205);
-}
-
-static nscolor
-GetScrollbarTrackColorForAuto(ComputedStyle* aStyle)
-{
-  return NS_RGB(240, 240, 240);
-}
-
-nscolor
-nsNativeThemeWin::GetWidgetAutoColor(ComputedStyle* aStyle, WidgetType aWidgetType)
-{
-  switch (aWidgetType) {
-    case StyleAppearance::Scrollbar:
-    case StyleAppearance::ScrollbarSmall:
-    case StyleAppearance::ScrollbarVertical:
-    case StyleAppearance::ScrollbarHorizontal:
-    case StyleAppearance::ScrollbarbuttonUp:
-    case StyleAppearance::ScrollbarbuttonDown:
-    case StyleAppearance::ScrollbarbuttonLeft:
-    case StyleAppearance::ScrollbarbuttonRight:
-      return GetScrollbarTrackColorForAuto(aStyle);
-
-    case StyleAppearance::ScrollbarthumbVertical:
-    case StyleAppearance::ScrollbarthumbHorizontal:
-      return GetScrollbarFaceColorForAuto(aStyle);
-
-    default:
-      return nsITheme::GetWidgetAutoColor(aStyle, aWidgetType);
-  }
-}
-
 static void
 ScaleForFrameDPI(LayoutDeviceIntMargin* aMargin, nsIFrame* aFrame)
 {
@@ -2099,7 +2087,8 @@ nsNativeThemeWin::GetWidgetBorder(nsDeviceContext* aContext,
       result.left = 0;
   }
 
-  if (aFrame && (aWidgetType == StyleAppearance::NumberInput ||
+  if (aFrame && (aWidgetType == StyleAppearance::MenulistTextfield ||
+                 aWidgetType == StyleAppearance::NumberInput ||
                  aWidgetType == StyleAppearance::Textfield ||
                  aWidgetType == StyleAppearance::TextfieldMultiline)) {
     nsIContent* content = aFrame->GetContent();
@@ -2199,7 +2188,8 @@ nsNativeThemeWin::GetWidgetPadding(nsDeviceContext* aContext,
     return ok;
   }
 
-  if (aWidgetType == StyleAppearance::NumberInput ||
+  if (aWidgetType == StyleAppearance::MenulistTextfield ||
+      aWidgetType == StyleAppearance::NumberInput ||
       aWidgetType == StyleAppearance::Textfield ||
       aWidgetType == StyleAppearance::TextfieldMultiline ||
       aWidgetType == StyleAppearance::Menulist)
@@ -2216,7 +2206,8 @@ nsNativeThemeWin::GetWidgetPadding(nsDeviceContext* aContext,
    * Instead, we add 2px padding for the contents and fix this. (Used to be 1px
    * added, see bug 430212)
    */
-  if (aWidgetType == StyleAppearance::NumberInput ||
+  if (aWidgetType == StyleAppearance::MenulistTextfield ||
+      aWidgetType == StyleAppearance::NumberInput ||
       aWidgetType == StyleAppearance::Textfield ||
       aWidgetType == StyleAppearance::TextfieldMultiline) {
     aResult->top = aResult->bottom = 2;
@@ -2358,6 +2349,7 @@ nsNativeThemeWin::GetMinimumWidgetSize(nsPresContext* aPresContext, nsIFrame* aF
 
   switch (aWidgetType) {
     case StyleAppearance::Groupbox:
+    case StyleAppearance::MenulistTextfield:
     case StyleAppearance::NumberInput:
     case StyleAppearance::Textfield:
     case StyleAppearance::Toolbox:
@@ -3812,8 +3804,12 @@ RENDER_AGAIN:
     case StyleAppearance::Listbox:
     case StyleAppearance::Menulist:
     case StyleAppearance::MenulistTextfield: {
-      // Draw inset edge
-      ::DrawEdge(hdc, &widgetRect, EDGE_SUNKEN, BF_RECT | BF_ADJUST);
+      // Paint the border, except for 'menulist-textfield' that isn't focused:
+      if (aWidgetType != StyleAppearance::MenulistTextfield || focused) {
+        // Draw inset edge
+        ::DrawEdge(hdc, &widgetRect, EDGE_SUNKEN, BF_RECT | BF_ADJUST);
+      }
+
       EventStates eventState = GetContentState(aFrame, aWidgetType);
 
       // Fill in background
@@ -4335,7 +4331,7 @@ nsNativeThemeWin::DrawCustomScrollbarPart(gfxContext* aContext,
 
   const nsStyleUI* ui = aStyle->StyleUI();
   nscolor trackColor = ui->mScrollbarTrackColor.IsAuto()
-    ? GetScrollbarTrackColorForAuto(aStyle)
+    ? NS_RGB(240, 240, 240)
     : ui->mScrollbarTrackColor.CalcColor(aStyle);
   switch (aWidgetType) {
     case StyleAppearance::ScrollbarHorizontal:
@@ -4372,7 +4368,7 @@ nsNativeThemeWin::DrawCustomScrollbarPart(gfxContext* aContext,
     case StyleAppearance::ScrollbarthumbVertical:
     case StyleAppearance::ScrollbarthumbHorizontal: {
       nscolor faceColor = ui->mScrollbarFaceColor.IsAuto()
-        ? GetScrollbarFaceColorForAuto(aStyle)
+        ? NS_RGB(205, 205, 205)
         : ui->mScrollbarFaceColor.CalcColor(aStyle);
       faceColor = AdjustScrollbarFaceColor(faceColor, eventStates);
       ctx->SetColor(Color::FromABGR(faceColor));

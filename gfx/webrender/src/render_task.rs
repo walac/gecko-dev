@@ -22,7 +22,7 @@ use internal_types::{CacheTextureId, FastHashMap, LayerIndex, SavedTargetIndex};
 #[cfg(feature = "pathfinder")]
 use pathfinder_partitioner::mesh::Mesh;
 use picture::PictureCacheKey;
-use prim_store::{PrimitiveIndex, ImageCacheKey, LineDecorationCacheKey};
+use prim_store::{PictureIndex, ImageCacheKey, LineDecorationCacheKey};
 #[cfg(feature = "debugger")]
 use print_tree::{PrintTreePrinter};
 use render_backend::FrameId;
@@ -52,7 +52,7 @@ fn render_task_sanity_check(size: &DeviceIntSize) {
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct RenderTaskId(pub u32, FrameId); // TODO(gw): Make private when using GPU cache!
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 #[repr(C)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
@@ -125,7 +125,7 @@ impl RenderTaskTree {
         };
 
         let pass = &mut passes[pass_index];
-        pass.add_render_task(id, task.get_dynamic_size(), task.target_kind());
+        pass.add_render_task(id, task.get_dynamic_size(), task.target_kind(), &task.location);
     }
 
     pub fn prepare_for_render(&mut self) {
@@ -173,7 +173,7 @@ impl ops::IndexMut<RenderTaskId> for RenderTaskTree {
 }
 
 /// Identifies the output buffer location for a given `RenderTask`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub enum RenderTaskLocation {
@@ -202,6 +202,16 @@ pub enum RenderTaskLocation {
     },
 }
 
+impl RenderTaskLocation {
+    /// Returns true if this is a dynamic location.
+    pub fn is_dynamic(&self) -> bool {
+        match *self {
+            RenderTaskLocation::Dynamic(..) => true,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
@@ -222,7 +232,7 @@ pub struct ClipRegionTask {
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct PictureTask {
-    pub prim_index: PrimitiveIndex,
+    pub pic_index: PictureIndex,
     pub can_merge: bool,
     pub content_origin: DeviceIntPoint,
     pub uv_rect_handle: GpuCacheHandle,
@@ -384,7 +394,7 @@ impl RenderTask {
     pub fn new_picture(
         location: RenderTaskLocation,
         unclipped_size: DeviceSize,
-        prim_index: PrimitiveIndex,
+        pic_index: PictureIndex,
         content_origin: DeviceIntPoint,
         children: Vec<RenderTaskId>,
         uv_rect_kind: UvRectKind,
@@ -405,7 +415,7 @@ impl RenderTask {
             location,
             children,
             kind: RenderTaskKind::Picture(PictureTask {
-                prim_index,
+                pic_index,
                 content_origin,
                 can_merge,
                 uv_rect_handle: GpuCacheHandle::new(),
@@ -554,7 +564,7 @@ impl RenderTask {
                 }
                 ClipItem::Rectangle(..) |
                 ClipItem::RoundedRectangle(..) |
-                ClipItem::Image(..) => {}
+                ClipItem::Image { .. } => {}
             }
         }
 
@@ -992,7 +1002,7 @@ impl RenderTask {
     pub fn print_with<T: PrintTreePrinter>(&self, pt: &mut T, tree: &RenderTaskTree) -> bool {
         match self.kind {
             RenderTaskKind::Picture(ref task) => {
-                pt.new_level(format!("Picture of {:?}", task.prim_index));
+                pt.new_level(format!("Picture of {:?}", task.pic_index));
             }
             RenderTaskKind::CacheMask(ref task) => {
                 pt.new_level(format!("CacheMask with {} clips", task.clip_node_range.count));

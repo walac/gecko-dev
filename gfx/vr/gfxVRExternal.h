@@ -131,12 +131,12 @@ private:
 #elif defined(XP_WIN)
   base::ProcessHandle mShmemFile;
 #elif defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
+
 #if defined(MOZ_WIDGET_ANDROID)
   bool mExternalStructFailed;
 #endif
   bool mEnumerationCompleted;
 #endif
-
   bool mDoShutdown;
 
   volatile VRExternalShmem* mExternalShmem;

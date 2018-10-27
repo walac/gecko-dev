@@ -262,7 +262,7 @@ struct JSErrorInterceptor {
      *
      * This method MUST be infallible.
      */
-    virtual void interceptError(JSContext* cx, const JS::Value& error) = 0;
+    virtual void interceptError(JSContext* cx, JS::HandleValue error) = 0;
 };
 
 /************************************************************************/
@@ -3049,6 +3049,25 @@ GetModuleMetadataHook(JSRuntime* rt);
  */
 extern JS_PUBLIC_API(void)
 SetModuleMetadataHook(JSRuntime* rt, ModuleMetadataHook func);
+
+using ModuleDynamicImportHook = bool (*)(JSContext* cx, HandleValue referencingPrivate,
+                                         HandleString specifier, HandleObject promise);
+
+/**
+ * Get the HostResolveImportedModule hook for the runtime.
+ */
+extern JS_PUBLIC_API(ModuleDynamicImportHook)
+GetModuleDynamicImportHook(JSRuntime* rt);
+
+/**
+ * Set the HostResolveImportedModule hook for the runtime to the given function.
+ */
+extern JS_PUBLIC_API(void)
+SetModuleDynamicImportHook(JSRuntime* rt, ModuleDynamicImportHook func);
+
+extern JS_PUBLIC_API(bool)
+FinishDynamicModuleImport(JSContext* cx, HandleValue referencingPrivate, HandleString specifier,
+                          HandleObject promise);
 
 /**
  * Parse the given source buffer as a module in the scope of the current global

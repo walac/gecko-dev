@@ -59,6 +59,11 @@ const Types = exports.__TypesForTests = [
     front: "devtools/shared/fronts/canvas",
   },
   {
+    types: ["changes"],
+    spec: "devtools/shared/specs/changes",
+    front: "devtools/shared/fronts/changes",
+  },
+  {
     types: ["cssProperties"],
     spec: "devtools/shared/specs/css-properties",
     front: "devtools/shared/fronts/css-properties",
@@ -207,7 +212,7 @@ const Types = exports.__TypesForTests = [
   {
     types: ["longstring"],
     spec: "devtools/shared/specs/string",
-    front: null
+    front: null,
   },
   {
     types: ["longstractor"],

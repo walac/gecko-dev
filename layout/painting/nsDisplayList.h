@@ -929,6 +929,9 @@ public:
   void SetPartialBuildFailed(bool aFailed) { mPartialBuildFailed = aFailed; }
   bool PartialBuildFailed() { return mPartialBuildFailed; }
 
+  bool IsInActiveDocShell() { return mIsInActiveDocShell; }
+  void SetInActiveDocShell(bool aActive) { mIsInActiveDocShell = aActive; }
+
   /**
    * Return true if we're currently building a display list for the presshell
    * of a chrome document, or if we're building the display list for a popup.
@@ -1626,52 +1629,7 @@ public:
                                              nsIFrame* aFrame,
                                              const nsRect& aVisibleRect,
                                              const nsRect& aDirtyRect,
-                                             nsRect* aOutDirtyRect)
-    {
-      nsRect visible = aVisibleRect;
-      nsRect dirtyRectRelativeToDirtyFrame = aDirtyRect;
-
-#ifdef MOZ_WIDGET_ANDROID
-      if (nsLayoutUtils::IsFixedPosFrameInDisplayPort(aFrame) &&
-          aBuilder->IsPaintingToWindow()) {
-        // We want to ensure that fixed position elements are visible when
-        // being async scrolled, so we paint them at the size of the larger
-        // viewport.
-        dirtyRectRelativeToDirtyFrame =
-          nsRect(nsPoint(0, 0), aFrame->GetParent()->GetSize());
-
-        nsIPresShell* ps = aFrame->PresShell();
-        if (ps->IsVisualViewportSizeSet() &&
-            dirtyRectRelativeToDirtyFrame.Size() <
-              ps->GetVisualViewportSize()) {
-          dirtyRectRelativeToDirtyFrame.SizeTo(ps->GetVisualViewportSize());
-        }
-
-        visible = dirtyRectRelativeToDirtyFrame;
-      }
-#endif
-
-      *aOutDirtyRect = dirtyRectRelativeToDirtyFrame - aFrame->GetPosition();
-      visible -= aFrame->GetPosition();
-
-      nsRect overflowRect = aFrame->GetVisualOverflowRect();
-
-      if (aFrame->IsTransformed() &&
-          mozilla::EffectCompositor::HasAnimationsForCompositor(
-            aFrame, eCSSProperty_transform)) {
-        /**
-         * Add a fuzz factor to the overflow rectangle so that elements only
-         * just out of view are pulled into the display list, so they can be
-         * prerendered if necessary.
-         */
-        overflowRect.Inflate(nsPresContext::CSSPixelsToAppUnits(32));
-      }
-
-      visible.IntersectRect(visible, overflowRect);
-      aOutDirtyRect->IntersectRect(*aOutDirtyRect, overflowRect);
-
-      return visible;
-    }
+                                             nsRect* aOutDirtyRect);
 
     nsRect GetVisibleRectForFrame(nsDisplayListBuilder* aBuilder,
                                   nsIFrame* aFrame,
@@ -2203,6 +2161,7 @@ private:
   bool mLessEventRegionItems;
   bool mDisablePartialUpdates;
   bool mPartialBuildFailed;
+  bool mIsInActiveDocShell;
 };
 
 class nsDisplayItem;

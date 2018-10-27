@@ -710,11 +710,6 @@ NS_InitXPCOM2(nsIServiceManager** aResult,
   // Init SharedThreadPool (which needs the service manager).
   SharedThreadPool::InitStatics();
 
-  // Force layout to spin up so that nsContentUtils is available for cx stack
-  // munging.
-  nsCOMPtr<nsISupports> componentLoader =
-    do_GetService("@mozilla.org/moz/jsloader;1");
-
   mozilla::ScriptPreloader::GetSingleton();
   mozilla::scache::StartupCache::GetSingleton();
   mozilla::AvailableMemoryTracker::Init();

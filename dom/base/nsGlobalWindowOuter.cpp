@@ -65,7 +65,7 @@
 #include "nsPrintfCString.h"
 #include "mozilla/intl/LocaleService.h"
 #include "WindowDestroyedEvent.h"
-#include "nsDocShellLoadInfo.h"
+#include "nsDocShellLoadState.h"
 
 // Helper Classes
 #include "nsJSUtils.h"
@@ -5520,7 +5520,7 @@ nsGlobalWindowOuter::OpenOuter(const nsAString& aUrl, const nsAString& aName,
 
 nsresult
 nsGlobalWindowOuter::Open(const nsAString& aUrl, const nsAString& aName,
-                          const nsAString& aOptions, nsDocShellLoadInfo* aLoadInfo,
+                          const nsAString& aOptions, nsDocShellLoadState* aLoadState,
                           bool aForceNoOpener, nsPIDOMWindowOuter **_retval)
 {
   return OpenInternal(aUrl, aName, aOptions,
@@ -5530,7 +5530,7 @@ nsGlobalWindowOuter::Open(const nsAString& aUrl, const nsAString& aName,
                       false,          // aDoJSFixups
                       true,           // aNavigate
                       nullptr, nullptr,  // No args
-                      aLoadInfo,
+                      aLoadState,
                       aForceNoOpener,
                       _retval);
 }
@@ -5546,7 +5546,7 @@ nsGlobalWindowOuter::OpenJS(const nsAString& aUrl, const nsAString& aName,
                       true,           // aDoJSFixups
                       true,           // aNavigate
                       nullptr, nullptr,  // No args
-                      nullptr,        // aLoadInfo
+                      nullptr,        // aLoadState
                       false,          // aForceNoOpener
                       _retval);
 }
@@ -5566,7 +5566,7 @@ nsGlobalWindowOuter::OpenDialog(const nsAString& aUrl, const nsAString& aName,
                       false,                   // aDoJSFixups
                       true,                    // aNavigate
                       nullptr, aExtraArgument, // Arguments
-                      nullptr,                 // aLoadInfo
+                      nullptr,                 // aLoadState
                       false,                   // aForceNoOpener
                       _retval);
 }
@@ -5585,7 +5585,7 @@ nsGlobalWindowOuter::OpenNoNavigate(const nsAString& aUrl,
                       false,          // aDoJSFixups
                       false,          // aNavigate
                       nullptr, nullptr,  // No args
-                      nullptr,        // aLoadInfo
+                      nullptr,        // aLoadState
                       false,          // aForceNoOpener
                       _retval);
 
@@ -5613,7 +5613,7 @@ nsGlobalWindowOuter::OpenDialogOuter(JSContext* aCx, const nsAString& aUrl,
                         false,            // aDoJSFixups
                         true,                // aNavigate
                         argvArray, nullptr,  // Arguments
-                        nullptr,          // aLoadInfo
+                        nullptr,          // aLoadState
                         false,            // aForceNoOpener
                         getter_AddRefs(dialog));
   return dialog.forget();
@@ -5782,6 +5782,31 @@ nsGlobalWindowOuter::PostMessageMozOuter(JSContext* aCx, JS::Handle<JS::Value> a
     // caller.
     providedPrincipal = BasePrincipal::CreateCodebasePrincipal(originURI, attrs);
     if (NS_WARN_IF(!providedPrincipal)) {
+      return;
+    }
+  } else {
+    // We still need to check the originAttributes if the target origin is '*'.
+    // But we will ingore the FPD here since the FPDs are possible to be different.
+    auto principal = BasePrincipal::Cast(GetPrincipal());
+    NS_ENSURE_TRUE_VOID(principal);
+
+    OriginAttributes targetAttrs = principal->OriginAttributesRef();
+    OriginAttributes sourceAttrs = aSubjectPrincipal.OriginAttributesRef();
+    // We have to exempt the check of OA if the subject prioncipal is a system
+    // principal since there are many tests try to post messages to content from
+    // chrome with a mismatch OA. For example, using the ContentTask.spawn() to
+    // post a message into a private browsing window. The injected code in
+    // ContentTask.spawn() will be executed under the system principal and the
+    // OA of the system principal mismatches with the OA of a private browsing
+    // window.
+    MOZ_DIAGNOSTIC_ASSERT(aSubjectPrincipal.GetIsSystemPrincipal() ||
+                          sourceAttrs.EqualsIgnoringFPD(targetAttrs));
+
+    // If 'privacy.firstparty.isolate.block_post_message' is true, we will block
+    // postMessage across different first party domains.
+    if (OriginAttributes::IsBlockPostMessageForFPI() &&
+        !aSubjectPrincipal.GetIsSystemPrincipal() &&
+        sourceAttrs.mFirstPartyDomain != targetAttrs.mFirstPartyDomain) {
       return;
     }
   }
@@ -6937,7 +6962,7 @@ nsGlobalWindowOuter::OpenInternal(const nsAString& aUrl, const nsAString& aName,
                                   bool aDoJSFixups, bool aNavigate,
                                   nsIArray *argv,
                                   nsISupports *aExtraArgument,
-                                  nsDocShellLoadInfo* aLoadInfo,
+                                  nsDocShellLoadState* aLoadState,
                                   bool aForceNoOpener,
                                   nsPIDOMWindowOuter **aReturn)
 {
@@ -7086,7 +7111,7 @@ nsGlobalWindowOuter::OpenInternal(const nsAString& aUrl, const nsAString& aName,
                                 aDialog, aNavigate, argv,
                                 isPopupSpamWindow,
                                 forceNoOpener,
-                                aLoadInfo,
+                                aLoadState,
                                 getter_AddRefs(domReturn));
     } else {
       // Force a system caller here so that the window watcher won't screw us
@@ -7109,7 +7134,7 @@ nsGlobalWindowOuter::OpenInternal(const nsAString& aUrl, const nsAString& aName,
                                 aDialog, aNavigate, aExtraArgument,
                                 isPopupSpamWindow,
                                 forceNoOpener,
-                                aLoadInfo,
+                                aLoadState,
                                 getter_AddRefs(domReturn));
 
     }

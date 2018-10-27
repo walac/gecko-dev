@@ -778,7 +778,9 @@ ReleaseAssertObjectHasNoWrappers(JSContext* cx, HandleObject target)
 }
 
 /*
- * Brain transplants. Not for beginners or the squeamish.
+ * [SMDOC] Brain transplants.
+ *
+ * Not for beginners or the squeamish.
  *
  * Sometimes a web spec requires us to transplant an object from one
  * compartment to another, like when a DOM node is inserted into a document in
@@ -865,9 +867,7 @@ JS_TransplantObject(JSContext* cx, HandleObject origobj, HandleObject target)
         // destination's cross compartment map and that the same
         // object will continue to work.
         AutoRealmUnchecked ar(cx, origobj->nonCCWRealm());
-        if (!JSObject::swap(cx, origobj, target)) {
-            MOZ_CRASH();
-        }
+        JSObject::swap(cx, origobj, target);
         newIdentity = origobj;
     } else if (WrapperMap::Ptr p = destination->lookupWrapper(origv)) {
         // There might already be a wrapper for the original object in
@@ -881,9 +881,7 @@ JS_TransplantObject(JSContext* cx, HandleObject origobj, HandleObject target)
         NukeCrossCompartmentWrapper(cx, newIdentity);
 
         AutoRealm ar(cx, newIdentity);
-        if (!JSObject::swap(cx, newIdentity, target)) {
-            MOZ_CRASH();
-        }
+        JSObject::swap(cx, newIdentity, target);
     } else {
         // Otherwise, we use |target| for the new identity object.
         newIdentity = target;
@@ -906,9 +904,7 @@ JS_TransplantObject(JSContext* cx, HandleObject origobj, HandleObject target)
             MOZ_CRASH();
         }
         MOZ_ASSERT(Wrapper::wrappedObject(newIdentityWrapper) == newIdentity);
-        if (!JSObject::swap(cx, origobj, newIdentityWrapper)) {
-            MOZ_CRASH();
-        }
+        JSObject::swap(cx, origobj, newIdentityWrapper);
         if (!origobj->compartment()->putWrapper(cx, CrossCompartmentKey(newIdentity), origv)) {
             MOZ_CRASH();
         }
@@ -4139,6 +4135,31 @@ JS::SetModuleMetadataHook(JSRuntime* rt, JS::ModuleMetadataHook func)
     rt->moduleMetadataHook = func;
 }
 
+JS_PUBLIC_API(JS::ModuleDynamicImportHook)
+JS::GetModuleDynamicImportHook(JSRuntime* rt)
+{
+    AssertHeapIsIdle();
+    return rt->moduleDynamicImportHook;
+}
+
+JS_PUBLIC_API(void)
+JS::SetModuleDynamicImportHook(JSRuntime* rt, JS::ModuleDynamicImportHook func)
+{
+    AssertHeapIsIdle();
+    rt->moduleDynamicImportHook = func;
+}
+
+JS_PUBLIC_API(bool)
+JS::FinishDynamicModuleImport(JSContext* cx, HandleValue referencingPrivate, HandleString specifier,
+                              HandleObject promise)
+{
+    AssertHeapIsIdle();
+    CHECK_THREAD(cx);
+    cx->check(referencingPrivate, promise);
+
+    return js::FinishDynamicModuleImport(cx, referencingPrivate, specifier, promise);
+}
+
 JS_PUBLIC_API(bool)
 JS::CompileModule(JSContext* cx, const ReadOnlyCompileOptions& options,
                   SourceBufferHolder& srcBuf, JS::MutableHandleObject module)
@@ -4696,26 +4717,29 @@ JS::NewReadableExternalSourceStreamObject(JSContext* cx, void* underlyingSource,
 }
 
 JS_PUBLIC_API(bool)
-JS::IsReadableStream(const JSObject* obj)
+JS::IsReadableStream(JSObject* obj)
 {
-    if (IsWrapper(const_cast<JSObject*>(obj)))
-        obj = CheckedUnwrap(const_cast<JSObject*>(obj));
+    if (IsWrapper(obj)) {
+        obj = CheckedUnwrap(obj);
+    }
     return obj && obj->is<ReadableStream>();
 }
 
 JS_PUBLIC_API(bool)
-JS::IsReadableStreamReader(const JSObject* obj)
+JS::IsReadableStreamReader(JSObject* obj)
 {
-    if (IsWrapper(const_cast<JSObject*>(obj)))
-        obj = CheckedUnwrap(const_cast<JSObject*>(obj));
+    if (IsWrapper(obj)) {
+        obj = CheckedUnwrap(obj);
+    }
     return obj && obj->is<ReadableStreamDefaultReader>();
 }
 
 JS_PUBLIC_API(bool)
-JS::IsReadableStreamDefaultReader(const JSObject* obj)
+JS::IsReadableStreamDefaultReader(JSObject* obj)
 {
-    if (IsWrapper(const_cast<JSObject*>(obj)))
-        obj = CheckedUnwrap(const_cast<JSObject*>(obj));
+    if (IsWrapper(obj)) {
+        obj = CheckedUnwrap(obj);
+    }
     return obj && obj->is<ReadableStreamDefaultReader>();
 }
 
@@ -4735,9 +4759,9 @@ ToUnwrapped(JSContext* cx, JSObject* obj)
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamIsReadable(JSContext* cx, const JSObject* streamObj, bool* result)
+JS::ReadableStreamIsReadable(JSContext* cx, HandleObject streamObj, bool* result)
 {
-    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, const_cast<JSObject*>(streamObj));
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, streamObj);
     if (!stream)
         return false;
 
@@ -4746,9 +4770,9 @@ JS::ReadableStreamIsReadable(JSContext* cx, const JSObject* streamObj, bool* res
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamIsLocked(JSContext* cx, const JSObject* streamObj, bool* result)
+JS::ReadableStreamIsLocked(JSContext* cx, HandleObject streamObj, bool* result)
 {
-    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, const_cast<JSObject*>(streamObj));
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, streamObj);
     if (!stream)
         return false;
 
@@ -4757,9 +4781,9 @@ JS::ReadableStreamIsLocked(JSContext* cx, const JSObject* streamObj, bool* resul
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamIsDisturbed(JSContext* cx, const JSObject* streamObj, bool* result)
+JS::ReadableStreamIsDisturbed(JSContext* cx, HandleObject streamObj, bool* result)
 {
-    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, const_cast<JSObject*>(streamObj));
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, streamObj);
     if (!stream)
         return false;
 
@@ -4768,9 +4792,9 @@ JS::ReadableStreamIsDisturbed(JSContext* cx, const JSObject* streamObj, bool* re
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamGetEmbeddingFlags(JSContext* cx, const JSObject* streamObj, uint8_t* flags)
+JS::ReadableStreamGetEmbeddingFlags(JSContext* cx, HandleObject streamObj, uint8_t* flags)
 {
-    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, const_cast<JSObject*>(streamObj));
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, streamObj);
     if (!stream)
         return false;
 
@@ -4793,9 +4817,9 @@ JS::ReadableStreamCancel(JSContext* cx, HandleObject streamObj, HandleValue reas
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamGetMode(JSContext* cx, const JSObject* streamObj, JS::ReadableStreamMode* mode)
+JS::ReadableStreamGetMode(JSContext* cx, HandleObject streamObj, JS::ReadableStreamMode* mode)
 {
-    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, const_cast<JSObject*>(streamObj));
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, streamObj);
     if (!stream)
         return false;
 
@@ -4832,9 +4856,9 @@ JS::ReadableStreamGetExternalUnderlyingSource(JSContext* cx, HandleObject stream
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamReleaseExternalUnderlyingSource(JSContext* cx, JSObject* streamObj)
+JS::ReadableStreamReleaseExternalUnderlyingSource(JSContext* cx, HandleObject streamObj)
 {
-    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, const_cast<JSObject*>(streamObj));
+    ReadableStream* stream = ToUnwrapped<ReadableStream>(cx, streamObj);
     if (!stream)
         return false;
 
@@ -4939,9 +4963,9 @@ JS::ReadableStreamError(JSContext* cx, HandleObject streamObj, HandleValue error
 }
 
 JS_PUBLIC_API(bool)
-JS::ReadableStreamReaderIsClosed(JSContext* cx, const JSObject* reader, bool* result)
+JS::ReadableStreamReaderIsClosed(JSContext* cx, HandleObject readerObj, bool* result)
 {
-    reader = ToUnwrapped<NativeObject>(cx, const_cast<JSObject*>(reader));
+    RootedObject reader(cx, ToUnwrapped<NativeObject>(cx, readerObj));
     if (!reader)
         return false;
 
