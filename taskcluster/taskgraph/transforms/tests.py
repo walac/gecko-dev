@@ -371,9 +371,9 @@ test_description_schema = Schema({
     Optional('product'): basestring,
 
     # conditional files to determine when these tests should be run
-    Exclusive(Optional('when'), 'optimization'): Any({
+    Exclusive(Optional('when'), 'optimization'): {
         Optional('files-changed'): [basestring],
-    }),
+    },
 
     # Optimization to perform on this task during the optimization phase.
     # Optimizations are defined in taskcluster/taskgraph/optimize.py.
@@ -640,7 +640,8 @@ def set_tier(config, tests):
                                          'macosx64-qr/debug',
                                          'android-em-4.3-arm7-api-16/opt',
                                          'android-em-4.3-arm7-api-16/debug',
-                                         'android-em-4.2-x86/opt']:
+                                         'android-em-4.2-x86/opt',
+                                         'android-em-7.0-x86/opt']:
                 test['tier'] = 1
             else:
                 test['tier'] = 2
@@ -958,7 +959,7 @@ def set_profile(config, tests):
     if config.params['try_mode'] == 'try_option_syntax':
         profile = config.params['try_options']['profile']
     for test in tests:
-        if profile and test['suite'] == 'talos':
+        if profile and test['suite'] in ['talos', 'raptor']:
             test['mozharness']['extra-options'].append('--geckoProfile')
         yield test
 

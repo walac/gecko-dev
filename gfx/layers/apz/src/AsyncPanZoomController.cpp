@@ -810,7 +810,7 @@ AsyncPanZoomController::InitializeGlobalState()
   MOZ_ASSERT(NS_IsMainThread());
 
   gZoomAnimationFunction = new ComputedTimingFunction(
-    nsTimingFunction(NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE));
+    nsTimingFunction(StyleTimingKeyword::Ease));
   ClearOnShutdown(&gZoomAnimationFunction);
   gVelocityCurveFunction = new ComputedTimingFunction(
     nsTimingFunction(gfxPrefs::APZCurveFunctionX1(),
@@ -4112,17 +4112,13 @@ AsyncPanZoomController::UpdateCheckerboardEvent(const MutexAutoLock& aProofOfLoc
                                                 uint32_t aMagnitude)
 {
   if (mCheckerboardEvent && mCheckerboardEvent->RecordFrameInfo(aMagnitude)) {
-    // This checkerboard event is done. Report some metrics to telemetry, but
-    // skip reporting if the sanity checker window is running, because we get
-    // checkerboarding reported on that window that we don't really care about.
-    if (!gfxPrefs::SanityTestRunning()) {
-      mozilla::Telemetry::Accumulate(mozilla::Telemetry::CHECKERBOARD_SEVERITY,
-        mCheckerboardEvent->GetSeverity());
-      mozilla::Telemetry::Accumulate(mozilla::Telemetry::CHECKERBOARD_PEAK,
-        mCheckerboardEvent->GetPeak());
-      mozilla::Telemetry::Accumulate(mozilla::Telemetry::CHECKERBOARD_DURATION,
-        (uint32_t)mCheckerboardEvent->GetDuration().ToMilliseconds());
-    }
+    // This checkerboard event is done. Report some metrics to telemetry.
+    mozilla::Telemetry::Accumulate(mozilla::Telemetry::CHECKERBOARD_SEVERITY,
+      mCheckerboardEvent->GetSeverity());
+    mozilla::Telemetry::Accumulate(mozilla::Telemetry::CHECKERBOARD_PEAK,
+      mCheckerboardEvent->GetPeak());
+    mozilla::Telemetry::Accumulate(mozilla::Telemetry::CHECKERBOARD_DURATION,
+      (uint32_t)mCheckerboardEvent->GetDuration().ToMilliseconds());
 
     mPotentialCheckerboardTracker.CheckerboardDone();
 
@@ -4260,7 +4256,7 @@ void AsyncPanZoomController::NotifyLayersUpdated(const ScrollMetadata& aScrollMe
   // ignore it
 
   bool needContentRepaint = false;
-  bool userAction = false;
+  RepaintUpdateType contentRepaintType = RepaintUpdateType::eNone;
   bool viewportUpdated = false;
 
   // We usually don't entertain viewport updates on the same transaction as
@@ -4384,6 +4380,7 @@ void AsyncPanZoomController::NotifyLayersUpdated(const ScrollMetadata& aScrollMe
       // becomes incorrect for the purposes of calculating the LD transform. To
       // correct this we need to update mExpectedGeckoMetrics to be the
       // last thing we know was painted by Gecko.
+      Maybe<CSSPoint> relativeDelta;
       if (gfxPrefs::APZRelativeUpdate() && aLayerMetrics.IsRelative()) {
         APZC_LOG("%p relative updating scroll offset from %s by %s\n", this,
           ToString(Metrics().GetScrollOffset()).c_str(),
@@ -4396,10 +4393,10 @@ void AsyncPanZoomController::NotifyLayersUpdated(const ScrollMetadata& aScrollMe
         // incorrect scroll offset for a period of time.
         if (Metrics().HasPendingScroll(aLayerMetrics)) {
           needContentRepaint = true;
-          userAction = true;
+          contentRepaintType = RepaintUpdateType::eUserAction;
         }
 
-        Metrics().ApplyRelativeScrollUpdateFrom(aLayerMetrics);
+        relativeDelta = Some(Metrics().ApplyRelativeScrollUpdateFrom(aLayerMetrics));
       } else {
         APZC_LOG("%p updating scroll offset from %s to %s\n", this,
           ToString(Metrics().GetScrollOffset()).c_str(),
@@ -4412,10 +4409,17 @@ void AsyncPanZoomController::NotifyLayersUpdated(const ScrollMetadata& aScrollMe
       mCompositedScrollOffset = Metrics().GetScrollOffset();
       mExpectedGeckoMetrics = aLayerMetrics;
 
-      // Cancel the animation (which might also trigger a repaint request)
-      // after we update the scroll offset above. Otherwise we can be left
-      // in a state where things are out of sync.
-      CancelAnimation();
+      // If we have applied a relative scroll update and a scroll animation is
+      // happening, attempt to apply a content shift and preserve the
+      // animation.
+      if (!mAnimation ||
+          relativeDelta.isNothing() ||
+          !mAnimation->ApplyContentShift(relativeDelta.value())) {
+        // Cancel the animation (which might also trigger a repaint request)
+        // after we update the scroll offset above. Otherwise we can be left
+        // in a state where things are out of sync.
+        CancelAnimation();
+      }
 
       // Since the scroll offset has changed, we need to recompute the
       // displayport margins and send them to layout. Otherwise there might be
@@ -4470,12 +4474,9 @@ void AsyncPanZoomController::NotifyLayersUpdated(const ScrollMetadata& aScrollMe
   }
 
   if (needContentRepaint) {
-    // This repaint request is not driven by a user action on the APZ side
-    RepaintUpdateType updateType = RepaintUpdateType::eNone;
-    if (userAction) {
-      updateType = RepaintUpdateType::eUserAction;
-    }
-    RequestContentRepaint(updateType);
+    // This repaint request could be driven by a user action if we accept a
+    // relative scroll offset update
+    RequestContentRepaint(contentRepaintType);
   }
   UpdateSharedCompositorFrameMetrics();
 }
@@ -4851,7 +4852,8 @@ void AsyncPanZoomController::GetGuid(ScrollableLayerGuid* aGuidOut) const
 
 ScrollableLayerGuid AsyncPanZoomController::GetGuid() const
 {
-  return ScrollableLayerGuid(mLayersId, Metrics());
+  return ScrollableLayerGuid(mLayersId, Metrics().GetPresShellId(),
+                             Metrics().GetScrollId());
 }
 
 void AsyncPanZoomController::UpdateSharedCompositorFrameMetrics()

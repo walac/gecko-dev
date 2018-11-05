@@ -106,7 +106,7 @@ using namespace mozilla::dom;
 using namespace mozilla::layout;
 using namespace mozilla::gfx;
 
-typedef FrameMetrics::ViewID ViewID;
+typedef ScrollableLayerGuid::ViewID ViewID;
 typedef nsStyleTransformMatrix::TransformReferenceBox TransformReferenceBox;
 
 #ifdef DEBUG
@@ -420,12 +420,8 @@ ToTimingFunction(const Maybe<ComputedTimingFunction>& aCTF)
       spline->X1(), spline->Y1(), spline->X2(), spline->Y2()));
   }
 
-  if (aCTF->GetType() == nsTimingFunction::Type::Frames) {
-    return TimingFunction(FramesFunction(aCTF->GetFrames()));
-  }
-
-  uint32_t type = aCTF->GetType() == nsTimingFunction::Type::StepStart ? 1 : 2;
-  return TimingFunction(StepFunction(aCTF->GetSteps(), type));
+  return TimingFunction(StepFunction(
+    aCTF->GetSteps().mSteps, static_cast<uint8_t>(aCTF->GetSteps().mPos)));
 }
 
 static void
@@ -1017,7 +1013,6 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
                                            bool aRetainingDisplayList)
   : mReferenceFrame(aReferenceFrame)
   , mIgnoreScrollFrame(nullptr)
-  , mCompositorHitTestInfo(nullptr)
   , mCurrentTableItem(nullptr)
   , mCurrentActiveScrolledRoot(nullptr)
   , mCurrentContainerASR(nullptr)
@@ -1035,8 +1030,8 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
   , mFirstClipChainToDestroy(nullptr)
   , mActiveScrolledRootForRootScrollframe(nullptr)
   , mMode(aMode)
-  , mCurrentScrollParentId(FrameMetrics::NULL_SCROLL_ID)
-  , mCurrentScrollbarTarget(FrameMetrics::NULL_SCROLL_ID)
+  , mCurrentScrollParentId(ScrollableLayerGuid::NULL_SCROLL_ID)
+  , mCurrentScrollbarTarget(ScrollableLayerGuid::NULL_SCROLL_ID)
   , mSVGEffectsBuildingDepth(0)
   , mFilterASR(nullptr)
   , mContainsBlendMode(false)
@@ -1073,12 +1068,12 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
   , mDisablePartialUpdates(false)
   , mPartialBuildFailed(false)
   , mIsInActiveDocShell(false)
+  , mHitTestArea()
+  , mHitTestInfo(CompositorHitTestInvisibleToHit)
 {
   MOZ_COUNT_CTOR(nsDisplayListBuilder);
 
   mBuildCompositorHitTestInfo = mAsyncPanZoomEnabled && IsForPainting();
-
-  mLessEventRegionItems = gfxPrefs::LessEventRegionItems();
 
   nsPresContext* pc = aReferenceFrame->PresContext();
   nsIPresShell* shell = pc->PresShell();
@@ -1120,8 +1115,6 @@ nsDisplayListBuilder::EndFrame()
   FreeClipChains();
   FreeTemporaryItems();
   nsCSSRendering::EndFrameTreesLocked();
-
-  MOZ_ASSERT(!mCompositorHitTestInfo);
 }
 
 void
@@ -2316,31 +2309,6 @@ nsDisplayListBuilder::AppendNewScrollInfoItemForHoisting(
   mScrollInfoItemsForHoisting->AppendToTop(aScrollInfoItem);
 }
 
-static nsRect
-GetFrameArea(const nsDisplayListBuilder* aBuilder, const nsIFrame* aFrame)
-{
-  nsRect area;
-
-  nsIScrollableFrame* scrollFrame =
-    nsLayoutUtils::GetScrollableFrameFor(aFrame);
-  if (scrollFrame) {
-    // If the frame is content of a scrollframe, then we need to pick up the
-    // area corresponding to the overflow rect as well. Otherwise the parts of
-    // the overflow that are not occupied by descendants get skipped and the
-    // APZ code sends touch events to the content underneath instead.
-    // See https://bugzilla.mozilla.org/show_bug.cgi?id=1127773#c15.
-    area = aFrame->GetScrollableOverflowRect();
-  } else {
-    area = nsRect(nsPoint(0, 0), aFrame->GetSize());
-  }
-
-  if (!area.IsEmpty()) {
-    return area + aBuilder->ToReferenceFrame(aFrame);
-  }
-
-  return area;
-}
-
 void
 nsDisplayListBuilder::BuildCompositorHitTestInfoIfNeeded(nsIFrame* aFrame,
                                                          nsDisplayList* aList,
@@ -2353,43 +2321,23 @@ nsDisplayListBuilder::BuildCompositorHitTestInfoIfNeeded(nsIFrame* aFrame,
     return;
   }
 
-  CompositorHitTestInfo info = aFrame->GetCompositorHitTestInfo(this);
-  if (!ShouldBuildCompositorHitTestInfo(aFrame, info, aBuildNew)) {
-    // Either the parent hit test info can be reused, or this frame has no hit
-    // test flags set.
+  const CompositorHitTestInfo info = aFrame->GetCompositorHitTestInfo(this);
+  if (info == CompositorHitTestInvisibleToHit) {
     return;
   }
 
-  nsDisplayCompositorHitTestInfo* item =
-    MakeDisplayItem<nsDisplayCompositorHitTestInfo>(this, aFrame, info);
+  const nsRect area = aFrame->GetCompositorHitTestArea(this);
+  if (!aBuildNew &&
+      GetHitTestInfo() == info &&
+      GetHitTestArea().Contains(area)) {
+    return;
+  }
 
-  SetCompositorHitTestInfo(item);
+  auto* item = MakeDisplayItem<nsDisplayCompositorHitTestInfo>(
+    this, aFrame, info, 0, Some(area));
+
+  SetCompositorHitTestInfo(area, info);
   aList->AppendToTop(item);
-}
-
-bool
-nsDisplayListBuilder::ShouldBuildCompositorHitTestInfo(
-  const nsIFrame* aFrame,
-  const CompositorHitTestInfo& aInfo,
-  const bool aBuildNew) const
-{
-  MOZ_ASSERT(mBuildCompositorHitTestInfo);
-
-  if (aInfo == CompositorHitTestInvisibleToHit) {
-    return false;
-  }
-
-  if (!mCompositorHitTestInfo || !mLessEventRegionItems || aBuildNew) {
-    return true;
-  }
-
-  if (mCompositorHitTestInfo->HitTestInfo() != aInfo) {
-    // Hit test flags are different.
-    return true;
-  }
-
-  // Create a new item if the parent does not contain the child completely.
-  return !mCompositorHitTestInfo->Area().Contains(GetFrameArea(this, aFrame));
 }
 
 void
@@ -2660,7 +2608,7 @@ nsDisplayList::BuildLayers(nsDisplayListBuilder* aBuilder,
     root->SetScaleToResolution(presShell->ScaleToResolution(),
                                containerParameters.mXScale);
 
-    auto callback = [root](FrameMetrics::ViewID aScrollId) -> bool {
+    auto callback = [root](ScrollableLayerGuid::ViewID aScrollId) -> bool {
       return nsLayoutUtils::ContainsMetricsWithId(root, aScrollId);
     };
     if (Maybe<ScrollMetadata> rootMetadata = nsLayoutUtils::GetRootMetadata(
@@ -5339,11 +5287,10 @@ nsDisplayEventReceiver::CreateWebRenderCommands(
 nsDisplayCompositorHitTestInfo::nsDisplayCompositorHitTestInfo(
   nsDisplayListBuilder* aBuilder,
   nsIFrame* aFrame,
-  mozilla::gfx::CompositorHitTestInfo aHitTestInfo,
+  const mozilla::gfx::CompositorHitTestInfo& aHitTestFlags,
   uint32_t aIndex,
   const mozilla::Maybe<nsRect>& aArea)
-  : nsDisplayEventReceiver(aBuilder, aFrame)
-  , mHitTestInfo(aHitTestInfo)
+  : nsDisplayHitTestInfoItem(aBuilder, aFrame)
   , mIndex(aIndex)
   , mAppUnitsPerDevPixel(mFrame->PresContext()->AppUnitsPerDevPixel())
 {
@@ -5352,20 +5299,39 @@ nsDisplayCompositorHitTestInfo::nsDisplayCompositorHitTestInfo(
   // compositor hit-test info or if the computed hit info indicated the
   // frame is invisible to hit-testing
   MOZ_ASSERT(aBuilder->BuildCompositorHitTestInfo());
-  MOZ_ASSERT(mHitTestInfo != CompositorHitTestInvisibleToHit);
+  MOZ_ASSERT(aHitTestFlags != CompositorHitTestInvisibleToHit);
 
+  const nsRect& area = aArea.isSome()
+                     ? *aArea
+                     : aFrame->GetCompositorHitTestArea(aBuilder);
+
+  SetHitTestInfo(area, aHitTestFlags);
+  InitializeScrollTarget(aBuilder);
+}
+
+nsDisplayCompositorHitTestInfo::nsDisplayCompositorHitTestInfo(
+  nsDisplayListBuilder* aBuilder,
+  nsIFrame* aFrame,
+  mozilla::UniquePtr<HitTestInfo>&& aHitTestInfo)
+  : nsDisplayHitTestInfoItem(aBuilder, aFrame)
+  , mIndex(0)
+  , mAppUnitsPerDevPixel(mFrame->PresContext()->AppUnitsPerDevPixel())
+{
+  MOZ_COUNT_CTOR(nsDisplayCompositorHitTestInfo);
+  SetHitTestInfo(std::move(aHitTestInfo));
+  InitializeScrollTarget(aBuilder);
+}
+
+void
+nsDisplayCompositorHitTestInfo::InitializeScrollTarget(
+  nsDisplayListBuilder* aBuilder)
+{
   if (aBuilder->GetCurrentScrollbarDirection().isSome()) {
     // In the case of scrollbar frames, we use the scrollbar's target
     // scrollframe instead of the scrollframe with which the scrollbar actually
     // moves.
-    MOZ_ASSERT(mHitTestInfo.contains(CompositorHitTestFlags::eScrollbar));
-    mScrollTarget = Some(aBuilder->GetCurrentScrollbarTarget());
-  }
-
-  if (aArea.isSome()) {
-    mArea = *aArea;
-  } else {
-    mArea = GetFrameArea(aBuilder, aFrame);
+    MOZ_ASSERT(HitTestFlags().contains(CompositorHitTestFlags::eScrollbar));
+    mScrollTarget = mozilla::Some(aBuilder->GetCurrentScrollbarTarget());
   }
 }
 
@@ -5377,7 +5343,7 @@ nsDisplayCompositorHitTestInfo::CreateWebRenderCommands(
   mozilla::layers::WebRenderLayerManager* aManager,
   nsDisplayListBuilder* aDisplayListBuilder)
 {
-  if (mArea.IsEmpty()) {
+  if (HitTestArea().IsEmpty()) {
     return true;
   }
 
@@ -5386,10 +5352,10 @@ nsDisplayCompositorHitTestInfo::CreateWebRenderCommands(
   // we don't need to do it as often, and so that we can do it for other
   // display item types as well (reducing the need for as many instances of
   // this display item).
-  FrameMetrics::ViewID scrollId =
-    mScrollTarget.valueOrFrom([&]() -> FrameMetrics::ViewID {
+  ScrollableLayerGuid::ViewID scrollId =
+    mScrollTarget.valueOrFrom([&]() -> ScrollableLayerGuid::ViewID {
       const ActiveScrolledRoot* asr = GetActiveScrolledRoot();
-      Maybe<FrameMetrics::ViewID> fixedTarget =
+      Maybe<ScrollableLayerGuid::ViewID> fixedTarget =
         aBuilder.GetContainingFixedPosScrollTarget(asr);
       if (fixedTarget) {
         return *fixedTarget;
@@ -5397,14 +5363,14 @@ nsDisplayCompositorHitTestInfo::CreateWebRenderCommands(
       if (asr) {
         return asr->GetViewId();
       }
-      return FrameMetrics::NULL_SCROLL_ID;
+      return ScrollableLayerGuid::NULL_SCROLL_ID;
     });
 
   // Insert a transparent rectangle with the hit-test info
-  aBuilder.SetHitTestInfo(scrollId, mHitTestInfo);
+  aBuilder.SetHitTestInfo(scrollId, HitTestFlags());
 
   const LayoutDeviceRect devRect =
-    LayoutDeviceRect::FromAppUnits(mArea, mAppUnitsPerDevPixel);
+    LayoutDeviceRect::FromAppUnits(HitTestArea(), mAppUnitsPerDevPixel);
 
   const wr::LayoutRect rect = wr::ToRoundedLayoutRect(devRect);
 
@@ -5413,13 +5379,6 @@ nsDisplayCompositorHitTestInfo::CreateWebRenderCommands(
   aBuilder.ClearHitTestInfo();
 
   return true;
-}
-
-void
-nsDisplayCompositorHitTestInfo::WriteDebugInfo(std::stringstream& aStream)
-{
-  aStream << nsPrintfCString(" (hitTestInfo 0x%x)", mHitTestInfo.serialize()).get();
-  AppendToString(aStream, mArea, " hitTestArea");
 }
 
 uint32_t
@@ -6047,7 +6006,7 @@ nsDisplayWrapList::nsDisplayWrapList(
   bool aClearClipChain,
   uint32_t aIndex,
   bool aAnonymous)
-  : nsDisplayItem(aBuilder, aFrame, aActiveScrolledRoot, aAnonymous)
+  : nsDisplayHitTestInfoItem(aBuilder, aFrame, aActiveScrolledRoot, aAnonymous)
   , mFrameActiveScrolledRoot(aBuilder->CurrentActiveScrolledRoot())
   , mOverrideZIndex(0)
   , mIndex(aIndex)
@@ -6094,10 +6053,10 @@ nsDisplayWrapList::nsDisplayWrapList(nsDisplayListBuilder* aBuilder,
                                      nsIFrame* aFrame,
                                      nsDisplayItem* aItem,
                                      bool aAnonymous)
-  : nsDisplayItem(aBuilder,
-                  aFrame,
-                  aBuilder->CurrentActiveScrolledRoot(),
-                  aAnonymous)
+  : nsDisplayHitTestInfoItem(aBuilder,
+                             aFrame,
+                             aBuilder->CurrentActiveScrolledRoot(),
+                             aAnonymous)
   , mOverrideZIndex(0)
   , mIndex(0)
   , mHasZIndexOverride(false)
@@ -6754,6 +6713,7 @@ nsDisplayOpacity::CreateWebRenderCommands(
 
   nsTArray<mozilla::wr::WrFilterOp> filters;
   StackingContextHelper sc(aSc,
+                           GetActiveScrolledRoot(),
                            aBuilder,
                            filters,
                            LayoutDeviceRect(),
@@ -6807,6 +6767,7 @@ nsDisplayBlendMode::CreateWebRenderCommands(
 {
   nsTArray<mozilla::wr::WrFilterOp> filters;
   StackingContextHelper sc(aSc,
+                           GetActiveScrolledRoot(),
                            aBuilder,
                            filters,
                            LayoutDeviceRect(),
@@ -6958,7 +6919,7 @@ nsDisplayBlendContainer::CreateWebRenderCommands(
   mozilla::layers::WebRenderLayerManager* aManager,
   nsDisplayListBuilder* aDisplayListBuilder)
 {
-  StackingContextHelper sc(aSc, aBuilder);
+  StackingContextHelper sc(aSc, GetActiveScrolledRoot(), aBuilder);
 
   return nsDisplayWrapList::CreateWebRenderCommands(
     aBuilder, aResources, sc, aManager, aDisplayListBuilder);
@@ -7098,6 +7059,7 @@ nsDisplayOwnLayer::CreateWebRenderCommands(
   prop.effect_type = wr::WrAnimationType::Transform;
 
   StackingContextHelper sc(aSc,
+                           GetActiveScrolledRoot(),
                            aBuilder,
                            nsTArray<wr::WrFilterOp>(),
                            LayoutDeviceRect(),
@@ -7122,6 +7084,12 @@ nsDisplayOwnLayer::UpdateScrollData(
       aLayerData->SetScrollbarData(mScrollbarData);
       if (IsScrollThumbLayer()) {
         aLayerData->SetScrollbarAnimationId(mWrAnimationId);
+        LayoutDeviceRect bounds = LayoutDeviceIntRect::FromAppUnits(
+            mBounds, mFrame->PresContext()->AppUnitsPerDevPixel());
+        // Assume a resolution of 1.0 for now because this is a WebRender codepath
+        // and we don't really handle resolution on the Gecko side
+        LayerIntRect layerBounds = RoundedOut(bounds * LayoutDeviceToLayerScale(1.0f));
+        aLayerData->SetVisibleRegion(LayerIntRegion(layerBounds));
       }
     }
   }
@@ -7860,7 +7828,7 @@ nsDisplayStickyPosition::CreateWebRenderCommands(
   }
 
   {
-    StackingContextHelper sc(aSc, aBuilder);
+    StackingContextHelper sc(aSc, GetActiveScrolledRoot(), aBuilder);
     nsDisplayWrapList::CreateWebRenderCommands(
       aBuilder, aResources, sc, aManager, aDisplayListBuilder);
   }
@@ -8069,7 +8037,7 @@ nsDisplayTransform::nsDisplayTransform(
   const nsRect& aChildrenBuildingRect,
   ComputeTransformFunction aTransformGetter,
   uint32_t aIndex)
-  : nsDisplayItem(aBuilder, aFrame)
+  : nsDisplayHitTestInfoItem(aBuilder, aFrame)
   , mStoredList(aBuilder, aFrame, aList)
   , mTransformGetter(aTransformGetter)
   , mAnimatedGeometryRootForChildren(mAnimatedGeometryRoot)
@@ -8138,7 +8106,7 @@ nsDisplayTransform::nsDisplayTransform(nsDisplayListBuilder* aBuilder,
                                        const nsRect& aChildrenBuildingRect,
                                        uint32_t aIndex,
                                        bool aAllowAsyncAnimation)
-  : nsDisplayItem(aBuilder, aFrame)
+  : nsDisplayHitTestInfoItem(aBuilder, aFrame)
   , mStoredList(aBuilder, aFrame, aList)
   , mTransformGetter(nullptr)
   , mAnimatedGeometryRootForChildren(mAnimatedGeometryRoot)
@@ -8163,7 +8131,7 @@ nsDisplayTransform::nsDisplayTransform(nsDisplayListBuilder* aBuilder,
                                        const nsRect& aChildrenBuildingRect,
                                        const Matrix4x4& aTransform,
                                        uint32_t aIndex)
-  : nsDisplayItem(aBuilder, aFrame)
+  : nsDisplayHitTestInfoItem(aBuilder, aFrame)
   , mStoredList(aBuilder, aFrame, aList)
   , mTransform(Some(aTransform))
   , mTransformGetter(nullptr)
@@ -8847,6 +8815,7 @@ nsDisplayTransform::CreateWebRenderCommands(
     ActiveLayerTracker::IsStyleMaybeAnimated(Frame(), eCSSProperty_transform);
 
   StackingContextHelper sc(aSc,
+                           GetActiveScrolledRoot(),
                            aBuilder,
                            filters,
                            LayoutDeviceRect(position, LayoutDeviceSize()),
@@ -9378,7 +9347,7 @@ nsDisplayTransform::WriteDebugInfo(std::stringstream& aStream)
 nsDisplayPerspective::nsDisplayPerspective(nsDisplayListBuilder* aBuilder,
                                            nsIFrame* aFrame,
                                            nsDisplayList* aList)
-  : nsDisplayItem(aBuilder, aFrame)
+  : nsDisplayHitTestInfoItem(aBuilder, aFrame)
   , mList(aBuilder, aFrame, aList, true)
 {
   MOZ_ASSERT(mList.GetChildren()->Count() == 1);
@@ -9496,6 +9465,7 @@ nsDisplayPerspective::CreateWebRenderCommands(
 
   nsTArray<mozilla::wr::WrFilterOp> filters;
   StackingContextHelper sc(aSc,
+                           GetActiveScrolledRoot(),
                            aBuilder,
                            filters,
                            LayoutDeviceRect(),
@@ -10039,13 +10009,13 @@ CreateSimpleClipRegion(const nsDisplayMasksAndClipPaths& aDisplayItem,
     return Nothing();
   }
 
-  auto& clipPath = style->mClipPath;
+  const auto& clipPath = style->mClipPath;
   if (clipPath.GetType() != StyleShapeSourceType::Shape) {
     return Nothing();
   }
 
-  auto& shape = clipPath.GetBasicShape();
-  if (shape->GetShapeType() == StyleBasicShapeType::Polygon) {
+  const auto& shape = clipPath.BasicShape();
+  if (shape.GetShapeType() == StyleBasicShapeType::Polygon) {
     return Nothing();
   }
 
@@ -10056,7 +10026,7 @@ CreateSimpleClipRegion(const nsDisplayMasksAndClipPaths& aDisplayItem,
   AutoTArray<wr::ComplexClipRegion, 1> clipRegions;
 
   wr::LayoutRect rect;
-  switch (shape->GetShapeType()) {
+  switch (shape.GetShapeType()) {
     case StyleBasicShapeType::Inset: {
       const nsRect insetRect =
         ShapeUtils::ComputeInsetRect(shape, refBox) + aDisplayItem.ToReferenceFrame();
@@ -10077,7 +10047,7 @@ CreateSimpleClipRegion(const nsDisplayMasksAndClipPaths& aDisplayItem,
       nsPoint center = ShapeUtils::ComputeCircleOrEllipseCenter(shape, refBox);
 
       nsSize radii;
-      if (shape->GetShapeType() == StyleBasicShapeType::Ellipse) {
+      if (shape.GetShapeType() == StyleBasicShapeType::Ellipse) {
         radii = ShapeUtils::ComputeEllipseRadii(shape, center, refBox);
       } else {
         nscoord radius = ShapeUtils::ComputeCircleRadius(shape, center, refBox);
@@ -10182,6 +10152,7 @@ nsDisplayMasksAndClipPaths::CreateWebRenderCommands(
       : Nothing();
 
     layer.emplace(aSc,
+                  GetActiveScrolledRoot(),
                   aBuilder,
                   /*aFilters: */ nsTArray<wr::WrFilterOp>(),
                   /*aBounds: */ bounds,
@@ -10496,6 +10467,7 @@ nsDisplayFilters::CreateWebRenderCommands(
 
   float opacity = mFrame->StyleEffects()->mOpacity;
   StackingContextHelper sc(aSc,
+                           GetActiveScrolledRoot(),
                            aBuilder,
                            wrFilters,
                            LayoutDeviceRect(),

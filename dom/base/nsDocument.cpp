@@ -497,9 +497,7 @@ struct PositionComparator
 
   int operator()(void* aElement) const {
     Element* curElement = static_cast<Element*>(aElement);
-    if (mElement == curElement) {
-      return 0;
-    }
+    MOZ_DIAGNOSTIC_ASSERT(mElement != curElement);
     if (nsContentUtils::PositionIsBefore(mElement, curElement)) {
       return -1;
     }
@@ -509,48 +507,40 @@ struct PositionComparator
 
 } // namespace
 
-bool
+void
 nsIdentifierMapEntry::AddIdElement(Element* aElement)
 {
   MOZ_ASSERT(aElement, "Must have element");
-  MOZ_ASSERT(!mIdContentList.Contains(nullptr),
-                  "Why is null in our list?");
-
-#ifdef DEBUG
-  Element* currentElement = mIdContentList.SafeElementAt(0);
-#endif
+  MOZ_ASSERT(!mIdContentList.Contains(nullptr), "Why is null in our list?");
 
   // Common case
   if (mIdContentList.IsEmpty()) {
-    if (!mIdContentList.AppendElement(aElement))
-      return false;
-    NS_ASSERTION(currentElement == nullptr, "How did that happen?");
+    mIdContentList.AppendElement(aElement);
     FireChangeCallbacks(nullptr, aElement);
-    return true;
+    return;
   }
+
+#ifdef DEBUG
+  Element* currentElement = mIdContentList.ElementAt(0);
+#endif
 
   // We seem to have multiple content nodes for the same id, or XUL is messing
   // with us.  Search for the right place to insert the content.
 
   size_t idx;
-  if (BinarySearchIf(mIdContentList, 0, mIdContentList.Length(),
-                     PositionComparator(aElement), &idx)) {
-    // Already in the list, so already in the right spot.  Get out of here.
-    // XXXbz this only happens because XUL does all sorts of random
-    // UpdateIdTableEntry calls.  Hate, hate, hate!
-    return true;
-  }
+  BinarySearchIf(mIdContentList,
+                 0,
+                 mIdContentList.Length(),
+                 PositionComparator(aElement),
+                 &idx);
 
-  if (!mIdContentList.InsertElementAt(idx, aElement)) {
-    return false;
-  }
+  mIdContentList.InsertElementAt(idx, aElement);
 
   if (idx == 0) {
     Element* oldElement = mIdContentList.SafeElementAt(1);
     NS_ASSERTION(currentElement == oldElement, "How did that happen?");
     FireChangeCallbacks(oldElement, aElement);
   }
-  return true;
 }
 
 void
@@ -1662,8 +1652,7 @@ nsDocument::~nsDocument()
     // fastblock is enabled and we're not a private document.  We always report
     // the all probe, and for the rest, report each category's probe depending
     // on whether the respective bit has been set in our enum set.
-    if (StaticPrefs::browser_contentblocking_enabled() &&
-        StaticPrefs::browser_fastblock_enabled() &&
+    if (StaticPrefs::browser_fastblock_enabled() &&
         !nsContentUtils::IsInPrivateBrowsing(this)) {
       for (auto label : mTrackerBlockedReasons) {
         AccumulateCategorical(label);
@@ -2429,7 +2418,7 @@ nsIDocument::MaybeDowngradePrincipal(nsIPrincipal* aPrincipal)
                                  "an expanded principal");
 
     auto* expanded = basePrin->As<ExpandedPrincipal>();
-    return do_AddRef(expanded->WhiteList().LastElement());
+    return do_AddRef(expanded->AllowList().LastElement());
   }
 
   if (nsContentUtils::IsSystemPrincipal(aPrincipal)) {
@@ -11180,10 +11169,8 @@ nsIDocument::CleanupFullscreenState()
 
   // Restore the zoom level that was in place prior to entering fullscreen.
   if (nsIPresShell* shell = GetShell()) {
-    if (nsPresContext* context = shell->GetPresContext()) {
-      if (context->IsRootContentDocument()) {
-        shell->SetResolutionAndScaleTo(mSavedResolution);
-      }
+    if (shell->GetMobileViewportManager()) {
+      shell->SetResolutionAndScaleTo(mSavedResolution);
     }
   }
 
@@ -11591,19 +11578,17 @@ nsIDocument::ApplyFullscreen(UniquePtr<FullscreenRequest> aRequest)
   while (true) {
     child->SetFullscreenRoot(fullScreenRootDoc);
 
-    // When entering fullscreen, reset the RCD's zoom level to 1,
-    // otherwise the fullscreen content could be sized larger than the
-    // screen (since fullscreen is implemented using position:fixed and
+    // When entering fullscreen, reset the RCD's resolution to the intrinsic
+    // resolution, otherwise the fullscreen content could be sized larger than
+    // the screen (since fullscreen is implemented using position:fixed and
     // fixed elements are sized to the layout viewport).
     // This also ensures that things like video controls aren't zoomed in
     // when in fullscreen mode.
     if (nsIPresShell* shell = child->GetShell()) {
-      if (nsPresContext* context = shell->GetPresContext()) {
-        if (context->IsRootContentDocument()) {
-          // Save the previous resolution so it can be restored.
-          child->mSavedResolution = shell->GetResolution();
-          shell->SetResolutionAndScaleTo(1.0f);
-        }
+      if (RefPtr<MobileViewportManager> manager = shell->GetMobileViewportManager()) {
+        // Save the previous resolution so it can be restored.
+        child->mSavedResolution = shell->GetResolution();
+        shell->SetResolutionAndScaleTo(manager->ComputeIntrinsicResolution());
       }
     }
 
@@ -12967,8 +12952,7 @@ void
 nsIDocument::MaybeAllowStorageForOpener()
 {
   if (StaticPrefs::network_cookie_cookieBehavior() !=
-        nsICookieService::BEHAVIOR_REJECT_TRACKER ||
-      !AntiTrackingCommon::ShouldHonorContentBlockingCookieRestrictions()) {
+        nsICookieService::BEHAVIOR_REJECT_TRACKER) {
     return;
   }
 
@@ -13976,8 +13960,7 @@ nsIDocument::RequestStorageAccess(mozilla::ErrorResult& aRv)
 
   bool granted = true;
   bool isTrackingWindow = false;
-  if (AntiTrackingCommon::ShouldHonorContentBlockingCookieRestrictions() &&
-      StaticPrefs::network_cookie_cookieBehavior() ==
+  if (StaticPrefs::network_cookie_cookieBehavior() ==
         nsICookieService::BEHAVIOR_REJECT_TRACKER) {
     // Only do something special for third-party tracking content.
     if (nsContentUtils::StorageDisabledByAntiTracking(this, nullptr)) {

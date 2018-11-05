@@ -635,11 +635,6 @@ pref("media.audioipc.stack_size", 262144);
 pref("media.cubeb.sandbox", false);
 #endif
 
-#ifdef XP_LINUX
-// Bug 1481152
-pref("media.cubeb_max_input_streams", 1);
-#endif
-
 #ifdef MOZ_AV1
 pref("media.av1.enabled", false);
 #endif
@@ -1102,6 +1097,7 @@ pref("devtools.recordreplay.enableRewinding", true);
 #endif
 
 pref("devtools.recordreplay.mvp.enabled", false);
+pref("devtools.recordreplay.timeline.enabled", false);
 
 // view source
 pref("view_source.syntax_highlight", true);
@@ -1537,12 +1533,21 @@ pref("javascript.options.throw_on_debuggee_would_run", false);
 pref("javascript.options.dump_stack_on_debuggee_would_run", false);
 
 // Spectre security vulnerability mitigations.
+#if defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
+pref("javascript.options.spectre.index_masking", false);
+pref("javascript.options.spectre.object_mitigations.barriers", false);
+pref("javascript.options.spectre.object_mitigations.misc", false);
+pref("javascript.options.spectre.string_mitigations", false);
+pref("javascript.options.spectre.value_masking", false);
+pref("javascript.options.spectre.jit_to_C++_calls", false);
+#else
 pref("javascript.options.spectre.index_masking", true);
 pref("javascript.options.spectre.object_mitigations.barriers", true);
 pref("javascript.options.spectre.object_mitigations.misc", true);
 pref("javascript.options.spectre.string_mitigations", true);
 pref("javascript.options.spectre.value_masking", true);
 pref("javascript.options.spectre.jit_to_C++_calls", true);
+#endif
 
 // Streams API
 pref("javascript.options.streams", false);
@@ -2232,12 +2237,9 @@ pref("network.auth.private-browsing-sso", false);
 
 // Control how throttling of http responses works - number of ms that each
 // suspend and resume period lasts (prefs named appropriately)
-#ifdef ANDROID
-// disabled because of bug 1382274
+// This feature is occasionally causing visible regressions (download too slow for
+// too long time, jitter in video/audio in background tabs...)
 pref("network.http.throttle.enable", false);
-#else
-pref("network.http.throttle.enable", true);
-#endif
 
 // Make HTTP throttling v2 algorithm Nightly-only due to bug 1462906
 #ifdef NIGHTLY_BUILD
@@ -3020,9 +3022,6 @@ pref("layout.css.convertFromNode.enabled", false);
 #else
 pref("layout.css.convertFromNode.enabled", true);
 #endif
-
-// Is support for CSS "text-align: unsafe X" enabled?
-pref("layout.css.text-align-unsafe-value.enabled", false);
 
 // Is support for CSS text-justify property enabled?
 pref("layout.css.text-justify.enabled", true);
@@ -4765,6 +4764,9 @@ pref("image.multithreaded_decoding.limit", -1);
 // How long in ms before we should start shutting down idle decoder threads.
 pref("image.multithreaded_decoding.idle_timeout", 600000);
 
+// Whether we attempt to decode WebP images or not.
+pref("image.webp.enabled", false);
+
 // Limit for the canvas image cache. 0 means we don't limit the size of the
 // cache.
 pref("canvas.image.cache.limit", 0);
@@ -4859,13 +4861,7 @@ pref("network.tcp.keepalive.retry_interval", 1); // seconds
 pref("network.tcp.keepalive.probe_count", 4);
 #endif
 
-#if !defined(EARLY_BETA_OR_EARLIER)
 pref("network.tcp.tcp_fastopen_enable", false);
-#elif  defined(XP_WIN) || defined(XP_MACOSX)
-pref("network.tcp.tcp_fastopen_enable", true);
-#else
-pref("network.tcp.tcp_fastopen_enable", false);
-#endif
 
 pref("network.tcp.tcp_fastopen_consecutive_failure_limit", 5);
 // We are trying to detect stalled tcp connections that use TFO and TLS
@@ -5285,10 +5281,6 @@ pref("io.activity.intervalMilliseconds", 0);
 // to take effect.
 pref("jsloader.shareGlobal", true);
 
-// When we're asked to take a screenshot, don't wait more than 2000ms for the
-// event loop to become idle before actually taking the screenshot.
-pref("dom.browserElement.maxScreenshotDelayMS", 2000);
-
 // Whether we should show the placeholder when the element is focused but empty.
 pref("dom.placeholder.show_on_focus", true);
 
@@ -5435,6 +5427,10 @@ pref("network.captive-portal-service.maxInterval", 1500000); // 25 minutes
 // Every 10 checks, the delay is increased by a factor of 5
 pref("network.captive-portal-service.backoffFactor", "5.0");
 pref("network.captive-portal-service.enabled", false);
+
+pref("network.connectivity-service.enabled", true);
+pref("network.connectivity-service.DNSv4.domain", "mozilla.org");
+pref("network.connectivity-service.DNSv6.domain", "mozilla.org");
 
 // DNS Trusted Recursive Resolver
 // 0 - default off, 1 - race, 2 TRR first, 3 TRR only, 4 shadow, 5 off by choice
@@ -5892,6 +5888,12 @@ pref("dom.xhr.lowercase_header.enabled", true);
 // this can be removed.
 pref("dom.clients.openwindow_favors_same_process", true);
 
+#ifdef RELEASE_OR_BETA
+pref("toolkit.aboutPerformance.showInternals", false);
+#else
+pref("toolkit.aboutPerformance.showInternals", true);
+#endif
+
 // When a crash happens, whether to include heap regions of the crash context
 // in the minidump. Enabled by default on nightly and aurora.
 #ifdef RELEASE_OR_BETA
@@ -5948,8 +5950,7 @@ pref("prio.enabled", false);
 #endif
 
 #ifdef NIGHTLY_BUILD
-// Bug 1499552; add a dummy pref to verify that collection of preferences
-// via telemetry is working as expected.
-pref("app.normandy.test.with_true_default", true);
-pref("app.normandy.test.with_false_default", false);
+pref("dom.sidebar.enabled", false);
+#else
+pref("dom.sidebar.enabled", true);
 #endif

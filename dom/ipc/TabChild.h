@@ -163,7 +163,7 @@ public:
   virtual PuppetWidget* WebWidget() = 0;
   nsIPrincipal* GetPrincipal() { return mPrincipal; }
   virtual bool DoUpdateZoomConstraints(const uint32_t& aPresShellId,
-                                       const mozilla::layers::FrameMetrics::ViewID& aViewId,
+                                       const mozilla::layers::ScrollableLayerGuid::ViewID& aViewId,
                                        const Maybe<mozilla::layers::ZoomConstraints>& aConstraints) = 0;
 
   virtual ScreenIntSize GetInnerSize() = 0;
@@ -641,7 +641,7 @@ public:
                             const int& aArg);
   void StartScrollbarDrag(const layers::AsyncDragMetrics& aDragMetrics);
   void ZoomToRect(const uint32_t& aPresShellId,
-                  const FrameMetrics::ViewID& aViewId,
+                  const ScrollableLayerGuid::ViewID& aViewId,
                   const CSSRect& aRect,
                   const uint32_t& aFlags);
 
@@ -751,6 +751,8 @@ protected:
   virtual mozilla::ipc::IPCResult RecvSetOriginAttributes(const OriginAttributes& aOriginAttributes) override;
 
   virtual mozilla::ipc::IPCResult RecvSetWidgetNativeData(const WindowsHandle& aWidgetNativeData) override;
+
+  virtual mozilla::ipc::IPCResult RecvGetContentBlockingLog(GetContentBlockingLogResolver&& aResolve) override;
 
 private:
   void HandleDoubleTap(const CSSPoint& aPoint, const Modifiers& aModifiers,

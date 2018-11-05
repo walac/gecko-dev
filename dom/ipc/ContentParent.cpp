@@ -2127,7 +2127,7 @@ ContentParent::GetTestShellSingleton()
   return static_cast<TestShellParent*>(p);
 }
 
-#ifdef XP_MACOSX
+#if defined(XP_MACOSX) && defined(MOZ_CONTENT_SANDBOX)
 void
 ContentParent::AppendSandboxParams(std::vector<std::string> &aArgs)
 {
@@ -2239,7 +2239,7 @@ ContentParent::AppendSandboxParams(std::vector<std::string> &aArgs)
   }
 #endif // DEBUG
 }
-#endif // XP_MACOSX
+#endif // XP_MACOSX && MOZ_CONTENT_SANDBOX
 
 bool
 ContentParent::LaunchSubprocess(ProcessPriority aInitialPriority /* = PROCESS_PRIORITY_FOREGROUND */)
@@ -3074,26 +3074,6 @@ ContentParent::RecvPlayEventSound(const uint32_t& aEventId)
 
   sound->PlayEventSound(aEventId);
 
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-ContentParent::RecvGetSystemColors(const uint32_t& colorsCount,
-                                   InfallibleTArray<uint32_t>* colors)
-{
-#ifdef MOZ_WIDGET_ANDROID
-  NS_ASSERTION(AndroidBridge::Bridge() != nullptr, "AndroidBridge is not available");
-  if (AndroidBridge::Bridge() == nullptr) {
-    // Do not fail - the colors won't be right, but it's not critical
-    return IPC_OK();
-  }
-
-  colors->AppendElements(colorsCount);
-
-  // The array elements correspond to the members of AndroidSystemColors structure,
-  // so just pass the pointer to the elements buffer
-  AndroidBridge::Bridge()->GetSystemColors((AndroidSystemColors*)colors->Elements());
-#endif
   return IPC_OK();
 }
 

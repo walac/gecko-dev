@@ -33,7 +33,6 @@ Notes to self:
 #include "nsNetUtil.h"
 #include "nsIOutputStream.h"
 #include "nsIInputStream.h"
-#include "nsIWeakReferenceUtils.h"
 #include "nsILoadContext.h"
 #include "mozilla/UniquePtr.h"
 
@@ -324,8 +323,7 @@ nsTransferable::GetTransferData(const char* aFlavor,
 //
 NS_IMETHODIMP
 nsTransferable::GetAnyTransferData(nsACString& aFlavor,
-                                   nsISupports** aData,
-                                   uint32_t* aDataLen)
+                                   nsISupports** aData)
 {
   MOZ_ASSERT(mInitialized);
 
@@ -333,7 +331,8 @@ nsTransferable::GetAnyTransferData(nsACString& aFlavor,
     DataStruct& data = mDataArray.ElementAt(i);
     if (data.IsDataAvailable()) {
       aFlavor.Assign(data.GetFlavor());
-      data.GetData(aData, aDataLen);
+      uint32_t dataLen;
+      data.GetData(aData, &dataLen);
       return NS_OK;
     }
   }

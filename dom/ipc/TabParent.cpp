@@ -2734,7 +2734,7 @@ TabParent::ApzAwareEventRoutingToChild(ScrollableLayerGuid* aOutTargetGuid,
       // testing code "wins" so we need to update the guid to reflect this.
       if (RenderFrameParent* rfp = GetRenderFrame()) {
         if (aOutTargetGuid->mLayersId != rfp->GetLayersId()) {
-          *aOutTargetGuid = ScrollableLayerGuid(rfp->GetLayersId(), 0, FrameMetrics::NULL_SCROLL_ID);
+          *aOutTargetGuid = ScrollableLayerGuid(rfp->GetLayersId(), 0, ScrollableLayerGuid::NULL_SCROLL_ID);
         }
       }
     }
@@ -2823,13 +2823,6 @@ TabParent::GetLoadContext()
     mLoadContext = loadContext;
   }
   return loadContext.forget();
-}
-
-NS_IMETHODIMP
-TabParent::GetUseAsyncPanZoom(bool* useAsyncPanZoom)
-{
-  *useAsyncPanZoom = AsyncPanZoomEnabled();
-  return NS_OK;
 }
 
 // defined in nsITabParent
@@ -2986,6 +2979,42 @@ TabParent::SaveRecording(const nsAString& aFilename, bool* aRetval)
     return rv;
   }
   return Manager()->AsContentParent()->SaveRecording(file, aRetval);
+}
+
+NS_IMETHODIMP
+TabParent::GetContentBlockingLog(Promise** aPromise)
+{
+  NS_ENSURE_ARG_POINTER(aPromise);
+
+  *aPromise = nullptr;
+  if (!mFrameElement) {
+    return NS_ERROR_FAILURE;
+  }
+
+  ErrorResult rv;
+  RefPtr<Promise> jsPromise =
+    Promise::Create(mFrameElement->OwnerDoc()->GetOwnerGlobal(), rv);
+  if (rv.Failed()) {
+    return NS_ERROR_FAILURE;
+  }
+
+  RefPtr<Promise> copy(jsPromise);
+  copy.forget(aPromise);
+
+  auto cblPromise = SendGetContentBlockingLog();
+  cblPromise->Then(GetMainThreadSerialEventTarget(), __func__,
+                   [jsPromise] (Tuple<nsString, bool> aResult) {
+                     if (Get<1>(aResult)) {
+                       jsPromise->MaybeResolve(Get<0>(aResult));
+                     } else {
+                       jsPromise->MaybeRejectWithUndefined();
+                     }
+                   },
+                   [jsPromise] (ResponseRejectReason aReason) {
+                     jsPromise->MaybeRejectWithUndefined();
+                   });
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP

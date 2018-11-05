@@ -1140,7 +1140,7 @@ Element::AddToIdTable(nsAtom* aId)
     containingShadow->AddToIdTable(this, aId);
   } else {
     nsIDocument* doc = GetUncomposedDoc();
-    if (doc && (!IsInAnonymousSubtree() || doc->IsXULDocument())) {
+    if (doc && !IsInAnonymousSubtree()) {
       doc->AddToIdTable(this, aId);
     }
   }
@@ -1163,7 +1163,7 @@ Element::RemoveFromIdTable()
     }
   } else {
     nsIDocument* doc = GetUncomposedDoc();
-    if (doc && (!IsInAnonymousSubtree() || doc->IsXULDocument())) {
+    if (doc && !IsInAnonymousSubtree()) {
       doc->RemoveFromIdTable(this, id);
     }
   }
@@ -1200,26 +1200,15 @@ Element::GetShadowRootByMode() const
   return shadowRoot;
 }
 
-// https://dom.spec.whatwg.org/#dom-element-attachshadow
-already_AddRefed<ShadowRoot>
-Element::AttachShadow(const ShadowRootInit& aInit, ErrorResult& aError)
+bool
+Element::CanAttachShadowDOM() const
 {
   /**
-   * 1. If context object’s namespace is not the HTML namespace,
-   *    then throw a "NotSupportedError" DOMException.
-   */
-  if (!IsHTMLElement() &&
-      !(XRE_IsParentProcess() && IsXULElement() && nsContentUtils::AllowXULXBLForPrincipal(NodePrincipal()))) {
-    aError.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
-    return nullptr;
-  }
-
-  /**
-   * 2. If context object’s local name is not
-   *      a valid custom element name, "article", "aside", "blockquote",
-   *      "body", "div", "footer", "h1", "h2", "h3", "h4", "h5", "h6",
-   *      "header", "main" "nav", "p", "section", or "span",
-   *    then throw a "NotSupportedError" DOMException.
+   * If context object’s local name is not
+   *    a valid custom element name, "article", "aside", "blockquote",
+   *    "body", "div", "footer", "h1", "h2", "h3", "h4", "h5", "h6",
+   *    "header", "main" "nav", "p", "section", or "span",
+   *  return false.
    */
   nsAtom* nameAtom = NodeInfo()->NameAtom();
   if (!(nsContentUtils::IsCustomElementName(nameAtom, NodeInfo()->NamespaceID()) ||
@@ -1241,12 +1230,37 @@ Element::AttachShadow(const ShadowRootInit& aInit, ErrorResult& aError)
         nameAtom == nsGkAtoms::p ||
         nameAtom == nsGkAtoms::section ||
         nameAtom == nsGkAtoms::span)) {
+    return false;
+  }
+
+  return true;
+}
+
+// https://dom.spec.whatwg.org/#dom-element-attachshadow
+already_AddRefed<ShadowRoot>
+Element::AttachShadow(const ShadowRootInit& aInit, ErrorResult& aError)
+{
+  /**
+   * 1. If context object’s namespace is not the HTML namespace,
+   *    then throw a "NotSupportedError" DOMException.
+   */
+  if (!IsHTMLElement() &&
+      !(XRE_IsParentProcess() && IsXULElement() && nsContentUtils::AllowXULXBLForPrincipal(NodePrincipal()))) {
     aError.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
     return nullptr;
   }
 
   /**
-   * 3. If context object is a shadow host, then throw
+   * 2. If context object’s local name is not valid to attach shadow DOM to,
+   *    then throw a "NotSupportedError" DOMException.
+   */
+  if (!CanAttachShadowDOM()) {
+    aError.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    return nullptr;
+  }
+
+  /**
+   * 2. If context object is a shadow host, then throw
    *    an "InvalidStateError" DOMException.
    */
   if (GetShadowRoot() || GetXBLBinding()) {
@@ -1683,6 +1697,10 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
       slots->mBindingParent = aBindingParent; // Weak, so no addref happens.
     }
   }
+
+  const bool hadParent = !!GetParentNode();
+  const bool wasInShadowTree = IsInShadowTree();
+
   NS_ASSERTION(!aBindingParent || IsRootOfNativeAnonymousSubtree() ||
                !HasFlag(NODE_IS_IN_NATIVE_ANONYMOUS_SUBTREE) ||
                (aParent && aParent->IsInNativeAnonymousSubtree()),
@@ -1706,7 +1724,7 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     }
   }
 
-  bool hadParent = !!GetParentNode();
+  MOZ_ASSERT_IF(wasInShadowTree, IsInShadowTree());
 
   // Now set the parent.
   if (aParent) {
@@ -1837,7 +1855,9 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     nsNodeUtils::NativeAnonymousChildListChange(this, false);
   }
 
-  if (HasID()) {
+  // Ensure we only add to the table once, in the case we move the ShadowRoot
+  // around.
+  if (HasID() && !wasInShadowTree) {
     AddToIdTable(DoGetID());
   }
 

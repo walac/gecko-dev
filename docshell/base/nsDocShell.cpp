@@ -665,6 +665,11 @@ nsDocShell::LoadURI(nsDocShellLoadState* aLoadState)
     StartupTimeline::RecordOnce(StartupTimeline::FIRST_LOAD_URI);
   }
 
+  // LoadType used to be set to a default value here, if no LoadInfo/LoadState
+  // object was passed in. That functionality has been removed as of bug
+  // 1492648. LoadType should now be set up by the caller at the time they
+  // create their nsDocShellLoadState object to pass into LoadURI.
+
   MOZ_LOG(gDocShellLeakLog, LogLevel::Debug,
           ("nsDocShell[%p]: loading %s with flags 0x%08x",
            this, aLoadState->URI()->GetSpecOrDefault().get(),
@@ -2850,8 +2855,10 @@ nsDocShell::SetDocLoaderParent(nsDocLoader* aParent)
   // Our parent has changed. Recompute scriptability.
   RecomputeCanExecuteScripts();
 
-  nsCOMPtr<nsPIDOMWindowOuter> window = GetWindow();
-  if (window) {
+  // Inform windows when they're being removed from their parent.
+  if (!aParent && mScriptGlobal) {
+    nsCOMPtr<nsPIDOMWindowOuter> window = mScriptGlobal->AsOuter();
+    MOZ_ASSERT(window);
     auto* win = nsGlobalWindowOuter::Cast(window);
     win->ParentWindowChanged();
   }
@@ -3916,6 +3923,27 @@ nsDocShell::GetMessageManager(ContentFrameMessageManager** aMessageManager)
     mm = win->GetMessageManager();
   }
   mm.forget(aMessageManager);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::GetContentBlockingLog(Promise** aPromise)
+{
+  NS_ENSURE_ARG_POINTER(aPromise);
+
+  if (!mContentViewer) {
+    *aPromise = nullptr;
+    return NS_ERROR_FAILURE;
+  }
+
+  nsIDocument* doc = mContentViewer->GetDocument();
+  ErrorResult rv;
+  RefPtr<Promise> promise = Promise::Create(doc->GetOwnerGlobal(), rv);
+  if (NS_WARN_IF(rv.Failed())) {
+    return rv.StealNSResult();
+  }
+  promise->MaybeResolve(doc->GetContentBlockingLog()->Stringify());
+  promise.forget(aPromise);
   return NS_OK;
 }
 
@@ -12838,7 +12866,6 @@ nsDocShell::GetUseTrackingProtection(bool* aUseTrackingProtection)
 {
   *aUseTrackingProtection  = false;
 
-  bool cbEnabled = StaticPrefs::browser_contentblocking_enabled();
   static bool sTPEnabled = false;
   static bool sTPInPBEnabled = false;
   static bool sPrefsInit = false;
@@ -12851,8 +12878,8 @@ nsDocShell::GetUseTrackingProtection(bool* aUseTrackingProtection)
       "privacy.trackingprotection.pbmode.enabled", false);
   }
 
-  if (mUseTrackingProtection || (cbEnabled && sTPEnabled) ||
-      (cbEnabled && UsePrivateBrowsing() && sTPInPBEnabled)) {
+  if (mUseTrackingProtection || sTPEnabled ||
+      (UsePrivateBrowsing() && sTPInPBEnabled)) {
     *aUseTrackingProtection = true;
     return NS_OK;
   }

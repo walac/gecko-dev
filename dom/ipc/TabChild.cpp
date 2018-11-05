@@ -93,7 +93,7 @@
 #include "nsThreadManager.h"
 #include "nsThreadUtils.h"
 #include "nsViewManager.h"
-#include "nsWeakReference.h"
+#include "nsIWeakReferenceUtils.h"
 #include "nsWindowWatcher.h"
 #include "PermissionMessageUtils.h"
 #include "PuppetWidget.h"
@@ -104,7 +104,6 @@
 #include "mozilla/gfx/Matrix.h"
 #include "UnitTransforms.h"
 #include "ClientLayerManager.h"
-#include "LayersLogging.h"
 #include "nsColorPickerProxy.h"
 #include "nsContentPermissionHelper.h"
 #include "nsNetUtil.h"
@@ -246,7 +245,7 @@ TabChildBase::DispatchMessageManagerMessage(const nsAString& aMessageName,
 bool
 TabChildBase::UpdateFrameHandler(const RepaintRequest& aRequest)
 {
-  MOZ_ASSERT(aRequest.GetScrollId() != FrameMetrics::NULL_SCROLL_ID);
+  MOZ_ASSERT(aRequest.GetScrollId() != ScrollableLayerGuid::NULL_SCROLL_ID);
 
   if (aRequest.IsRootContent()) {
     if (nsCOMPtr<nsIPresShell> shell = GetPresShell()) {
@@ -1431,7 +1430,7 @@ TabChild::StartScrollbarDrag(const layers::AsyncDragMetrics& aDragMetrics)
 
 void
 TabChild::ZoomToRect(const uint32_t& aPresShellId,
-                     const FrameMetrics::ViewID& aViewId,
+                     const ScrollableLayerGuid::ViewID& aViewId,
                      const CSSRect& aRect,
                      const uint32_t& aFlags)
 {
@@ -3404,6 +3403,21 @@ mozilla::ipc::IPCResult
 TabChild::RecvSetWidgetNativeData(const WindowsHandle& aWidgetNativeData)
 {
   mWidgetNativeData = aWidgetNativeData;
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+TabChild::RecvGetContentBlockingLog(GetContentBlockingLogResolver&& aResolve)
+{
+  bool success = false;
+  nsAutoString result;
+
+  if (nsCOMPtr<nsIDocument> doc = GetDocument()) {
+    result = doc->GetContentBlockingLog()->Stringify();
+    success = true;
+  }
+
+  aResolve(Tuple<const nsString&, const bool&>(result, success));
   return IPC_OK();
 }
 

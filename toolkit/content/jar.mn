@@ -93,6 +93,7 @@ toolkit.jar:
    content/global/bindings/tree.xml            (widgets/tree.xml)
    content/global/bindings/videocontrols.xml   (widgets/videocontrols.xml)
 *  content/global/bindings/wizard.xml          (widgets/wizard.xml)
+   content/global/elements/datetimebox.js      (widgets/datetimebox.js)
    content/global/elements/findbar.js          (widgets/findbar.js)
    content/global/elements/editor.js          (widgets/editor.js)
    content/global/elements/general.js          (widgets/general.js)
@@ -102,6 +103,7 @@ toolkit.jar:
    content/global/elements/tabbox.js           (widgets/tabbox.js)
    content/global/elements/textbox.js          (widgets/textbox.js)
    content/global/elements/videocontrols.js    (widgets/videocontrols.js)
+   content/global/elements/tree.js             (widgets/tree.js)
 #ifdef XP_MACOSX
    content/global/macWindowMenu.js
 #endif

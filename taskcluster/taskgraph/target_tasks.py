@@ -7,7 +7,7 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 from taskgraph import try_option_syntax
-from taskgraph.util.attributes import match_run_on_projects
+from taskgraph.util.attributes import match_run_on_projects, match_run_on_hg_branches
 
 _target_task_methods = {}
 
@@ -39,6 +39,13 @@ def filter_for_project(task, parameters):
     """Filter tasks by project.  Optionally enable nightlies."""
     run_on_projects = set(task.attributes.get('run_on_projects', []))
     return match_run_on_projects(parameters['project'], run_on_projects)
+
+
+def filter_for_hg_branch(task, parameters):
+    """Filter tasks by hg branch.
+    If `run_on_hg_branch` is not defined, then task runs on all branches"""
+    run_on_hg_branches = set(task.attributes.get('run_on_hg_branches', ['all']))
+    return match_run_on_hg_branches(parameters['hg_branch'], run_on_hg_branches)
 
 
 def filter_on_platforms(task, platforms):
@@ -81,7 +88,7 @@ def filter_release_tasks(task, parameters):
 def standard_filter(task, parameters):
     return all(
         filter_func(task, parameters) for filter_func in
-        (filter_out_cron, filter_for_project)
+        (filter_out_cron, filter_for_project, filter_for_hg_branch)
     )
 
 
@@ -533,10 +540,9 @@ def target_tasks_nightly_desktop(full_task_graph, parameters, graph_config):
 @_target_task('searchfox_index')
 def target_tasks_searchfox(full_task_graph, parameters, graph_config):
     """Select tasks required for indexing Firefox for Searchfox web site each day"""
-    # For now we only do Linux and Mac debug builds. Windows builds
-    # are currently broken (bug 1418415).
     return ['searchfox-linux64-searchfox/debug',
-            'searchfox-macosx64-searchfox/debug']
+            'searchfox-macosx64-searchfox/debug',
+            'searchfox-win64-searchfox/debug']
 
 
 @_target_task('pipfile_update')

@@ -147,53 +147,6 @@ struct ScopeNote {
     uint32_t        parent;     // Index of parent block scope in notes, or NoScopeNote.
 };
 
-struct ConstArray {
-    js::GCPtrValue* vector;     // array of indexed constant values
-    uint32_t length;
-};
-
-struct ObjectArray {
-    js::GCPtrObject* vector;    // Array of indexed objects.
-    uint32_t length;            // Count of indexed objects.
-};
-
-struct ScopeArray {
-    js::GCPtrScope* vector;     // Array of indexed scopes.
-    uint32_t        length;     // Count of indexed scopes.
-};
-
-struct TryNoteArray {
-    JSTryNote*      vector;     // Array of indexed try notes.
-    uint32_t        length;     // Count of indexed try notes.
-};
-
-struct ScopeNoteArray {
-    ScopeNote* vector;          // Array of indexed ScopeNote records.
-    uint32_t   length;          // Count of indexed try notes.
-};
-
-class YieldAndAwaitOffsetArray {
-    friend bool
-    detail::CopyScript(JSContext* cx, HandleScript src, HandleScript dst,
-                       MutableHandle<GCVector<Scope*>> scopes);
-
-    uint32_t*       vector_;    // Array of bytecode offsets.
-    uint32_t        length_;    // Count of bytecode offsets.
-
-  public:
-    void init(uint32_t* vector, uint32_t length) {
-        vector_ = vector;
-        length_ = length;
-    }
-    uint32_t& operator[](uint32_t index) {
-        MOZ_ASSERT(index < length_);
-        return vector_[index];
-    }
-    uint32_t length() const {
-        return length_;
-    }
-};
-
 class ScriptCounts
 {
   public:
@@ -1274,6 +1227,184 @@ template<XDRMode mode>
 XDRResult
 XDRScriptConst(XDRState<mode>* xdr, MutableHandleValue vp);
 
+// [SMDOC] - JSScript data layout (unshared)
+//
+// PrivateScriptData stores variable-length data associated with a script.
+// Abstractly a PrivateScriptData consists of all these arrays:
+//
+//   * A non-empty array of GCPtrScope in scopes()
+//   * A possibly-empty array of GCPtrValue in consts()
+//   * A possibly-empty array of JSObject* in objects()
+//   * A possibly-empty array of JSTryNote in tryNotes()
+//   * A possibly-empty array of ScopeNote in scopeNotes()
+//   * A possibly-empty array of uint32_t in resumeOffsets()
+//
+// Accessing any of these arrays just requires calling the appropriate public
+// Span-computing function.
+//
+// Under the hood, PrivateScriptData is a small class followed by a memory
+// layout that compactly encodes all these arrays, in this manner (only
+// explicit padding, "--" separators for readability only):
+//
+//   <PrivateScriptData itself>
+//   --
+//   (OPTIONAL) PackedSpan for consts()
+//   (OPTIONAL) PackedSpan for objects()
+//   (OPTIONAL) PackedSpan for tryNotes()
+//   (OPTIONAL) PackedSpan for scopeNotes()
+//   (OPTIONAL) PackedSpan for resumeOffsets()
+//   --
+//   (REQUIRED) All the GCPtrScopes that constitute scopes()
+//   --
+//   (OPTIONAL) If there are consts, padding needed for space so far to be
+//              GCPtrValue-aligned
+//   (OPTIONAL) All the GCPtrValues that constitute consts()
+//   --
+//   (OPTIONAL) All the GCPtrObjects that constitute objects()
+//   --
+//   (OPTIONAL) All the JSTryNotes that constitute tryNotes()
+//   --
+//   (OPTIONAL) All the ScopeNotes that constitute scopeNotes()
+//   --
+//   (OPTIONAL) All the uint32_t's that constitute resumeOffsets()
+//
+// The contents of PrivateScriptData indicate which optional items are present.
+// PrivateScriptData::packedOffsets contains bit-fields, one per array.
+// Multiply each packed offset by sizeof(uint32_t) to compute a *real* offset.
+//
+// PrivateScriptData::scopesOffset indicates where scopes() begins. The bound
+// of five PackedSpans ensures we can encode this offset compactly.
+// PrivateScriptData::nscopes indicates the number of GCPtrScopes in scopes().
+//
+// The other PackedScriptData::*Offset fields indicate where a potential
+// corresponding PackedSpan resides. If the packed offset is 0, there is no
+// PackedSpan, and the array is empty. Otherwise the PackedSpan's uint32_t
+// offset and length fields store: 1) a *non-packed* offset (a literal count of
+// bytes offset from the *start* of PrivateScriptData struct) to the
+// corresponding array, and 2) the number of elements in the array,
+// respectively.
+//
+// PrivateScriptData and PackedSpan are 64-bit-aligned, so manual alignment in
+// trailing fields is only necessary before the first trailing fields with
+// increased alignment -- before GCPtrValues for consts(), on 32-bit, where the
+// preceding GCPtrScopes as pointers are only 32-bit-aligned.
+class alignas(JS::Value) PrivateScriptData final
+{
+    struct PackedOffsets
+    {
+        static constexpr size_t SCALE = sizeof(uint32_t);
+        static constexpr size_t MAX_OFFSET = 0b1111;
+
+        // (Scaled) offset to Scopes
+        uint32_t scopesOffset : 8;
+
+        // (Scaled) offset to Spans. These are set to 0 if they don't exist.
+        uint32_t constsSpanOffset : 4;
+        uint32_t objectsSpanOffset : 4;
+        uint32_t tryNotesSpanOffset : 4;
+        uint32_t scopeNotesSpanOffset : 4;
+        uint32_t resumeOffsetsSpanOffset : 4;
+    };
+
+    // Detect accidental size regressions.
+    static_assert(sizeof(PackedOffsets) == sizeof(uint32_t),
+                  "unexpected bit-field packing");
+
+    // A span describes base offset and length of one variable length array in
+    // the private data.
+    struct alignas(uintptr_t) PackedSpan
+    {
+        uint32_t offset;
+        uint32_t length;
+    };
+
+    // Concrete Fields
+    PackedOffsets packedOffsets = {}; // zeroes
+    uint32_t nscopes;
+
+    // Translate an offset into a concrete pointer.
+    template <typename T>
+    T* offsetToPointer(size_t offset)
+    {
+        uintptr_t base = reinterpret_cast<uintptr_t>(this);
+        uintptr_t elem = base + offset;
+        return reinterpret_cast<T*>(elem);
+    }
+
+    // Translate a PackedOffsets member into a pointer.
+    template <typename T>
+    T* packedOffsetToPointer(size_t packedOffset)
+    {
+        return offsetToPointer<T>(packedOffset * PackedOffsets::SCALE);
+    }
+
+    // Translates a PackedOffsets member into a PackedSpan* and then unpacks
+    // that to a mozilla::Span.
+    template <typename T>
+    mozilla::Span<T> packedOffsetToSpan(size_t scaledSpanOffset)
+    {
+        PackedSpan* span = packedOffsetToPointer<PackedSpan>(scaledSpanOffset);
+        T* base = offsetToPointer<T>(span->offset);
+        return mozilla::MakeSpan(base, span->length);
+    }
+
+    // Helpers for creating initializing trailing data
+    template <typename T>
+    void initSpan(size_t* cursor, uint32_t scaledSpanOffset, size_t length);
+
+    template <typename T>
+    void initElements(size_t offset, size_t length);
+
+    // Size to allocate
+    static size_t AllocationSize(uint32_t nscopes, uint32_t nconsts, uint32_t nobjects,
+                                 uint32_t ntrynotes, uint32_t nscopenotes,
+                                 uint32_t nresumeoffsets);
+
+    // Initialize header and PackedSpans
+    PrivateScriptData(uint32_t nscopes_, uint32_t nconsts, uint32_t nobjects,
+                      uint32_t ntrynotes, uint32_t nscopenotes, uint32_t nresumeoffsets);
+
+  public:
+
+    // Accessors for typed array spans.
+    mozilla::Span<GCPtrScope> scopes() {
+        GCPtrScope* base = packedOffsetToPointer<GCPtrScope>(packedOffsets.scopesOffset);
+        return mozilla::MakeSpan(base, nscopes);
+    }
+    mozilla::Span<GCPtrValue> consts() {
+        return packedOffsetToSpan<GCPtrValue>(packedOffsets.constsSpanOffset);
+    }
+    mozilla::Span<GCPtrObject> objects() {
+        return packedOffsetToSpan<GCPtrObject>(packedOffsets.objectsSpanOffset);
+    }
+    mozilla::Span<JSTryNote> tryNotes() {
+        return packedOffsetToSpan<JSTryNote>(packedOffsets.tryNotesSpanOffset);
+    }
+    mozilla::Span<ScopeNote> scopeNotes() {
+        return packedOffsetToSpan<ScopeNote>(packedOffsets.scopeNotesSpanOffset);
+    }
+    mozilla::Span<uint32_t> resumeOffsets() {
+        return packedOffsetToSpan<uint32_t>(packedOffsets.resumeOffsetsSpanOffset);
+    }
+
+    // Fast tests for if array exists
+    bool hasConsts() const { return packedOffsets.constsSpanOffset != 0; }
+    bool hasObjects() const { return packedOffsets.objectsSpanOffset != 0; }
+    bool hasTryNotes() const { return packedOffsets.tryNotesSpanOffset != 0; }
+    bool hasScopeNotes() const { return packedOffsets.scopeNotesSpanOffset != 0; }
+    bool hasResumeOffsets() const { return packedOffsets.resumeOffsetsSpanOffset != 0; }
+
+    // Allocate a new PrivateScriptData. Headers and GCPtrs are initialized.
+    // The size of allocation is returned as an out parameter.
+    static PrivateScriptData* new_(JSContext* cx,
+                                   uint32_t nscopes, uint32_t nconsts, uint32_t nobjects,
+                                   uint32_t ntrynotes, uint32_t nscopenotes,
+                                   uint32_t nresumeoffsets,
+                                   uint32_t* dataSize);
+
+    void traceChildren(JSTracer* trc);
+};
+
 /*
  * Common data that can be shared between many scripts in a single runtime.
  */
@@ -1404,13 +1535,13 @@ class JSScript : public js::gc::TenuredCell
     uint8_t* jitCodeRaw_ = nullptr;
     uint8_t* jitCodeSkipArgCheck_ = nullptr;
 
+    // Shareable script data
     js::SharedScriptData* scriptData_ = nullptr;
 
-  public:
-    // Pointer to variable-length data array (see comment above Create() for
-    // details).
-    uint8_t* data = nullptr;
+    // Unshared variable-length data
+    js::PrivateScriptData* data_ = nullptr;
 
+  public:
     JS::Realm* realm_ = nullptr;
 
   private:
@@ -1517,18 +1648,6 @@ class JSScript : public js::gc::TenuredCell
     /* Number of type sets used in this script for dynamic type monitoring. */
     uint16_t nTypeSets_ = 0;
 
-    // Bit fields.
-
-  public:
-    // The kinds of the optional arrays.
-    enum ArrayKind {
-        CONSTS,
-        OBJECTS,
-        TRYNOTES,
-        SCOPENOTES,
-        ARRAY_KIND_BITS
-    };
-
   private:
     struct BitFields
     {
@@ -1537,14 +1656,6 @@ class JSScript : public js::gc::TenuredCell
          * C++20, so we can't initialize these to zero in place.  Instead we
          * braced-init this to all zeroes in the JSScript constructor, then
          * custom-assign particular bit-fields in the constructor body.
-         */
-
-        // The bits in this field indicate the presence/non-presence of several
-        // optional arrays in |data|.  See the comments above Create() for details.
-        uint8_t hasArrayBits_ : ARRAY_KIND_BITS;
-
-        /*
-         * All remaining bit-fields are single-bit bools.
          */
 
         // No need for result value of last expression statement.
@@ -1671,7 +1782,9 @@ class JSScript : public js::gc::TenuredCell
 
         // True if the debugger's onNewScript hook has not yet been called.
         bool hideScriptFromDebugger_ : 1;
-    } bitFields_;
+    };
+
+    BitFields bitFields_ = {}; // Zero-initialize bitfield flags.
 
     //
     // End of fields.  Start methods.
@@ -1690,14 +1803,13 @@ class JSScript : public js::gc::TenuredCell
                            js::MutableHandle<JS::GCVector<js::Scope*>> scopes);
 
   private:
-    JSScript(JS::Realm* realm, uint8_t* stubEntry, const JS::ReadOnlyCompileOptions& options,
-             js::HandleObject sourceObject, uint32_t bufStart, uint32_t bufEnd,
+    JSScript(JS::Realm* realm, uint8_t* stubEntry, js::HandleObject sourceObject,
+             uint32_t sourceStart, uint32_t sourceEnd,
              uint32_t toStringStart, uint32_t toStringend);
 
-    static JSScript* createInitialized(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
-                                       js::HandleObject sourceObject,
-                                       uint32_t bufStart, uint32_t bufEnd,
-                                       uint32_t toStringStart, uint32_t toStringEnd);
+    static JSScript* New(JSContext* cx, js::HandleObject sourceObject,
+                         uint32_t sourceStart, uint32_t sourceEnd,
+                         uint32_t toStringStart, uint32_t toStringEnd);
 
   public:
     static JSScript* Create(JSContext* cx,
@@ -1706,13 +1818,13 @@ class JSScript : public js::gc::TenuredCell
                             uint32_t sourceStart, uint32_t sourceEnd,
                             uint32_t toStringStart, uint32_t toStringEnd);
 
-    // Three ways ways to initialize a JSScript. Callers of partiallyInit()
-    // are responsible for notifying the debugger after successfully creating
-    // any kind (function or other) of new JSScript.  However, callers of
-    // fullyInitFromEmitter() do not need to do this.
-    static bool partiallyInit(JSContext* cx, JS::Handle<JSScript*> script,
-                              uint32_t nscopes, uint32_t nconsts, uint32_t nobjects,
-                              uint32_t ntrynotes, uint32_t nscopenotes, uint32_t nyieldoffsets);
+    // NOTE: If you use createPrivateScriptData directly instead of via
+    // fullyInitFromEmitter, you are responsible for notifying the debugger
+    // after successfully creating the script.
+    static bool createPrivateScriptData(JSContext* cx, JS::Handle<JSScript*> script,
+                                        uint32_t nscopes, uint32_t nconsts,
+                                        uint32_t nobjects, uint32_t ntrynotes,
+                                        uint32_t nscopenotes, uint32_t nresumeoffsets);
 
   private:
     static void initFromFunctionBox(js::HandleScript script, js::frontend::FunctionBox* funbox);
@@ -2336,8 +2448,8 @@ class JSScript : public js::gc::TenuredCell
   private:
     bool makeTypes(JSContext* cx);
 
-    bool createScriptData(JSContext* cx, uint32_t codeLength, uint32_t srcnotesLength,
-                          uint32_t natoms);
+    bool createSharedScriptData(JSContext* cx, uint32_t codeLength,
+                                uint32_t noteLength, uint32_t natoms);
     bool shareScriptData(JSContext* cx);
     void freeScriptData();
     void setScriptData(js::SharedScriptData* data);
@@ -2369,6 +2481,7 @@ class JSScript : public js::gc::TenuredCell
     void destroyScriptCounts();
     void destroyScriptName();
     void clearHasScriptCounts();
+    void resetScriptCounts();
 
     jsbytecode* main() const {
         return code() + mainOffset();
@@ -2391,99 +2504,43 @@ class JSScript : public js::gc::TenuredCell
     size_t sizeOfData(mozilla::MallocSizeOf mallocSizeOf) const;
     size_t sizeOfTypeScript(mozilla::MallocSizeOf mallocSizeOf) const;
 
-    bool hasArray(ArrayKind kind) const {
-        return bitFields_.hasArrayBits_ & (1 << kind);
-    }
-    void setHasArray(ArrayKind kind) { bitFields_.hasArrayBits_ |= (1 << kind); }
-    void cloneHasArray(JSScript* script) {
-        bitFields_.hasArrayBits_ = script->bitFields_.hasArrayBits_;
-    }
-
-    bool hasConsts() const       { return hasArray(CONSTS); }
-    bool hasObjects() const      { return hasArray(OBJECTS); }
-    bool hasTrynotes() const     { return hasArray(TRYNOTES); }
-    bool hasScopeNotes() const   { return hasArray(SCOPENOTES); }
-    bool hasYieldAndAwaitOffsets() const {
-        return isGenerator() || isAsync();
-    }
-
-#define OFF(fooOff, hasFoo, t)   (fooOff() + (hasFoo() ? sizeof(t) : 0))
-
-    size_t scopesOffset() const       { return 0; }
-    size_t constsOffset() const       { return scopesOffset() + sizeof(js::ScopeArray); }
-    size_t objectsOffset() const      { return OFF(constsOffset,     hasConsts,     js::ConstArray); }
-    size_t trynotesOffset() const     { return OFF(objectsOffset,    hasObjects,    js::ObjectArray); }
-    size_t scopeNotesOffset() const   { return OFF(trynotesOffset,   hasTrynotes,   js::TryNoteArray); }
-    size_t yieldAndAwaitOffsetsOffset() const {
-        return OFF(scopeNotesOffset, hasScopeNotes, js::ScopeNoteArray);
-    }
-
-#undef OFF
-
     size_t dataSize() const { return dataSize_; }
 
-  private:
+    bool hasConsts() const       { return data_->hasConsts(); }
+    bool hasObjects() const      { return data_->hasObjects(); }
+    bool hasTrynotes() const     { return data_->hasTryNotes(); }
+    bool hasScopeNotes() const   { return data_->hasScopeNotes(); }
+    bool hasResumeOffsets() const {
+        return data_->hasResumeOffsets();
+    }
 
-    js::ConstArray* constsRaw() const {
+    mozilla::Span<const js::GCPtrScope> scopes() const {
+        return data_->scopes();
+    }
+
+    mozilla::Span<const js::GCPtrValue> consts() const {
         MOZ_ASSERT(hasConsts());
-        return reinterpret_cast<js::ConstArray*>(data + constsOffset());
+        return data_->consts();
     }
 
-    js::ObjectArray* objectsRaw() const {
+    mozilla::Span<const js::GCPtrObject> objects() const {
         MOZ_ASSERT(hasObjects());
-        return reinterpret_cast<js::ObjectArray*>(data + objectsOffset());
+        return data_->objects();
     }
 
-    js::ScopeArray* scopesRaw() const {
-        return reinterpret_cast<js::ScopeArray*>(data + scopesOffset());
-    }
-
-    js::TryNoteArray* trynotesRaw() const {
+    mozilla::Span<const JSTryNote> trynotes() const {
         MOZ_ASSERT(hasTrynotes());
-        return reinterpret_cast<js::TryNoteArray*>(data + trynotesOffset());
+        return data_->tryNotes();
     }
 
-    js::ScopeNoteArray* scopeNotesRaw() const {
+    mozilla::Span<const js::ScopeNote> scopeNotes() const {
         MOZ_ASSERT(hasScopeNotes());
-        return reinterpret_cast<js::ScopeNoteArray*>(data + scopeNotesOffset());
+        return data_->scopeNotes();
     }
 
-    js::YieldAndAwaitOffsetArray& yieldAndAwaitOffsetsRaw() const {
-        MOZ_ASSERT(hasYieldAndAwaitOffsets());
-        return *reinterpret_cast<js::YieldAndAwaitOffsetArray*>(data +
-                                                                yieldAndAwaitOffsetsOffset());
-    }
-
-  public:
-
-    mozilla::Span<js::GCPtrValue> consts() const {
-        js::ConstArray* array = constsRaw();
-        return mozilla::MakeSpan(array->vector, array->length);
-    }
-
-    mozilla::Span<js::GCPtrObject> objects() const {
-        js::ObjectArray* array = objectsRaw();
-        return mozilla::MakeSpan(array->vector, array->length);
-    }
-
-    mozilla::Span<js::GCPtrScope> scopes() const {
-        js::ScopeArray* array = scopesRaw();
-        return mozilla::MakeSpan(array->vector, array->length);
-    }
-
-    mozilla::Span<JSTryNote> trynotes() const {
-        js::TryNoteArray* array = trynotesRaw();
-        return mozilla::MakeSpan(array->vector, array->length);
-    }
-
-    mozilla::Span<js::ScopeNote> scopeNotes() const {
-        js::ScopeNoteArray* array = scopeNotesRaw();
-        return mozilla::MakeSpan(array->vector, array->length);
-    }
-
-    mozilla::Span<uint32_t> yieldAndAwaitOffsets() const {
-        js::YieldAndAwaitOffsetArray& array = yieldAndAwaitOffsetsRaw();
-        return mozilla::MakeSpan(&array[0], array.length());
+    mozilla::Span<const uint32_t> resumeOffsets() const {
+        MOZ_ASSERT(hasResumeOffsets());
+        return data_->resumeOffsets();
     }
 
     bool hasLoops();

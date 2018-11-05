@@ -300,6 +300,7 @@ private:
     // Connections will only be established in this function.
     // (including DNS prefetch and speculative connection.)
     nsresult BeginConnectActual();
+    void MaybeStartDNSPrefetch();
 
     // We might synchronously or asynchronously call BeginConnectActual,
     // which includes DNS prefetch and speculative connection, according to
@@ -647,6 +648,10 @@ private:
     // due to the tracking protection rules, but the asynchronous cancellation
     // process hasn't finished yet.
     uint32_t                          mTrackingProtectionCancellationPending : 1;
+
+    // True only when we are between Resume and async fire of mCallOnResume.
+    // Used to suspend any newly created pumps in mCallOnResume handler.
+    uint32_t                          mAsyncResumePending : 1;
 
     nsTArray<nsContinueRedirectionFunc> mRedirectFuncStack;
 

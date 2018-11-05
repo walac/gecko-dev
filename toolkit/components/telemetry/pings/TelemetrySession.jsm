@@ -789,22 +789,13 @@ var Impl = {
     return ret;
   },
 
-  /**
-   * Get the type of the dataset that needs to be collected, based on the preferences.
-   * @return {Integer} A value from nsITelemetry.DATASET_*.
-   */
-  getDatasetType() {
-    return Telemetry.canRecordExtended ? Ci.nsITelemetry.DATASET_RELEASE_CHANNEL_OPTIN
-                                       : Ci.nsITelemetry.DATASET_RELEASE_CHANNEL_OPTOUT;
-  },
-
   getHistograms: function getHistograms(clearSubsession) {
-    let hls = Telemetry.snapshotHistograms(this.getDatasetType(), clearSubsession);
+    let hls = Telemetry.getSnapshotForHistograms("main", clearSubsession);
     return TelemetryUtils.packHistograms(hls, this._testing);
   },
 
   getKeyedHistograms(clearSubsession) {
-    let khs = Telemetry.snapshotKeyedHistograms(this.getDatasetType(), clearSubsession);
+    let khs = Telemetry.getSnapshotForKeyedHistograms("main", clearSubsession);
     return TelemetryUtils.packKeyedHistograms(khs, this._testing);
   },
 
@@ -825,8 +816,8 @@ var Impl = {
     }
 
     let scalarsSnapshot = keyed ?
-      Telemetry.snapshotKeyedScalars(this.getDatasetType(), clearSubsession) :
-      Telemetry.snapshotScalars(this.getDatasetType(), clearSubsession);
+      Telemetry.getSnapshotForKeyedScalars("main", clearSubsession) :
+      Telemetry.getSnapshotForScalars("main", clearSubsession);
 
     // Don't return the test scalars.
     let ret = {};
@@ -1614,21 +1605,21 @@ var Impl = {
    */
   _prioEncode(payloadObj) {
     // First, map the Telemetry histogram names to the params PrioEncoder expects.
-    const prioEncodedHistograms = {
-      "BROWSER_IS_USER_DEFAULT": "browserIsUserDefault",
-      "NEWTAB_PAGE_ENABLED": "newTabPageEnabled",
-      "PDF_VIEWER_USED": "pdfViewerUsed",
-    };
+    const prioEncodedHistograms = [
+      "BROWSER_IS_USER_DEFAULT",
+      "NEWTAB_PAGE_ENABLED",
+      "PDF_VIEWER_USED",
+    ];
 
     // Build list of Prio parameters, using the first value recorded in each histogram.
-    let prioParams = {};
-    for (const [histogramName, prioName] of Object.entries(prioEncodedHistograms)) {
+    let prioParams = { booleans: [] };
+    for (const [i, histogramName] of prioEncodedHistograms.entries()) {
       try {
         if (histogramName in payloadObj.histograms) {
           const histogram = payloadObj.histograms[histogramName];
-          prioParams[prioName] = Boolean(histogram.sum);
+          prioParams.booleans[i] = Boolean(histogram.sum);
         } else {
-          prioParams[prioName] = false;
+          prioParams.booleans[i] = false;
         }
 
       } catch (ex) {

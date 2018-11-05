@@ -8088,6 +8088,9 @@ GeneralParser<ParseHandler, Unit>::classDefinition(YieldHandling yieldHandling,
             Node initializer = null();
             if (tt == TokenKind::Assign) {
                 initializer = assignExpr(InAllowed, yieldHandling, TripledotProhibited);
+                if (!initializer) {
+                    return null();
+                }
                 if (!tokenStream.getToken(&tt)) {
                     return null();
                 }
@@ -10029,8 +10032,7 @@ Parser<FullParseHandler, Unit>::newRegExp()
     RegExpFlag flags = anyChars.currentToken().regExpFlags();
 
     Rooted<RegExpObject*> reobj(context);
-    reobj = RegExpObject::create(context, chars.begin(), chars.length(), flags, anyChars, alloc,
-                                 TenuredObject);
+    reobj = RegExpObject::create(context, chars.begin(), chars.length(), flags, anyChars, TenuredObject);
     if (!reobj) {
         return null();
     }
@@ -10049,8 +10051,13 @@ Parser<SyntaxParseHandler, Unit>::newRegExp()
     RegExpFlag flags = anyChars.currentToken().regExpFlags();
 
     mozilla::Range<const char16_t> source(chars.begin(), chars.length());
-    if (!js::irregexp::ParsePatternSyntax(anyChars, alloc, source, flags & UnicodeFlag)) {
-        return null();
+    {
+        LifoAllocScope scopeAlloc(&alloc);
+        if (!js::irregexp::ParsePatternSyntax(anyChars, scopeAlloc.alloc(),
+                                              source, flags & UnicodeFlag))
+        {
+            return null();
+        }
     }
 
     return handler.newRegExp(SyntaxParseHandler::NodeGeneric, pos(), *this);
@@ -10958,7 +10965,8 @@ GeneralParser<ParseHandler, Unit>::importExpr(YieldHandling yieldHandling)
 
         MUST_MATCH_TOKEN_MOD(TokenKind::RightParen, TokenStream::Operand, JSMSG_PAREN_AFTER_ARGS);
 
-        if (!context->runtime()->moduleDynamicImportHook && !abortIfSyntaxParser()) {
+        if (!context->runtime()->moduleDynamicImportHook) {
+            error(JSMSG_NO_DYNAMIC_IMPORT);
             return null();
         }
 

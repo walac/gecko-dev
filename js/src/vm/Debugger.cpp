@@ -91,6 +91,13 @@ enum {
     JSSLOT_DEBUGFRAME_COUNT
 };
 
+inline js::Debugger*
+js::DebuggerFrame::owner() const
+{
+    JSObject* dbgobj = &getReservedSlot(JSSLOT_DEBUGFRAME_OWNER).toObject();
+    return Debugger::fromJSObject(dbgobj);
+}
+
 const ClassOps DebuggerFrame::classOps_ = {
     nullptr,    /* addProperty */
     nullptr,    /* delProperty */
@@ -1058,19 +1065,19 @@ DebuggerFrame_maybeDecrementFrameScriptStepModeCount(FreeOp* fop, AbstractFrameP
  */
 class MOZ_RAII AutoSetGeneratorRunning
 {
-    int32_t yieldAwaitIndex_;
+    int32_t resumeIndex_;
     Rooted<GeneratorObject*> genObj_;
 
   public:
     AutoSetGeneratorRunning(JSContext* cx, Handle<GeneratorObject*> genObj)
-      : yieldAwaitIndex_(0),
+      : resumeIndex_(0),
         genObj_(cx, genObj)
     {
         if (genObj) {
             if (!genObj->isClosed() && genObj->isSuspended()) {
                 // Yielding or awaiting.
-                yieldAwaitIndex_ =
-                    genObj->getFixedSlot(GeneratorObject::YIELD_AND_AWAIT_INDEX_SLOT).toInt32();
+                resumeIndex_ =
+                    genObj->getFixedSlot(GeneratorObject::RESUME_INDEX_SLOT).toInt32();
                 genObj->setRunning();
             } else {
                 // Returning or throwing. The generator is already closed, if
@@ -1083,8 +1090,8 @@ class MOZ_RAII AutoSetGeneratorRunning
     ~AutoSetGeneratorRunning() {
         if (genObj_) {
             MOZ_ASSERT(genObj_->isRunning());
-            genObj_->setFixedSlot(GeneratorObject::YIELD_AND_AWAIT_INDEX_SLOT,
-                                  Int32Value(yieldAwaitIndex_));
+            genObj_->setFixedSlot(GeneratorObject::RESUME_INDEX_SLOT,
+                                  Int32Value(resumeIndex_));
         }
     }
 };
@@ -8903,8 +8910,7 @@ EvaluateInEnv(JSContext* cx, Handle<Env*> env, AbstractFramePtr frame,
         if (!scope) {
             return false;
         }
-        script = frontend::CompileEvalScript(cx, cx->tempLifoAlloc(), env, scope,
-                                             options, srcBuf);
+        script = frontend::CompileEvalScript(cx, env, scope, options, srcBuf);
         if (script) {
             script->setActiveEval();
         }
@@ -8914,8 +8920,7 @@ EvaluateInEnv(JSContext* cx, Handle<Env*> env, AbstractFramePtr frame,
         // circumvent the fresh lexical scope that all eval have, so that the
         // users of executeInGlobal, like the web console, may add new bindings to
         // the global scope.
-        script = frontend::CompileGlobalScript(cx, cx->tempLifoAlloc(), scopeKind, options,
-                                               srcBuf);
+        script = frontend::CompileGlobalScript(cx, scopeKind, options, srcBuf);
     }
 
     if (!script) {

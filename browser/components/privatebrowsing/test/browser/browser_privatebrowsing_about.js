@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 const TP_PB_ENABLED_PREF = "privacy.trackingprotection.pbmode.enabled";
-const CB_ENABLED_PREF = "browser.contentblocking.enabled";
 
 /**
  * Opens a new private window and loads "about:privatebrowsing" there.
@@ -73,51 +72,3 @@ add_task(async function test_links() {
   await BrowserTestUtils.closeWindow(win);
 });
 
-function waitForPrefChanged(pref) {
-  return new Promise(resolve => {
-    let prefObserver = {
-      QueryInterface: ChromeUtils.generateQI([Ci.nsIObserver]),
-      observe() {
-        Services.prefs.removeObserver(pref, prefObserver);
-        resolve();
-      },
-    };
-    Services.prefs.addObserver(pref, prefObserver);
-  });
-}
-
-/**
- * Tests the action to disable and re-enable Tracking Protection in
- * "about:privatebrowsing" when content blocking is disabled.
- */
-add_task(async function test_toggleTrackingProtectionContentBlocking() {
-  Services.prefs.setBoolPref(TP_PB_ENABLED_PREF, true);
-  Services.prefs.setBoolPref(CB_ENABLED_PREF, false);
-
-  registerCleanupFunction(function() {
-    Services.prefs.clearUserPref(TP_PB_ENABLED_PREF);
-    Services.prefs.clearUserPref(CB_ENABLED_PREF);
-  });
-
-  let { win, tab } = await openAboutPrivateBrowsing();
-
-  let promiseCBPrefChanged = waitForPrefChanged(CB_ENABLED_PREF);
-  await ContentTask.spawn(tab, {}, async function() {
-    is(content.document.getElementById("tpToggle").checked, false, "toggle is not active");
-    content.document.getElementById("tpButton").click();
-  });
-  await promiseCBPrefChanged;
-  ok(Services.prefs.getBoolPref(TP_PB_ENABLED_PREF), "Tracking Protection is enabled.");
-  ok(Services.prefs.getBoolPref(CB_ENABLED_PREF), "Content Blocking is enabled.");
-
-  let promiseTPPrefChanged = waitForPrefChanged(TP_PB_ENABLED_PREF);
-  await ContentTask.spawn(tab, {}, async function() {
-    is(content.document.getElementById("tpToggle").checked, true, "toggle is active");
-    content.document.getElementById("tpButton").click();
-  });
-  await promiseTPPrefChanged;
-  ok(!Services.prefs.getBoolPref(TP_PB_ENABLED_PREF), "Tracking Protection is disabled.");
-  ok(Services.prefs.getBoolPref(CB_ENABLED_PREF), "Content Blocking is enabled.");
-
-  await BrowserTestUtils.closeWindow(win);
-});
