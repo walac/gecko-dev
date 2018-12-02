@@ -766,8 +766,11 @@ gTestDirsPartialSuccess = gTestDirsCommon.concat(gTestDirsPartialSuccess);
 
 /**
  * Helper function for setting up the test environment.
+ *
+ * @param  aAppUpdateAutoEnabled
+ *         See setAppUpdateAutoSync in shared.js for details.
  */
-function setupTestCommon() {
+function setupTestCommon(aAppUpdateAutoEnabled = false) {
   debugDump("start - general test setup");
 
   Assert.strictEqual(gTestID, undefined,
@@ -873,6 +876,8 @@ function setupTestCommon() {
       }
     }
   }
+
+  setAppUpdateAutoSync(aAppUpdateAutoEnabled);
 
   debugDump("finish - general test setup");
   return true;
@@ -2004,6 +2009,9 @@ function runUpdate(aExpectedStatus, aSwitchApp, aExpectedExitValue, aCheckSvcLog
   Assert.equal(status, aExpectedStatus,
                "the update status" + MSG_SHOULD_EQUAL);
 
+  Assert.ok(!updateHasBinaryTransparencyErrorResult(),
+            "binary transparency is not being processed for now");
+
   if (IS_SERVICE_TEST && aCheckSvcLog) {
     let contents = readServiceLogFile();
     Assert.notEqual(contents, svcOriginalLog,
@@ -3091,9 +3099,9 @@ function replaceLogPaths(aLogContents) {
  */
 function checkUpdateLogContents(aCompareLogFile, aStaged = false,
                                 aReplace = false, aExcludeDistDir = false) {
-  if (IS_UNIX && !IS_MACOSX) {
+  if (IS_UNIX) {
     // The order that files are returned when enumerating the file system on
-    // Linux is not deterministic so skip checking the logs.
+    // Linux and Mac is not deterministic so skip checking the logs.
     return;
   }
 
@@ -3122,6 +3130,8 @@ function checkUpdateLogContents(aCompareLogFile, aStaged = false,
   updateLogContents = updateLogContents.replace(/WORKING DIRECTORY.*/g, "");
   // Skip lines that log failed attempts to open the callback executable.
   updateLogContents = updateLogContents.replace(/NS_main: callback app file .*/g, "");
+  // Remove carriage returns.
+  updateLogContents = updateLogContents.replace(/\r/g, "");
 
   if (IS_WIN) {
     // The FindFile results when enumerating the filesystem on Windows is not
@@ -3138,10 +3148,16 @@ function checkUpdateLogContents(aCompareLogFile, aStaged = false,
     updateLogContents = updateLogContents.replace(/^ensure_remove_recursive: unable to remove directory: .*$/mg, "");
     updateLogContents = updateLogContents.replace(/^Removing tmpDir failed, err: -1$/mg, "");
     updateLogContents = updateLogContents.replace(/^remove_recursive_on_reboot: .*$/mg, "");
+    // Replace requests will retry renaming the installation directory 10 times
+    // when there are files still in use. The following will remove the
+    // additional entries from the log file when this happens so the log check
+    // passes.
+    let re = new RegExp("\n" + ERR_RENAME_FILE + "[^\n]*\n" +
+                        "PerformReplaceRequest: destDir rename[^\n]*\n" +
+                        "rename_file: proceeding to rename the directory\n", "g");
+    updateLogContents = updateLogContents.replace(re, "\n");
   }
 
-  // Remove carriage returns.
-  updateLogContents = updateLogContents.replace(/\r/g, "");
   // Replace error codes since they are different on each platform.
   updateLogContents = updateLogContents.replace(/, err:.*\n/g, "\n");
   // Replace to make the log parsing happy.
@@ -3202,8 +3218,8 @@ function checkUpdateLogContents(aCompareLogFile, aStaged = false,
     // incorrect line.
     for (let i = 0; i < aryLog.length; ++i) {
       if (aryLog[i] != aryCompare[i]) {
-        logTestInfo("the first incorrect line in the update log is: " +
-                    aryLog[i]);
+        logTestInfo("the first incorrect line is line #" + i + " and the " +
+                    "value is: " + aryLog[i]);
         Assert.equal(aryLog[i], aryCompare[i],
                      "the update log contents" + MSG_SHOULD_EQUAL);
       }
@@ -3856,7 +3872,7 @@ function stop_httpserver(aCallback) {
 function createAppInfo(aID, aName, aVersion, aPlatformVersion) {
   const XULAPPINFO_CONTRACTID = "@mozilla.org/xre/app-info;1";
   const XULAPPINFO_CID = Components.ID("{c763b610-9d49-455a-bbd2-ede71682a1ac}");
-  let ifaces = [Ci.nsIXULAppInfo, Ci.nsIXULRuntime];
+  let ifaces = [Ci.nsIXULAppInfo, Ci.nsIPlatformInfo, Ci.nsIXULRuntime];
   if (IS_WIN) {
     ifaces.push(Ci.nsIWinAppHelper);
   }

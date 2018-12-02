@@ -30,6 +30,7 @@ var ext;
 var testName = null;
 var settingsURL = null;
 var csPort = null;
+var host = null;
 var benchmarkPort = null;
 var testType;
 var pageCycles = 0;
@@ -54,6 +55,7 @@ var geckoProfiling = false;
 var geckoInterval = 1;
 var geckoEntries = 1000000;
 var webRenderEnabled = false;
+var debugMode = 0;
 
 var results = {"name": "",
                "page": "",
@@ -84,6 +86,13 @@ function getTestSettings() {
           // just replace the '<port>' keyword in the URL with actual benchmarkPort
           testURL = testURL.replace("<port>", benchmarkPort);
         }
+
+        if (host) {
+          // just replace the '<host>' keyword in the URL with actual host
+          testURL = testURL.replace("<host>", host);
+        }
+
+        console.log("testURL: " + testURL);
 
         results.page = testURL;
         results.type = testType;
@@ -193,6 +202,8 @@ function getBrowserInfo() {
 function testTabCreated(tab) {
   testTabID = tab.id;
   postToControlServer("status", "opened new empty tab " + testTabID);
+  // update raptor browser toolbar icon text, for a visual indicator when debugging
+  ext.browserAction.setTitle({title: "Raptor RUNNING"});
 }
 
 function testTabRemoved(tab) {
@@ -437,7 +448,7 @@ function postToControlServer(msgType, msgData) {
     console.log("\n" + msgData);
   }
   // requires 'control server' running at port 8000 to receive results
-  var url = "http://127.0.0.1:" + csPort + "/";
+  var url = "http://" + host + ":" + csPort + "/";
   var client = new XMLHttpRequest();
   client.onreadystatechange = function() {
     if (client.readyState == XMLHttpRequest.DONE && client.status == 200) {
@@ -460,9 +471,13 @@ function postToControlServer(msgType, msgData) {
 }
 
 function cleanUp() {
-  // close tab
-  ext.tabs.remove(testTabID);
-  console.log("closed tab " + testTabID);
+  // close tab unless raptor debug-mode is enabled
+  if (debugMode != 1) {
+    ext.tabs.remove(testTabID);
+    console.log("closed tab " + testTabID);
+  } else {
+    console.log("raptor debug-mode enabled, leaving tab open");
+  }
   if (testType == "pageload") {
     // remove listeners
     ext.runtime.onMessage.removeListener(resultListener);
@@ -484,7 +499,6 @@ function cleanUp() {
 }
 
 function runner() {
-  console.log("Welcome to Jurassic Park!");
   let config = getTestConfig();
   console.log("test name is: " + config.test_name);
   console.log("test settings url is: " + config.test_settings_url);
@@ -494,6 +508,10 @@ function runner() {
   browserName = config.browser;
   benchmarkPort = config.benchmark_port;
   postStartupDelay = config.post_startup_delay;
+  host = config.host;
+  debugMode = config.debug_mode;
+
+  postToControlServer("status", "raptor runner.js is loaded!");
 
   getBrowserInfo().then(function() {
     getTestSettings().then(function() {

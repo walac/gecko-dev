@@ -31,7 +31,7 @@ registerCleanupFunction(() => {
 const openAnimationInspector = async function() {
   const { inspector, toolbox } = await openInspectorSidebarTab(TAB_NAME);
   await inspector.once("inspector-updated");
-  const { animationinspector: animationInspector } = inspector;
+  const animationInspector = inspector.getPanel("animationinspector");
   await waitForRendering(animationInspector);
   const panel = inspector.panelWin.document.getElementById("animation-container");
   return { animationInspector, toolbox, inspector, panel };
@@ -272,7 +272,7 @@ const clickOnTargetNode = async function(animationInspector, panel, index) {
   info(`Click on a target node in animation target component[${ index }]`);
   const targetEl = panel.querySelectorAll(".animation-target .objectBox")[index];
   targetEl.scrollIntoView(false);
-  const onHighlight = animationInspector.inspector.toolbox.once("node-highlight");
+  const onHighlight = animationInspector.inspector.highlighter.once("node-highlight");
   const onAnimationTargetUpdated = animationInspector.once("animation-target-rendered");
   EventUtils.synthesizeMouseAtCenter(targetEl, {}, targetEl.ownerGlobal);
   await onAnimationTargetUpdated;
@@ -405,7 +405,7 @@ const selectAnimationInspector = async function(inspector) {
   const onUpdated = inspector.once("inspector-updated");
   inspector.sidebar.select("animationinspector");
   await onUpdated;
-  await waitForRendering(inspector.animationinspector);
+  await waitForRendering(inspector.getPanel("animationinspector"));
 };
 
 /**
@@ -428,7 +428,7 @@ const selectNodeAndWaitForAnimations = async function(data, inspector, reason = 
   const onUpdated = inspector.once("inspector-updated");
   await selectNode(data, inspector, reason);
   await onUpdated;
-  await waitForRendering(inspector.animationinspector);
+  await waitForRendering(inspector.getPanel("animationinspector"));
 };
 
 /**

@@ -15,7 +15,8 @@ add_task(async function() {
   info("Force all debug target panes to be expanded");
   prepareCollapsibilitiesTest();
 
-  const { document, tab } = await openAboutDebugging();
+  const { document, tab, window } = await openAboutDebugging();
+  const AboutDebugging = window.AboutDebugging;
 
   const connectSidebarItem = findSidebarItemByText("Connect", document);
   const connectLink = connectSidebarItem.querySelector(".js-sidebar-link");
@@ -33,19 +34,26 @@ add_task(async function() {
   info("Wait for the tab to appear in the debug targets with the correct name");
   await waitUntil(() => findDebugTargetByText("TAB1", document));
 
+  await waitForRequestsToSettle(AboutDebugging.store);
   info("Click on the Connect item in the sidebar");
   connectLink.click();
 
   info("Wait until Connect page is displayed");
   await waitUntil(() => document.querySelector(".js-connect-page"));
-  ok(isSidebarItemSelected(connectSidebarItem), "Connect sidebar item is selected");
+  // we need to wait here because the sidebar isn't updated after mounting the page
+  info("Wait until Connect sidebar item is selected");
+  await waitUntil(() => isSidebarItemSelected(connectSidebarItem));
   ok(!document.querySelector(".js-runtime-page"), "Runtime page no longer rendered");
 
   info("Open a new tab which should be listed when we go back to This Firefox");
   const backgroundTab2 = await addTab(TAB_URL_2, { background: true });
 
   info("Click on the ThisFirefox item in the sidebar");
+  const requestsSuccess = waitForRequestsSuccess(window);
   thisFirefoxLink.click();
+
+  info("Wait for all target requests to complete");
+  await requestsSuccess;
 
   info("Wait until ThisFirefox page is displayed");
   await waitUntil(() => document.querySelector(".js-runtime-page"));
@@ -67,6 +75,8 @@ add_task(async function() {
 
   info("Check TAB2 disappears, meaning ThisFirefox client is correctly connected");
   await waitUntil(() => !findDebugTargetByText("TAB2", document));
+
+  await waitForRequestsToSettle(AboutDebugging.store);
 
   await removeTab(tab);
 });

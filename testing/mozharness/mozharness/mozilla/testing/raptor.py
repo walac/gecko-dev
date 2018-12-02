@@ -61,10 +61,12 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin):
           "dest": "app",
           "help": "name of the application we are testing (default: firefox)"
           }],
-        [["--branch-name"],
-         {"action": "store",
-          "dest": "branch",
-          "help": "branch running against"
+        [["--is-release-build"],
+         {"action": "store_true",
+          "dest": "is_release_build",
+          "help": "Whether the build is a release build which requires work arounds "
+                  "using MOZ_DISABLE_NONLOCAL_CONNECTIONS to support installing unsigned "
+                  "webextensions. Defaults to False."
           }],
         [["--add-option"],
          {"action": "extend",
@@ -120,6 +122,16 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin):
             "dest": "page_timeout",
             "type": "int",
             "help": "How long to wait (ms) for one page_cycle to complete, before timing out"
+        }],
+        [["--host"], {
+            "dest": "host",
+            "help": "Hostname from which to serve urls (default: 127.0.0.1).",
+        }],
+        [["--debug-mode"], {
+            "dest": "debug_mode",
+            "action": "store_true",
+            "default": False,
+            "help": "Run Raptor in debug mode (open browser console, limited page-cycles, etc.)",
         }],
 
     ] + testing_config_options + copy.deepcopy(code_coverage_config_options)
@@ -183,6 +195,9 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin):
         self.gecko_profile_interval = self.config.get('gecko_profile_interval')
         self.gecko_profile_entries = self.config.get('gecko_profile_entries')
         self.test_packages_url = self.config.get('test_packages_url')
+        self.host = self.config.get('host')
+        self.is_release_build = self.config.get('is_release_build')
+        self.debug_mode = self.config.get('debug_mode', False)
 
     # We accept some configuration options from the try commit message in the
     # format mozharness: <options>. Example try commit message: mozharness:
@@ -319,8 +334,6 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin):
         # options overwritten from **kw
         if 'test' in self.config:
             kw_options['test'] = self.config['test']
-        if self.config.get('branch'):
-            kw_options['branchName'] = self.config['branch']
         if self.symbols_path:
             kw_options['symbolsPath'] = self.symbols_path
         if self.config.get('obj_path', None) is not None:
@@ -337,6 +350,8 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin):
             options += self.config['raptor_cmd_line_args']
         if self.config.get('code_coverage', False):
             options.extend(['--code-coverage'])
+        if self.config.get('is_release_build', False):
+            options.extend(['--is-release-build'])
         for key, value in kw_options.items():
             options.extend(['--%s' % key, value])
 
@@ -514,8 +529,9 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin):
         # disable "GC poisoning" Bug# 1499043
         env['JSGC_DISABLE_POISONING'] = '1'
 
-        # needed to load unsigned raptor webext on moz-beta
-        env['MOZ_DISABLE_NONLOCAL_CONNECTIONS'] = '1'
+        # needed to load unsigned raptor webext on release builds.
+        if self.is_release_build:
+            env['MOZ_DISABLE_NONLOCAL_CONNECTIONS'] = '1'
 
         if self.repo_path is not None:
             env['MOZ_DEVELOPER_REPO_DIR'] = self.repo_path

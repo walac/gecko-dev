@@ -460,7 +460,7 @@
           if (this.isRemoteBrowser) {
             return this._outerWindowID;
           }
-          return this.contentWindow.windowUtils.outerWindowID;
+          return this.docShell.outerWindowID;
         ]]></getter>
       </property>
 
@@ -478,6 +478,18 @@
             }
             return null;
           }
+        ]]></getter>
+      </property>
+
+      <field name="_browsingContextId">null</field>
+
+      <property name="browsingContext" readonly="true">
+        <getter><![CDATA[
+          if (!this.isRemoteBrowser) {
+            return this.docShell.browsingContext;
+          }
+
+          return ChromeUtils.getBrowsingContext(this._browsingContextId);
         ]]></getter>
       </property>
 
@@ -1281,6 +1293,7 @@
           switch (aMessage.name) {
             case "Browser:Init":
               this._outerWindowID = data.outerWindowID;
+              this._browsingContextId = data.browsingContextId;
               break;
             case "DOMTitleChanged":
               this._contentTitle = data.title;

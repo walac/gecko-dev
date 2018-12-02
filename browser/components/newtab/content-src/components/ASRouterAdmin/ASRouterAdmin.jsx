@@ -1,4 +1,5 @@
 import {ASRouterUtils} from "../../asrouter/asrouter-content";
+import {ModalOverlay} from "../../asrouter/components/ModalOverlay/ModalOverlay";
 import React from "react";
 
 export class ASRouterAdmin extends React.PureComponent {
@@ -11,7 +12,24 @@ export class ASRouterAdmin extends React.PureComponent {
     this.findOtherBundledMessagesOfSameTemplate = this.findOtherBundledMessagesOfSameTemplate.bind(this);
     this.handleExpressionEval = this.handleExpressionEval.bind(this);
     this.onChangeTargetingParameters = this.onChangeTargetingParameters.bind(this);
-    this.state = {messageFilter: "all", evaluationStatus: {}, stringTargetingParameters: null};
+    this.onChangeAttributionParameters = this.onChangeAttributionParameters.bind(this);
+    this.setAttribution = this.setAttribution.bind(this);
+    this.onCopyTargetingParams = this.onCopyTargetingParams.bind(this);
+    this.onPasteTargetingParams = this.onPasteTargetingParams.bind(this);
+    this.onNewTargetingParams = this.onNewTargetingParams.bind(this);
+    this.state = {
+      messageFilter: "all",
+      evaluationStatus: {},
+      stringTargetingParameters: null,
+      newStringTargetingParameters: null,
+      copiedToClipboard: false,
+      pasteFromClipboard: false,
+      attributionParameters: {
+        source: "addons.mozilla.org",
+        campaign: "non-fx-button",
+        content: "iridium@particlecore.github.io",
+      },
+    };
   }
 
   onMessage({data: action}) {
@@ -89,7 +107,6 @@ export class ASRouterAdmin extends React.PureComponent {
   onChangeTargetingParameters(event) {
     const {name} = event.target;
     const {value} = event.target;
-    this.refs.evaluationStatus.innerText = "";
 
     this.setState(({stringTargetingParameters}) => {
       let targetingParametersError = null;
@@ -102,65 +119,13 @@ export class ASRouterAdmin extends React.PureComponent {
         targetingParametersError = {id: name};
       }
 
-      return {stringTargetingParameters: updatedParameters, targetingParametersError};
+      return {
+        copiedToClipboard: false,
+        evaluationStatus: {},
+        stringTargetingParameters: updatedParameters,
+        targetingParametersError,
+      };
     });
-  }
-
-  renderMessageItem(msg) {
-    const isCurrent = msg.id === this.state.lastMessageId;
-    const isBlocked = this.state.messageBlockList.includes(msg.id);
-    const impressions = this.state.messageImpressions[msg.id] ? this.state.messageImpressions[msg.id].length : 0;
-
-    let itemClassName = "message-item";
-    if (isCurrent) { itemClassName += " current"; }
-    if (isBlocked) { itemClassName += " blocked"; }
-
-    return (<tr className={itemClassName} key={msg.id}>
-      <td className="message-id"><span>{msg.id} <br /></span></td>
-      <td>
-        <button className={`button ${(isBlocked ? "" : " primary")}`} onClick={isBlocked ? this.handleUnblock(msg) : this.handleBlock(msg)}>{isBlocked ? "Unblock" : "Block"}</button>
-       {isBlocked ? null : <button className="button" onClick={this.handleOverride(msg.id)}>Show</button>}
-       <br />({impressions} impressions)
-      </td>
-      <td className="message-summary">
-        <pre>{JSON.stringify(msg, null, 2)}</pre>
-      </td>
-    </tr>);
-  }
-
-  renderMessages() {
-    if (!this.state.messages) {
-      return null;
-    }
-    const messagesToShow = this.state.messageFilter === "all" ? this.state.messages : this.state.messages.filter(message => message.provider === this.state.messageFilter);
-    return (<table><tbody>
-      {messagesToShow.map(msg => this.renderMessageItem(msg))}
-    </tbody></table>);
-  }
-
-  onChangeMessageFilter(event) {
-    this.setState({messageFilter: event.target.value});
-  }
-
-  renderMessageFilter() {
-    if (!this.state.providers) {
-      return null;
-    }
-    return (<p>Show messages from <select value={this.state.messageFilter} onChange={this.onChangeMessageFilter}>
-      <option value="all">all providers</option>
-      {this.state.providers.map(provider => (<option key={provider.id} value={provider.id}>{provider.id}</option>))}
-    </select></p>);
-  }
-
-  renderTableHead() {
-    return (<thead>
-      <tr className="message-item">
-        <td className="min" />
-        <td className="min">Provider ID</td>
-        <td>Source</td>
-        <td>Last Updated</td>
-      </tr>
-    </thead>);
   }
 
   handleEnabledToggle(event) {
@@ -191,6 +156,107 @@ export class ASRouterAdmin extends React.PureComponent {
     this.setState({messageFilter: "all"});
   }
 
+  onChangeMessageFilter(event) {
+    this.setState({messageFilter: event.target.value});
+  }
+
+  // Simulate a copy event that sets to clipboard all targeting paramters and values
+  onCopyTargetingParams(event) {
+    const stringTargetingParameters = {...this.state.stringTargetingParameters};
+    for (const key of Object.keys(stringTargetingParameters)) {
+      // If the value is not set the parameter will be lost when we stringify
+      if (stringTargetingParameters[key] === undefined) {
+        stringTargetingParameters[key] = null;
+      }
+    }
+    const setClipboardData = e => {
+      e.preventDefault();
+      e.clipboardData.setData("text", JSON.stringify(stringTargetingParameters, null, 2));
+      document.removeEventListener("copy", setClipboardData);
+      this.setState({copiedToClipboard: true});
+    };
+
+    document.addEventListener("copy", setClipboardData);
+
+    document.execCommand("copy");
+  }
+
+  // Copy all clipboard data to targeting parameters
+  onPasteTargetingParams(event) {
+    this.setState(({pasteFromClipboard}) => ({
+      pasteFromClipboard: !pasteFromClipboard,
+      newStringTargetingParameters: "",
+    }));
+  }
+
+  onNewTargetingParams(event) {
+    this.setState({newStringTargetingParameters: event.target.value});
+    event.target.classList.remove("errorState");
+    this.refs.targetingParamsEval.innerText = "";
+
+    try {
+      const stringTargetingParameters = JSON.parse(event.target.value);
+      this.setState({stringTargetingParameters});
+    } catch (e) {
+      event.target.classList.add("errorState");
+      this.refs.targetingParamsEval.innerText = e.message;
+    }
+  }
+
+  renderMessageItem(msg) {
+    const isCurrent = msg.id === this.state.lastMessageId;
+    const isBlocked = this.state.messageBlockList.includes(msg.id) || this.state.messageBlockList.includes(msg.campaign);
+    const impressions = this.state.messageImpressions[msg.id] ? this.state.messageImpressions[msg.id].length : 0;
+
+    let itemClassName = "message-item";
+    if (isCurrent) { itemClassName += " current"; }
+    if (isBlocked) { itemClassName += " blocked"; }
+
+    return (<tr className={itemClassName} key={msg.id}>
+      <td className="message-id"><span>{msg.id} <br /></span></td>
+      <td>
+        <button className={`button ${(isBlocked ? "" : " primary")}`} onClick={isBlocked ? this.handleUnblock(msg) : this.handleBlock(msg)}>{isBlocked ? "Unblock" : "Block"}</button>
+       {isBlocked ? null : <button className="button" onClick={this.handleOverride(msg.id)}>Show</button>}
+       <br />({impressions} impressions)
+      </td>
+      <td className="message-summary">
+        <pre>{JSON.stringify(msg, null, 2)}</pre>
+      </td>
+    </tr>);
+  }
+
+  renderMessages() {
+    if (!this.state.messages) {
+      return null;
+    }
+    const messagesToShow = this.state.messageFilter === "all" ? this.state.messages : this.state.messages.filter(message => message.provider === this.state.messageFilter);
+    return (<table><tbody>
+      {messagesToShow.map(msg => this.renderMessageItem(msg))}
+    </tbody></table>);
+  }
+
+  renderMessageFilter() {
+    if (!this.state.providers) {
+      return null;
+    }
+    return (<p>Show messages from <select value={this.state.messageFilter} onChange={this.onChangeMessageFilter}>
+      <option value="all">all providers</option>
+      {this.state.providers.map(provider => (<option key={provider.id} value={provider.id}>{provider.id}</option>))}
+    </select></p>);
+  }
+
+  renderTableHead() {
+    return (<thead>
+      <tr className="message-item">
+        <td className="min" />
+        <td className="min">Provider ID</td>
+        <td>Source</td>
+        <td className="min">Cohort</td>
+        <td className="min">Last Updated</td>
+      </tr>
+    </thead>);
+  }
+
   renderProviders() {
     const providersConfig = this.state.providerPrefs;
     const providerInfo = this.state.providers;
@@ -205,11 +271,7 @@ export class ASRouterAdmin extends React.PureComponent {
 
         let label = "local";
         if (provider.type === "remote") {
-          let displayUrl = "";
-          try {
-            displayUrl = `(${new URL(info.url).hostname})`;
-          } catch (err) {}
-          label = (<span>endpoint <a target="_blank" href={info.url}>{displayUrl}</a></span>);
+          label = (<span>endpoint (<a className="providerUrl" target="_blank" href={info.url} rel="noopener noreferrer">{info.url}</a>)</span>);
         } else if (provider.type === "remote-settings") {
           label = `remote settings (${provider.bucket})`;
         }
@@ -230,28 +292,57 @@ export class ASRouterAdmin extends React.PureComponent {
           <td>{isTestProvider ? <input type="checkbox" disabled={true} readOnly={true} checked={true} /> : <input type="checkbox" data-provider={provider.id} checked={isUserEnabled && isSystemEnabled} onChange={this.handleEnabledToggle} />}</td>
           <td>{provider.id}</td>
           <td><span className={`sourceLabel${(isUserEnabled && isSystemEnabled) ? "" : " isDisabled"}`}>{label}</span></td>
+          <td>{provider.cohort}</td>
           <td style={{whiteSpace: "nowrap"}}>{info.lastUpdated ? new Date(info.lastUpdated).toLocaleString() : ""}</td>
         </tr>);
       })}
     </tbody></table>);
   }
 
+  renderPasteModal() {
+    if (!this.state.pasteFromClipboard) {
+      return null;
+    }
+    const errors = this.refs.targetingParamsEval && this.refs.targetingParamsEval.innerText.length;
+    return (
+      <ModalOverlay title="New targeting parameters" button_label={errors ? "Cancel" : "Done"} onDoneButton={this.onPasteTargetingParams}>
+        <div className="onboardingMessage">
+          <p>
+            <textarea onChange={this.onNewTargetingParams} value={this.state.newStringTargetingParameters} autoFocus={true} rows="20" cols="60" />
+          </p>
+          <p ref="targetingParamsEval" />
+        </div>
+      </ModalOverlay>
+    );
+  }
+
   renderTargetingParameters() {
     // There was no error and the result is truthy
     const success = this.state.evaluationStatus.success && !!this.state.evaluationStatus.result;
+    const result = JSON.stringify(this.state.evaluationStatus.result, null, 2) || "(Empty result)";
 
     return (<table><tbody>
       <tr><td><h2>Evaluate JEXL expression</h2></td></tr>
       <tr>
         <td>
           <p><textarea ref="expressionInput" rows="10" cols="60" placeholder="Evaluate JEXL expressions and mock parameters by changing their values below" /></p>
-          <p>Status: <span ref="evaluationStatus">{success ? "✅" : "❌"}, Result: {JSON.stringify(this.state.evaluationStatus.result, null, 2)}</span></p>
+          <p>Status: <span ref="evaluationStatus">{success ? "✅" : "❌"}, Result: {result}</span></p>
         </td>
         <td>
            <button className="ASRouterButton secondary" onClick={this.handleExpressionEval}>Evaluate</button>
         </td>
       </tr>
       <tr><td><h2>Modify targeting parameters</h2></td></tr>
+      <tr>
+        <td>
+          <button className="ASRouterButton secondary" onClick={this.onCopyTargetingParams} disabled={this.state.copiedToClipboard}>
+            {this.state.copiedToClipboard ? "Parameters copied!" : "Copy parameters"}
+          </button>
+          <button className="ASRouterButton secondary" onClick={this.onPasteTargetingParams} disabled={this.state.pasteFromClipboard}>
+            Paste parameters
+          </button>
+        </td>
+      </tr>
       {this.state.stringTargetingParameters && Object.keys(this.state.stringTargetingParameters).map((param, i) => {
         const value = this.state.stringTargetingParameters[param];
         const errorState = this.state.targetingParametersError && this.state.targetingParametersError.id === param;
@@ -268,9 +359,56 @@ export class ASRouterAdmin extends React.PureComponent {
       </tbody></table>);
   }
 
+  onChangeAttributionParameters(event) {
+    const {name, value} = event.target;
+
+    this.setState(({attributionParameters}) => {
+      const updatedParameters = {...attributionParameters};
+      updatedParameters[name] = value;
+
+      return {attributionParameters: updatedParameters};
+    });
+  }
+
+  setAttribution(e) {
+    ASRouterUtils.sendMessage({type: "FORCE_ATTRIBUTION", data: this.state.attributionParameters});
+  }
+
+  renderAttributionParamers() {
+    return (
+      <div>
+        <h2> Attribution Parameters </h2>
+        <p> This forces the browser to set some attribution parameters, useful for testing the Return To AMO feature. Clicking on 'Force Attribution', with the default values in each field, will demo the Return To AMO flow with the addon called 'Iridium for Youtube'. If you wish to try different attribution parameters, enter them in the text boxes. If you wish to try a different addon with the Return To AMO flow, make sure the 'content' text box has the addon GUID, then click 'Force Attribution'.</p>
+        <table>
+          <tr>
+            <td><b> Source </b></td>
+            <td> <input type="text" name="source" placeholder="addons.mozilla.org" value={this.state.attributionParameters.source} onChange={this.onChangeAttributionParameters} /> </td>
+          </tr>
+          <tr>
+            <td><b> Campaign </b></td>
+            <td> <input type="text" name="campaign" placeholder="non-fx-button" value={this.state.attributionParameters.campaign} onChange={this.onChangeAttributionParameters} /> </td>
+          </tr>
+          <tr>
+            <td><b> Content </b></td>
+            <td> <input type="text" name="content" placeholder="iridium@particlecore.github.io" value={this.state.attributionParameters.content} onChange={this.onChangeAttributionParameters} /> </td>
+          </tr>
+          <tr>
+            <td> <button className="ASRouterButton primary button" onClick={this.setAttribution} > Force Attribution </button> </td>
+          </tr>
+        </table>
+      </div>);
+  }
+
   render() {
     return (<div className="asrouter-admin outer-wrapper">
       <h1>AS Router Admin</h1>
+      <p className="helpLink">
+        <span className="icon icon-small-spacer icon-info" />
+        {" "}
+        <span>
+          Need help using these tools? Check out our <a target="blank" href="https://github.com/mozilla/activity-stream/blob/master/content-src/asrouter/docs/debugging-docs.md">documentation</a>
+        </span>
+      </p>
       <h2>Targeting Utilities</h2>
       <button className="button" onClick={this.expireCache}>Expire Cache</button> (This expires the cache in ASR Targeting for bookmarks and top sites)
       <h2>Message Providers <button title="Restore all provider settings that ship with Firefox" className="button" onClick={this.resetPref}>Restore default prefs</button></h2>
@@ -279,7 +417,9 @@ export class ASRouterAdmin extends React.PureComponent {
       <h2>Messages</h2>
       {this.renderMessageFilter()}
       {this.renderMessages()}
+      {this.renderPasteModal()}
       {this.renderTargetingParameters()}
+      {this.renderAttributionParamers()}
     </div>);
   }
 }

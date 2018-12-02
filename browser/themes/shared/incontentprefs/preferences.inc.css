@@ -28,10 +28,10 @@ groupbox[data-category] {
   margin: 0 0 32px;
 }
 
-caption {
+html|h2 {
   margin: 16px 0 4px;
   font-size: 1.14em;
-  font-weight: 600;
+  line-height: normal;
 }
 
 .header-name {
@@ -653,6 +653,13 @@ button > hbox > label {
   margin-inline-end: 8px;
   margin-top: 7px;
   margin-bottom: 7px;
+}
+
+html|img.update-throbber {
+  vertical-align: middle;
+}
+
+image.update-throbber {
   list-style-image: url("chrome://global/skin/icons/loading.png");
 }
 

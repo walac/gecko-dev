@@ -14,13 +14,21 @@ def test_verify_options(filedir):
                      binary='invalid/path',
                      gecko_profile='False',
                      page_cycles=1,
-                     page_timeout=60000)
+                     page_timeout=60000,
+                     debug='True')
     parser = ArgumentParser()
 
     with pytest.raises(SystemExit):
         verify_options(parser, args)
 
     args.binary = os.path.join(filedir, 'fake_binary.exe')
+    verify_options(parser, args)  # assert no exception
+
+    args = Namespace(app='geckoview',
+                     binary='org.mozilla.geckoview_example',
+                     gecko_profile='False',
+                     is_release_build=False,
+                     host='sophie')
     verify_options(parser, args)  # assert no exception
 
 

@@ -240,6 +240,11 @@ const Types = exports.__TypesForTests = [
     front: null,
   },
   {
+    types: ["addonTarget"],
+    spec: "devtools/shared/specs/targets/addon",
+    front: "devtools/shared/fronts/targets/addon",
+  },
+  {
     types: ["browsingContextTarget"],
     spec: "devtools/shared/specs/targets/browsing-context",
     front: null,
@@ -247,6 +252,11 @@ const Types = exports.__TypesForTests = [
   {
     types: ["chromeWindowTarget"],
     spec: "devtools/shared/specs/targets/chrome-window",
+    front: null,
+  },
+  {
+    types: ["contentProcessTarget"],
+    spec: "devtools/shared/specs/targets/content-process",
     front: null,
   },
   {
@@ -267,7 +277,7 @@ const Types = exports.__TypesForTests = [
   {
     types: ["workerTarget"],
     spec: "devtools/shared/specs/targets/worker",
-    front: null,
+    front: "devtools/shared/fronts/targets/worker",
   },
   {
     types: ["audionode", "webaudio"],

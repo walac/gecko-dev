@@ -16,8 +16,10 @@ const { SHOW_ELEMENT } = require("devtools/shared/dom-node-filter-constants");
 const { getStringifiableFragments } =
   require("devtools/server/actors/utils/css-grid-utils");
 
-loader.lazyRequireGetter(this, "getCSSStyleRules", "devtools/shared/inspector/css-logic", true);
 loader.lazyRequireGetter(this, "CssLogic", "devtools/server/actors/inspector/css-logic", true);
+loader.lazyRequireGetter(this, "getCSSStyleRules", "devtools/shared/inspector/css-logic", true);
+loader.lazyRequireGetter(this, "isCssPropertyKnown", "devtools/server/actors/css-properties", true);
+loader.lazyRequireGetter(this, "parseDeclarations", "devtools/shared/css/parsing-utils", true);
 loader.lazyRequireGetter(this, "nodeConstants", "devtools/shared/dom-node-constants");
 
 /**
@@ -175,25 +177,49 @@ const FlexItemActor = ActorClassWithSpec(flexItemSpec, {
 
     if (isElementNode) {
       for (const name in properties) {
-        let value = "";
-        // Look first on the element style.
-        if (this.element.style &&
-            this.element.style[name] && this.element.style[name] !== "auto") {
-          value = this.element.style[name];
-        } else {
-          // And then on the rules that apply to the element.
-          // getCSSStyleRules returns rules from least to most specific, so override
-          // values as we find them.
-          const cssRules = getCSSStyleRules(this.element);
-          for (const rule of cssRules) {
-            const rulePropertyValue = rule.style.getPropertyValue(name);
-            if (rulePropertyValue && rulePropertyValue !== "auto") {
-              value = rulePropertyValue;
+        const values = [];
+        const cssRules = getCSSStyleRules(this.element);
+
+        for (const rule of cssRules) {
+        // For each rule, go through *all* properties, because there may be several of
+        // them in the same rule and some with !important flags (which would be more
+        // important even if placed before another property with the same name)
+          const declarations = parseDeclarations(isCssPropertyKnown, rule.style.cssText);
+
+          for (const declaration of declarations) {
+            if (declaration.name === name && declaration.value !== "auto") {
+              values.push({ value: declaration.value, priority: declaration.priority });
             }
           }
         }
 
-        properties[name] = value;
+        // Then go through the element style because it's usually more important, but
+        // might not be if there is a prior !important property
+        if (this.element.style && this.element.style[name] &&
+          this.element.style[name] !== "auto") {
+          values.push({
+            value: this.element.style.getPropertyValue(name),
+            priority: this.element.style.getPropertyPriority(name),
+          });
+        }
+
+        // Now that we have a list of all the property's rule values, go through all the
+        // values and show the property value with the highest priority. Therefore, show
+        // the last !important value. Otherwise, show the last value stored.
+        let rulePropertyValue = "";
+
+        if (values.length) {
+          const lastValueIndex = values.length - 1;
+          rulePropertyValue = values[lastValueIndex].value;
+
+          for (const { priority, value } of values) {
+            if (priority === "important") {
+              rulePropertyValue = `${value} !important`;
+            }
+          }
+        }
+
+        properties[name] = rulePropertyValue;
       }
     }
 
@@ -309,13 +335,12 @@ const LayoutActor = ActorClassWithSpec(layoutSpec, {
    *         The node to start iterating at.
    * @param  {String} type
    *         Can be "grid" or "flex", the display type we are searching for.
-   * @param  {Boolean|null} onlyLookAtCurrentNode
-   *         Whether or not to consider only the current node's display (ie, don't walk
-   *         up the tree).
+   * @param  {Node|null} container
+   *         The container of the current node.
    * @return {GridActor|FlexboxActor|null} The GridActor or FlexboxActor of the
    * grid/flex container of the give node. Otherwise, returns null.
    */
-  getCurrentDisplay(node, type, onlyLookAtCurrentNode) {
+  getCurrentDisplay(node, type, container) {
     if (isNodeDead(node)) {
       return null;
     }
@@ -336,10 +361,18 @@ const LayoutActor = ActorClassWithSpec(layoutSpec, {
       }
 
       if (type == "flex") {
-        if (displayType == "inline-flex" || displayType == "flex") {
+        // If only the current node is being considered when finding its display, then
+        // return it as only a flex container.
+        if ((displayType == "inline-flex" || displayType == "flex") &&
+              !container) {
           return new FlexboxActor(this, currentNode);
-        } else if (onlyLookAtCurrentNode) {
-          return null;
+
+        // If considering the current node's container, then we are trying to determine
+        // the current node's flex item status.
+        } else if (container) {
+          if (this.isNodeFlexItemInContainer(currentNode, container)) {
+            return new FlexboxActor(this, container);
+          }
         }
       } else if (type == "grid" &&
                  (displayType == "inline-grid" || displayType == "grid")) {
@@ -361,7 +394,9 @@ const LayoutActor = ActorClassWithSpec(layoutSpec, {
 
       if (type == "flex" &&
           (displayType == "inline-flex" || displayType == "flex")) {
-        return new FlexboxActor(this, currentNode);
+        if (this.isNodeFlexItemInContainer(node, currentNode)) {
+          return new FlexboxActor(this, currentNode);
+        }
       } else if (type == "grid" &&
                  (displayType == "inline-grid" || displayType == "grid")) {
         return new GridActor(this, currentNode);
@@ -405,11 +440,13 @@ const LayoutActor = ActorClassWithSpec(layoutSpec, {
    * Otherwise, returns null.
    */
   getCurrentFlexbox(node, onlyLookAtParents) {
+    let container = null;
+
     if (onlyLookAtParents) {
-      node = node.rawNode.parentNode;
+      container = node.rawNode.parentNode;
     }
 
-    return this.getCurrentDisplay(node, "flex", onlyLookAtParents);
+    return this.getCurrentDisplay(node, "flex", container);
   },
 
   /**
@@ -444,6 +481,35 @@ const LayoutActor = ActorClassWithSpec(layoutSpec, {
     }
 
     return gridActors;
+  },
+
+  /**
+   * Returns whether or not the given node is actually considered a flex item by its
+   * container.
+   *
+   * @param  {Node|NodeActor} supposedItem
+   *         The node that might be a flex item of its container.
+   * @param  {Node} container
+   *         The node's container.
+   * @return {Boolean} Whether or not the node we are looking at is a flex item of its
+   * container.
+   */
+  isNodeFlexItemInContainer(supposedItem, container) {
+    const containerDisplayType = this.walker.getNode(container).displayType;
+
+    if (containerDisplayType == "inline-flex" || containerDisplayType == "flex") {
+      const containerFlex = container.getAsFlexContainer();
+
+      for (const line of containerFlex.getLines()) {
+        for (const item of line.getItems()) {
+          if (item.node === supposedItem) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
   },
 });
 

@@ -7,22 +7,23 @@ Transform the checksums signing task into an actual task description.
 
 from __future__ import absolute_import, print_function, unicode_literals
 
+
 from taskgraph.loader.single_dep import schema
 from taskgraph.transforms.base import TransformSequence
 from taskgraph.transforms.beetmover import craft_release_properties
 from taskgraph.util.attributes import copy_attributes_from_dependent_job
-from taskgraph.util.schema import validate_schema
-from taskgraph.util.scriptworker import (get_beetmover_bucket_scope,
+from taskgraph.util.scriptworker import (generate_beetmover_artifact_map,
+                                         generate_beetmover_upstream_artifacts,
                                          get_beetmover_action_scope,
-                                         get_worker_type_for_scope)
+                                         get_beetmover_bucket_scope,
+                                         get_worker_type_for_scope,
+                                         should_use_artifact_map)
+from voluptuous import Any, Optional, Required
 from taskgraph.transforms.task import task_description_schema
-from voluptuous import Any, Required, Optional
 
 # Voluptuous uses marker objects as dictionary *keys*, but they are not
 # comparable, so we cast all of the keys back to regular strings
 task_description_schema = {str(k): v for k, v in task_description_schema.schema.iteritems()}
-
-transforms = TransformSequence()
 
 taskref_or_string = Any(
     basestring,
@@ -30,6 +31,7 @@ taskref_or_string = Any(
 
 beetmover_checksums_description_schema = schema.extend({
     Required('depname', default='build'): basestring,
+    Required('attributes'): {basestring: object},
     Optional('label'): basestring,
     Optional('treeherder'): task_description_schema['treeherder'],
     Optional('locale'): basestring,
@@ -37,15 +39,8 @@ beetmover_checksums_description_schema = schema.extend({
     Optional('shipping-product'): task_description_schema['shipping-product'],
 })
 
-
-@transforms.add
-def validate(config, jobs):
-    for job in jobs:
-        label = job.get('primary-dependency', object).__dict__.get('label', '?no-label?')
-        validate_schema(
-            beetmover_checksums_description_schema, job,
-            "In checksums-signing ({!r} kind) task for {!r}:".format(config.kind, label))
-        yield job
+transforms = TransformSequence()
+transforms.add_validate(beetmover_checksums_description_schema)
 
 
 @transforms.add
@@ -90,6 +85,7 @@ def make_beetmover_checksums_description(config, jobs):
         dependencies = {dependent_kind: dep_job.label}
 
         attributes = copy_attributes_from_dependent_job(dep_job)
+        attributes.update(job.get('attributes', {}))
 
         if dep_job.attributes.get('locale'):
             treeherder['symbol'] = 'BMcs({})'.format(dep_job.attributes.get('locale'))
@@ -152,10 +148,23 @@ def make_beetmover_checksums_worker(config, jobs):
         worker = {
             'implementation': 'beetmover',
             'release-properties': craft_release_properties(config, job),
-            'upstream-artifacts': generate_upstream_artifacts(
-                refs, platform, locale
-            ),
         }
+
+        if should_use_artifact_map(platform, config.params['project']):
+            upstream_artifacts = generate_beetmover_upstream_artifacts(
+                job, platform, locale
+            )
+            worker['artifact-map'] = generate_beetmover_artifact_map(
+                config, job, platform=platform, locale=locale)
+        else:
+            upstream_artifacts = generate_upstream_artifacts(
+                refs, platform, locale
+            )
+            # Clean up un-used artifact map, to avoid confusion
+            if job['attributes'].get('artifact_map'):
+                del job['attributes']['artifact_map']
+
+        worker['upstream-artifacts'] = upstream_artifacts
 
         if locale:
             worker["locale"] = locale

@@ -306,6 +306,19 @@ class RTCStatsReport {
   makeStatsPublic(warnNullable, warnRemoteNullable, isLegacy) {
     let legacyProps = {};
     for (let key in this._report) {
+      const underlying = this._report[key];
+      // Add legacy names for renamed stats
+      if (underlying.type == "local-candidate" || underlying.type == "remote-candidate") {
+            // RTCIceCandidateStats transportId is ChromeOnly, don't copy it
+            delete underlying.transportId;
+            if (isLegacy) {
+              // Copy stat.address to the legacy field name
+              underlying.ipAddress = underlying.address;
+              // Callback stats are frozen to have legacy names
+              delete underlying.address;
+            }
+      }
+
       let internal = Cu.cloneInto(this._report[key], this._win);
       if (isLegacy) {
         internal.type = this._specToLegacyFieldMapping[internal.type] || internal.type;
@@ -1192,22 +1205,17 @@ class RTCPeerConnection {
 
   // TODO: Implement processing for end-of-candidates (bug 1318167)
   addIceCandidate(cand, onSucc, onErr) {
+    if (cand === null) {
+      throw new this._win.DOMException(
+        "Empty candidate can not be added.",
+        "TypeError");
+    }
     return this._auto(onSucc, onErr, () => cand && this._addIceCandidate(cand));
   }
 
   async _addIceCandidate({ candidate, sdpMid, sdpMLineIndex }) {
     this._checkClosed();
-    if (sdpMid === null && sdpMLineIndex === null) {
-      throw new this._win.DOMException(
-          "Invalid candidate (both sdpMid and sdpMLineIndex are null).",
-          "TypeError");
-    }
     return this._chain(() => {
-      if (!this.remoteDescription) {
-        throw new this._win.DOMException(
-            "setRemoteDescription needs to called before addIceCandidate",
-            "InvalidStateError");
-      }
       return new Promise((resolve, reject) => {
         this._onAddIceCandidateSuccess = resolve;
         this._onAddIceCandidateError = reject;
@@ -1221,9 +1229,6 @@ class RTCPeerConnection {
   }
 
   addTrack(track, stream) {
-    if (stream.currentTime === undefined) {
-      throw new this._win.DOMException("invalid stream.", "InvalidParameterError");
-    }
     this._checkClosed();
 
     if (this._transceivers.some(
@@ -1716,7 +1721,7 @@ class PeerConnectionObserver {
     const reasonName = [
       "",
       "InternalError",
-      "InvalidCandidateError",
+      "InternalError",
       "InvalidParameterError",
       "InvalidStateError",
       "InvalidSessionDescriptionError",
@@ -1724,6 +1729,8 @@ class PeerConnectionObserver {
       "InternalError",
       "IncompatibleMediaStreamTrackError",
       "InternalError",
+      "TypeError",
+      "OperationError",
     ];
     let name = reasonName[Math.min(code, reasonName.length - 1)];
     return new this._dompc._win.DOMException(message, name);

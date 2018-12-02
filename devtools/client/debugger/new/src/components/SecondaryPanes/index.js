@@ -4,7 +4,6 @@
 
 // @flow
 
-import PropTypes from "prop-types";
 import React, { Component } from "react";
 import { connect } from "react-redux";
 import { List } from "immutable";
@@ -12,7 +11,7 @@ import { List } from "immutable";
 import actions from "../../actions";
 import {
   getTopFrame,
-  getBreakpoints,
+  getBreakpointsList,
   getBreakpointsDisabled,
   getBreakpointsLoading,
   getExpressions,
@@ -119,7 +118,7 @@ class SecondaryPanes extends Component<Props, State> {
     const isIndeterminate =
       !breakpointsDisabled && breakpoints.some(x => x.disabled);
 
-    if (features.skipPausing || breakpoints.size == 0) {
+    if (features.skipPausing || breakpoints.length === 0) {
       return null;
     }
 
@@ -435,15 +434,11 @@ class SecondaryPanes extends Component<Props, State> {
   }
 }
 
-SecondaryPanes.contextTypes = {
-  shortcuts: PropTypes.object
-};
-
 const mapStateToProps = state => ({
   expressions: getExpressions(state),
   extra: getExtra(state),
   hasFrames: !!getTopFrame(state),
-  breakpoints: getBreakpoints(state),
+  breakpoints: getBreakpointsList(state),
   breakpointsDisabled: getBreakpointsDisabled(state),
   breakpointsLoading: getBreakpointsLoading(state),
   isWaitingOnBreak: getIsWaitingOnBreak(state),

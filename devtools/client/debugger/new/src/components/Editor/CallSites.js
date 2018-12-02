@@ -5,7 +5,7 @@
 import React, { Component } from "react";
 import { connect } from "react-redux";
 
-import { range, keyBy, isEqualWith } from "lodash";
+import { range, keyBy, isEqualWith, uniqBy, groupBy, flatten } from "lodash";
 
 import CallSite from "./CallSite";
 
@@ -44,21 +44,11 @@ class CallSites extends Component {
     selectedLocation: Object
   };
 
-  constructor(props) {
-    super(props);
-
-    this.state = {
-      showCallSites: false
-    };
-  }
-
   componentDidMount() {
     const { editor } = this.props;
     const codeMirrorWrapper = editor.codeMirror.getWrapperElement();
 
     codeMirrorWrapper.addEventListener("click", e => this.onTokenClick(e));
-    document.body.addEventListener("keydown", this.onKeyDown);
-    document.body.addEventListener("keyup", this.onKeyUp);
   }
 
   componentWillUnmount() {
@@ -66,32 +56,15 @@ class CallSites extends Component {
     const codeMirrorWrapper = editor.codeMirror.getWrapperElement();
 
     codeMirrorWrapper.removeEventListener("click", e => this.onTokenClick(e));
-    document.body.removeEventListener("keydown", this.onKeyDown);
-    document.body.removeEventListener("keyup", this.onKeyUp);
   }
-
-  onKeyUp = e => {
-    if (e.key === "Alt") {
-      e.preventDefault();
-      this.setState({ showCallSites: false });
-    }
-  };
-
-  onKeyDown = e => {
-    if (e.key === "Alt") {
-      e.preventDefault();
-      this.setState({ showCallSites: true });
-    }
-  };
 
   onTokenClick(e) {
     const { target } = e;
     const { editor, selectedLocation } = this.props;
 
     if (
-      (!e.altKey && !target.classList.contains("call-site-bp")) ||
-      (!target.classList.contains("call-site") &&
-        !target.classList.contains("call-site-bp"))
+      !target.classList.contains("call-site") &&
+      !target.classList.contains("call-site-bp")
     ) {
       return;
     }
@@ -143,23 +116,57 @@ class CallSites extends Component {
     }
   }
 
+  // Return the call sites that are on the same line as an
+  // existing line breakpoint
+  filterCallSitesByLineNumber() {
+    const { callSites, breakpoints } = this.props;
+
+    // Get unique lines from breakpoints so we can filter out unwated call sites
+    const uniqueBreakpointLines = new Set(
+      breakpoints.map(bp => bp.location.line)
+    );
+
+    // Get call sites based on activated breakpoint lines
+    const callSitesInRange = callSites.filter(({ location }) =>
+      uniqueBreakpointLines.has(location.start.line)
+    );
+
+    // Group call sites by line
+    const callSitesByLineObj = groupBy(callSitesInRange, "location.start.line");
+
+    // Per group, ensure all call sites are unique
+    return flatten(
+      Object.values(callSitesByLineObj).map(arr => {
+        const uniques = uniqBy(
+          arr,
+          site =>
+            `${site.generatedLocation.line}:${site.generatedLocation.column}`
+        );
+        // Only return call sites for a line when more than 1 is found
+        return uniques.length > 1 ? uniques : [];
+      })
+    );
+  }
+
   render() {
-    const { editor, callSites, selectedSource } = this.props;
-    const { showCallSites } = this.state;
-    let sites;
-    if (!callSites) {
+    const { editor, callSites, selectedSource, breakpoints } = this.props;
+
+    if (!callSites || breakpoints.length === 0) {
       return null;
     }
 
+    const callSitesFiltered = this.filterCallSitesByLineNumber();
+
+    let sites;
     editor.codeMirror.operation(() => {
-      const childCallSites = callSites.map((callSite, index) => {
+      const childCallSites = callSitesFiltered.map((callSite, index) => {
         const props = {
           key: index,
           callSite,
           editor,
           source: selectedSource,
           breakpoint: callSite.breakpoint,
-          showCallSite: showCallSites
+          showCallSite: true
         };
         return <CallSite {...props} />;
       });
@@ -180,7 +187,7 @@ function getCallSites(symbols, breakpoints) {
   // to speed up the lookups. Hopefully we'll fix the
   // inconsistency with column offsets so that we can expect
   // a breakpoint to be added at the beginning of a call expression.
-  const bpLocationMap = keyBy(breakpoints.valueSeq().toJS(), ({ location }) =>
+  const bpLocationMap = keyBy(breakpoints, ({ location }) =>
     locationKey(location)
   );
 

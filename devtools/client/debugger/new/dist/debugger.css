@@ -243,7 +243,7 @@
 
 button.open-accessibility-inspector,
 button.open-inspector {
-  mask: url("chrome://devtools/skin/images/devtools-reps/open-inspector.svg") no-repeat;
+  mask: url("resource://devtools/client/shared/components/reps/images/open-inspector.svg") no-repeat;
   display: inline-block;
   background-color: var(--comment-node-color);
   height: 16px;
@@ -264,7 +264,7 @@ button.open-inspector {
 /* Jump to definition button */
 
 button.jump-definition {
-  mask: url("chrome://devtools/skin/images/devtools-reps/jump-definition.svg") no-repeat;
+  mask: url("resource://devtools/client/shared/components/reps/images/jump-definition.svg") no-repeat;
   display: inline-block;
   background-color: var(--comment-node-color);
   height: 16px;
@@ -273,6 +273,22 @@ button.jump-definition {
 }
 
 .jump-definition:hover {
+  background-color: var(--theme-highlight-blue);
+}
+
+/******************************************************************************/
+/* Invoke getter button */
+
+button.invoke-getter {
+  mask: url("resource://devtools/client/shared/components/reps/images/input.svg") no-repeat;
+  display: inline-block;
+  background-color: var(--comment-node-color);
+  height: 10px;
+  vertical-align: middle;
+  border:none;
+}
+
+.invoke-getter:hover {
   background-color: var(--theme-highlight-blue);
 }
 
@@ -337,24 +353,29 @@ button.jump-definition {
   cursor: default;
 }
 
-.tree-node img.arrow {
-  mask: url("chrome://devtools/skin/images/devtools-components/arrow.svg") no-repeat;
-  mask-size: 100%;
+.tree-node button.arrow {
+  background:url("resource://devtools/client/debugger/new/images/arrow.svg") no-repeat;
+  background-size:contain;
+  background-position:center center;
   width: 9px;
   height: 9px;
+  border:0;
+  padding:0;
   margin-inline-start: 1px;
   margin-inline-end: 4px;
-  background-color: var(--theme-splitter-color, #9B9B9B);
   transform: rotate(-90deg);
+  transform-origin: center center;
   transition: transform 0.125s ease;
   align-self: center;
+  -moz-context-properties: fill;
+  fill: var(--theme-splitter-color, #9B9B9B);
 }
 
-html[dir="rtl"] .tree-node img.arrow {
+html[dir="rtl"] .tree-node button.arrow {
   transform: rotate(90deg);
 }
 
-.tree-node img.arrow.expanded.expanded {
+.tree-node button.arrow.expanded.expanded {
   transform: rotate(0deg);
  }
 
@@ -363,8 +384,8 @@ html[dir="rtl"] .tree-node img.arrow {
   background-color: var(--theme-selection-background, #0a84ff);
 }
 
-.tree-node.focused img.arrow {
-  background-color: currentColor;
+.tree-node.focused button.arrow {
+  fill: currentColor;
 }
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -404,7 +425,7 @@ html[dir="rtl"] .tree-node img.arrow {
   color: var(--theme-comment);
 }
 
-.object-inspector .tree-node img.arrow {
+.object-inspector .tree-node .arrow {
   display: inline-block;
   vertical-align: middle;
 }
@@ -951,7 +972,6 @@ menuseparator {
 .split-box.horz > .splitter {
   min-height: calc(var(--devtools-splitter-top-width) +
     var(--devtools-splitter-bottom-width) + 1px);
-
   border-top-width: var(--devtools-splitter-top-width);
   border-bottom-width: var(--devtools-splitter-bottom-width);
 
@@ -1035,39 +1055,39 @@ img.result-item-icon {
 }
 
 img.domain {
-  mask: url("chrome://devtools/skin/images/debugger/domain.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/domain.svg") no-repeat;
 }
 
 img.folder {
-  mask: url("chrome://devtools/skin/images/debugger/folder.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/folder.svg") no-repeat;
 }
 
 img.coffeescript {
-  mask: url("chrome://devtools/skin/images/debugger/coffeescript.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/coffeescript.svg") no-repeat;
 }
 
 img.javascript {
-  mask: url("chrome://devtools/skin/images/debugger/javascript.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/javascript.svg") no-repeat;
 }
 
 img.tab {
-  mask: url("chrome://devtools/skin/images/debugger/tab.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/tab.svg") no-repeat;
 }
 
 img.react {
-  mask: url("chrome://devtools/skin/images/debugger/react.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/react.svg") no-repeat;
 }
 
 img.typescript {
-  mask: url("chrome://devtools/skin/images/debugger/typescript.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/typescript.svg") no-repeat;
 }
 
 img.extension {
-  mask: url("chrome://devtools/skin/images/debugger/extension.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/extension.svg") no-repeat;
 }
 
 img.file {
-  mask: url("chrome://devtools/skin/images/debugger/file.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/file.svg") no-repeat;
   width: 13px;
   height: 13px;
 }
@@ -1096,7 +1116,7 @@ img.result-item-icon {
 }
 
 img.arrow {
-  mask: url("chrome://devtools/skin/images/debugger/arrow.svg");
+  mask: url("resource://devtools/client/debugger/new/images/arrow.svg");
   margin-inline-end: 5px;
   margin-top: 3px;
   width: 9px;
@@ -1244,7 +1264,7 @@ html[dir="rtl"] .managed-tree .tree .node > div {
 }
 
 .close-btn .close {
-  mask: url("chrome://devtools/skin/images/debugger/close.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/close.svg") no-repeat;
   mask-size: 100%;
   background-color: var(--theme-comment);
   width: 8px;
@@ -1862,7 +1882,7 @@ html .toggle-button.end.vertical svg {
 }
 
 .sources-list .managed-tree .tree .node img.blackBox {
-  mask: url("chrome://devtools/skin/images/debugger/blackBox.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/blackBox.svg") no-repeat;
   mask-size: 100%;
   background-color: var(--theme-highlight-blue);
   width: 13px;
@@ -2182,24 +2202,24 @@ menuseparator {
 }
 
 .source-icon.prettyPrint {
-  mask: url("chrome://devtools/skin/images/debugger/prettyPrint.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/prettyPrint.svg") no-repeat;
   mask-size: 100%;
   background: var(--theme-highlight-blue);
   fill: var(--theme-textbox-box-shadow);
 }
 
 .source-icon.vue {
-  background: url("chrome://devtools/skin/images/debugger/vuejs.svg") 1px 1px no-repeat;
+  background: url("resource://devtools/client/debugger/new/images/vuejs.svg") 1px 1px no-repeat;
   background-size: 15px;
 }
 
 .source-icon.angular {
-  background: url("chrome://devtools/skin/images/debugger/angular.svg") 1px 1px no-repeat;
+  background: url("resource://devtools/client/debugger/new/images/angular.svg") 1px 1px no-repeat;
   background-size: 13px 13px;
 }
 
 .source-icon.blackBox {
-  mask: url("chrome://devtools/skin/images/debugger/blackBox.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/blackBox.svg") no-repeat;
   mask-size: 100%;
   background: var(--theme-highlight-blue);
 }
@@ -2274,27 +2294,17 @@ menuseparator {
 }
 
 .source-footer > .commands > .action > img.prettyPrint {
-  mask: url("chrome://devtools/skin/images/debugger/prettyPrint.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/prettyPrint.svg") no-repeat;
   height: 16px;
   width: 16px;
   background: var(--theme-body-color);
 }
 
 .source-footer > .commands > .action > img.blackBox {
-  mask: url("chrome://devtools/skin/images/debugger/blackBox.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/blackBox.svg") no-repeat;
   height: 16px;
   width: 16px;
   background: var(--theme-body-color);
-}
-
-.source-footer .commands .coverage {
-  color: var(--theme-body-color);
-}
-
-.coverage-on .source-footer .commands .coverage {
-  color: var(--theme-highlight-blue);
-  border: 1px solid var(--theme-body-color-inactive);
-  border-radius: 2px;
 }
 
 .source-footer > .commands > .blackboxed > img.blackBox {
@@ -2676,13 +2686,13 @@ menuseparator {
 
 .call-site {
   position: relative;
-  border-bottom: 2px solid lightgrey;
+  display: inline;
   cursor: pointer;
 }
 
 .call-site::before {
   content: "";
-  mask: url("chrome://devtools/skin/images/debugger/column-marker.svg") no-repeat 100% 100%;
+  mask: url("resource://devtools/client/debugger/new/images/column-marker.svg") no-repeat 100% 100%;
   mask-size: contain;
   display: inline-block;
   background-color: var(--blue-55);
@@ -2691,20 +2701,8 @@ menuseparator {
   height: 12px;
 }
 
-.call-site-bp {
-  position: relative;
-  border-bottom: 2px solid #aed3ef;
-  cursor: pointer;
-}
-
-.call-site-bp::before {
-  content: "";
-  mask: url("chrome://devtools/skin/images/debugger/column-marker.svg") no-repeat 100% 100%;
-  mask-size: contain;
-  display: inline-block;
-  background-color: var(--blue-55);
-  width: 9px;
-  height: 12px;
+.call-site.active::before {
+  opacity: 1;
 }
 
 .theme-dark .call-site {
@@ -2845,7 +2843,7 @@ html[dir="rtl"] .editor-mount {
   height: 12px;
   width: 9px;
   background-color: var(--gutter-hover-background-color);
-  mask: url("chrome://devtools/skin/images/debugger/breakpoint.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/breakpoint.svg") no-repeat;
   mask-size: auto 12px;
   mask-position: right;
 }
@@ -2871,11 +2869,6 @@ html[dir="rtl"] .editor-mount {
 
 .editor-wrapper .highlight-lines {
   background: var(--theme-selection-background-hover);
-}
-
-.coverage-on .CodeMirror-code :not(.hit-marker) .CodeMirror-line,
-.coverage-on .CodeMirror-code :not(.hit-marker) .CodeMirror-gutter-wrapper {
-  opacity: 0.5;
 }
 
 .editor.new-breakpoint svg {
@@ -2966,7 +2959,8 @@ html[dir="rtl"] .editor-mount {
   color: var(--theme-comment);
 }
 
-.debug-expression {
+.debug-expression,
+.new-debug-line .call-site {
   background-color: var(--debug-expression-background);
 }
 
@@ -3080,6 +3074,11 @@ debug-expression-error {
   display: flex;
   width: 100%;
   align-items: center;
+}
+
+.breakpoints-list .breakpoint-heading .filename {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .breakpoints-list .breakpoint-heading .filename span {
@@ -3482,17 +3481,20 @@ html[dir="rtl"] .breakpoints-list .breakpoint .breakpoint-line {
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 .why-paused {
+  display: flex;
   background-color: var(--theme-body-background);
   color: var(--theme-body-color);
-  padding: 10px 10px 10px 20px;
-  white-space: normal;
   opacity: 0.6;
   font-size: 12px;
-  flex: 0 1 auto;
   text-align: center;
   font-style: italic;
   font-weight: 300;
   cursor: default;
+  min-height: 24px;
+}
+
+.why-paused > div {
+  margin: auto;
 }
 
 .theme-dark .secondary-panes .why-paused {
@@ -3500,6 +3502,7 @@ html[dir="rtl"] .breakpoints-list .breakpoint .breakpoint-line {
 }
 
 .why-paused .message {
+  padding: 4px;
   font-size: 10px;
 }
 
@@ -3594,6 +3597,8 @@ html[dir="rtl"] .breakpoints-list .breakpoint .breakpoint-line {
 
 .show-more-container {
   display: flex;
+  min-height: 24px;
+  padding: 4px 0;
 }
 
 .show-more {
@@ -3617,7 +3622,7 @@ html[dir="rtl"] .breakpoints-list .breakpoint .breakpoint-line {
   margin-inline-start: 4px;
 }
 
-:root.theme-dark .annotation-logo svg path {
+:root.theme-dark .annotation-logo:not(.angular) svg path {
   fill: var(--theme-highlight-blue);
 }
 /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -3819,42 +3824,42 @@ img.skipPausing {
 }
 
 .command-bar img.pause {
-  mask: url("chrome://devtools/skin/images/debugger/pause.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/pause.svg") no-repeat;
 }
 
 .command-bar img.stepOver {
-  mask: url("chrome://devtools/skin/images/debugger/stepOver.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/stepOver.svg") no-repeat;
 }
 
 .command-bar img.stepIn {
-  mask: url("chrome://devtools/skin/images/debugger/stepIn.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/stepIn.svg") no-repeat;
 }
 
 .command-bar img.stepOut {
-  mask: url("chrome://devtools/skin/images/debugger/stepOut.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/stepOut.svg") no-repeat;
 }
 
 .command-bar img.resume {
-  mask: url("chrome://devtools/skin/images/debugger/resume.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/resume.svg") no-repeat;
 }
 
 .command-bar img.rewind {
-  mask: url("chrome://devtools/skin/images/debugger/resume.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/resume.svg") no-repeat;
   transform: scaleX(-1);
 }
 
 .command-bar img.reverseStepOver {
-  mask: url("chrome://devtools/skin/images/debugger/stepOver.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/stepOver.svg") no-repeat;
   transform: scaleX(-1);
 }
 
 .command-bar img.reverseStepIn {
-  mask: url("chrome://devtools/skin/images/debugger/stepIn.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/stepIn.svg") no-repeat;
   transform: scaleX(-1);
 }
 
 .command-bar img.reverseStepOut {
-  mask: url("chrome://devtools/skin/images/debugger/stepOut.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/stepOut.svg") no-repeat;
   transform: scaleX(-1);
 }
 
@@ -3863,7 +3868,7 @@ img.skipPausing {
 }
 
 .command-bar img.shortcuts {
-  mask: url("chrome://devtools/skin/images/help.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/help.svg") no-repeat;
   mask-size: contain;
 }
 
@@ -3886,7 +3891,7 @@ img.skipPausing {
 }
 
 .command-bar .skipPausing {
-  mask: url("chrome://devtools/skin/images/debugger/disable-pausing.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/disable-pausing.svg") no-repeat;
   mask-size: 100%;
 }
 
@@ -3991,7 +3996,7 @@ img.skipPausing {
 .xhr-label {
   max-width: calc(100% - var(--breakpoint-expression-right-clear-space));
   display: inline-block;
-  cursor: pointer;
+  cursor: text;
   flex-grow: 1;
   text-overflow: ellipsis;
   padding-inline-end: 8px;
@@ -4275,6 +4280,19 @@ html .welcomebox .toggle-button-end.collapsed {
   font-size: 12px;
 }
 
+.source-tab::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: transparent;
+  transition: transform 250ms var(--animation-curve), opacity 250ms var(--animation-curve);
+  opacity: 0;
+  transform: scaleX(0);
+}
+
 .source-tab:first-child {
   margin-inline-start: 0;
 }
@@ -4283,12 +4301,24 @@ html .welcomebox .toggle-button-end.collapsed {
   background: linear-gradient(var(--theme-toolbar-hover) 28px, transparent 1px);
 }
 
+.source-tab:not(.active):hover::before {
+  background: var(--tab-line-hover-color);
+  opacity: 1;
+  transform: scaleX(1);
+}
+
 .source-tab.active {
   color: var(--theme-toolbar-selected-color);
   border-bottom-color: transparent;
   border-left: 1px solid var(--theme-splitter-color);
   border-right: 1px solid var(--theme-splitter-color);
   background-color: var(--theme-body-background);
+}
+
+.source-tab.active::before {
+  background: var(--tab-line-selected-color);
+  opacity: 1;
+  transform: scaleX(1);
 }
 
 .theme-dark .source-tab.active {
@@ -4316,7 +4346,7 @@ html .welcomebox .toggle-button-end.collapsed {
 }
 
 .source-tab img.react {
-  mask: url("chrome://devtools/skin/images/debugger/react.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/react.svg") no-repeat;
   mask-size: 100%;
   height: 14px;
   width: 14px;
@@ -4333,7 +4363,7 @@ html .welcomebox .toggle-button-end.collapsed {
 }
 
 img.moreTabs {
-  mask: url("chrome://devtools/skin/images/command-chevron.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/command-chevron.svg") no-repeat;
   mask-size: 100%;
   width: 12px;
   height: 12px;
@@ -4372,30 +4402,6 @@ html[dir="rtl"] img.moreTabs {
 
 .source-tab:hover .close-btn {
   visibility: visible;
-}
-
-.source-tab-line {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 2px;
-  background: transparent;
-  transition: transform 250ms var(--animation-curve), opacity 250ms var(--animation-curve);
-  opacity: 0;
-  transform: scaleX(0);
-}
-
-.source-tab:not(.active):hover .source-tab-line {
-  background: var(--tab-line-hover-color);
-  opacity: 1;
-  transform: scaleX(1);
-}
-
-.source-tab.active .source-tab-line {
-  background: var(--tab-line-selected-color);
-  opacity: 1;
-  transform: scaleX(1);
 }
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -4461,19 +4467,19 @@ html[dir="rtl"] .dropdown {
 }
 
 .dropdown-icon.prettyPrint {
-  mask: url("chrome://devtools/skin/images/debugger/prettyPrint.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/prettyPrint.svg") no-repeat;
   mask-size: 100%;
   background: var(--theme-highlight-blue);
 }
 
 .dropdown-icon.blackBox {
-  mask: url("chrome://devtools/skin/images/debugger/blackBox.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/blackBox.svg") no-repeat;
   mask-size: 100%;
   background: var(--theme-highlight-blue);
 }
 
 .dropdown-icon.file {
-  mask: url("chrome://devtools/skin/images/debugger/file.svg") no-repeat;
+  mask: url("resource://devtools/client/debugger/new/images/file.svg") no-repeat;
   mask-size: 100%;
   margin-bottom: 7px;
 }

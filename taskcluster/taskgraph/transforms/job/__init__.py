@@ -109,14 +109,7 @@ job_description_schema = Schema({
 })
 
 transforms = TransformSequence()
-
-
-@transforms.add
-def validate(config, jobs):
-    for job in jobs:
-        validate_schema(job_description_schema, job,
-                        "In job {!r}:".format(job.get('name', job.get('label'))))
-        yield job
+transforms.add_validate(job_description_schema)
 
 
 @transforms.add
@@ -163,11 +156,6 @@ def use_fetches(config, jobs):
         if not fetches:
             yield job
             continue
-
-        # Hack added for `mach artifact toolchain` to support reading toolchain
-        # kinds in isolation.
-        if 'fetch' in fetches and config.params.get('ignore_fetches'):
-            fetches['fetch'][:] = []
 
         job_fetches = []
         name = job.get('name', job.get('label'))
@@ -221,7 +209,7 @@ def use_fetches(config, jobs):
         env['MOZ_FETCHES'] = {'task-reference': json.dumps(job_fetches, sort_keys=True)}
 
         impl, os = worker_type_implementation(job['worker-type'])
-        if os == 'windows':
+        if os in ('windows', 'macosx'):
             env.setdefault('MOZ_FETCHES_DIR', 'fetches')
         else:
             workdir = job['run'].get('workdir', '/builds/worker')

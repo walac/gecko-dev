@@ -5,6 +5,7 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.TelemetryUtils;
 import org.mozilla.gecko.annotation.RobocopTarget;
 import org.mozilla.gecko.annotation.WrapForJNI;
 import org.mozilla.gecko.mozglue.GeckoLoader;
@@ -126,6 +127,8 @@ public class GeckoThread extends Thread {
     @WrapForJNI
     private static int uiThreadId;
 
+    private static TelemetryUtils.Timer sInitTimer;
+
     // Main process parameters
     public static final int FLAG_DEBUGGING = 1 << 0; // Debugging mode.
     public static final int FLAG_PRELOAD_CHILD = 1 << 1; // Preload child during main thread start.
@@ -176,6 +179,8 @@ public class GeckoThread extends Thread {
         if (mInitialized) {
             return false;
         }
+
+        sInitTimer = new TelemetryUtils.UptimeTimer("GV_STARTUP_RUNTIME_MS");
 
         mInitInfo = info;
 
@@ -255,10 +260,10 @@ public class GeckoThread extends Thread {
         return isState(State.RUNNING);
     }
 
-    private static void loadGeckoLibs(final Context context, final String resourcePath) {
-        GeckoLoader.loadSQLiteLibs(context, resourcePath);
-        GeckoLoader.loadNSSLibs(context, resourcePath);
-        GeckoLoader.loadGeckoLibs(context, resourcePath);
+    private static void loadGeckoLibs(final Context context) {
+        GeckoLoader.loadSQLiteLibs(context);
+        GeckoLoader.loadNSSLibs(context);
+        GeckoLoader.loadGeckoLibs(context);
         setState(State.LIBS_READY);
     }
 
@@ -277,28 +282,9 @@ public class GeckoThread extends Thread {
             res.updateConfiguration(config, null);
         }
 
-        final String resourcePath = context.getPackageResourcePath();
+        GeckoSystemStateListener.getInstance().initialize(context);
 
-        try {
-            loadGeckoLibs(context, resourcePath);
-            return;
-        } catch (final Exception e) {
-            // Cannot load libs; try clearing the cached files.
-            Log.w(LOGTAG, "Clearing cache after load libs exception", e);
-        }
-
-        FileUtils.delTree(GeckoLoader.getCacheDir(context),
-                          new FileUtils.FilenameRegexFilter(".*\\.so(?:\\.crc)?$"),
-                          /* recurse */ true);
-
-        if (!GeckoLoader.verifyCRCs(resourcePath)) {
-            setState(State.CORRUPT_APK);
-            EventDispatcher.getInstance().dispatch("Gecko:CorruptAPK", null);
-            return;
-        }
-
-        // Then try loading again. If this throws again, we actually crash.
-        loadGeckoLibs(context, resourcePath);
+        loadGeckoLibs(context);
     }
 
     private String[] getMainProcessArgs() {
@@ -569,6 +555,11 @@ public class GeckoThread extends Thread {
         final boolean result = sNativeQueue.checkAndSetState(expectedState, newState);
         if (result) {
             Log.d(LOGTAG, "State changed to " + newState);
+
+            if (sInitTimer != null && isRunning()) {
+                sInitTimer.stop();
+                sInitTimer = null;
+            }
         }
         return result;
     }

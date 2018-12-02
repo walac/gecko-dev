@@ -25,6 +25,8 @@ unset MAKECAB
 #    CARGO
 . "$topsrcdir/browser/config/mozconfigs/common"
 
+export MOZ_PACKAGE_JSSHELL=1
+
 # MinGW Stuff
 ac_add_options --target=x86_64-w64-mingw32
 ac_add_options --with-toolchain-prefix=x86_64-w64-mingw32-
@@ -34,9 +36,6 @@ MOZ_COPY_PDBS=1
 
 # Temporary config settings until we get these working on mingw
 ac_add_options --disable-accessibility # https://sourceforge.net/p/mingw-w64/bugs/648/
-
-# For now, we'll disable the sandbox, until we get get Bug 1461421 figured out
-ac_add_options --disable-sandbox
 
 # These aren't supported on mingw at this time
 ac_add_options --disable-maintenance-service

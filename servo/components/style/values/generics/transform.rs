@@ -5,14 +5,16 @@
 //! Generic types for CSS values that are related to transformations.
 
 use app_units::Au;
+use crate::values::computed::length::Length as ComputedLength;
+use crate::values::computed::length::LengthOrPercentage as ComputedLengthOrPercentage;
+use crate::values::specified::angle::Angle as SpecifiedAngle;
+use crate::values::specified::length::Length as SpecifiedLength;
+use crate::values::specified::length::LengthOrPercentage as SpecifiedLengthOrPercentage;
+use crate::values::{computed, CSSFloat};
 use euclid::{self, Rect, Transform3D};
 use num_traits::Zero;
-use values::{computed, CSSFloat};
-use values::computed::length::Length as ComputedLength;
-use values::computed::length::LengthOrPercentage as ComputedLengthOrPercentage;
-use values::specified::angle::Angle as SpecifiedAngle;
-use values::specified::length::Length as SpecifiedLength;
-use values::specified::length::LengthOrPercentage as SpecifiedLengthOrPercentage;
+use std::fmt::{self, Write};
+use style_traits::{CssWriter, ToCss};
 
 /// A generic 2D transformation matrix.
 #[allow(missing_docs)]
@@ -512,8 +514,8 @@ pub fn get_normalized_vector_and_angle<T: Zero>(
     z: CSSFloat,
     angle: T,
 ) -> (CSSFloat, CSSFloat, CSSFloat, T) {
+    use crate::values::computed::transform::DirectionVector;
     use euclid::approxeq::ApproxEq;
-    use values::computed::transform::DirectionVector;
     let vector = DirectionVector::new(x, y, z);
     if vector.square_length().approx_eq(&f32::zero()) {
         // https://www.w3.org/TR/css-transforms-1/#funcdef-rotate3d
@@ -528,7 +530,6 @@ pub fn get_normalized_vector_and_angle<T: Zero>(
 
 #[derive(
     Clone,
-    ComputeSquaredDistance,
     Copy,
     Debug,
     MallocSizeOf,
@@ -536,7 +537,6 @@ pub fn get_normalized_vector_and_angle<T: Zero>(
     SpecifiedValueInfo,
     ToAnimatedZero,
     ToComputedValue,
-    ToCss,
 )]
 /// A value of the `Rotate` property
 ///
@@ -550,9 +550,55 @@ pub enum Rotate<Number, Angle> {
     Rotate3D(Number, Number, Number, Angle),
 }
 
+/// A trait to check if the current 3D vector is parallel to the DirectionVector.
+/// This is especially for serialization on Rotate.
+pub trait IsParallelTo {
+    /// Returns true if this is parallel to the vector.
+    fn is_parallel_to(&self, vector: &computed::transform::DirectionVector) -> bool;
+}
+
+impl<Number, Angle> ToCss for Rotate<Number, Angle>
+where
+    Number: Copy + ToCss,
+    Angle: ToCss,
+    (Number, Number, Number): IsParallelTo,
+{
+    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: fmt::Write,
+    {
+        use crate::values::computed::transform::DirectionVector;
+        match *self {
+            Rotate::None => dest.write_str("none"),
+            Rotate::Rotate(ref angle) => angle.to_css(dest),
+            Rotate::Rotate3D(x, y, z, ref angle) => {
+                // If a 3d rotation is specified, the property must serialize with an axis
+                // specified. If the axis is parallel with the x, y, or z axises, it must
+                // serialize as the appropriate keyword.
+                // https://drafts.csswg.org/css-transforms-2/#individual-transform-serialization
+                let v = (x, y, z);
+                if v.is_parallel_to(&DirectionVector::new(1., 0., 0.)) {
+                    dest.write_char('x')?;
+                } else if v.is_parallel_to(&DirectionVector::new(0., 1., 0.)) {
+                    dest.write_char('y')?;
+                } else if v.is_parallel_to(&DirectionVector::new(0., 0., 1.)) {
+                    dest.write_char('z')?;
+                } else {
+                    x.to_css(dest)?;
+                    dest.write_char(' ')?;
+                    y.to_css(dest)?;
+                    dest.write_char(' ')?;
+                    z.to_css(dest)?;
+                }
+                dest.write_char(' ')?;
+                angle.to_css(dest)
+            },
+        }
+    }
+}
+
 #[derive(
     Clone,
-    ComputeSquaredDistance,
     Copy,
     Debug,
     MallocSizeOf,
@@ -560,7 +606,6 @@ pub enum Rotate<Number, Angle> {
     SpecifiedValueInfo,
     ToAnimatedZero,
     ToComputedValue,
-    ToCss,
 )]
 /// A value of the `Scale` property
 ///
@@ -568,24 +613,46 @@ pub enum Rotate<Number, Angle> {
 pub enum Scale<Number> {
     /// 'none'
     None,
-    /// '<number>'
-    ScaleX(Number),
-    /// '<number>{2}'
+    /// '<number>{1,2}'
     Scale(Number, Number),
     /// '<number>{3}'
     Scale3D(Number, Number, Number),
 }
 
+impl<Number: ToCss + PartialEq> ToCss for Scale<Number> {
+    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: fmt::Write,
+    {
+        match *self {
+            Scale::None => dest.write_str("none"),
+            Scale::Scale(ref x, ref y) => {
+                x.to_css(dest)?;
+                if x != y {
+                    dest.write_char(' ')?;
+                    y.to_css(dest)?;
+                }
+                Ok(())
+            },
+            Scale::Scale3D(ref x, ref y, ref z) => {
+                x.to_css(dest)?;
+                dest.write_char(' ')?;
+                y.to_css(dest)?;
+                dest.write_char(' ')?;
+                z.to_css(dest)
+            },
+        }
+    }
+}
+
 #[derive(
     Clone,
-    ComputeSquaredDistance,
     Debug,
     MallocSizeOf,
     PartialEq,
     SpecifiedValueInfo,
     ToAnimatedZero,
     ToComputedValue,
-    ToCss,
 )]
 /// A value of the `Translate` property
 ///
@@ -593,12 +660,54 @@ pub enum Scale<Number> {
 pub enum Translate<LengthOrPercentage, Length> {
     /// 'none'
     None,
-    /// '<length-percentage>'
-    TranslateX(LengthOrPercentage),
-    /// '<length-percentage> <length-percentage>'
+    /// '<length-percentage>' or '<length-percentage> <length-percentage>'
     Translate(LengthOrPercentage, LengthOrPercentage),
     /// '<length-percentage> <length-percentage> <length>'
     Translate3D(LengthOrPercentage, LengthOrPercentage, Length),
+}
+
+/// A trait to check if this is a zero length.
+/// An alternative way is use num_traits::Zero. However, in order to implement num_traits::Zero,
+/// we also have to implement Add, which may be complicated for LengthOrPercentage::Calc.
+/// We could do this if other types also need it. If so, we could drop this trait.
+pub trait IsZeroLength {
+    /// Returns true if this is a zero length.
+    fn is_zero_length(&self) -> bool;
+}
+
+impl<LoP: ToCss + IsZeroLength, L: ToCss> ToCss for Translate<LoP, L> {
+    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: fmt::Write,
+    {
+        // The spec says:
+        // 1. If a 2d translation is specified, the property must serialize with only one or two
+        //    values (per usual, if the second value is 0px, the default, it must be omitted when
+        //    serializing).
+        // 2. If a 3d translation is specified, all three values must be serialized.
+        // https://drafts.csswg.org/css-transforms-2/#individual-transform-serialization
+        //
+        // We don't omit the 3rd component even if it is 0px for now, and the related
+        // spec issue is https://github.com/w3c/csswg-drafts/issues/3305
+        match *self {
+            Translate::None => dest.write_str("none"),
+            Translate::Translate(ref x, ref y) => {
+                x.to_css(dest)?;
+                if !y.is_zero_length() {
+                    dest.write_char(' ')?;
+                    y.to_css(dest)?;
+                }
+                Ok(())
+            },
+            Translate::Translate3D(ref x, ref y, ref z) => {
+                x.to_css(dest)?;
+                dest.write_char(' ')?;
+                y.to_css(dest)?;
+                dest.write_char(' ')?;
+                z.to_css(dest)
+            },
+        }
+    }
 }
 
 #[allow(missing_docs)]

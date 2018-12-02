@@ -15,11 +15,13 @@ import { getUnicodeUrl } from "devtools-modules";
 import { endTruncateStr } from "./utils";
 import { truncateMiddleText } from "../utils/text";
 import { parse as parseURL } from "../utils/url";
+import { renderWasmText } from "./wasm";
+import { toEditorPosition } from "./editor";
 export { isMinified } from "./isMinified";
 import { getURL, getFileExtension } from "./sources-tree";
 import { prefs } from "./prefs";
 
-import type { Source, Location } from "../types";
+import type { Source, Location, JsSource } from "../types";
 import type { SourceMetaDataType } from "../reducers/ast";
 import type { SymbolDeclarations } from "../workers/parser";
 
@@ -59,8 +61,7 @@ export function shouldPrettyPrint(source: Source) {
     isPretty(source) ||
     !isJavaScript(source) ||
     isOriginal(source) ||
-    source.sourceMapURL ||
-    !prefs.clientSourceMapsEnabled
+    (prefs.clientSourceMapsEnabled && source.sourceMapURL)
   ) {
     return false;
   }
@@ -169,8 +170,12 @@ export function getFilename(source: Source) {
  * @memberof utils/source
  * @static
  */
-export function getTruncatedFileName(source: Source, length: number = 30) {
-  return truncateMiddleText(getFilename(source), length);
+export function getTruncatedFileName(
+  source: Source,
+  querystring: string = "",
+  length: number = 30
+) {
+  return truncateMiddleText(`${getFilename(source)}${querystring}`, length);
 }
 
 /* Gets path for files with same filename for editor tabs, breakpoints, etc.
@@ -382,14 +387,21 @@ export function isLoading(source: Source) {
 }
 
 export function getTextAtPosition(source: ?Source, location: Location) {
-  if (!source || source.isWasm || !source.text) {
+  if (!source || !source.text) {
     return "";
   }
 
   const line = location.line;
   const column = location.column || 0;
 
-  const lineText = source.text.split("\n")[line - 1];
+  if (source.isWasm) {
+    const { line: editorLine } = toEditorPosition(location);
+    const lines = renderWasmText(source);
+    return lines[editorLine];
+  }
+
+  const text = ((source: any): JsSource).text || "";
+  const lineText = text.split("\n")[line - 1];
   if (!lineText) {
     return "";
   }
@@ -446,4 +458,8 @@ export function isOriginal(source: Source) {
 
 export function isGenerated(source: Source) {
   return isGeneratedId(source.id);
+}
+
+export function getSourceQueryString(source: ?Source) {
+  return source ? parseURL(source.url).search : "";
 }

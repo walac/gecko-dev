@@ -8,16 +8,16 @@
 //! `pseudo_element_definition.mako.rs`. If you touch that file, you probably
 //! need to update the checked-in files for Servo.
 
+use crate::gecko_bindings::structs::{self, CSSPseudoElementType};
+use crate::properties::longhands::display::computed_value::T as Display;
+use crate::properties::{ComputedValues, PropertyFlags};
+use crate::selector_parser::{NonTSPseudoClass, PseudoElementCascadeType, SelectorImpl};
+use crate::str::{starts_with_ignore_ascii_case, string_as_ascii_lowercase};
+use crate::string_cache::Atom;
+use crate::values::serialize_atom_identifier;
 use cssparser::ToCss;
-use gecko_bindings::structs::{self, CSSPseudoElementType};
-use properties::{ComputedValues, PropertyFlags};
-use properties::longhands::display::computed_value::T as Display;
-use selector_parser::{NonTSPseudoClass, PseudoElementCascadeType, SelectorImpl};
 use std::fmt;
-use str::{starts_with_ignore_ascii_case, string_as_ascii_lowercase};
-use string_cache::Atom;
 use thin_slice::ThinBoxedSlice;
-use values::serialize_atom_identifier;
 
 include!(concat!(
     env!("OUT_DIR"),
@@ -27,12 +27,14 @@ include!(concat!(
 impl ::selectors::parser::PseudoElement for PseudoElement {
     type Impl = SelectorImpl;
 
+    // ::slotted() should support all tree-abiding pseudo-elements, see
+    // https://drafts.csswg.org/css-scoping/#slotted-pseudo
+    // https://drafts.csswg.org/css-pseudo-4/#treelike
     fn valid_after_slotted(&self) -> bool {
-        // TODO(emilio): Remove this function or this comment after [1] is
-        // resolved.
-        //
-        // [1]: https://github.com/w3c/csswg-drafts/issues/3150
-        self.is_before_or_after()
+        matches!(
+            *self,
+            PseudoElement::Before | PseudoElement::After | PseudoElement::Placeholder
+        )
     }
 
     fn supports_pseudo_class(&self, pseudo_class: &NonTSPseudoClass) -> bool {

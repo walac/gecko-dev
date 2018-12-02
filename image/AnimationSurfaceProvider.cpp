@@ -17,17 +17,15 @@ using namespace mozilla::gfx;
 namespace mozilla {
 namespace image {
 
-AnimationSurfaceProvider::AnimationSurfaceProvider(NotNull<RasterImage*> aImage,
-                                                   const SurfaceKey& aSurfaceKey,
-                                                   NotNull<Decoder*> aDecoder,
-                                                   size_t aCurrentFrame)
-  : ISurfaceProvider(ImageKey(aImage.get()), aSurfaceKey,
-                     AvailabilityState::StartAsPlaceholder())
-  , mImage(aImage.get())
-  , mDecodingMutex("AnimationSurfaceProvider::mDecoder")
-  , mDecoder(aDecoder.get())
-  , mFramesMutex("AnimationSurfaceProvider::mFrames")
-{
+AnimationSurfaceProvider::AnimationSurfaceProvider(
+    NotNull<RasterImage*> aImage, const SurfaceKey& aSurfaceKey,
+    NotNull<Decoder*> aDecoder, size_t aCurrentFrame)
+    : ISurfaceProvider(ImageKey(aImage.get()), aSurfaceKey,
+                       AvailabilityState::StartAsPlaceholder()),
+      mImage(aImage.get()),
+      mDecodingMutex("AnimationSurfaceProvider::mDecoder"),
+      mDecoder(aDecoder.get()),
+      mFramesMutex("AnimationSurfaceProvider::mFrames") {
   MOZ_ASSERT(!mDecoder->IsMetadataDecode(),
              "Use MetadataDecodingTask for metadata decodes");
   MOZ_ASSERT(!mDecoder->IsFirstFrameDecode(),
@@ -36,22 +34,23 @@ AnimationSurfaceProvider::AnimationSurfaceProvider(NotNull<RasterImage*> aImage,
   // We may produce paletted surfaces for GIF which means the frames are smaller
   // than one would expect.
   size_t pixelSize = !aDecoder->ShouldBlendAnimation() &&
-                     aDecoder->GetType() == DecoderType::GIF
-                     ? sizeof(uint8_t) : sizeof(uint32_t);
+                             aDecoder->GetType() == DecoderType::GIF
+                         ? sizeof(uint8_t)
+                         : sizeof(uint32_t);
 
   // Calculate how many frames we need to decode in this animation before we
   // enter decode-on-demand mode.
   IntSize frameSize = aSurfaceKey.Size();
   size_t threshold =
-    (size_t(gfxPrefs::ImageAnimatedDecodeOnDemandThresholdKB()) * 1024) /
-    (pixelSize * frameSize.width * frameSize.height);
+      (size_t(gfxPrefs::ImageAnimatedDecodeOnDemandThresholdKB()) * 1024) /
+      (pixelSize * frameSize.width * frameSize.height);
   size_t batch = gfxPrefs::ImageAnimatedDecodeOnDemandBatchSize();
 
-  mFrames.reset(new AnimationFrameRetainedBuffer(threshold, batch, aCurrentFrame));
+  mFrames.reset(
+      new AnimationFrameRetainedBuffer(threshold, batch, aCurrentFrame));
 }
 
-AnimationSurfaceProvider::~AnimationSurfaceProvider()
-{
+AnimationSurfaceProvider::~AnimationSurfaceProvider() {
   DropImageReference();
 
   if (mDecoder) {
@@ -59,9 +58,7 @@ AnimationSurfaceProvider::~AnimationSurfaceProvider()
   }
 }
 
-void
-AnimationSurfaceProvider::DropImageReference()
-{
+void AnimationSurfaceProvider::DropImageReference() {
   if (!mImage) {
     return;  // Nothing to do.
   }
@@ -71,12 +68,10 @@ AnimationSurfaceProvider::DropImageReference()
                                     mImage.forget());
 }
 
-void
-AnimationSurfaceProvider::Reset()
-{
+void AnimationSurfaceProvider::Reset() {
   // We want to go back to the beginning.
   bool mayDiscard;
-  bool restartDecoder;
+  bool restartDecoder = false;
 
   {
     MutexAutoLock lock(mFramesMutex);
@@ -100,12 +95,23 @@ AnimationSurfaceProvider::Reset()
     // this should not take too long to acquire.
     MutexAutoLock lock(mDecodingMutex);
 
-    // Recreate the decoder so we can regenerate the frames again.
-    mDecoder = DecoderFactory::CloneAnimationDecoder(mDecoder);
-    MOZ_ASSERT(mDecoder);
+    // We may have hit an error while redecoding. Because FrameAnimator is
+    // tightly coupled to our own state, that means we would need to go through
+    // some heroics to resume animating in those cases. The typical reason for
+    // a redecode to fail is out of memory, and recycling should prevent most of
+    // those errors. When image.animated.generate-full-frames has shipped
+    // enabled on a release or two, we can simply remove the old FrameAnimator
+    // blending code and simplify this quite a bit -- just always pop the next
+    // full frame and timeout off the stack.
+    if (mDecoder) {
+      mDecoder = DecoderFactory::CloneAnimationDecoder(mDecoder);
+      MOZ_ASSERT(mDecoder);
 
-    MutexAutoLock lock2(mFramesMutex);
-    restartDecoder = mFrames->Reset();
+      MutexAutoLock lock2(mFramesMutex);
+      restartDecoder = mFrames->Reset();
+    } else {
+      MOZ_ASSERT(mFrames->HasRedecodeError());
+    }
   }
 
   if (restartDecoder) {
@@ -113,9 +119,7 @@ AnimationSurfaceProvider::Reset()
   }
 }
 
-void
-AnimationSurfaceProvider::Advance(size_t aFrame)
-{
+void AnimationSurfaceProvider::Advance(size_t aFrame) {
   bool restartDecoder;
 
   {
@@ -129,9 +133,7 @@ AnimationSurfaceProvider::Advance(size_t aFrame)
   }
 }
 
-DrawableFrameRef
-AnimationSurfaceProvider::DrawableRef(size_t aFrame)
-{
+DrawableFrameRef AnimationSurfaceProvider::DrawableRef(size_t aFrame) {
   MutexAutoLock lock(mFramesMutex);
 
   if (Availability().IsPlaceholder()) {
@@ -147,9 +149,7 @@ AnimationSurfaceProvider::DrawableRef(size_t aFrame)
   return frame->DrawableRef();
 }
 
-already_AddRefed<imgFrame>
-AnimationSurfaceProvider::GetFrame(size_t aFrame)
-{
+already_AddRefed<imgFrame> AnimationSurfaceProvider::GetFrame(size_t aFrame) {
   MutexAutoLock lock(mFramesMutex);
 
   if (Availability().IsPlaceholder()) {
@@ -162,9 +162,7 @@ AnimationSurfaceProvider::GetFrame(size_t aFrame)
   return frame.forget();
 }
 
-bool
-AnimationSurfaceProvider::IsFinished() const
-{
+bool AnimationSurfaceProvider::IsFinished() const {
   MutexAutoLock lock(mFramesMutex);
 
   if (Availability().IsPlaceholder()) {
@@ -175,16 +173,12 @@ AnimationSurfaceProvider::IsFinished() const
   return mFrames->IsFirstFrameFinished();
 }
 
-bool
-AnimationSurfaceProvider::IsFullyDecoded() const
-{
+bool AnimationSurfaceProvider::IsFullyDecoded() const {
   MutexAutoLock lock(mFramesMutex);
   return mFrames->SizeKnown() && !mFrames->MayDiscard();
 }
 
-size_t
-AnimationSurfaceProvider::LogicalSizeInBytes() const
-{
+size_t AnimationSurfaceProvider::LogicalSizeInBytes() const {
   // When decoding animated images, we need at most three live surfaces: the
   // composited surface, the previous composited surface for
   // DisposalMethod::RESTORE_PREVIOUS, and the surface we're currently decoding
@@ -200,10 +194,8 @@ AnimationSurfaceProvider::LogicalSizeInBytes() const
   return 3 * size.width * size.height * sizeof(uint32_t);
 }
 
-void
-AnimationSurfaceProvider::AddSizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
-                                                 const AddSizeOfCb& aCallback)
-{
+void AnimationSurfaceProvider::AddSizeOfExcludingThis(
+    MallocSizeOf aMallocSizeOf, const AddSizeOfCb& aCallback) {
   // Note that the surface cache lock is already held here, and then we acquire
   // mFramesMutex. For this method, this ordering is unavoidable, which means
   // that we must be careful to always use the same ordering elsewhere.
@@ -211,9 +203,7 @@ AnimationSurfaceProvider::AddSizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
   mFrames->AddSizeOfExcludingThis(aMallocSizeOf, aCallback);
 }
 
-void
-AnimationSurfaceProvider::Run()
-{
+void AnimationSurfaceProvider::Run() {
   MutexAutoLock lock(mDecodingMutex);
 
   if (!mDecoder) {
@@ -254,8 +244,9 @@ AnimationSurfaceProvider::Run()
     }
 
     if (result == LexerResult(Yield::NEED_MORE_DATA)) {
-      // We can't make any more progress right now. The decoder itself will ensure
-      // that we get reenqueued when more data is available; just return for now.
+      // We can't make any more progress right now. The decoder itself will
+      // ensure that we get reenqueued when more data is available; just return
+      // for now.
       return;
     }
 
@@ -272,9 +263,7 @@ AnimationSurfaceProvider::Run()
   }
 }
 
-bool
-AnimationSurfaceProvider::CheckForNewFrameAtYield()
-{
+bool AnimationSurfaceProvider::CheckForNewFrameAtYield() {
   mDecodingMutex.AssertCurrentThreadOwns();
   MOZ_ASSERT(mDecoder);
 
@@ -299,7 +288,7 @@ AnimationSurfaceProvider::CheckForNewFrameAtYield()
 
     // Append the new frame to the list.
     AnimationFrameBuffer::InsertStatus status =
-      mFrames->Insert(std::move(frame));
+        mFrames->Insert(std::move(frame));
     switch (status) {
       case AnimationFrameBuffer::InsertStatus::DISCARD_CONTINUE:
         continueDecoding = true;
@@ -332,9 +321,7 @@ AnimationSurfaceProvider::CheckForNewFrameAtYield()
   return continueDecoding;
 }
 
-bool
-AnimationSurfaceProvider::CheckForNewFrameAtTerminalState()
-{
+bool AnimationSurfaceProvider::CheckForNewFrameAtTerminalState() {
   mDecodingMutex.AssertCurrentThreadOwns();
   MOZ_ASSERT(mDecoder);
 
@@ -364,7 +351,8 @@ AnimationSurfaceProvider::CheckForNewFrameAtTerminalState()
     }
 
     // Append the new frame to the list.
-    AnimationFrameBuffer::InsertStatus status = mFrames->Insert(std::move(frame));
+    AnimationFrameBuffer::InsertStatus status =
+        mFrames->Insert(std::move(frame));
     switch (status) {
       case AnimationFrameBuffer::InsertStatus::DISCARD_CONTINUE:
       case AnimationFrameBuffer::InsertStatus::DISCARD_YIELD:
@@ -379,7 +367,7 @@ AnimationSurfaceProvider::CheckForNewFrameAtTerminalState()
     }
 
     continueDecoding =
-      mFrames->MarkComplete(mDecoder->GetFirstFrameRefreshArea());
+        mFrames->MarkComplete(mDecoder->GetFirstFrameRefreshArea());
 
     // We only want to handle the first frame if it is the first pass for the
     // animation decoder. The owning image will be cleared after that.
@@ -395,9 +383,7 @@ AnimationSurfaceProvider::CheckForNewFrameAtTerminalState()
   return continueDecoding;
 }
 
-void
-AnimationSurfaceProvider::RequestFrameDiscarding()
-{
+void AnimationSurfaceProvider::RequestFrameDiscarding() {
   mDecodingMutex.AssertCurrentThreadOwns();
   mFramesMutex.AssertCurrentThreadOwns();
   MOZ_ASSERT(mDecoder);
@@ -407,7 +393,8 @@ AnimationSurfaceProvider::RequestFrameDiscarding()
     return;
   }
 
-  auto oldFrameQueue = static_cast<AnimationFrameRetainedBuffer*>(mFrames.get());
+  auto oldFrameQueue =
+      static_cast<AnimationFrameRetainedBuffer*>(mFrames.get());
 
   // We only recycle if it is a full frame. Partial frames may be sized
   // differently from each other. We do not support recycling with WebRender
@@ -415,8 +402,7 @@ AnimationSurfaceProvider::RequestFrameDiscarding()
   // required to know when it is safe to recycle.
   MOZ_ASSERT(!mDecoder->GetFrameRecycler());
   if (gfxPrefs::ImageAnimatedDecodeOnDemandRecycle() &&
-      mDecoder->ShouldBlendAnimation() &&
-      (!gfxVars::GetUseWebRenderOrDefault() || !gfxPrefs::ImageMemShared())) {
+      mDecoder->ShouldBlendAnimation()) {
     mFrames.reset(new AnimationFrameRecyclingQueue(std::move(*oldFrameQueue)));
     mDecoder->SetFrameRecycler(this);
   } else {
@@ -424,9 +410,7 @@ AnimationSurfaceProvider::RequestFrameDiscarding()
   }
 }
 
-void
-AnimationSurfaceProvider::AnnounceSurfaceAvailable()
-{
+void AnimationSurfaceProvider::AnnounceSurfaceAvailable() {
   mFramesMutex.AssertNotCurrentThreadOwns();
   MOZ_ASSERT(mImage);
 
@@ -438,9 +422,7 @@ AnimationSurfaceProvider::AnnounceSurfaceAvailable()
   SurfaceCache::SurfaceAvailable(WrapNotNull(this));
 }
 
-void
-AnimationSurfaceProvider::FinishDecoding()
-{
+void AnimationSurfaceProvider::FinishDecoding() {
   mDecodingMutex.AssertCurrentThreadOwns();
   MOZ_ASSERT(mDecoder);
 
@@ -473,22 +455,19 @@ AnimationSurfaceProvider::FinishDecoding()
   DropImageReference();
 }
 
-bool
-AnimationSurfaceProvider::ShouldPreferSyncRun() const
-{
+bool AnimationSurfaceProvider::ShouldPreferSyncRun() const {
   MutexAutoLock lock(mDecodingMutex);
   MOZ_ASSERT(mDecoder);
 
   return mDecoder->ShouldSyncDecode(gfxPrefs::ImageMemDecodeBytesAtATime());
 }
 
-RawAccessFrameRef
-AnimationSurfaceProvider::RecycleFrame(gfx::IntRect& aRecycleRect)
-{
+RawAccessFrameRef AnimationSurfaceProvider::RecycleFrame(
+    gfx::IntRect& aRecycleRect) {
   MutexAutoLock lock(mFramesMutex);
   MOZ_ASSERT(mFrames->IsRecycling());
   return mFrames->RecycleFrame(aRecycleRect);
 }
 
-} // namespace image
-} // namespace mozilla
+}  // namespace image
+}  // namespace mozilla

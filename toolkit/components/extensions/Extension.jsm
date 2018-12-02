@@ -244,6 +244,7 @@ var UninstallObserver = {
         ExtensionStorage.clear(addon.id, {shouldNotifyListeners: false}));
 
       // Clear any IndexedDB storage created by the extension
+      // If LSNG is enabled, this also clears localStorage.
       let baseURI = Services.io.newURI(`moz-extension://${uuid}/`);
       let principal = Services.scriptSecurityManager.createCodebasePrincipal(
         baseURI, {});
@@ -257,10 +258,14 @@ var UninstallObserver = {
 
       ExtensionStorageIDB.clearMigratedExtensionPref(addon.id);
 
-      // Clear localStorage created by the extension
-      let storage = Services.domStorageManager.getStorage(null, principal);
-      if (storage) {
-        storage.clear();
+      // If LSNG is not enabled, we need to clear localStorage explicitly using
+      // the old API.
+      if (!Services.lsm.nextGenLocalStorageEnabled) {
+        // Clear localStorage created by the extension
+        let storage = Services.domStorageManager.getStorage(null, principal);
+        if (storage) {
+          storage.clear();
+        }
       }
 
       // Remove any permissions related to the unlimitedStorage permission
@@ -892,7 +897,11 @@ class ExtensionData {
     for (let id of this.dependencies) {
       let policy = WebExtensionPolicy.getByID(id);
       if (policy) {
-        apiManagers.push(policy.extension.experimentAPIManager);
+        if (policy.extension.experimentAPIManager) {
+          apiManagers.push(policy.extension.experimentAPIManager);
+        } else if (AppConstants.DEBUG) {
+          Cu.reportError(`Cannot find experimental API exported from ${id}`);
+        }
       }
     }
 

@@ -523,9 +523,9 @@ class ADBHost(ADBCommand):
 
 class ADBDevice(ADBCommand):
     """ADBDevice is an abstract base class which provides methods which
-    can be used to interact with the associated Android or B2G based
-    device. It must be used via one of the concrete implementations in
-    :class:`ADBAndroid` or :class:`ADBB2G`.
+    can be used to interact with the associated Android-based
+    device. It must be used via the concrete implementation in
+    :class:`ADBAndroid`.
     """
     __metaclass__ = ABCMeta
 
@@ -1438,7 +1438,15 @@ class ADBDevice(ADBCommand):
                        "WifiMonitor:S",
                        "WifiStateTracker:S",
                        "wpa_supplicant:S",
-                       "NetworkStateTracker:S"],
+                       "NetworkStateTracker:S",
+                       "EmulatedCamera_Camera:S",
+                       "EmulatedCamera_Device:S",
+                       "EmulatedCamera_FakeCamera:S",
+                       "EmulatedCamera_FakeDevice:S",
+                       "EmulatedCamera_CallbackNotifier:S",
+                       "GnssLocationProvider:S",
+                       "Hyphenator:S",
+                       "BatteryStats:S"],
                    format="time",
                    filter_out_regexps=[],
                    timeout=None,
@@ -2264,8 +2272,10 @@ class ADBDevice(ADBCommand):
                         pid_i = i
                 if user_i != -1 and pid_i != -1:
                     break
-                self._logger.error('get_process_list: %s' % header)
-                if attempt >= max_attempts:
+                # if this isn't the final attempt, don't print this as an error
+                if attempt < max_attempts:
+                    self._logger.info('get_process_list: attempt: %d %s' % (attempt, header))
+                else:
                     raise ADBError('get_process_list: Unknown format: %s: %s' % (
                         header, adb_process))
             ret = []

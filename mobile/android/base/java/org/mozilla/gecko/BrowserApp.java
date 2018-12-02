@@ -89,8 +89,7 @@ import org.mozilla.gecko.dlc.DlcStudyService;
 import org.mozilla.gecko.dlc.DlcSyncService;
 import org.mozilla.gecko.extensions.ExtensionPermissionsHelper;
 import org.mozilla.gecko.firstrun.OnboardingHelper;
-import org.mozilla.gecko.gfx.DynamicToolbarAnimator;
-import org.mozilla.gecko.gfx.DynamicToolbarAnimator.PinReason;
+import org.mozilla.geckoview.DynamicToolbarAnimator.PinReason;
 import org.mozilla.gecko.home.BrowserSearch;
 import org.mozilla.gecko.home.HomeBanner;
 import org.mozilla.gecko.home.HomeConfig;
@@ -166,6 +165,7 @@ import org.mozilla.gecko.widget.AnchoredPopup;
 import org.mozilla.gecko.widget.AnimatedProgressBar;
 import org.mozilla.gecko.widget.GeckoActionProvider;
 import org.mozilla.gecko.widget.SplashScreen;
+import org.mozilla.geckoview.DynamicToolbarAnimator;
 import org.mozilla.geckoview.GeckoSession;
 
 import java.io.File;
@@ -891,7 +891,6 @@ public class BrowserApp extends GeckoApp
             @Override
             protected Void doInBackground(Void... params) {
                 super.doInBackground(params);
-                SwitchBoard.loadConfig(context, serverUrl, configStatuslistener);
                 if (GeckoPreferences.isMmaAvailableAndEnabled(context)) {
                     // Do LeanPlum start/init here
                     MmaDelegate.init(BrowserApp.this, variablesChangedListener);
@@ -1867,9 +1866,16 @@ public class BrowserApp extends GeckoApp
 
             case "Sanitize:Finished":
                 if (message.getBoolean("shutdown", false)) {
-                    // Gecko is shutting down and has called our sanitize handlers,
-                    // so we can start exiting, too.
-                    finishAndShutdown(/* restart */ false);
+                    // Gecko is shutting down and has called our sanitize handlers, so to make us
+                    // appear more responsive, we can start shutting down the UI as well, even if
+                    // that means that Android might kill our process before Gecko has fully exited.
+
+                    // There is at least one exception, though: If we want to dump a captured
+                    // profile to disk, Gecko must be able to fully shutdown, so we only kill the UI
+                    // later on, in response to the Gecko thread exiting.
+                    if (!mDumpProfileOnShutdown) {
+                        finishAndShutdown(/* restart */ false);
+                    }
                 }
                 break;
 
@@ -3144,12 +3150,13 @@ public class BrowserApp extends GeckoApp
         final MenuItem enterGuestMode = aMenu.findItem(R.id.new_guest_session);
         final MenuItem exitGuestMode = aMenu.findItem(R.id.exit_guest_session);
 
-        // Only show the "Quit" menu item on pre-ICS, television devices,
+        // Only show the "Quit" menu when capturing a profile, on television devices,
         // or if the user has explicitly enabled the clear on shutdown pref.
         // (We check the pref last to save the pref read.)
         // In ICS+, it's easy to kill an app through the task switcher.
         final SharedPreferences prefs = GeckoSharedPrefs.forProfile(this);
         final boolean visible = HardwareUtils.isTelevision() ||
+                                mDumpProfileOnShutdown ||
                                 prefs.getBoolean(GeckoPreferences.PREFS_SHOW_QUIT_MENU, false) ||
                                 !PrefUtils.getStringSet(prefs,
                                                         ClearOnShutdownPref.PREF,
@@ -3349,7 +3356,7 @@ public class BrowserApp extends GeckoApp
         if (SwitchBoard.isInExperiment(this, Experiments.TOP_ADDONS_MENU)) {
             MenuUtils.safeSetVisible(aMenu, R.id.addons_top_level, true);
             GeckoMenuItem item = (GeckoMenuItem) aMenu.findItem(R.id.addons_top_level);
-            if (item != null) {
+            if (item != null && mExtensionPermissionsHelper != null) {
                 if (mExtensionPermissionsHelper.getShowUpdateIcon()) {
                     item.setIcon(R.drawable.ic_addon_update);
                 } else {

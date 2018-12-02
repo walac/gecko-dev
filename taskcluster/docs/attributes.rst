@@ -244,6 +244,11 @@ lot of places. To support private artifacts, we've moved this to the
 ``artifact_prefix`` attribute. It will default to ``public/build`` but will be
 overrideable per-task.
 
+artifact_map
+===============
+For beetmover jobs, this indicates which yaml file should be used to
+generate the upstream artifacts and payload instructions to the task.
+
 enable-full-crashsymbols
 ========================
 In automation, full crashsymbol package generation is normally disabled.  For
@@ -255,3 +260,21 @@ cron
 ====
 Indicates that a task is meant to be run via cron tasks, and should not be run
 on push.
+
+cache_digest
+============
+Some tasks generate artifacts that are cached between pushes. This is the unique string used
+to identify the current version of the artifacts. See :py:mod:`taskgraph.util.cached_task`.
+
+cache_type
+==========
+Some tasks generate artifacts that are cached between pushes. This is the type of cache that is
+used for the this task. See :py:mod:`taskgraph.util.cached_task`.
+
+required_signoffs
+=================
+A list of release signoffs that this kind requires, should the release also
+require these signoffs. For example, ``mar-signing`` signoffs may be required
+by some releases in the future; for any releases that require ``mar-signing``
+signoffs, the kinds that also require that signoff are marked with this
+attribute.

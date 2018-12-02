@@ -4,6 +4,8 @@
 
 // @flow
 import React, { Component } from "react";
+import PropTypes from "prop-types";
+
 import classNames from "classnames";
 import Svg from "../../shared/Svg";
 
@@ -16,12 +18,13 @@ import type { LocalFrame } from "./types";
 
 type FrameTitleProps = {
   frame: Frame,
-  options: Object
+  options: Object,
+  l10n: Object
 };
 
-function FrameTitle({ frame, options = {} }: FrameTitleProps) {
-  const displayName = formatDisplayName(frame, options);
-  return <div className="title">{displayName}</div>;
+function FrameTitle({ frame, options = {}, l10n }: FrameTitleProps) {
+  const displayName = formatDisplayName(frame, options, l10n);
+  return <span className="title">{displayName}</span>;
 }
 
 type FrameLocationProps = { frame: LocalFrame, displayFullUrl: boolean };
@@ -33,10 +36,10 @@ function FrameLocation({ frame, displayFullUrl = false }: FrameLocationProps) {
 
   if (frame.library) {
     return (
-      <div className="location">
+      <span className="location">
         {frame.library}
         <Svg name={frame.library.toLowerCase()} className="annotation-logo" />
-      </div>
+      </span>
     );
   }
 
@@ -45,7 +48,12 @@ function FrameLocation({ frame, displayFullUrl = false }: FrameLocationProps) {
     ? getFileURL(source, false)
     : getFilename(source);
 
-  return <div className="location">{`${filename}:${location.line}`}</div>;
+  return (
+    <span className="location">
+      <span className="filename">{filename}</span>:
+      <span className="line">{location.line}</span>
+    </span>
+  );
 }
 
 FrameLocation.displayName = "FrameLocation";
@@ -61,16 +69,18 @@ type FrameComponentProps = {
   shouldMapDisplayName: boolean,
   toggleBlackBox: Function,
   displayFullUrl: boolean,
-  getFrameTitle?: string => string
+  getFrameTitle?: string => string,
+  disableContextMenu: boolean
 };
 
 export default class FrameComponent extends Component<FrameComponentProps> {
   static defaultProps = {
     hideLocation: false,
-    shouldMapDisplayName: true
+    shouldMapDisplayName: true,
+    disableContextMenu: false
   };
 
-  onContextMenu(event: SyntheticKeyboardEvent<HTMLElement>) {
+  onContextMenu(event: SyntheticMouseEvent<HTMLElement>) {
     const {
       frame,
       copyStackTrace,
@@ -87,11 +97,11 @@ export default class FrameComponent extends Component<FrameComponentProps> {
   }
 
   onMouseDown(
-    e: SyntheticKeyboardEvent<HTMLElement>,
+    e: SyntheticMouseEvent<HTMLElement>,
     frame: Frame,
     selectedFrame: Frame
   ) {
-    if (e.which == 3) {
+    if (e.button !== 0) {
       return;
     }
     this.props.selectFrame(frame);
@@ -115,8 +125,10 @@ export default class FrameComponent extends Component<FrameComponentProps> {
       hideLocation,
       shouldMapDisplayName,
       displayFullUrl,
-      getFrameTitle
+      getFrameTitle,
+      disableContextMenu
     } = this.props;
+    const { l10n } = this.context;
 
     const className = classNames("frame", {
       selected: selectedFrame && selectedFrame.id === frame.id
@@ -128,23 +140,34 @@ export default class FrameComponent extends Component<FrameComponentProps> {
         )
       : undefined;
 
+    const tabChar = "\t";
+    const newLineChar = "\n";
+
     return (
       <li
         key={frame.id}
         className={className}
         onMouseDown={e => this.onMouseDown(e, frame, selectedFrame)}
         onKeyUp={e => this.onKeyUp(e, frame, selectedFrame)}
-        onContextMenu={e => this.onContextMenu(e)}
+        onContextMenu={disableContextMenu ? null : e => this.onContextMenu(e)}
         tabIndex={0}
         title={title}
       >
-        <FrameTitle frame={frame} options={{ shouldMapDisplayName }} />
+        {tabChar}
+        <FrameTitle
+          frame={frame}
+          options={{ shouldMapDisplayName }}
+          l10n={l10n}
+        />
+        {!hideLocation && " "}
         {!hideLocation && (
           <FrameLocation frame={frame} displayFullUrl={displayFullUrl} />
         )}
+        {newLineChar}
       </li>
     );
   }
 }
 
 FrameComponent.displayName = "Frame";
+FrameComponent.contextTypes = { l10n: PropTypes.object };

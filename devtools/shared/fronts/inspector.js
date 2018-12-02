@@ -8,6 +8,7 @@ const telemetry = new Telemetry();
 const TELEMETRY_EYEDROPPER_OPENED = "DEVTOOLS_EYEDROPPER_OPENED_COUNT";
 const TELEMETRY_EYEDROPPER_OPENED_MENU = "DEVTOOLS_MENU_EYEDROPPER_OPENED_COUNT";
 const SHOW_ALL_ANONYMOUS_CONTENT_PREF = "devtools.inspector.showAllAnonymousContent";
+const SHOW_UA_SHADOW_ROOTS_PREF = "devtools.inspector.showUserAgentShadowRoots";
 
 const {
   Front,
@@ -171,13 +172,14 @@ const WalkerFront = FrontClassWithSpec(walkerSpec, {
     impl: "_querySelector",
   }),
 
-  getNodeActorFromObjectActor: custom(function(objectActorID) {
-    return this._getNodeActorFromObjectActor(objectActorID).then(response => {
-      return response ? response.node : null;
-    });
-  }, {
-    impl: "_getNodeActorFromObjectActor",
-  }),
+  gripToNodeFront: async function(grip) {
+    const response = await this.getNodeActorFromObjectActor(grip.actor);
+    const nodeFront = response ? response.node : null;
+    if (!nodeFront) {
+      throw new Error("The ValueGrip passed could not be translated to a NodeFront");
+    }
+    return nodeFront;
+  },
 
   getNodeActorFromWindowID: custom(function(windowID) {
     return this._getNodeActorFromWindowID(windowID).then(response => {
@@ -478,7 +480,12 @@ var InspectorFront = FrontClassWithSpec(inspectorSpec, {
   _getWalker: async function() {
     const showAllAnonymousContent = Services.prefs.getBoolPref(
       SHOW_ALL_ANONYMOUS_CONTENT_PREF);
-    this.walker = await this.getWalker({ showAllAnonymousContent });
+    const showUserAgentShadowRoots = Services.prefs.getBoolPref(
+      SHOW_UA_SHADOW_ROOTS_PREF);
+    this.walker = await this.getWalker({
+      showAllAnonymousContent,
+      showUserAgentShadowRoots,
+    });
   },
 
   _getHighlighter: async function() {
@@ -491,8 +498,13 @@ var InspectorFront = FrontClassWithSpec(inspectorSpec, {
   },
 
   destroy: function() {
+    // Selection isn't a Front and so isn't managed by InspectorFront
+    // and has to be destroyed manually
+    this.selection.destroy();
+    // Highlighter fronts are managed by InspectorFront and so will be
+    // automatically destroyed. But we have to clear the `_highlighters`
+    // Map as well as explicitly call `finalize` request on all of them.
     this.destroyHighlighters();
-    delete this.walker;
     Front.prototype.destroy.call(this);
   },
 

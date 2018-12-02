@@ -45,8 +45,6 @@ const GEO_PREF = "browser.search.region";
 const SPOCS_GEOS = ["US"];
 const IS_NIGHTLY_OR_UNBRANDED_BUILD = ["nightly", "default"].includes(UpdateUtils.getUpdateChannel(true));
 
-const ONE_HOUR_IN_MS = 60 * 60 * 1000;
-
 // Determine if spocs should be shown for a geo/locale
 function showSpocs({geo}) {
   return SPOCS_GEOS.includes(geo);
@@ -202,34 +200,16 @@ const PREFS_CONFIG = new Map([
     title: "Does the user allow CFR recommendations?",
     value: true,
   }],
-  ["asrouter.messageProviders", {
-    title: "Configuration for ASRouter message providers",
-
-    /**
-     * Each provider must have a unique id and a type of "local" or "remote".
-     * Local providers must specify the name of an ASRouter message provider.
-     * Remote providers must specify a `url` and an `updateCycleInMs`.
-     * Each provider must also have an `enabled` boolean.
-     */
-    value: JSON.stringify([{
+  ["asrouter.providers.onboarding", {
+    title: "Configuration for onboarding provider",
+    value: JSON.stringify({
       id: "onboarding",
       type: "local",
       localProvider: "OnboardingMessageProvider",
       enabled: true,
-    }, {
-      id: "snippets",
-      type: "remote",
-      url: "https://snippets.cdn.mozilla.net/%STARTPAGE_VERSION%/%NAME%/%VERSION%/%APPBUILDID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/",
-      updateCycleInMs: ONE_HOUR_IN_MS * 4,
-      enabled: false,
-    }, {
-      id: "cfr",
-      type: "local",
-      localProvider: "CFRMessageProvider",
-      enabled: IS_NIGHTLY_OR_UNBRANDED_BUILD,
-      cohort: IS_NIGHTLY_OR_UNBRANDED_BUILD ? "nightly" : "",
-    }]),
+    }),
   }],
+  // See browser/app/profile/firefox.js for other ASR preferences. They must be defined there to enable roll-outs.
 ]);
 
 // Array of each feed's FEEDS_CONFIG factory and values to add to PREFS_CONFIG

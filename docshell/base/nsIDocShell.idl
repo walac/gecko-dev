@@ -82,38 +82,6 @@ interface nsIDocShell : nsIDocShellTreeItem
    */
   [noscript]void loadURI(in nsDocShellLoadStatePtr loadState);
 
-  const long INTERNAL_LOAD_FLAGS_NONE                    = 0x0;
-  const long INTERNAL_LOAD_FLAGS_INHERIT_PRINCIPAL       = 0x1;
-  const long INTERNAL_LOAD_FLAGS_DONT_SEND_REFERRER      = 0x2;
-  const long INTERNAL_LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP = 0x4;
-
-  // This flag marks the first load in this object
-  // @see nsIWebNavigation::LOAD_FLAGS_FIRST_LOAD
-  const long INTERNAL_LOAD_FLAGS_FIRST_LOAD              = 0x8;
-
-
-  // The set of flags that should not be set before calling into
-  // nsDocShell::LoadURI and other nsDocShell loading functions.
-  const long INTERNAL_LOAD_FLAGS_LOADURI_SETUP_FLAGS     = 0xf;
-
-
-  const long INTERNAL_LOAD_FLAGS_BYPASS_CLASSIFIER       = 0x10;
-  const long INTERNAL_LOAD_FLAGS_FORCE_ALLOW_COOKIES     = 0x20;
-
-  // Whether the load should be treated as srcdoc load, rather than a URI one.
-  const long INTERNAL_LOAD_FLAGS_IS_SRCDOC               = 0x40;
-
-  // Whether this is the load of a frame's original src attribute
-  const long INTERNAL_LOAD_FLAGS_ORIGINAL_FRAME_SRC      = 0x80;
-
-  const long INTERNAL_LOAD_FLAGS_NO_OPENER               = 0x100;
-
-  // Whether a top-level data URI navigation is allowed for that load
-  const long INTERNAL_LOAD_FLAGS_FORCE_ALLOW_DATA_URI    = 0x200;
-
-  // Whether the load was triggered by user interaction.
-  const long INTERNAL_LOAD_FLAGS_IS_USER_TRIGGERED       = 0x1000;
-
   /**
    * Loads the given URI.  This method is identical to loadURI(...) except
    * that its parameter list is broken out instead of being packaged inside
@@ -137,6 +105,9 @@ interface nsIDocShell : nsIDocShellTreeItem
    * @param aLoadReplace         - If set LOAD_REPLACE flag will be set on the
    *                               channel. aOriginalURI is null, this argument is
    *                               ignored.
+   * @param aIsFromProcessingFrameAttributes
+   *          - If this is a load triggered by changing frame attributes.
+   *            See nsILoadInfo.isFromProcessingFrameAttributes
    * @param aReferrer            - Referring URI
    * @param aReferrerPolicy      - Referrer policy
    * @param aTriggeringPrincipal - A non-null principal that initiated that load.
@@ -184,6 +155,7 @@ interface nsIDocShell : nsIDocShellTreeItem
                               [const] in MaybeURI aResultPrincipalURI,
                               in bool aKeepResultPrincipalURIIfSet,
                               in boolean aLoadReplace,
+                              in boolean aIsFromProcessingFrameAttributes,
                               in nsIURI aReferrer,
                               in unsigned long aReferrerPolicy,
                               in nsIPrincipal aTriggeringPrincipal,
@@ -238,18 +210,18 @@ interface nsIDocShell : nsIDocShellTreeItem
   /**
    * Presentation context for the currently loaded document.  This may be null.
    */
-  [noscript] readonly attribute nsPresContext presContext;
+  [notxpcom,nostdcall] readonly attribute nsPresContext presContext;
 
   /**
    * Presentation shell for the currently loaded document.  This may be null.
    */
-  [noscript,notxpcom] nsIPresShell GetPresShell();
+  [notxpcom,nostdcall] readonly attribute nsIPresShell presShell;
 
   /**
    * Presentation shell for the oldest document, if this docshell is
    * currently transitioning between documents.
    */
-  [noscript] readonly attribute nsIPresShell eldestPresShell;
+  [notxpcom,nostdcall] readonly attribute nsIPresShell eldestPresShell;
 
   /**
    * Content Viewer that is currently loaded for this DocShell.  This may
@@ -351,20 +323,29 @@ interface nsIDocShell : nsIDocShellTreeItem
    * @param aDirection - Whether to enumerate forwards or backwards.
    */
 
-  const long ENUMERATE_FORWARDS  = 0;
-  const long ENUMERATE_BACKWARDS = 1;
+  cenum DocShellEnumeratorDirection : 8 {
+    ENUMERATE_FORWARDS  = 0,
+    ENUMERATE_BACKWARDS = 1
+  };
 
   nsISimpleEnumerator getDocShellEnumerator(in long aItemType,
-                                            in long aDirection);
+                                            in nsIDocShell_DocShellEnumeratorDirection aDirection);
 
   /**
-   * The type of application that created this window
+   * The type of application that created this window.
+   *
+   * DO NOT DELETE, see bug 176166. For firefox, this value will always be
+   * UNKNOWN. However, it is used heavily in Thunderbird/comm-central and we
+   * don't really have a great replacement at the moment, so we'll just leave it
+   * here.
    */
-  const unsigned long APP_TYPE_UNKNOWN  = 0;
-  const unsigned long APP_TYPE_MAIL     = 1;
-  const unsigned long APP_TYPE_EDITOR   = 2;
+  cenum AppType : 8 {
+    APP_TYPE_UNKNOWN = 0,
+    APP_TYPE_MAIL    = 1,
+    APP_TYPE_EDITOR  = 2
+  };
 
-  attribute unsigned long appType;
+  [infallible] attribute nsIDocShell_AppType appType;
 
   /**
    * certain dochshells (like the message pane)
@@ -412,25 +393,30 @@ interface nsIDocShell : nsIDocShellTreeItem
   /**
    * Current busy state for DocShell
    */
-  const unsigned long BUSY_FLAGS_NONE             = 0;
-  const unsigned long BUSY_FLAGS_BUSY             = 1;
-  const unsigned long BUSY_FLAGS_BEFORE_PAGE_LOAD = 2;
-  const unsigned long BUSY_FLAGS_PAGE_LOADING     = 4;
+  cenum BusyFlags : 8 {
+    BUSY_FLAGS_NONE             = 0,
+    BUSY_FLAGS_BUSY             = 1,
+    BUSY_FLAGS_BEFORE_PAGE_LOAD = 2,
+    BUSY_FLAGS_PAGE_LOADING     = 4,
+  };
+
+  [infallible] readonly attribute nsIDocShell_BusyFlags busyFlags;
 
   /**
    * Load commands for the document
    */
-  const unsigned long LOAD_CMD_NORMAL  = 0x1;   // Normal load
-  const unsigned long LOAD_CMD_RELOAD  = 0x2;   // Reload
-  const unsigned long LOAD_CMD_HISTORY = 0x4;   // Load from history
-  const unsigned long LOAD_CMD_PUSHSTATE = 0x8; // History.pushState()
-
-  readonly attribute unsigned long busyFlags;
+  cenum LoadCommand : 8 {
+    LOAD_CMD_NORMAL  = 0x1,   // Normal load
+    LOAD_CMD_RELOAD  = 0x2,   // Reload
+    LOAD_CMD_HISTORY = 0x4,   // Load from history
+    LOAD_CMD_PUSHSTATE = 0x8, // History.pushState()
+  };
 
   /*
-   * attribute to access the loadtype  for the document
+   * Attribute to access the loadtype for the document. LoadType Enum is
+   * defined in nsDocShellLoadTypes.h
    */
-  attribute unsigned long  loadType;
+  [infallible] attribute unsigned long loadType;
 
   /*
    * Default load flags (as defined in nsIRequest) that will be set on all
@@ -559,7 +545,7 @@ interface nsIDocShell : nsIDocShellTreeItem
    * The original offset of this child in its container. This property is -1 for
    * dynamically added docShells.
    */
-  [noscript] attribute long childOffset;
+  [notxpcom,nostdcall] attribute long childOffset;
 
   /**
    * Find out whether the docshell is currently in the middle of a page
@@ -620,12 +606,6 @@ interface nsIDocShell : nsIDocShellTreeItem
   [infallible] readonly attribute boolean hasTrackingContentLoaded;
 
    /**
-   * This attribute determines whether a document has Slow Tracking Content
-   * that has been blocked from loading.
-   */
-   [infallible] readonly attribute boolean hasSlowTrackingContentBlocked;
-
-   /**
    * This attribute determines whether a document seen cookies or storage
    * blocked due to a site permission being denied.
    */
@@ -648,6 +628,12 @@ interface nsIDocShell : nsIDocShellTreeItem
    * blocked due to cookie behavior settings blocking all third-party cookies.
    */
    [infallible] readonly attribute boolean hasForeignCookiesBeenBlocked;
+
+   /**
+   * This attribute determines whether a document seen cookies or storage
+   * attempts ever whether they've been allowed or blocked.
+   */
+   [infallible] readonly attribute boolean hasCookiesLoaded;
 
   /**
    * Disconnects this docshell's editor from its window, and stores the
@@ -712,13 +698,6 @@ interface nsIDocShell : nsIDocShellTreeItem
    * @param aPrincipal the principal to use for the new document.
    */
   void createAboutBlankContentViewer(in nsIPrincipal aPrincipal);
-
-  /**
-   * Like createAboutBlankContentViewer, but don't check for permit unload.
-   * Only used by special session history operation.
-   * @param aPrincipal the principal to use for the new document.
-   */
-  [noscript] void forceCreateAboutBlankContentViewer(in nsIPrincipal aPrincipal);
 
   /**
    * Upon getting, returns the canonical encoding label of the document
@@ -822,10 +801,11 @@ interface nsIDocShell : nsIDocShellTreeItem
   /**
    * The type of iframe that this docshell lives.
    */
-  const unsigned long FRAME_TYPE_REGULAR = 0;
-  const unsigned long FRAME_TYPE_BROWSER = 1;
-
-  [infallible] attribute unsigned long frameType;
+  cenum FrameType : 8 {
+    FRAME_TYPE_REGULAR = 0,
+    FRAME_TYPE_BROWSER = 1,
+  };
+  [infallible] attribute nsIDocShell_FrameType frameType;
 
   /**
    * Returns true if this docshell corresponds to an <iframe mozbrowser>.
@@ -1091,6 +1071,8 @@ interface nsIDocShell : nsIDocShellTreeItem
                                                                   in string asyncCause);
   [noscript,notxpcom,nostdcall] void notifyJSRunToCompletionStop();
 
+  [noscript] void GetOSHEId(out uint32_t aSHEntryId);
+
   /**
    * This attribute determines whether a document which is not about:blank has
    * already be loaded by this docShell.
@@ -1132,45 +1114,51 @@ interface nsIDocShell : nsIDocShellTreeItem
 
   [noscript,nostdcall,notxpcom] nsICommandManager GetCommandManager();
 
+  cenum TouchEventsOverride: 8 {
+    /**
+     * Override platform/pref default behaviour and force-disable touch events.
+     */
+    TOUCHEVENTS_OVERRIDE_DISABLED = 0,
+    /**
+     * Override platform/pref default behaviour and force-enable touch events.
+     */
+    TOUCHEVENTS_OVERRIDE_ENABLED = 1,
+    /**
+     * Don't override the platform/pref default behaviour for touch events.
+     */
+    TOUCHEVENTS_OVERRIDE_NONE = 2,
+  };
+
   /**
    * This allows chrome to override the default choice of whether touch events
    * are available on a specific docshell. Possible values are listed below.
    */
-  attribute unsigned long touchEventsOverride;
-  /**
-   * Override platform/pref default behaviour and force-disable touch events.
-   */
-  const unsigned long TOUCHEVENTS_OVERRIDE_DISABLED = 0;
-  /**
-   * Override platform/pref default behaviour and force-enable touch events.
-   */
-  const unsigned long TOUCHEVENTS_OVERRIDE_ENABLED = 1;
-  /**
-   * Don't override the platform/pref default behaviour for touch events.
-   */
-  const unsigned long TOUCHEVENTS_OVERRIDE_NONE = 2;
+  [infallible] attribute nsIDocShell_TouchEventsOverride touchEventsOverride;
 
-  /**
-   * Override platform/pref default behaviour and force-disable support for
-   * <meta name="viewport">.
-   */
-  const unsigned long META_VIEWPORT_OVERRIDE_DISABLED = 0;
-  /**
-   * Override platform/pref default behaviour and force-enable support for
-   * <meta name="viewport">.
-   */
-  const unsigned long META_VIEWPORT_OVERRIDE_ENABLED = 1;
-  /**
-   * Don't override the platform/pref default behaviour for support for
-   * <meta name="viewport">.
-   */
-  const unsigned long META_VIEWPORT_OVERRIDE_NONE = 2;
+  cenum MetaViewportOverride: 8 {
+    /**
+     * Override platform/pref default behaviour and force-disable support for
+     * <meta name="viewport">.
+     */
+    META_VIEWPORT_OVERRIDE_DISABLED = 0,
+    /**
+     * Override platform/pref default behaviour and force-enable support for
+     * <meta name="viewport">.
+     */
+    META_VIEWPORT_OVERRIDE_ENABLED = 1,
+    /**
+     * Don't override the platform/pref default behaviour for support for
+     * <meta name="viewport">.
+     */
+    META_VIEWPORT_OVERRIDE_NONE = 2,
+  };
+
   /**
    * This allows chrome to override the default choice of whether the
    * <meta name="viewport"> tag is respected in a specific docshell.
    * Possible values are listed above.
    */
-  attribute unsigned long metaViewportOverride;
+  [infallible] attribute nsIDocShell_MetaViewportOverride metaViewportOverride;
 
   /**
    * This value is `true` if its corresponding unit of related browsing contexts
@@ -1232,9 +1220,6 @@ interface nsIDocShell : nsIDocShellTreeItem
    */
   mozilla::HTMLEditor* GetHTMLEditor();
   nsresult SetHTMLEditor(mozilla::HTMLEditor* aHTMLEditor);
-
-  void AttachBrowsingContext(nsIDocShell* aParentDocShell);
-  void DetachBrowsingContext();
 %}
 
   /**
@@ -1244,18 +1229,20 @@ interface nsIDocShell : nsIDocShellTreeItem
 
   /**
    * Allowed CSS display modes. This needs to be kept in
-   * sync with similar values in nsStyleConsts.h
+   * sync with similar values in ServoStyleConsts.h
    */
-  const unsigned long DISPLAY_MODE_BROWSER = 0;
-  const unsigned long DISPLAY_MODE_MINIMAL_UI = 1;
-  const unsigned long DISPLAY_MODE_STANDALONE = 2;
-  const unsigned long DISPLAY_MODE_FULLSCREEN = 3;
+  cenum DisplayMode: 8 {
+    DISPLAY_MODE_BROWSER = 0,
+    DISPLAY_MODE_MINIMAL_UI = 1,
+    DISPLAY_MODE_STANDALONE = 2,
+    DISPLAY_MODE_FULLSCREEN = 3,
+  };
 
   /**
    * Display mode for this docshell. Defaults to DISPLAY_MODE_BROWSER.
    * Media queries only look at the value in the top-most docshell.
    */
-  attribute unsigned long displayMode;
+  [infallible] attribute nsIDocShell_DisplayMode displayMode;
 
   /**
    * The message manager for this docshell.  This does not throw, but

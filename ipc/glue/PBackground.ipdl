@@ -6,6 +6,10 @@ include protocol PAsmJSCacheEntry;
 include protocol PBackgroundIDBFactory;
 include protocol PBackgroundIndexedDBUtils;
 include protocol PBackgroundSDBConnection;
+include protocol PBackgroundLSDatabase;
+include protocol PBackgroundLSObserver;
+include protocol PBackgroundLSRequest;
+include protocol PBackgroundLSSimpleRequest;
 include protocol PBackgroundLocalStorageCache;
 include protocol PBackgroundStorage;
 include protocol PBackgroundTest;
@@ -21,6 +25,9 @@ include protocol PGamepadTestChannel;
 include protocol PHttpBackgroundChannel;
 include protocol PIPCBlobInputStream;
 include protocol PPendingIPCBlob;
+include protocol PRemoteWorker;
+include protocol PRemoteWorkerService;
+include protocol PSharedWorker;
 include protocol PTemporaryIPCBlob;
 include protocol PMessagePort;
 include protocol PCameras;
@@ -41,10 +48,12 @@ include DOMTypes;
 include IPCBlob;
 include IPCServiceWorkerDescriptor;
 include IPCServiceWorkerRegistrationDescriptor;
+include PBackgroundLSSharedTypes;
 include PBackgroundSharedTypes;
 include PBackgroundIDBSharedTypes;
 include PFileSystemParams;
 include ProtocolTypes;
+include RemoteWorkerTypes;
 include MIDITypes;
 
 include "mozilla/dom/cache/IPCUtils.h";
@@ -68,6 +77,10 @@ sync protocol PBackground
   manages PBackgroundIDBFactory;
   manages PBackgroundIndexedDBUtils;
   manages PBackgroundSDBConnection;
+  manages PBackgroundLSDatabase;
+  manages PBackgroundLSObserver;
+  manages PBackgroundLSRequest;
+  manages PBackgroundLSSimpleRequest;
   manages PBackgroundLocalStorageCache;
   manages PBackgroundStorage;
   manages PBackgroundTest;
@@ -83,6 +96,9 @@ sync protocol PBackground
   manages PHttpBackgroundChannel;
   manages PIPCBlobInputStream;
   manages PPendingIPCBlob;
+  manages PRemoteWorker;
+  manages PRemoteWorkerService;
+  manages PSharedWorker;
   manages PTemporaryIPCBlob;
   manages PMessagePort;
   manages PCameras;
@@ -111,6 +127,27 @@ parent:
   async FlushPendingFileDeletions();
 
   async PBackgroundSDBConnection(PrincipalInfo principalInfo);
+
+  async PBackgroundLSDatabase(PrincipalInfo principalInfo,
+                              uint32_t privateBrowsingId,
+                              uint64_t datastoreId);
+
+  async PBackgroundLSObserver(uint64_t observerId);
+
+  /**
+   * Issue an asynchronous request that will be used in a synchronous fashion
+   * through complex machinations described in `PBackgroundLSRequest.ipdl` and
+   * `LSObject.h`.
+   */
+  async PBackgroundLSRequest(LSRequestParams params);
+
+  /**
+   * Issues a simple, non-cancelable asynchronous request that's used in an
+   * asynchronous fashion by callers.  (LSRequest is not simple because it used
+   * in a synchronous fashion which leads to complexities regarding cancelation,
+   * see `PBackgroundLSRequest.ipdl` for details.)
+   */
+  async PBackgroundLSSimpleRequest(LSSimpleRequestParams params);
 
   async PBackgroundLocalStorageCache(PrincipalInfo principalInfo,
                                      nsCString originKey,
@@ -153,6 +190,10 @@ parent:
 
   async PWebAuthnTransaction();
 
+  async PSharedWorker(RemoteWorkerData data,
+                      uint64_t windowID,
+                      MessagePortIdentifier portIdentifier);
+
   async PTemporaryIPCBlob();
 
   async PClientManager();
@@ -166,6 +207,8 @@ parent:
 
   async PServiceWorker(IPCServiceWorkerDescriptor aDescriptor);
 
+  async PRemoteWorkerService();
+
   async PServiceWorkerContainer();
 
   async PServiceWorkerRegistration(IPCServiceWorkerRegistrationDescriptor aDescriptor);
@@ -178,6 +221,7 @@ child:
 
   async PPendingIPCBlob(IPCBlob blob);
 
+  async PRemoteWorker(RemoteWorkerData data);
 both:
   // PIPCBlobInputStream is created on the parent side only if the child starts
   // a migration.

@@ -22,6 +22,7 @@ UNIFIED_SOURCES += [
     'testChromeBuffer.cpp',
     'testCloneScript.cpp',
     'testCompileNonSyntactic.cpp',
+    'testCompileUtf8.cpp',
     'testDateToLocaleString.cpp',
     'testDebugger.cpp',
     'testDeepFreeze.cpp',
@@ -30,6 +31,7 @@ UNIFIED_SOURCES += [
     'testDefinePropertyIgnoredAttributes.cpp',
     'testDeflateStringToUTF8Buffer.cpp',
     'testDifferentNewTargetInvokeConstructor.cpp',
+    'testEmptyWindowIsOmitted.cpp',
     'testErrorCopying.cpp',
     'testErrorLineOfContext.cpp',
     'testException.cpp',
@@ -111,6 +113,7 @@ UNIFIED_SOURCES += [
     'testUTF8.cpp',
     'testWasmLEB128.cpp',
     'testWeakMap.cpp',
+    'testWindowNonConfigurable.cpp',
     'testXDR.cpp',
 ]
 

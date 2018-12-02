@@ -6,18 +6,16 @@
 
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm", this);
-ChromeUtils.import("resource://gre/modules/FileUtils.jsm", this);
-ChromeUtils.import("resource://gre/modules/Services.jsm", this);
-ChromeUtils.import("resource://gre/modules/ctypes.jsm", this);
-ChromeUtils.import("resource://gre/modules/UpdateTelemetry.jsm", this);
-ChromeUtils.import("resource://gre/modules/AppConstants.jsm", this);
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/FileUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/UpdateTelemetry.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 XPCOMUtils.defineLazyGlobalGetters(this, ["DOMParser", "XMLHttpRequest"]);
 
 const UPDATESERVICE_CID = Components.ID("{B3C290A6-3943-4B89-8BBE-C01EB7B3B311}");
 
 const PREF_APP_UPDATE_ALTWINDOWTYPE        = "app.update.altwindowtype";
-const PREF_APP_UPDATE_AUTO                 = "app.update.auto";
 const PREF_APP_UPDATE_BACKGROUNDINTERVAL   = "app.update.download.backgroundInterval";
 const PREF_APP_UPDATE_BACKGROUNDERRORS     = "app.update.backgroundErrors";
 const PREF_APP_UPDATE_BACKGROUNDMAXERRORS  = "app.update.backgroundMaxErrors";
@@ -60,6 +58,7 @@ const DIR_UPDATES         = "updates";
 
 const FILE_ACTIVE_UPDATE_XML = "active-update.xml";
 const FILE_BACKUP_UPDATE_LOG = "backup-update.log";
+const FILE_BT_RESULT         = "bt.result";
 const FILE_LAST_UPDATE_LOG   = "last-update.log";
 const FILE_UPDATES_XML       = "updates.xml";
 const FILE_UPDATE_LOG        = "update.log";
@@ -98,6 +97,7 @@ const WRITE_ERROR_CALLBACK_APP             = 37;
 const SERVICE_COULD_NOT_COPY_UPDATER       = 49;
 const SERVICE_STILL_APPLYING_TERMINATED    = 50;
 const SERVICE_STILL_APPLYING_NO_EXIT_CODE  = 51;
+const SERVICE_COULD_NOT_IMPERSONATE        = 58;
 const WRITE_ERROR_FILE_COPY                = 61;
 const WRITE_ERROR_DELETE_FILE              = 62;
 const WRITE_ERROR_OPEN_PATCH_FILE          = 63;
@@ -137,7 +137,8 @@ const SERVICE_ERRORS = [SERVICE_UPDATER_COULD_NOT_BE_STARTED,
                         SERVICE_INSTALLDIR_ERROR,
                         SERVICE_COULD_NOT_COPY_UPDATER,
                         SERVICE_STILL_APPLYING_TERMINATED,
-                        SERVICE_STILL_APPLYING_NO_EXIT_CODE];
+                        SERVICE_STILL_APPLYING_NO_EXIT_CODE,
+                        SERVICE_COULD_NOT_IMPERSONATE];
 
 // Error codes 80 through 99 are reserved for nsUpdateService.js and are not
 // defined in common/errors.h
@@ -193,18 +194,15 @@ var gUpdateMutexHandle = null;
 // session
 var gUpdateDirPermissionFixAttempted = false;
 
-ChromeUtils.defineModuleGetter(this, "UpdateUtils",
-                               "resource://gre/modules/UpdateUtils.jsm");
-ChromeUtils.defineModuleGetter(this, "WindowsRegistry",
-                               "resource://gre/modules/WindowsRegistry.jsm");
-ChromeUtils.defineModuleGetter(this, "AsyncShutdown",
-                               "resource://gre/modules/AsyncShutdown.jsm");
-ChromeUtils.defineModuleGetter(this, "OS",
-                               "resource://gre/modules/osfile.jsm");
-ChromeUtils.defineModuleGetter(this, "CertUtils",
-                               "resource://gre/modules/CertUtils.jsm");
-ChromeUtils.defineModuleGetter(this, "DeferredTask",
-                               "resource://gre/modules/DeferredTask.jsm");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
+  CertUtils: "resource://gre/modules/CertUtils.jsm",
+  ctypes: "resource://gre/modules/ctypes.jsm",
+  DeferredTask: "resource://gre/modules/DeferredTask.jsm",
+  OS: "resource://gre/modules/osfile.jsm",
+  UpdateUtils: "resource://gre/modules/UpdateUtils.jsm",
+  WindowsRegistry: "resource://gre/modules/WindowsRegistry.jsm",
+});
 
 XPCOMUtils.defineLazyGetter(this, "gLogEnabled", function aus_gLogEnabled() {
   return Services.prefs.getBoolPref(PREF_APP_UPDATE_LOG, false);
@@ -651,6 +649,29 @@ function readStatusFile(dir) {
 }
 
 /**
+ * Reads the binary transparency result file from the given directory.
+ * Removes the file if it is present (so don't call this twice and expect a
+ * result the second time).
+ * @param   dir
+ *          The dir to look for an update.bt file in
+ * @return  A error code from verifying binary transparency information or null
+ *          if the file was not present (indicating there was no error).
+ */
+function readBinaryTransparencyResult(dir) {
+  let binaryTransparencyResultFile = dir.clone();
+  binaryTransparencyResultFile.append(FILE_BT_RESULT);
+  let result = readStringFromFile(binaryTransparencyResultFile);
+  LOG("readBinaryTransparencyResult - result: " + result + ", path: "
+      + binaryTransparencyResultFile.path);
+  // If result is non-null, the file exists. We should remove it to avoid
+  // double-reporting this result.
+  if (result) {
+    binaryTransparencyResultFile.remove(false);
+  }
+  return result;
+}
+
+/**
  * Writes the current update operation/state to a file in the patch
  * directory, indicating to the patching system that operations need
  * to be performed.
@@ -1056,6 +1077,10 @@ function pingStateAndStatusCodes(aUpdate, aStartup, aStatus) {
       }
       AUSTLMY.pingStatusErrorCode(suffix, statusErrorCode);
     }
+  }
+  let binaryTransparencyResult = readBinaryTransparencyResult(getUpdatesDir());
+  if (binaryTransparencyResult) {
+    AUSTLMY.pingBinaryTransparencyResult(suffix, parseInt(binaryTransparencyResult));
   }
   AUSTLMY.pingStateCode(suffix, stateCode);
 }
@@ -1660,6 +1685,11 @@ UpdateService.prototype = {
   observe: function AUS_observe(subject, topic, data) {
     switch (topic) {
       case "post-update-processing":
+        // This pref was not cleared out of profiles after it stopped being used
+        // (Bug 1420514), so clear it out on the next update to avoid confusion
+        // regarding its use.
+        Services.prefs.clearUserPref("app.update.enabled");
+
         if (readStatusFile(getUpdatesDir()) == STATE_SUCCEEDED) {
           // After a successful update the post update preference needs to be
           // set early during startup so applications can perform post update
@@ -2080,8 +2110,10 @@ UpdateService.prototype = {
     // Histogram IDs:
     // UPDATE_NOT_PREF_UPDATE_AUTO_EXTERNAL
     // UPDATE_NOT_PREF_UPDATE_AUTO_NOTIFY
-    AUSTLMY.pingBoolPref("UPDATE_NOT_PREF_UPDATE_AUTO_" + this._pingSuffix,
-                         PREF_APP_UPDATE_AUTO, true, true);
+    UpdateUtils.getAppUpdateAutoEnabled().then(enabled => {
+      AUSTLMY.pingGeneric("UPDATE_NOT_PREF_UPDATE_AUTO_" + this._pingSuffix,
+                          enabled, true);
+    });
     // Histogram IDs:
     // UPDATE_NOT_PREF_UPDATE_STAGING_ENABLED_EXTERNAL
     // UPDATE_NOT_PREF_UPDATE_STAGING_ENABLED_NOTIFY
@@ -2296,7 +2328,7 @@ UpdateService.prototype = {
    * @param   updates
    *          An array of available updates
    */
-  _selectAndInstallUpdate: function AUS__selectAndInstallUpdate(updates) {
+  _selectAndInstallUpdate: async function AUS__selectAndInstallUpdate(updates) {
     // Return early if there's an active update. The user is already aware and
     // is downloading or performed some user action to prevent notification.
     var um = Cc["@mozilla.org/updates/update-manager;1"].
@@ -2359,7 +2391,8 @@ UpdateService.prototype = {
      * Major         Notify
      * Minor         Auto Install
      */
-    if (!Services.prefs.getBoolPref(PREF_APP_UPDATE_AUTO, true)) {
+    let updateAuto = await UpdateUtils.getAppUpdateAutoEnabled();
+    if (!updateAuto) {
       LOG("UpdateService:_selectAndInstallUpdate - prompting because silent " +
           "install is disabled. Notifying observers. topic: update-available, " +
           "status: show-prompt");

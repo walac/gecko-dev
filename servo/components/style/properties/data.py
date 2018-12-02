@@ -270,12 +270,12 @@ class Longhand(object):
 
     def base_type(self):
         if self.predefined_type and not self.is_vector:
-            return "::values::specified::{}".format(self.predefined_type)
+            return "crate::values::specified::{}".format(self.predefined_type)
         return "longhands::{}::SpecifiedValue".format(self.ident)
 
     def specified_type(self):
         if self.predefined_type and not self.is_vector:
-            ty = "::values::specified::{}".format(self.predefined_type)
+            ty = "crate::values::specified::{}".format(self.predefined_type)
         else:
             ty = "longhands::{}::SpecifiedValue".format(self.ident)
         if self.boxed:
@@ -291,6 +291,8 @@ class Longhand(object):
                 "AlignItems",
                 "AlignSelf",
                 "Appearance",
+                "BreakBetween",
+                "BreakWithin",
                 "BackgroundRepeat",
                 "BorderImageRepeat",
                 "BorderStyle",
@@ -324,6 +326,7 @@ class Longhand(object):
                 "Opacity",
                 "OutlineStyle",
                 "OverflowClipBox",
+                "OverflowWrap",
                 "OverscrollBehavior",
                 "Percentage",
                 "Resize",
@@ -335,6 +338,7 @@ class Longhand(object):
                 "TextEmphasisPosition",
                 "TouchAction",
                 "TransformStyle",
+                "UserSelect",
                 "XSpan",
                 "XTextZoom",
                 "ZIndex",
@@ -432,6 +436,8 @@ class Alias(object):
         self.original = original
         self.enabled_in = original.enabled_in
         self.servo_pref = original.servo_pref
+        self.animatable = original.animatable
+        self.transitionable = original.transitionable
         self.gecko_pref = gecko_pref
         self.allowed_in_page_rule = original.allowed_in_page_rule
         self.allowed_in_keyframe_block = original.allowed_in_keyframe_block

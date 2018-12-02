@@ -162,6 +162,9 @@ startup-restore-previous-session =
     .label = Restore previous session
     .accesskey = s
 
+startup-restore-warn-on-quit =
+    .label = Warn you when quitting the browser
+
 disable-extension =
     .label = Disable Extension
 
@@ -175,8 +178,8 @@ open-new-link-as-tabs =
     .label = Open links in tabs instead of new windows
     .accesskey = w
 
-warn-on-close-multiple-tabs =
-    .label = Warn you when closing multiple tabs
+warn-on-quit-close-multiple-tabs =
+    .label = Warn you when quitting and closing multiple tabs
     .accesskey = m
 
 warn-on-open-many-tabs =
@@ -359,6 +362,12 @@ update-application-use-service =
 update-enable-search-update =
     .label = Automatically update search engines
     .accesskey = e
+
+update-pref-write-failure-title = Write Failure
+
+# Variables:
+#   $path (String) - Path to the configuration file
+update-pref-write-failure-message = Unable to save preference. Could not write to file: { $path }
 
 ## General Section - Performance
 
@@ -764,13 +773,13 @@ sitedata-disallow-cookies-option =
 sitedata-block-desc = Type blocked
     .accesskey = T
 
-sitedata-block-trackers-option-recommended =
-    .label = Third-party trackers (recommended)
-sitedata-block-unvisited-option =
+sitedata-option-block-trackers =
+    .label = Third-party trackers
+sitedata-option-block-unvisited =
     .label = Cookies from unvisited websites
-sitedata-block-all-third-party-option =
+sitedata-option-block-all-third-party =
     .label = All third-party cookies (may cause websites to break)
-sitedata-block-all-option =
+sitedata-option-block-all =
     .label = All cookies (will cause websites to break)
 
 sitedata-clear =
@@ -781,9 +790,9 @@ sitedata-settings =
     .label = Manage Data…
     .accesskey = M
 
-sitedata-cookies-exceptions =
-    .label = Exceptions…
-    .accesskey = E
+sitedata-cookies-permissions =
+    .label = Manage Permissions…
+    .accesskey = P
 
 ## Privacy Section - Address Bar
 
@@ -807,53 +816,55 @@ addressbar-suggestions-settings = Change preferences for search engine suggestio
 
 content-blocking-header = Content Blocking
 
-content-blocking-desc = Block third-party content, like ads or code, that can slow your browsing and track you around the web. Customize your settings for the best balance of protection and performance.
+content-blocking-description = Block third-party content that tracks you around the web. Control how much of your online activity gets stored and shared between websites.
 
 content-blocking-learn-more = Learn more
-content-blocking-restore-defaults =
-  .label = Restore Defaults
-  .accesskey = R
 
-content-blocking-category-label = Choose what to block
+# The terminology used to refer to categories of Content Blocking is also used in chrome/browser/browser.properties and should be translated consistently.
+# "Standard" in this case is an adjective, meaning "default" or "normal".
+content-blocking-setting-standard =
+  .label = Standard
+  .accesskey = d
+content-blocking-setting-strict =
+  .label = Strict
+  .accesskey = r
+content-blocking-setting-custom =
+  .label = Custom
+  .accesskey = C
 
-content-blocking-tracking-protection-trackers-label =
+content-blocking-standard-description = Only blocks known trackers in Private Windows.
+content-blocking-standard-desc = Balanced for protection and performance. Allows some trackers so websites function properly.
+content-blocking-strict-desc = Blocks all trackers { -brand-short-name } detects. May cause some sites to break.
+content-blocking-custom-desc = Choose what to block.
+
+content-blocking-private-trackers = Known trackers only in Private Windows
+content-blocking-third-party-cookies = Third-party tracking cookies
+content-blocking-all-windows-trackers = Known trackers in all windows
+content-blocking-all-third-party-cookies = All third-party cookies
+
+content-blocking-warning-title = Heads up!
+content-blocking-warning-desc = Blocking cookies and trackers can cause some websites to break. It’s easy to disable blocking for sites you trust.
+content-blocking-learn-how = Learn how
+
+content-blocking-trackers-label =
   .label = Trackers
   .accesskey = T
-content-blocking-tracking-protection-all-detected-trackers-label =
-  .label = All Detected Trackers
-  .accesskey = T
-content-blocking-tracking-protection-new-description = Block all known trackers. (May prevent some pages from loading.)
-content-blocking-tracking-protection-option-always =
-  .label = Always
+content-blocking-tracking-protection-option-all-windows =
+  .label = In all windows
   .accesskey = A
-content-blocking-tracking-protection-option-private =
-  .label = Only in private windows
+content-blocking-option-private =
+  .label = Only in Private Windows
   .accesskey = p
 content-blocking-tracking-protection-change-block-list = Change block list
 
-content-blocking-third-party-cookies-label =
-  .label = Third-Party Cookies
+content-blocking-cookies-label =
+  .label = Cookies
   .accesskey = C
-content-blocking-reject-trackers-description = Block all third-party cookies or just those set by trackers.
-# This is a warning message shown next to a yellow warning icon when the Third-Party Cookies subsection
-# of the Content Blocking UI in Preferences has been disabled due to the either the "All cookies" option
-# or the "Cookies from unvisited websites" option being selected in the Cookies and Site Data section of
-# the UI.
-content-blocking-reject-trackers-warning-your-settings-prevent-changes = Your settings in Cookies and Site Data are preventing changes to Third-Party Cookies settings.
-content-blocking-change-cookie-settings =
-  .label = Change Cookie Settings
-  .accesskey = S
-content-blocking-reject-trackers-block-trackers-option-recommended =
-  .label = Trackers (recommended)
-  .accesskey = k
-content-blocking-reject-trackers-all-third-parties-option =
-  .label = All third-party cookies (may cause websites to break)
-  .accesskey = A
 
 ## Privacy Section - Tracking
 
-tracking-exceptions =
-    .label = Exceptions…
+tracking-manage-exceptions =
+    .label = Manage Exceptions…
     .accesskey = x
 
 ## Privacy Section - Permissions
@@ -942,6 +953,10 @@ collection-studies =
     .label = Allow { -brand-short-name } to install and run studies
 collection-studies-link = View { -brand-short-name } studies
 
+addon-recommendations =
+    .label = Allow { -brand-short-name } to make personalized extension recommendations
+addon-recommendations-link = Learn more
+
 # This message is displayed above disabled data sharing options in developer builds
 # or builds with no Telemetry support available.
 collection-health-report-disabled = Data reporting is disabled for this build configuration
@@ -1003,6 +1018,39 @@ certs-view =
 certs-devices =
     .label = Security Devices…
     .accesskey = D
+
+space-alert-learn-more-button =
+    .label = Learn More
+    .accesskey = L
+
+space-alert-over-5gb-pref-button =
+    .label =
+        { PLATFORM() ->
+            [windows] Open Options
+           *[other] Open Preferences
+        }
+    .accesskey =
+        { PLATFORM() ->
+            [windows] O
+           *[other] O
+        }
+
+space-alert-over-5gb-message =
+    { PLATFORM() ->
+        [windows] { -brand-short-name } is running out of disk space. Website contents may not display properly. You can clear stored data in Options > Privacy & Security > Cookies and Site Data.
+       *[other] { -brand-short-name } is running out of disk space. Website contents may not display properly. You can clear stored data in Preferences > Privacy & Security > Cookies and Site Data.
+    }
+
+space-alert-under-5gb-ok-button =
+    .label = OK, Got it
+    .accesskey = K
+
+space-alert-under-5gb-message = { -brand-short-name } is running out of disk space. Website contents may not display properly. Visit “Learn More” to optimize your disk usage for better browsing experience.
+
+## The following strings are used in the Download section of settings
+desktop-folder-name = Desktop
+downloads-folder-name = Downloads
+choose-download-folder-title = Choose Download Folder:
 
 # Variables:
 #   $service-name (String) - Name of a cloud storage provider like Dropbox, Google Drive, etc...

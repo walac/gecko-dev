@@ -136,6 +136,8 @@ function Editor(config) {
     themeSwitching: true,
     autocomplete: false,
     autocompleteOpts: {},
+    // Set to true to prevent the search addon to be activated.
+    disableSearchAddon: false,
   };
 
   // Additional shortcuts.
@@ -422,15 +424,6 @@ Editor.prototype = {
 
     cm.on("gutterClick", (cmArg, line, gutter, ev) => {
       const lineOrOffset = !this.isWasm ? line : this.lineToWasmOffset(line);
-      const head = { line: line, ch: 0 };
-      const tail = { line: line, ch: this.getText(lineOrOffset).length };
-
-      // Shift-click on a gutter selects the whole line.
-      if (ev.shiftKey) {
-        cmArg.setSelection(head, tail);
-        return;
-      }
-
       this.emit("gutterClick", lineOrOffset, ev.button);
     });
 
@@ -438,7 +431,9 @@ Editor.prototype = {
       return L10N.getStr(name);
     });
 
-    this._initShortcuts(win);
+    if (!this.config.disableSearchAddon) {
+      this._initSearchShortcuts(win);
+    }
 
     editors.set(this, cm);
 
@@ -1398,11 +1393,11 @@ Editor.prototype = {
   /**
    * Register all key shortcuts.
    */
-  _initShortcuts: function(win) {
+  _initSearchShortcuts: function(win) {
     const shortcuts = new KeyShortcuts({
       window: win,
     });
-    this._onShortcut = this._onShortcut.bind(this);
+    this._onSearchShortcut = this._onSearchShortcut.bind(this);
     const keys = [
       "find.key",
       "findNext.key",
@@ -1417,13 +1412,13 @@ Editor.prototype = {
     // Process generic keys:
     keys.forEach(name => {
       const key = L10N.getStr(name);
-      shortcuts.on(key, event => this._onShortcut(name, event));
+      shortcuts.on(key, event => this._onSearchShortcut(name, event));
     });
   },
     /**
    * Key shortcut listener.
    */
-  _onShortcut: function(name, event) {
+  _onSearchShortcut: function(name, event) {
     if (!this._isInputOrTextarea(event.target)) {
       return;
     }

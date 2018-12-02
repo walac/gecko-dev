@@ -55,10 +55,6 @@ crashtest:
         by-test-platform:
             android-em.*: 7200
             default: 3600
-    tier:
-        by-test-platform:
-            android-em-7.0-x86/opt: 3
-            default: default
 
 jsreftest:
     description: "JS Reftest run"
@@ -73,7 +69,7 @@ jsreftest:
     chunks:
         by-test-platform:
             android-em-4.3-arm7-api-16/debug: 100
-            android-em-7.0-x86/opt: 3
+            android-em-7.0-x86/opt: 4
             android-em.*: 40
             windows.*: 2
             windows10-64-ccov/debug: 5
@@ -99,10 +95,7 @@ reftest:
         by-test-platform:
             android-em.*: xlarge
             default: default
-    virtualization:
-        by-test-platform:
-            windows10.*: hardware
-            default: virtual-with-gpu
+    virtualization: virtual-with-gpu
     chunks:
         by-test-platform:
             android-em-4.3-arm7-api-16/debug: 56
@@ -123,6 +116,7 @@ reftest:
         by-test-platform:
             android-em.*: 7200
             windows10-64-ccov/debug: 5400
+            windows10-64-asan/opt: 5400
             macosx64-ccov/debug: 5400
             default: 3600
     mozharness:

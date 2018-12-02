@@ -9,6 +9,10 @@
     background-color: -moz-win-accentcolor;
     color: -moz-win-accentcolortext;
   }
+  :root[tabsintitlebar] #titlebar {
+    --lwt-toolbarbutton-icon-fill: currentColor;
+    --toolbarbutton-icon-fill-opacity: .7;
+  }
 }
 
 /* The window background is white due to no accentcolor in the lightweight
@@ -17,7 +21,7 @@
    broken. So instead just show the normal titlebar in that case, and override
    the window color as transparent when the compositor is available. */
 @media (-moz-windows-compositor: 0) {
-  #main-window[tabsintitlebar] #titlebar:-moz-lwtheme {
+  :root[tabsintitlebar]:not([inDOMFullscreen]) > #navigator-toolbox > #titlebar:-moz-lwtheme {
     visibility: visible;
   }
 
@@ -59,9 +63,9 @@
 }
 
 @media (-moz-windows-glass) {
-  /* Set to full fill-opacity to improve visibility of toolbar buttons on aero glass. */
+  /* Use opaque white icons on Aero Glass. */
   #TabsToolbar {
-    --toolbarbutton-icon-fill-opacity: 1;
+    --lwt-toolbarbutton-icon-fill: white;
   }
 
   /* Make the menubar text readable on aero glass (copied from browser-aero.css). */

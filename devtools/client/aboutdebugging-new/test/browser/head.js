@@ -32,6 +32,10 @@ registerCleanupFunction(async function() {
   }
   const { ADB } = require("devtools/shared/adb/adb");
   await ADB.kill();
+
+  const { remoteClientManager } =
+    require("devtools/client/shared/remote-debugging/remote-client-manager");
+  await remoteClientManager.removeAllClients();
 });
 
 /**
@@ -46,19 +50,76 @@ async function openAboutDebugging(page, win) {
   await enableNewAboutDebugging();
 
   info("opening about:debugging");
+
   const tab = await addTab("about:debugging", { window: win });
   const browser = tab.linkedBrowser;
   const document = browser.contentDocument;
   const window = browser.contentWindow;
-  const { AboutDebugging } = window;
+  info("wait for the initial about:debugging requests to be successful");
+  await waitForRequestsSuccess(window);
 
-  await Promise.all([
+  return { tab, document, window };
+}
+
+async function reloadAboutDebugging(tab) {
+  info("reload about:debugging");
+
+  await refreshTab(tab);
+  const browser = tab.linkedBrowser;
+  const document = browser.contentDocument;
+  const window = browser.contentWindow;
+  info("wait for the initial about:debugging requests to be successful");
+  await waitForRequestsSuccess(window);
+
+  return document;
+}
+
+// Wait for all about:debugging target request actions to succeed.
+// They will typically be triggered after watching a new runtime or loading
+// about:debugging.
+function waitForRequestsSuccess(win) {
+  const { AboutDebugging } = win;
+  return Promise.all([
     waitForDispatch(AboutDebugging.store, "REQUEST_EXTENSIONS_SUCCESS"),
     waitForDispatch(AboutDebugging.store, "REQUEST_TABS_SUCCESS"),
     waitForDispatch(AboutDebugging.store, "REQUEST_WORKERS_SUCCESS"),
   ]);
+}
 
-  return { tab, document, window };
+/**
+ * Wait for all client requests to settle, meaning here that no new request has been
+ * dispatched after the provided delay.
+ */
+async function waitForRequestsToSettle(store, delay = 500) {
+  let hasSettled = false;
+
+  // After each iteration of this while loop, we check is the timerPromise had the time
+  // to resolve or if we captured a REQUEST_*_SUCCESS action before.
+  while (!hasSettled) {
+    let timer;
+
+    // This timer will be executed only if no REQUEST_*_SUCCESS action is dispatched
+    // during the delay. We consider that when no request are received for some time, it
+    // means there are no ongoing requests anymore.
+    const timerPromise = new Promise(resolve => {
+      timer = setTimeout(() => {
+        hasSettled = true;
+        resolve();
+      }, delay);
+    });
+
+    // Wait either for a REQUEST_*_SUCCESS to be dispatched, or for the timer to resolve.
+    await Promise.race([
+      waitForDispatch(store, "REQUEST_EXTENSIONS_SUCCESS"),
+      waitForDispatch(store, "REQUEST_TABS_SUCCESS"),
+      waitForDispatch(store, "REQUEST_WORKERS_SUCCESS"),
+      timerPromise,
+    ]);
+
+    // Clear the timer to avoid setting hasSettled to true accidently unless timerPromise
+    // was the first to resolve.
+    clearTimeout(timer);
+  }
 }
 
 function waitForDispatch(store, type) {
@@ -101,5 +162,27 @@ function findSidebarItemByText(text, document) {
   const sidebarItems = document.querySelectorAll(".js-sidebar-item");
   return [...sidebarItems].find(element => {
     return element.textContent.includes(text);
+  });
+}
+
+async function connectToRuntime(deviceName, document) {
+  info(`Wait until the sidebar item for ${deviceName} appears`);
+  await waitUntil(() => findSidebarItemByText(deviceName, document));
+  const sidebarItem = findSidebarItemByText(deviceName, document);
+  const connectButton = sidebarItem.querySelector(".js-connect-button");
+  ok(connectButton, `Connect button is displayed for the runtime ${deviceName}`);
+
+  info("Click on the connect button and wait until it disappears");
+  connectButton.click();
+  await waitUntil(() => !sidebarItem.querySelector(".js-connect-button"));
+}
+
+async function selectRuntime(deviceName, name, document) {
+  const sidebarItem = findSidebarItemByText(deviceName, document);
+  sidebarItem.querySelector(".js-sidebar-link").click();
+
+  await waitUntil(() => {
+    const runtimeInfo = document.querySelector(".js-runtime-info");
+    return runtimeInfo && runtimeInfo.textContent.includes(name);
   });
 }

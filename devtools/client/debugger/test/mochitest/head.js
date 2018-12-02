@@ -13,6 +13,7 @@ Services.scriptloader.loadSubScript("chrome://mochitests/content/browser/devtool
 // be affected by this pref.
 var gEnableLogging = Services.prefs.getBoolPref("devtools.debugger.log");
 Services.prefs.setBoolPref("devtools.debugger.log", false);
+Services.prefs.setBoolPref("security.allow_eval_with_system_principal", true);
 
 var { BrowserToolboxProcess } = ChromeUtils.import("resource://devtools/client/framework/ToolboxProcess.jsm", {});
 var { DebuggerServer } = require("devtools/server/main");
@@ -37,6 +38,7 @@ const CHROME_URI = Services.io.newURI(CHROME_URL);
 registerCleanupFunction(async function() {
   info("finish() was called, cleaning up...");
   Services.prefs.setBoolPref("devtools.debugger.log", gEnableLogging);
+  Services.prefs.clearUserPref("security.allow_eval_with_system_principal");
 
   while (gBrowser && gBrowser.tabs && gBrowser.tabs.length > 1) {
     info("Destroying toolbox.");
@@ -148,43 +150,6 @@ function removeAddon(aAddon) {
   aAddon.uninstall();
 
   return deferred.promise;
-}
-
-function getTargetActorForUrl(aClient, aUrl) {
-  let deferred = promise.defer();
-
-  aClient.listTabs().then(aResponse => {
-    let targetActor = aResponse.tabs.filter(aGrip => aGrip.url == aUrl).pop();
-    deferred.resolve(targetActor);
-  });
-
-  return deferred.promise;
-}
-
-function getAddonActorForId(aClient, aAddonId) {
-  info("Get addon actor for ID: " + aAddonId);
-  let deferred = promise.defer();
-
-  aClient.listAddons().then(aResponse => {
-    let addonTargetActor = aResponse.addons.filter(aGrip => aGrip.id == aAddonId).pop();
-    info("got addon actor for ID: " + aAddonId);
-    deferred.resolve(addonTargetActor);
-  });
-
-  return deferred.promise;
-}
-
-async function attachTargetActorForUrl(aClient, aUrl) {
-  let grip = await getTargetActorForUrl(aClient, aUrl);
-  let [ response, front ] = await aClient.attachTarget(grip.actor);
-  return [grip, response, front];
-}
-
-async function attachThreadActorForUrl(aClient, aUrl) {
-  let [grip, response] = await attachTargetActorForUrl(aClient, aUrl);
-  let [response2, threadClient] = await aClient.attachThread(response.threadActor);
-  await threadClient.resume();
-  return threadClient;
 }
 
 // Override once from shared-head, as some tests depend on trying native DOM listeners
@@ -775,18 +740,6 @@ function reopenVarPopup(...aArgs) {
   return hideVarPopup.apply(this, aArgs).then(() => openVarPopup.apply(this, aArgs));
 }
 
-function attachAddonActorForId(aClient, aAddonId) {
-  let deferred = promise.defer();
-
-  getAddonActorForId(aClient, aAddonId).then(aGrip => {
-    aClient.attachAddon(aGrip.actor).then(([aResponse]) => {
-      deferred.resolve([aGrip, aResponse]);
-    });
-  });
-
-  return deferred.promise;
-}
-
 function doResume(aPanel) {
   const threadClient = aPanel.panelWin.gThreadClient;
   return threadClient.resume();
@@ -931,7 +884,7 @@ function findTab(tabs, url) {
 
 function attachTarget(client, tab) {
   info("Attaching to tab with url '" + tab.url + "'.");
-  return client.attachTarget(tab.actor);
+  return client.attachTarget(tab);
 }
 
 function listWorkers(targetFront) {
@@ -947,11 +900,6 @@ function findWorker(workers, url) {
     }
   }
   return null;
-}
-
-function attachWorker(targetFront, worker) {
-  info("Attaching to worker with url '" + worker.url + "'.");
-  return targetFront.attachWorker(worker.actor);
 }
 
 function waitForWorkerListChanged(targetFront) {
@@ -1117,31 +1065,4 @@ function waitForDispatch(panel, type, eventRepeat = 1) {
       info(type + " dispatched " + count + " time(s)");
     }
   });
-}
-
-async function initWorkerDebugger(TAB_URL, WORKER_URL) {
-  DebuggerServer.init();
-  DebuggerServer.registerAllActors();
-
-  let client = new DebuggerClient(DebuggerServer.connectPipe());
-  await connect(client);
-
-  let tab = await addTab(TAB_URL);
-  let { tabs } = await listTabs(client);
-  let [, targetFront] = await attachTarget(client, findTab(tabs, TAB_URL));
-
-  await createWorkerInTab(tab, WORKER_URL);
-
-  let { workers } = await listWorkers(targetFront);
-  let [, workerTargetFront] = await attachWorker(targetFront,
-                                             findWorker(workers, WORKER_URL));
-
-  let toolbox = await gDevTools.showToolbox(TargetFactory.forWorker(workerTargetFront),
-                                            "jsdebugger",
-                                            Toolbox.HostType.WINDOW);
-
-  let debuggerPanel = toolbox.getCurrentPanel();
-  let gDebugger = debuggerPanel.panelWin;
-
-  return {client, tab, targetFront, workerTargetFront, toolbox, gDebugger};
 }

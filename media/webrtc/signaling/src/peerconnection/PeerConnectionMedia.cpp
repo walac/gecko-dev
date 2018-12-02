@@ -4,6 +4,7 @@
 
 #include "CSFLog.h"
 
+#include "nr_socket_proxy_config.h"
 #include "MediaPipelineFilter.h"
 #include "MediaPipeline.h"
 #include "PeerConnectionImpl.h"
@@ -20,9 +21,13 @@
 #include "nsIContentPolicy.h"
 #include "nsIProxyInfo.h"
 #include "nsIProtocolProxyService.h"
+#include "nsIPrincipal.h"
+#include "nsProxyRelease.h"
 
 #include "nsIScriptGlobalObject.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/dom/PBrowserOrId.h"
+#include "mozilla/dom/TabChild.h"
 #include "MediaManager.h"
 #include "WebrtcGmpVideoCodec.h"
 
@@ -35,12 +40,9 @@ static const char* pcmLogTag = "PeerConnectionMedia";
 #endif
 #define LOGTAG pcmLogTag
 
-NS_IMETHODIMP PeerConnectionMedia::ProtocolProxyQueryHandler::
-OnProxyAvailable(nsICancelable *request,
-                 nsIChannel *aChannel,
-                 nsIProxyInfo *proxyinfo,
-                 nsresult result) {
-
+NS_IMETHODIMP PeerConnectionMedia::ProtocolProxyQueryHandler::OnProxyAvailable(
+    nsICancelable* request, nsIChannel* aChannel, nsIProxyInfo* proxyinfo,
+    nsresult result) {
   if (!pcm_->mProxyRequest) {
     // PeerConnectionMedia is no longer waiting
     return NS_OK;
@@ -59,40 +61,22 @@ OnProxyAvailable(nsICancelable *request,
   return NS_OK;
 }
 
-void
-PeerConnectionMedia::ProtocolProxyQueryHandler::SetProxyOnPcm(
-    nsIProxyInfo& proxyinfo)
-{
+void PeerConnectionMedia::ProtocolProxyQueryHandler::SetProxyOnPcm(
+    nsIProxyInfo& proxyinfo) {
   CSFLogInfo(LOGTAG, "%s: Had proxyinfo", __FUNCTION__);
-  nsresult rv;
-  nsCString httpsProxyHost;
-  int32_t httpsProxyPort;
 
-  rv = proxyinfo.GetHost(httpsProxyHost);
-  if (NS_FAILED(rv)) {
-    CSFLogError(LOGTAG, "%s: Failed to get proxy server host", __FUNCTION__);
-    return;
-  }
-
-  rv = proxyinfo.GetPort(&httpsProxyPort);
-  if (NS_FAILED(rv)) {
-    CSFLogError(LOGTAG, "%s: Failed to get proxy server port", __FUNCTION__);
-    return;
-  }
-
-  assert(httpsProxyPort >= 0 && httpsProxyPort < (1 << 16));
-  pcm_->mProxyHost = httpsProxyHost.get();
-  pcm_->mProxyPort = static_cast<uint16_t>(httpsProxyPort);
+  nsCString alpn = NS_LITERAL_CSTRING("webrtc,c-webrtc");
+  PBrowserOrId browser = TabChild::GetFrom(pcm_->GetWindow());
+  pcm_->mProxyConfig.reset(new NrSocketProxyConfig(browser, alpn));
 }
 
-NS_IMPL_ISUPPORTS(PeerConnectionMedia::ProtocolProxyQueryHandler, nsIProtocolProxyCallback)
+NS_IMPL_ISUPPORTS(PeerConnectionMedia::ProtocolProxyQueryHandler,
+                  nsIProtocolProxyCallback)
 
-void
-PeerConnectionMedia::StunAddrsHandler::OnStunAddrsAvailable(
-    const mozilla::net::NrIceStunAddrArray& addrs)
-{
+void PeerConnectionMedia::StunAddrsHandler::OnStunAddrsAvailable(
+    const mozilla::net::NrIceStunAddrArray& addrs) {
   CSFLogInfo(LOGTAG, "%s: receiving (%d) stun addrs", __FUNCTION__,
-                                                      (int)addrs.Length());
+             (int)addrs.Length());
   if (pcm_) {
     pcm_->mStunAddrs = addrs;
     pcm_->mLocalAddrsCompleted = true;
@@ -101,14 +85,15 @@ PeerConnectionMedia::StunAddrsHandler::OnStunAddrsAvailable(
     // If parent process returns 0 STUN addresses, change ICE connection
     // state to failed.
     if (!pcm_->mStunAddrs.Length()) {
-      pcm_->SignalIceConnectionStateChange(dom::PCImplIceConnectionState::Failed);
+      pcm_->SignalIceConnectionStateChange(
+          dom::PCImplIceConnectionState::Failed);
     }
 
     pcm_ = nullptr;
   }
 }
 
-PeerConnectionMedia::PeerConnectionMedia(PeerConnectionImpl *parent)
+PeerConnectionMedia::PeerConnectionMedia(PeerConnectionImpl* parent)
     : mTransportHandler(nullptr),
       mParent(parent),
       mParentHandle(parent->GetHandle()),
@@ -116,29 +101,27 @@ PeerConnectionMedia::PeerConnectionMedia(PeerConnectionImpl *parent)
       mMainThread(mParent->GetMainThread()),
       mSTSThread(mParent->GetSTSThread()),
       mProxyResolveCompleted(false),
-      mLocalAddrsCompleted(false) {
-}
+      mProxyConfig(nullptr),
+      mLocalAddrsCompleted(false) {}
 
-PeerConnectionMedia::~PeerConnectionMedia()
-{
+PeerConnectionMedia::~PeerConnectionMedia() {
   MOZ_RELEASE_ASSERT(!mMainThread);
 }
 
-void
-PeerConnectionMedia::InitLocalAddrs()
-{
+void PeerConnectionMedia::InitLocalAddrs() {
   if (XRE_IsContentProcess()) {
     CSFLogDebug(LOGTAG, "%s: Get stun addresses via IPC",
                 mParentHandle.c_str());
 
-    nsCOMPtr<nsIEventTarget> target = mParent->GetWindow()
-      ? mParent->GetWindow()->EventTargetFor(TaskCategory::Other)
-      : nullptr;
+    nsCOMPtr<nsIEventTarget> target =
+        mParent->GetWindow()
+            ? mParent->GetWindow()->EventTargetFor(TaskCategory::Other)
+            : nullptr;
 
     // We're in the content process, so send a request over IPC for the
     // stun address discovery.
     mStunAddrsRequest =
-      new net::StunAddrsRequestChild(new StunAddrsHandler(this), target);
+        new net::StunAddrsRequestChild(new StunAddrsHandler(this), target);
     mStunAddrsRequest->SendGetStunAddrs();
   } else {
     // No content process, so don't need to hold up the ice event queue
@@ -148,13 +131,11 @@ PeerConnectionMedia::InitLocalAddrs()
   }
 }
 
-nsresult
-PeerConnectionMedia::InitProxy()
-{
+nsresult PeerConnectionMedia::InitProxy() {
   // Allow mochitests to disable this, since mochitest configures a fake proxy
   // that serves up content.
-  bool disable = Preferences::GetBool("media.peerconnection.disable_http_proxy",
-                                      false);
+  bool disable =
+      Preferences::GetBool("media.peerconnection.disable_http_proxy", false);
   if (disable) {
     mProxyResolveCompleted = true;
     return NS_OK;
@@ -162,15 +143,17 @@ PeerConnectionMedia::InitProxy()
 
   nsresult rv;
   nsCOMPtr<nsIProtocolProxyService> pps =
-    do_GetService(NS_PROTOCOLPROXYSERVICE_CONTRACTID, &rv);
+      do_GetService(NS_PROTOCOLPROXYSERVICE_CONTRACTID, &rv);
   if (NS_FAILED(rv)) {
-    CSFLogError(LOGTAG, "%s: Failed to get proxy service: %d", __FUNCTION__, (int)rv);
+    CSFLogError(LOGTAG, "%s: Failed to get proxy service: %d", __FUNCTION__,
+                (int)rv);
     return NS_ERROR_FAILURE;
   }
 
   // We use the following URL to find the "default" proxy address for all HTTPS
   // connections.  We will only attempt one HTTP(S) CONNECT per peer connection.
-  // "example.com" is guaranteed to be unallocated and should return the best default.
+  // "example.com" is guaranteed to be unallocated and should return the best
+  // default.
   nsCOMPtr<nsIURI> fakeHttpsLocation;
   rv = NS_NewURI(getter_AddRefs(fakeHttpsLocation), "https://example.com");
   if (NS_FAILED(rv)) {
@@ -179,36 +162,38 @@ PeerConnectionMedia::InitProxy()
   }
 
   nsCOMPtr<nsIChannel> channel;
-  rv = NS_NewChannel(getter_AddRefs(channel),
-                     fakeHttpsLocation,
+  rv = NS_NewChannel(getter_AddRefs(channel), fakeHttpsLocation,
                      nsContentUtils::GetSystemPrincipal(),
                      nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
                      nsIContentPolicy::TYPE_OTHER);
 
   if (NS_FAILED(rv)) {
-    CSFLogError(LOGTAG, "%s: Failed to get channel from URI: %d",
-                __FUNCTION__, (int)rv);
+    CSFLogError(LOGTAG, "%s: Failed to get channel from URI: %d", __FUNCTION__,
+                (int)rv);
     return NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsIEventTarget> target = mParent->GetWindow()
-      ? mParent->GetWindow()->EventTargetFor(TaskCategory::Network)
-      : nullptr;
-  RefPtr<ProtocolProxyQueryHandler> handler = new ProtocolProxyQueryHandler(this);
+  nsCOMPtr<nsIEventTarget> target =
+      mParent->GetWindow()
+          ? mParent->GetWindow()->EventTargetFor(TaskCategory::Network)
+          : nullptr;
+  RefPtr<ProtocolProxyQueryHandler> handler =
+      new ProtocolProxyQueryHandler(this);
   rv = pps->AsyncResolve(channel,
                          nsIProtocolProxyService::RESOLVE_PREFER_HTTPS_PROXY |
-                         nsIProtocolProxyService::RESOLVE_ALWAYS_TUNNEL,
+                             nsIProtocolProxyService::RESOLVE_ALWAYS_TUNNEL,
                          handler, target, getter_AddRefs(mProxyRequest));
   if (NS_FAILED(rv)) {
-    CSFLogError(LOGTAG, "%s: Failed to resolve protocol proxy: %d", __FUNCTION__, (int)rv);
+    CSFLogError(LOGTAG, "%s: Failed to resolve protocol proxy: %d",
+                __FUNCTION__, (int)rv);
     return NS_ERROR_FAILURE;
   }
 
   return NS_OK;
 }
 
-nsresult PeerConnectionMedia::Init(const dom::RTCConfiguration& aConfiguration)
-{
+nsresult PeerConnectionMedia::Init(
+    const dom::RTCConfiguration& aConfiguration) {
   nsresult rv = InitProxy();
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -217,7 +202,7 @@ nsresult PeerConnectionMedia::Init(const dom::RTCConfiguration& aConfiguration)
 
   mTransportHandler = new MediaTransportHandler;
   rv = mTransportHandler->Init("PC:" + mParentName, aConfiguration);
-  if(NS_FAILED(rv)) {
+  if (NS_FAILED(rv)) {
     CSFLogError(LOGTAG, "%s: Failed to init mtransport", __FUNCTION__);
     return NS_ERROR_FAILURE;
   }
@@ -226,9 +211,7 @@ nsresult PeerConnectionMedia::Init(const dom::RTCConfiguration& aConfiguration)
   return NS_OK;
 }
 
-void
-PeerConnectionMedia::EnsureTransports(const JsepSession& aSession)
-{
+void PeerConnectionMedia::EnsureTransports(const JsepSession& aSession) {
   for (const auto& transceiver : aSession.GetTransceivers()) {
     if (transceiver->HasOwnTransport()) {
       RUN_ON_THREAD(
@@ -246,10 +229,8 @@ PeerConnectionMedia::EnsureTransports(const JsepSession& aSession)
   GatherIfReady();
 }
 
-nsresult
-PeerConnectionMedia::UpdateTransports(const JsepSession& aSession,
-                                      const bool forceIceTcp)
-{
+nsresult PeerConnectionMedia::UpdateTransports(const JsepSession& aSession,
+                                               const bool forceIceTcp) {
   std::set<std::string> finalTransports;
   for (const auto& transceiver : aSession.GetTransceivers()) {
     if (transceiver->HasOwnTransport()) {
@@ -258,12 +239,11 @@ PeerConnectionMedia::UpdateTransports(const JsepSession& aSession,
     }
   }
 
-  RUN_ON_THREAD(
-      GetSTSThread(),
-      WrapRunnable(mTransportHandler,
-                   &MediaTransportHandler::RemoveTransportsExcept,
-                   finalTransports),
-      NS_DISPATCH_NORMAL);
+  RUN_ON_THREAD(GetSTSThread(),
+                WrapRunnable(mTransportHandler,
+                             &MediaTransportHandler::RemoveTransportsExcept,
+                             finalTransports),
+                NS_DISPATCH_NORMAL);
 
   for (const auto& transceiverImpl : mTransceivers) {
     transceiverImpl->UpdateTransport();
@@ -272,10 +252,8 @@ PeerConnectionMedia::UpdateTransports(const JsepSession& aSession,
   return NS_OK;
 }
 
-void
-PeerConnectionMedia::UpdateTransport(const JsepTransceiver& aTransceiver,
-                                     bool aForceIceTcp)
-{
+void PeerConnectionMedia::UpdateTransport(const JsepTransceiver& aTransceiver,
+                                          bool aForceIceTcp) {
   std::string ufrag;
   std::string pwd;
   std::vector<std::string> candidates;
@@ -293,36 +271,27 @@ PeerConnectionMedia::UpdateTransport(const JsepTransceiver& aTransceiver,
   candidates = transport.mIce->GetCandidates();
   components = transport.mComponents;
   if (aForceIceTcp) {
-    candidates.erase(std::remove_if(candidates.begin(),
-                                    candidates.end(),
-                                    [](const std::string & s) {
-                                      return s.find(" UDP ") != std::string::npos ||
-                                             s.find(" udp ") != std::string::npos; }),
-                     candidates.end());
+    candidates.erase(
+        std::remove_if(candidates.begin(), candidates.end(),
+                       [](const std::string& s) {
+                         return s.find(" UDP ") != std::string::npos ||
+                                s.find(" udp ") != std::string::npos;
+                       }),
+        candidates.end());
   }
 
   RUN_ON_THREAD(
       GetSTSThread(),
-      WrapRunnable(mTransportHandler,
-                   &MediaTransportHandler::ActivateTransport,
-                   transport.mTransportId,
-                   transport.mLocalUfrag,
-                   transport.mLocalPwd,
-                   components,
-                   ufrag,
-                   pwd,
-                   candidates,
-                   mParent->Identity(),
-                   transport.mDtls->GetRole() ==
-                       JsepDtlsTransport::kJsepDtlsClient,
-                   transport.mDtls->GetFingerprints(),
-                   mParent->PrivacyRequested()),
+      WrapRunnable(
+          mTransportHandler, &MediaTransportHandler::ActivateTransport,
+          transport.mTransportId, transport.mLocalUfrag, transport.mLocalPwd,
+          components, ufrag, pwd, candidates, mParent->Identity(),
+          transport.mDtls->GetRole() == JsepDtlsTransport::kJsepDtlsClient,
+          transport.mDtls->GetFingerprints(), mParent->PrivacyRequested()),
       NS_DISPATCH_NORMAL);
 }
 
-nsresult
-PeerConnectionMedia::UpdateMediaPipelines()
-{
+nsresult PeerConnectionMedia::UpdateMediaPipelines() {
   // The GMP code is all the way on the other side of webrtc.org, and it is not
   // feasible to plumb error information all the way back. So, we set up a
   // handle to the PC (for the duration of this call) in a global variable.
@@ -330,47 +299,40 @@ PeerConnectionMedia::UpdateMediaPipelines()
   WebrtcGmpPCHandleSetter setter(mParentHandle);
 
   for (RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
-    nsresult rv = transceiver->UpdateConduit();
-    if (NS_FAILED(rv)) {
-      return rv;
-    }
+    transceiver->ResetSync();
+  }
 
+  for (RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
     if (!transceiver->IsVideo()) {
-      rv = transceiver->SyncWithMatchingVideoConduits(mTransceivers);
+      nsresult rv = transceiver->SyncWithMatchingVideoConduits(mTransceivers);
       if (NS_FAILED(rv)) {
         return rv;
       }
-      // TODO: If there is no audio, we should probably de-sync. However, this
-      // has never been done before, and it is unclear whether it is safe...
+    }
+
+    nsresult rv = transceiver->UpdateConduit();
+    if (NS_FAILED(rv)) {
+      return rv;
     }
   }
 
   return NS_OK;
 }
 
-void
-PeerConnectionMedia::StartIceChecks(const JsepSession& aSession)
-{
-  nsCOMPtr<nsIRunnable> runnable(
-      WrapRunnable(
-        RefPtr<PeerConnectionMedia>(this),
-        &PeerConnectionMedia::StartIceChecks_s,
-        aSession.IsIceControlling(),
-        aSession.IsOfferer(),
-        aSession.RemoteIsIceLite(),
-        // Copy, just in case API changes to return a ref
-        std::vector<std::string>(aSession.GetIceOptions())));
+void PeerConnectionMedia::StartIceChecks(const JsepSession& aSession) {
+  nsCOMPtr<nsIRunnable> runnable(WrapRunnable(
+      RefPtr<PeerConnectionMedia>(this), &PeerConnectionMedia::StartIceChecks_s,
+      aSession.IsIceControlling(), aSession.IsOfferer(),
+      aSession.RemoteIsIceLite(),
+      // Copy, just in case API changes to return a ref
+      std::vector<std::string>(aSession.GetIceOptions())));
 
   PerformOrEnqueueIceCtxOperation(runnable);
 }
 
-void
-PeerConnectionMedia::StartIceChecks_s(
-    bool aIsControlling,
-    bool aIsOfferer,
-    bool aIsIceLite,
+void PeerConnectionMedia::StartIceChecks_s(
+    bool aIsControlling, bool aIsOfferer, bool aIsIceLite,
     const std::vector<std::string>& aIceOptionsList) {
-
   CSFLogDebug(LOGTAG, "Starting ICE Checking");
 
   std::vector<std::string> attributes;
@@ -385,72 +347,51 @@ PeerConnectionMedia::StartIceChecks_s(
     }
   }
 
-  nsresult rv = mTransportHandler->StartIceChecks(aIsControlling,
-                                                  aIsOfferer,
-                                                  attributes);
-  if (NS_FAILED(rv)) {
-    CSFLogError(LOGTAG, "%s: couldn't start ICE", __FUNCTION__ );
-  }
+  mTransportHandler->StartIceChecks(aIsControlling, aIsOfferer, attributes);
 }
 
-bool
-PeerConnectionMedia::GetPrefDefaultAddressOnly() const
-{
-  ASSERT_ON_THREAD(mMainThread); // will crash on STS thread
+bool PeerConnectionMedia::GetPrefDefaultAddressOnly() const {
+  ASSERT_ON_THREAD(mMainThread);  // will crash on STS thread
 
   uint64_t winId = mParent->GetWindow()->WindowID();
 
   bool default_address_only = Preferences::GetBool(
-    "media.peerconnection.ice.default_address_only", false);
+      "media.peerconnection.ice.default_address_only", false);
   default_address_only |=
-    !MediaManager::Get()->IsActivelyCapturingOrHasAPermission(winId);
+      !MediaManager::Get()->IsActivelyCapturingOrHasAPermission(winId);
   return default_address_only;
 }
 
-void
-PeerConnectionMedia::ConnectSignals()
-{
+void PeerConnectionMedia::ConnectSignals() {
   mTransportHandler->SignalGatheringStateChange.connect(
-      this,
-      &PeerConnectionMedia::IceGatheringStateChange_s);
+      this, &PeerConnectionMedia::IceGatheringStateChange_s);
   mTransportHandler->SignalConnectionStateChange.connect(
-      this,
-      &PeerConnectionMedia::IceConnectionStateChange_s);
+      this, &PeerConnectionMedia::IceConnectionStateChange_s);
   mTransportHandler->SignalCandidate.connect(
-      this,
-      &PeerConnectionMedia::OnCandidateFound_s);
+      this, &PeerConnectionMedia::OnCandidateFound_s);
   mTransportHandler->SignalAlpnNegotiated.connect(
-      this,
-      &PeerConnectionMedia::AlpnNegotiated_s);
+      this, &PeerConnectionMedia::AlpnNegotiated_s);
 }
 
-void
-PeerConnectionMedia::AddIceCandidate(const std::string& aCandidate,
-                                     const std::string& aTransportId)
-{
+void PeerConnectionMedia::AddIceCandidate(const std::string& aCandidate,
+                                          const std::string& aTransportId) {
   MOZ_ASSERT(!aTransportId.empty());
-  RUN_ON_THREAD(GetSTSThread(),
-                WrapRunnable(
-                    mTransportHandler,
-                    &MediaTransportHandler::AddIceCandidate,
-                    aTransportId,
-                    aCandidate),
-                NS_DISPATCH_NORMAL);
+  RUN_ON_THREAD(
+      GetSTSThread(),
+      WrapRunnable(mTransportHandler, &MediaTransportHandler::AddIceCandidate,
+                   aTransportId, aCandidate),
+      NS_DISPATCH_NORMAL);
 }
 
-void
-PeerConnectionMedia::UpdateNetworkState(bool online) {
-  RUN_ON_THREAD(GetSTSThread(),
-                WrapRunnable(
-                    mTransportHandler,
-                    &MediaTransportHandler::UpdateNetworkState,
-                    online),
-                NS_DISPATCH_NORMAL);
+void PeerConnectionMedia::UpdateNetworkState(bool online) {
+  RUN_ON_THREAD(
+      GetSTSThread(),
+      WrapRunnable(mTransportHandler,
+                   &MediaTransportHandler::UpdateNetworkState, online),
+      NS_DISPATCH_NORMAL);
 }
 
-void
-PeerConnectionMedia::FlushIceCtxOperationQueueIfReady()
-{
+void PeerConnectionMedia::FlushIceCtxOperationQueueIfReady() {
   ASSERT_ON_THREAD(mMainThread);
 
   if (IsIceCtxReady()) {
@@ -461,9 +402,8 @@ PeerConnectionMedia::FlushIceCtxOperationQueueIfReady()
   }
 }
 
-void
-PeerConnectionMedia::PerformOrEnqueueIceCtxOperation(nsIRunnable* runnable)
-{
+void PeerConnectionMedia::PerformOrEnqueueIceCtxOperation(
+    nsIRunnable* runnable) {
   ASSERT_ON_THREAD(mMainThread);
 
   if (IsIceCtxReady()) {
@@ -473,30 +413,27 @@ PeerConnectionMedia::PerformOrEnqueueIceCtxOperation(nsIRunnable* runnable)
   }
 }
 
-void
-PeerConnectionMedia::GatherIfReady() {
+void PeerConnectionMedia::GatherIfReady() {
   ASSERT_ON_THREAD(mMainThread);
 
   // If we had previously queued gathering or ICE start, unqueue them
   mQueuedIceCtxOperations.clear();
   nsCOMPtr<nsIRunnable> runnable(WrapRunnable(
-        RefPtr<PeerConnectionMedia>(this),
-        &PeerConnectionMedia::EnsureIceGathering_s,
-        GetPrefDefaultAddressOnly()));
+      RefPtr<PeerConnectionMedia>(this),
+      &PeerConnectionMedia::EnsureIceGathering_s, GetPrefDefaultAddressOnly()));
 
   PerformOrEnqueueIceCtxOperation(runnable);
 }
 
-void
-PeerConnectionMedia::EnsureIceGathering_s(bool aDefaultRouteOnly) {
-  if (!mProxyHost.empty()) {
+void PeerConnectionMedia::EnsureIceGathering_s(bool aDefaultRouteOnly) {
+  if (mProxyConfig) {
     // Note that this could check if PrivacyRequested() is set on the PC and
     // remove "webrtc" from the ALPN list.  But that would only work if the PC
     // was constructed with a peerIdentity constraint, not when isolated
     // streams are added.  If we ever need to signal to the proxy that the
     // media is isolated, then we would need to restructure this code.
-    mTransportHandler->SetProxyServer(
-        mProxyHost, mProxyPort, "webrtc,c-webrtc");
+    mTransportHandler->SetProxyServer(std::move(*mProxyConfig));
+    mProxyConfig.reset();
   }
 
   // Make sure we don't call StartIceGathering if we're in e10s mode
@@ -505,8 +442,7 @@ PeerConnectionMedia::EnsureIceGathering_s(bool aDefaultRouteOnly) {
   // attempt to gather them (as in non-e10s mode), and this will cause a
   // sandboxing exception in e10s mode.
   if (!mStunAddrs.Length() && XRE_IsContentProcess()) {
-    CSFLogInfo(LOGTAG,
-               "%s: No STUN addresses returned from parent process",
+    CSFLogInfo(LOGTAG, "%s: No STUN addresses returned from parent process",
                __FUNCTION__);
     return;
   }
@@ -514,9 +450,7 @@ PeerConnectionMedia::EnsureIceGathering_s(bool aDefaultRouteOnly) {
   mTransportHandler->StartIceGathering(aDefaultRouteOnly, mStunAddrs);
 }
 
-void
-PeerConnectionMedia::SelfDestruct()
-{
+void PeerConnectionMedia::SelfDestruct() {
   ASSERT_ON_THREAD(mMainThread);
 
   CSFLogDebug(LOGTAG, "%s: ", __FUNCTION__);
@@ -542,16 +476,15 @@ PeerConnectionMedia::SelfDestruct()
   mQueuedIceCtxOperations.clear();
 
   // Shutdown the transport (async)
-  RUN_ON_THREAD(mSTSThread, WrapRunnable(
-      this, &PeerConnectionMedia::ShutdownMediaTransport_s),
-                NS_DISPATCH_NORMAL);
+  RUN_ON_THREAD(
+      mSTSThread,
+      WrapRunnable(this, &PeerConnectionMedia::ShutdownMediaTransport_s),
+      NS_DISPATCH_NORMAL);
 
   CSFLogDebug(LOGTAG, "%s: Media shut down", __FUNCTION__);
 }
 
-void
-PeerConnectionMedia::SelfDestruct_m()
-{
+void PeerConnectionMedia::SelfDestruct_m() {
   CSFLogDebug(LOGTAG, "%s: ", __FUNCTION__);
 
   ASSERT_ON_THREAD(mMainThread);
@@ -562,9 +495,7 @@ PeerConnectionMedia::SelfDestruct_m()
   this->Release();
 }
 
-void
-PeerConnectionMedia::ShutdownMediaTransport_s()
-{
+void PeerConnectionMedia::ShutdownMediaTransport_s() {
   ASSERT_ON_THREAD(mSTSThread);
 
   CSFLogDebug(LOGTAG, "%s: ", __FUNCTION__);
@@ -575,30 +506,23 @@ PeerConnectionMedia::ShutdownMediaTransport_s()
   mTransportHandler = nullptr;
 
   // we're holding a ref to 'this' that's released by SelfDestruct_m
-  mMainThread->Dispatch(WrapRunnable(this, &PeerConnectionMedia::SelfDestruct_m),
-                        NS_DISPATCH_NORMAL);
+  mMainThread->Dispatch(
+      WrapRunnable(this, &PeerConnectionMedia::SelfDestruct_m),
+      NS_DISPATCH_NORMAL);
 }
 
-nsresult
-PeerConnectionMedia::AddTransceiver(
-    JsepTransceiver* aJsepTransceiver,
-    dom::MediaStreamTrack& aReceiveTrack,
+nsresult PeerConnectionMedia::AddTransceiver(
+    JsepTransceiver* aJsepTransceiver, dom::MediaStreamTrack& aReceiveTrack,
     dom::MediaStreamTrack* aSendTrack,
-    RefPtr<TransceiverImpl>* aTransceiverImpl)
-{
+    RefPtr<TransceiverImpl>* aTransceiverImpl) {
   if (!mCall) {
     mCall = WebRtcCallWrapper::Create();
   }
 
-  RefPtr<TransceiverImpl> transceiver = new TransceiverImpl(
-      mParent->GetHandle(),
-      mTransportHandler,
-      aJsepTransceiver,
-      mMainThread.get(),
-      mSTSThread.get(),
-      &aReceiveTrack,
-      aSendTrack,
-      mCall.get());
+  RefPtr<TransceiverImpl> transceiver =
+      new TransceiverImpl(mParent->GetHandle(), mTransportHandler,
+                          aJsepTransceiver, mMainThread.get(), mSTSThread.get(),
+                          &aReceiveTrack, aSendTrack, mCall.get());
 
   if (!transceiver->IsValid()) {
     return NS_ERROR_FAILURE;
@@ -608,12 +532,11 @@ PeerConnectionMedia::AddTransceiver(
     // implement checking for peerIdentity (where failure == black/silence)
     nsIDocument* doc = mParent->GetWindow()->GetExtantDoc();
     if (doc) {
-      transceiver->UpdateSinkIdentity(nullptr,
-                                      doc->NodePrincipal(),
+      transceiver->UpdateSinkIdentity(nullptr, doc->NodePrincipal(),
                                       mParent->GetPeerIdentity());
     } else {
       MOZ_CRASH();
-      return NS_ERROR_FAILURE; // Don't remove this till we know it's safe.
+      return NS_ERROR_FAILURE;  // Don't remove this till we know it's safe.
     }
   }
 
@@ -623,11 +546,9 @@ PeerConnectionMedia::AddTransceiver(
   return NS_OK;
 }
 
-void
-PeerConnectionMedia::GetTransmitPipelinesMatching(
+void PeerConnectionMedia::GetTransmitPipelinesMatching(
     const MediaStreamTrack* aTrack,
-    nsTArray<RefPtr<MediaPipeline>>* aPipelines)
-{
+    nsTArray<RefPtr<MediaPipeline>>* aPipelines) {
   for (RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
     if (transceiver->HasSendTrack(aTrack)) {
       aPipelines->AppendElement(transceiver->GetSendPipeline());
@@ -635,11 +556,9 @@ PeerConnectionMedia::GetTransmitPipelinesMatching(
   }
 }
 
-void
-PeerConnectionMedia::GetReceivePipelinesMatching(
+void PeerConnectionMedia::GetReceivePipelinesMatching(
     const MediaStreamTrack* aTrack,
-    nsTArray<RefPtr<MediaPipeline>>* aPipelines)
-{
+    nsTArray<RefPtr<MediaPipeline>>* aPipelines) {
   for (RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
     if (transceiver->HasReceiveTrack(aTrack)) {
       aPipelines->AppendElement(transceiver->GetReceivePipeline());
@@ -647,10 +566,8 @@ PeerConnectionMedia::GetReceivePipelinesMatching(
   }
 }
 
-std::string
-PeerConnectionMedia::GetTransportIdMatching(
-    const dom::MediaStreamTrack& aTrack) const
-{
+std::string PeerConnectionMedia::GetTransportIdMatching(
+    const dom::MediaStreamTrack& aTrack) const {
   for (const RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
     if (transceiver->HasReceiveTrack(&aTrack)) {
       return transceiver->GetTransportId();
@@ -659,10 +576,8 @@ PeerConnectionMedia::GetTransportIdMatching(
   return std::string();
 }
 
-nsresult
-PeerConnectionMedia::AddRIDExtension(MediaStreamTrack& aRecvTrack,
-                                     unsigned short aExtensionId)
-{
+nsresult PeerConnectionMedia::AddRIDExtension(MediaStreamTrack& aRecvTrack,
+                                              unsigned short aExtensionId) {
   DebugOnly<bool> trackFound = false;
   for (RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
     if (transceiver->HasReceiveTrack(&aRecvTrack)) {
@@ -674,10 +589,8 @@ PeerConnectionMedia::AddRIDExtension(MediaStreamTrack& aRecvTrack,
   return NS_OK;
 }
 
-nsresult
-PeerConnectionMedia::AddRIDFilter(MediaStreamTrack& aRecvTrack,
-                                  const nsAString& aRid)
-{
+nsresult PeerConnectionMedia::AddRIDFilter(MediaStreamTrack& aRecvTrack,
+                                           const nsAString& aRid) {
   DebugOnly<bool> trackFound = false;
   for (RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
     MOZ_ASSERT(transceiver->HasReceiveTrack(&aRecvTrack));
@@ -690,10 +603,8 @@ PeerConnectionMedia::AddRIDFilter(MediaStreamTrack& aRecvTrack,
   return NS_OK;
 }
 
-void
-PeerConnectionMedia::IceGatheringStateChange_s(
-    dom::PCImplIceGatheringState aState)
-{
+void PeerConnectionMedia::IceGatheringStateChange_s(
+    dom::PCImplIceGatheringState aState) {
   ASSERT_ON_THREAD(mSTSThread);
 
   // ShutdownMediaTransport_s has not run yet because it unhooks this function
@@ -701,32 +612,27 @@ PeerConnectionMedia::IceGatheringStateChange_s(
   // yet either, so this PCMedia will still be around when this dispatch reaches
   // main.
   GetMainThread()->Dispatch(
-    WrapRunnable(this,
-                 &PeerConnectionMedia::IceGatheringStateChange_m,
-                 aState),
-    NS_DISPATCH_NORMAL);
+      WrapRunnable(this, &PeerConnectionMedia::IceGatheringStateChange_m,
+                   aState),
+      NS_DISPATCH_NORMAL);
 }
 
-void
-PeerConnectionMedia::IceConnectionStateChange_s(
-    dom::PCImplIceConnectionState aState)
-{
+void PeerConnectionMedia::IceConnectionStateChange_s(
+    dom::PCImplIceConnectionState aState) {
   ASSERT_ON_THREAD(mSTSThread);
   // ShutdownMediaTransport_s has not run yet because it unhooks this function
   // from its signal, which means that SelfDestruct_m has not been dispatched
   // yet either, so this PCMedia will still be around when this dispatch reaches
   // main.
   GetMainThread()->Dispatch(
-    WrapRunnable(this,
-                 &PeerConnectionMedia::IceConnectionStateChange_m, aState),
-    NS_DISPATCH_NORMAL);
+      WrapRunnable(this, &PeerConnectionMedia::IceConnectionStateChange_m,
+                   aState),
+      NS_DISPATCH_NORMAL);
 }
 
-void
-PeerConnectionMedia::OnCandidateFound_s(
+void PeerConnectionMedia::OnCandidateFound_s(
     const std::string& aTransportId,
-    const MediaTransportHandler::CandidateInfo& aCandidateInfo)
-{
+    const MediaTransportHandler::CandidateInfo& aCandidateInfo) {
   ASSERT_ON_THREAD(mSTSThread);
   MOZ_RELEASE_ASSERT(mTransportHandler);
 
@@ -737,58 +643,45 @@ PeerConnectionMedia::OnCandidateFound_s(
   // yet either, so this PCMedia will still be around when this dispatch reaches
   // main.
   GetMainThread()->Dispatch(
-    WrapRunnable(this,
-                 &PeerConnectionMedia::OnCandidateFound_m,
-                 aTransportId,
-                 aCandidateInfo),
-    NS_DISPATCH_NORMAL);
+      WrapRunnable(this, &PeerConnectionMedia::OnCandidateFound_m, aTransportId,
+                   aCandidateInfo),
+      NS_DISPATCH_NORMAL);
 }
 
-void
-PeerConnectionMedia::IceGatheringStateChange_m(
-    dom::PCImplIceGatheringState aState)
-{
+void PeerConnectionMedia::IceGatheringStateChange_m(
+    dom::PCImplIceGatheringState aState) {
   ASSERT_ON_THREAD(mMainThread);
   SignalIceGatheringStateChange(aState);
 }
 
-void
-PeerConnectionMedia::IceConnectionStateChange_m(
-    dom::PCImplIceConnectionState aState)
-{
+void PeerConnectionMedia::IceConnectionStateChange_m(
+    dom::PCImplIceConnectionState aState) {
   ASSERT_ON_THREAD(mMainThread);
   SignalIceConnectionStateChange(aState);
 }
 
-void
-PeerConnectionMedia::OnCandidateFound_m(
+void PeerConnectionMedia::OnCandidateFound_m(
     const std::string& aTransportId,
-    const MediaTransportHandler::CandidateInfo& aCandidateInfo)
-{
+    const MediaTransportHandler::CandidateInfo& aCandidateInfo) {
   ASSERT_ON_THREAD(mMainThread);
   if (!aCandidateInfo.mDefaultHostRtp.empty()) {
     SignalUpdateDefaultCandidate(aCandidateInfo.mDefaultHostRtp,
                                  aCandidateInfo.mDefaultPortRtp,
                                  aCandidateInfo.mDefaultHostRtcp,
-                                 aCandidateInfo.mDefaultPortRtcp,
-                                 aTransportId);
+                                 aCandidateInfo.mDefaultPortRtcp, aTransportId);
   }
   SignalCandidate(aCandidateInfo.mCandidate, aTransportId);
 }
 
-void
-PeerConnectionMedia::AlpnNegotiated_s(const std::string& aAlpn)
-{
+void PeerConnectionMedia::AlpnNegotiated_s(const std::string& aAlpn) {
   GetMainThread()->Dispatch(
-    WrapRunnableNM(&PeerConnectionMedia::AlpnNegotiated_m,
-                   mParentHandle, aAlpn),
-    NS_DISPATCH_NORMAL);
+      WrapRunnableNM(&PeerConnectionMedia::AlpnNegotiated_m, mParentHandle,
+                     aAlpn),
+      NS_DISPATCH_NORMAL);
 }
 
-void
-PeerConnectionMedia::AlpnNegotiated_m(const std::string& aParentHandle,
-                                      const std::string& aAlpn)
-{
+void PeerConnectionMedia::AlpnNegotiated_m(const std::string& aParentHandle,
+                                           const std::string& aAlpn) {
   PeerConnectionWrapper pcWrapper(aParentHandle);
   PeerConnectionImpl* pc = pcWrapper.impl();
   if (pc) {
@@ -805,9 +698,7 @@ PeerConnectionMedia::AlpnNegotiated_m(const std::string& aParentHandle,
  *
  * @returns true if any track has a peerIdentity set on it
  */
-bool
-PeerConnectionMedia::AnyLocalTrackHasPeerIdentity() const
-{
+bool PeerConnectionMedia::AnyLocalTrackHasPeerIdentity() const {
   ASSERT_ON_THREAD(mMainThread);
 
   for (const RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
@@ -819,9 +710,8 @@ PeerConnectionMedia::AnyLocalTrackHasPeerIdentity() const
   return false;
 }
 
-void
-PeerConnectionMedia::UpdateRemoteStreamPrincipals_m(nsIPrincipal* aPrincipal)
-{
+void PeerConnectionMedia::UpdateRemoteStreamPrincipals_m(
+    nsIPrincipal* aPrincipal) {
   ASSERT_ON_THREAD(mMainThread);
 
   for (RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
@@ -829,11 +719,9 @@ PeerConnectionMedia::UpdateRemoteStreamPrincipals_m(nsIPrincipal* aPrincipal)
   }
 }
 
-void
-PeerConnectionMedia::UpdateSinkIdentity_m(const MediaStreamTrack* aTrack,
-                                          nsIPrincipal* aPrincipal,
-                                          const PeerIdentity* aSinkIdentity)
-{
+void PeerConnectionMedia::UpdateSinkIdentity_m(
+    const MediaStreamTrack* aTrack, nsIPrincipal* aPrincipal,
+    const PeerIdentity* aSinkIdentity) {
   ASSERT_ON_THREAD(mMainThread);
 
   for (RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
@@ -841,9 +729,7 @@ PeerConnectionMedia::UpdateSinkIdentity_m(const MediaStreamTrack* aTrack,
   }
 }
 
-bool
-PeerConnectionMedia::AnyCodecHasPluginID(uint64_t aPluginID)
-{
+bool PeerConnectionMedia::AnyCodecHasPluginID(uint64_t aPluginID) {
   for (RefPtr<TransceiverImpl>& transceiver : mTransceivers) {
     if (transceiver->ConduitHasPluginID(aPluginID)) {
       return true;
@@ -852,4 +738,7 @@ PeerConnectionMedia::AnyCodecHasPluginID(uint64_t aPluginID)
   return false;
 }
 
-} // namespace mozilla
+nsPIDOMWindowInner* PeerConnectionMedia::GetWindow() const {
+  return mParent->GetWindow();
+}
+}  // namespace mozilla

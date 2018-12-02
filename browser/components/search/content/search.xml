@@ -189,11 +189,9 @@
 
             document.popupNode = null;
 
-            const isRTL = getComputedStyle(this, "").direction == "rtl";
-
             var outerRect = this.getBoundingClientRect();
             var innerRect = this.inputField.getBoundingClientRect();
-            let width = isRTL ?
+            let width = RTL_UI ?
                         innerRect.right - outerRect.left :
                         outerRect.right - innerRect.left;
             popup.setAttribute("width", width > 100 ? width : 100);
@@ -377,7 +375,7 @@
                    role="presentation"/>
       </xul:hbox>
       <xul:richlistbox anonid="richlistbox" class="autocomplete-richlistbox search-panel-tree" flex="1"/>
-      <xul:search-one-offs anonid="search-one-off-buttons" class="search-one-offs"/>
+      <xul:hbox anonid="search-one-off-buttons" class="search-one-offs"/>
     </content>
     <implementation>
       <method name="openAutocompletePopup">
@@ -473,8 +471,9 @@
       </property>
 
       <field name="oneOffButtons" readonly="true">
-        document.getAnonymousElementByAttribute(this, "anonid",
-                                                "search-one-off-buttons");
+        new SearchOneOffs(
+          document.getAnonymousElementByAttribute(this, "anonid",
+                                                  "search-one-off-buttons"));
       </field>
 
       <method name="updateHeader">

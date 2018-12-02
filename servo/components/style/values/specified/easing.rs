@@ -4,14 +4,14 @@
 
 //! Specified types for CSS Easing functions.
 
+use crate::parser::{Parse, ParserContext};
+use crate::values::computed::easing::TimingFunction as ComputedTimingFunction;
+use crate::values::generics::easing::TimingFunction as GenericTimingFunction;
+use crate::values::generics::easing::{StepPosition, TimingKeyword};
+use crate::values::specified::{Integer, Number};
 use cssparser::Parser;
-use parser::{Parse, ParserContext};
 use selectors::parser::SelectorParseErrorKind;
 use style_traits::{ParseError, StyleParseErrorKind};
-use values::computed::easing::TimingFunction as ComputedTimingFunction;
-use values::generics::easing::{StepPosition, TimingKeyword};
-use values::generics::easing::TimingFunction as GenericTimingFunction;
-use values::specified::{Integer, Number};
 
 /// A specified timing function.
 pub type TimingFunction = GenericTimingFunction<Integer, Number>;
@@ -74,10 +74,9 @@ impl Parse for TimingFunction {
                     Ok(GenericTimingFunction::Steps(steps, position))
                 },
                 _ => Err(()),
-            }).map_err(|()| {
-                location.new_custom_error(
-                    StyleParseErrorKind::UnexpectedFunction(function.clone())
-                )
+            })
+            .map_err(|()| {
+                location.new_custom_error(StyleParseErrorKind::UnexpectedFunction(function.clone()))
             })
         })
     }

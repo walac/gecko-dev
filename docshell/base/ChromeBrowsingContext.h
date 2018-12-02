@@ -20,39 +20,34 @@ namespace dom {
 // ChromeBrowsingContext is a BrowsingContext living in the parent
 // process, with whatever extra data that a BrowsingContext in the
 // parent needs.
-class ChromeBrowsingContext final
-  : public BrowsingContext
-{
-public:
+class ChromeBrowsingContext final : public BrowsingContext {
+ public:
   static void CleanupContexts(uint64_t aProcessId);
   static already_AddRefed<ChromeBrowsingContext> Get(uint64_t aId);
   static ChromeBrowsingContext* Cast(BrowsingContext* aContext);
-  static already_AddRefed<ChromeBrowsingContext> Create(
-    uint64_t aBrowsingContextId,
-    const nsAString& aName,
-    uint64_t aProcessId);
+  static const ChromeBrowsingContext* Cast(const BrowsingContext* aContext);
 
-  bool IsOwnedByProcess(uint64_t aProcessId) const
-  {
+  bool IsOwnedByProcess(uint64_t aProcessId) const {
     return mProcessId == aProcessId;
   }
 
-protected:
+ protected:
   void Traverse(nsCycleCollectionTraversalCallback& cb) {}
   void Unlink() {}
-  ChromeBrowsingContext(uint64_t aBrowsingContextId,
-                        const nsAString& aName,
-                        uint64_t aProcessId);
 
-private:
+  using Type = BrowsingContext::Type;
+  ChromeBrowsingContext(BrowsingContext* aParent, BrowsingContext* aOpener,
+                        const nsAString& aName, uint64_t aBrowsingContextId,
+                        uint64_t aProcessId, Type aType = Type::Chrome);
+
+ private:
   friend class BrowsingContext;
 
-  explicit ChromeBrowsingContext(nsIDocShell* aDocShell);
-
+  // XXX(farre): Store a ContentParent pointer here rather than mProcessId?
   // Indicates which process owns the docshell.
   uint64_t mProcessId;
 };
 
-} // namespace dom
-} // namespace mozilla
+}  // namespace dom
+}  // namespace mozilla
 #endif

@@ -22,6 +22,29 @@ static const char pluginSandboxRules[] = R"SANDBOX_LITERAL(
       (deny default)
       (deny default (with no-log)))
 
+  ; These are not included in (deny default)
+  (deny process-info*)
+  ; This isn't available in some older macOS releases.
+  (if (defined? 'nvram*)
+    (deny nvram*))
+  ; This property require macOS 10.10+
+  (if (defined? 'file-map-executable)
+    (deny file-map-executable))
+
+  (if (defined? 'file-map-executable)
+    (allow file-map-executable file-read*
+      (subpath "/System/Library/PrivateFrameworks")
+      (regex #"^/usr/lib/libstdc\+\+\.[^/]*dylib$")
+      (literal plugin-binary-path)
+      (literal app-binary-path)
+      (subpath app-path))
+    (allow file-read*
+      (subpath "/System/Library/PrivateFrameworks")
+      (regex #"^/usr/lib/libstdc\+\+\.[^/]*dylib$")
+      (literal plugin-binary-path)
+      (literal app-binary-path)
+      (subpath app-path)))
+
   (allow signal (target self))
   (allow sysctl-read)
   (allow iokit-open (iokit-user-client-class "IOHIDParamUserClient"))
@@ -31,12 +54,7 @@ static const char pluginSandboxRules[] = R"SANDBOX_LITERAL(
       (literal "/dev/urandom")
       (literal "/usr/share/icu/icudt51l.dat")
       (subpath "/System/Library/Displays/Overrides")
-      (subpath "/System/Library/CoreServices/CoreTypes.bundle")
-      (subpath "/System/Library/PrivateFrameworks")
-      (regex #"^/usr/lib/libstdc\+\+\.[^/]*dylib$")
-      (literal plugin-binary-path)
-      (literal app-path)
-      (literal app-binary-path))
+      (subpath "/System/Library/CoreServices/CoreTypes.bundle"))
 )SANDBOX_LITERAL";
 
 static const char widevinePluginSandboxRulesAddend[] = R"SANDBOX_LITERAL(
@@ -61,7 +79,6 @@ static const char contentSandboxRules[] = R"SANDBOX_LITERAL(
   (define testingReadPath2 (param "TESTING_READ_PATH2"))
   (define testingReadPath3 (param "TESTING_READ_PATH3"))
   (define testingReadPath4 (param "TESTING_READ_PATH4"))
-  (define parentPort (param "PARENT_PORT"))
   (define crashPort (param "CRASH_PORT"))
 
   (if (string=? should-log "TRUE")
@@ -188,14 +205,14 @@ static const char contentSandboxRules[] = R"SANDBOX_LITERAL(
     (ipc-posix-name-regex #"^CFPBS:"))
 
   (allow signal (target self))
-  (if (string? parentPort)
-    (allow mach-lookup (global-name parentPort)))
   (if (string? crashPort)
     (allow mach-lookup (global-name crashPort)))
   (if (string=? hasWindowServer "TRUE")
     (allow mach-lookup (global-name "com.apple.windowserver.active")))
-  (allow mach-lookup (global-name "com.apple.coreservices.launchservicesd"))
-  (allow mach-lookup (global-name "com.apple.lsd.mapdb"))
+  (allow mach-lookup
+    (global-name "com.apple.CoreServices.coreservicesd")
+    (global-name "com.apple.coreservices.launchservicesd")
+    (global-name "com.apple.lsd.mapdb"))
 
   (if (>= macosMinorVersion 13)
     (allow mach-lookup
@@ -821,6 +838,6 @@ static const char flashPluginSandboxRules[] = R"SANDBOX_LITERAL(
   (deny file-write-create (vnode-type SYMLINK))
 )SANDBOX_LITERAL";
 
-}
+}  // namespace mozilla
 
-#endif // mozilla_SandboxPolicies_h
+#endif  // mozilla_SandboxPolicies_h

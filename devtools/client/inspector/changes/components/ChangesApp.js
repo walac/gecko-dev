@@ -10,6 +10,8 @@ const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const { connect } = require("devtools/client/shared/vendor/react-redux");
 
 const CSSDeclaration = createFactory(require("./CSSDeclaration"));
+const { getSourceForDisplay } = require("../utils/changes-utils");
+const { getStr } = require("../utils/l10n");
 
 class ChangesApp extends PureComponent {
   static get propTypes() {
@@ -33,19 +35,35 @@ class ChangesApp extends PureComponent {
     this.renderedRules = [];
   }
 
-  renderDeclarations(remove = {}, add = {}) {
-    const removals = Object.entries(remove).map(([property, value]) => {
-      return CSSDeclaration({ className: "level diff-remove", property, value });
-    });
+  renderDeclarations(remove = [], add = []) {
+    const removals = remove
+      // Sorting changed declarations in the order they appear in the Rules view.
+      .sort((a, b) => a.index > b.index)
+      .map(({property, value, index}) => {
+        return CSSDeclaration({
+          key: "remove-" + property + index,
+          className: "level diff-remove",
+          property,
+          value,
+        });
+      });
 
-    const additions = Object.entries(add).map(([property, value]) => {
-      return CSSDeclaration({ className: "level diff-add", property, value });
-    });
+    const additions = add
+      // Sorting changed declarations in the order they appear in the Rules view.
+      .sort((a, b) => a.index > b.index)
+      .map(({property, value, index}) => {
+        return CSSDeclaration({
+          key: "add-" + property + index,
+          className: "level diff-add",
+          property,
+          value,
+        });
+      });
 
     return [removals, additions];
   }
 
-  renderRule(ruleId, rule, rules) {
+  renderRule(ruleId, rule, rules, level = 0) {
     const selector = rule.selector;
 
     if (this.renderedRules.includes(ruleId)) {
@@ -55,45 +73,58 @@ class ChangesApp extends PureComponent {
     // Mark this rule as rendered so we don't render it again.
     this.renderedRules.push(ruleId);
 
+    let diffClass = "";
+    if (rule.changeType === "rule-add") {
+      diffClass = "diff-add";
+    } else if (rule.changeType === "rule-remove") {
+      diffClass = "diff-remove";
+    }
+
     return dom.div(
       {
-        className: "rule",
+        key: ruleId,
+        className: "rule devtools-monospace",
+        style: {
+          "--diff-level": level,
+        },
       },
       dom.div(
         {
-          className: "level selector",
+          className: `level selector ${diffClass}`,
           title: selector,
         },
         selector,
         dom.span({ className: "bracket-open" }, "{")
       ),
-      // Render any nested child rules if they are present.
-      rule.children.length > 0 && rule.children.map(childRuleId => {
-        return this.renderRule(childRuleId, rules[childRuleId], rules);
+      // Render any nested child rules if they exist.
+      rule.children.map(childRuleId => {
+        return this.renderRule(childRuleId, rules[childRuleId], rules, level + 1);
       }),
       // Render any changed CSS declarations.
       this.renderDeclarations(rule.remove, rule.add),
-      dom.span({ className: "level bracket-close" }, "}")
+      dom.div({ className: `level bracket-close ${diffClass}` }, "}")
     );
   }
 
   renderDiff(changes = {}) {
     // Render groups of style sources: stylesheets and element style attributes.
     return Object.entries(changes).map(([sourceId, source]) => {
-      const href = source.href || `inline stylesheet #${source.index}`;
-      const rules = source.rules;
+      const path = getSourceForDisplay(source);
+      const { href, rules, isFramed } = source;
 
-      return dom.details(
+      return dom.div(
         {
-          className: "source devtools-monospace",
-          open: true,
+          key: sourceId,
+          className: "source",
         },
-        dom.summary(
+        dom.div(
           {
             className: "href",
             title: href,
           },
-          href),
+          dom.span({}, path),
+          isFramed && this.renderFrameBadge(href)
+        ),
         // Render changed rules within this source.
         Object.entries(rules).map(([ruleId, rule]) => {
           return this.renderRule(ruleId, rule, rules);
@@ -102,16 +133,35 @@ class ChangesApp extends PureComponent {
     });
   }
 
+  renderFrameBadge(href = "") {
+    return dom.span(
+      {
+        className: "inspector-badge",
+        title: href,
+      },
+      getStr("changes.iframeLabel")
+    );
+  }
+
+  renderEmptyState() {
+    return dom.div({ className: "devtools-sidepanel-no-result" },
+      dom.p({}, getStr("changes.noChanges")),
+      dom.p({}, getStr("changes.noChangesDescription"))
+    );
+  }
+
   render() {
     // Reset log of rendered rules.
     this.renderedRules = [];
+    const hasChanges = Object.keys(this.props.changes).length > 0;
 
     return dom.div(
       {
         className: "theme-sidebar inspector-tabpanel",
         id: "sidebar-panel-changes",
       },
-      this.renderDiff(this.props.changes)
+      !hasChanges && this.renderEmptyState(),
+      hasChanges && this.renderDiff(this.props.changes)
     );
   }
 }

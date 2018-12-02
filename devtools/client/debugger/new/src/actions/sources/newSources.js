@@ -25,6 +25,8 @@ import {
   getPendingBreakpointsForSource
 } from "../../selectors";
 
+import { prefs } from "../../utils/prefs";
+
 import type { Source, SourceId } from "../../types";
 import type { Action, ThunkArgs } from "../types";
 
@@ -46,7 +48,7 @@ function createOriginalSource(
 
 function loadSourceMaps(sources) {
   return async function({ dispatch, sourceMaps }: ThunkArgs) {
-    if (!sourceMaps) {
+    if (!prefs.clientSourceMapsEnabled) {
       return;
     }
 
@@ -81,12 +83,18 @@ function loadSourceMap(sourceId: SourceId) {
     }
 
     if (!urls) {
+      // The source might have changed while we looked up the URLs, so we need
+      // to load it again before dispatching. We ran into an issue here because
+      // this was previously using 'source' and was at risk of resetting the
+      // 'loadedState' field to 'loading', putting it in an inconsistent state.
+      const currentSource = getSource(getState(), sourceId);
+
       // If this source doesn't have a sourcemap, enable it for pretty printing
       dispatch(
         ({
           type: "UPDATE_SOURCE",
           // NOTE: Flow https://github.com/facebook/flow/issues/6342 issue
-          source: (({ ...source, sourceMapURL: "" }: any): Source)
+          source: (({ ...currentSource, sourceMapURL: "" }: any): Source)
         }: Action)
       );
       return;

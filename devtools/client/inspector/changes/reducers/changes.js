@@ -25,8 +25,8 @@ function cloneState(state = {}) {
         rules[ruleId] = {
           ...rule,
           children: rule.children.slice(0),
-          add: { ...rule.add },
-          remove: { ...rule.remove },
+          add: rule.add.slice(0),
+          remove: rule.remove.slice(0),
         };
 
         return rules;
@@ -86,7 +86,8 @@ function createRule(ruleData, rules) {
       const nextRuleId = array[index + 1];
 
       // Copy or create an entry for this rule.
-      rules[ruleId] = Object.assign({}, { selector, children: [] }, rules[ruleId]);
+      const defaults = { selector, add: [], remove: [], children: [] };
+      rules[ruleId] = Object.assign(defaults, rules[ruleId]);
 
       // The next ruleId is lower in the rule tree, therefore it's a child of this rule.
       if (nextRuleId && !rules[ruleId].children.includes(nextRuleId)) {
@@ -128,21 +129,23 @@ function removeRule(ruleId, rules) {
  *
  * Structure:
  *    <sourceId>: {
- *      type: // "stylesheet" or "element"
- *      href: // Stylesheet or document URL
+ *      type: // {String} One of: "stylesheet", "inline" or "element"
+ *      href: // {String|null} Stylesheet or document URL; null for inline stylesheets
  *      rules: {
  *        <ruleId>: {
- *          selector: "" // String CSS selector or CSS at-rule text
- *          children: [] // Array of <ruleId> for child rules of this rule.
- *          parent:      // <ruleId> of the parent rule
- *          add: {
- *            <property>: <value> // CSS declaration
- *            ...
- *          },
- *          remove: {
- *            <property>: <value> // CSS declaration
- *           ...
- *          }
+ *          selector:    // {String} CSS selector or CSS at-rule text
+ *          changeType:  // {String} Optional; one of: "rule-add" or "rule-remove"
+ *          children: [] // {Array} of <ruleId> for child rules of this rule
+ *          parent:      // {String} <ruleId> of the parent rule
+ *          add: [       // {Array} of objects with CSS declarations
+ *            {
+ *              property:    // {String} CSS property name
+ *              value:       // {String} CSS property value
+ *              index:       // {Number} Position of the declaration within its CSS rule
+ *            }
+ *            ... // more declarations
+ *          ],
+ *          remove: []   // {Array} of objects with CSS declarations
  *        }
  *        ... // more rules
  *      }
@@ -153,70 +156,138 @@ const INITIAL_STATE = {};
 
 const reducers = {
 
+  /**
+   * CSS changes are collected on the server by the ChangesActor which dispatches them to
+   * the client as atomic operations: a rule/declaration updated, added or removed.
+   *
+   * By design, the ChangesActor has no big-picture context of all the collected changes.
+   * It only holds the stack of atomic changes. This makes it roboust for many use cases:
+   * building a diff-view, supporting undo/redo, offline persistence, etc. Consumers,
+   * like the Changes panel, get to massage the data for their particular purposes.
+   *
+   * Here in the reducer, we aggregate incoming changes to build a human-readable diff
+   * shown in the Changes panel.
+   * - added / removed declarations are grouped by CSS rule. Rules are grouped by their
+   *   parent rules (@media, @supports, @keyframes, etc.); Rules belong to sources
+   *   (stylesheets, inline styles)
+   * - declarations have an index corresponding to their position in the CSS rule. This
+   *   allows tracking of multiple declarations with the same property name.
+   * - repeated changes a declaration will show only the original removal and the latest
+   *   addition;
+   * - when a declaration is removed, we update the indices of other tracked declarations
+   *   in the same rule which may have changed position in the rule as a result;
+   * - changes which cancel each other out (i.e. return to original) are both removed
+   *   from the store;
+   * - when changes cancel each other out leaving the rule unchanged, the rule is removed
+   *   from the store. Its parent rule is removed as well if it too ends up unchanged.
+   */
   [TRACK_CHANGE](state, { change }) {
     const defaults = {
       selector: null,
       source: {},
       ancestors: [],
-      add: {},
-      remove: {},
+      add: [],
+      remove: [],
     };
 
     change = { ...defaults, ...change };
     state = cloneState(state);
 
-    const { type, href, index } = change.source;
-    const { selector, ancestors, ruleIndex } = change;
+    const { type, href, index, isFramed } = change.source;
+    const { selector, ancestors, ruleIndex, type: changeType } = change;
     const sourceId = getSourceHash(change.source);
     const ruleId = getRuleHash({ selector, ancestors, ruleIndex });
 
     // Copy or create object identifying the source (styelsheet/element) for this change.
-    const source = Object.assign({}, state[sourceId], { type, href, index });
+    const source = Object.assign({}, state[sourceId], { type, href, index, isFramed });
     // Copy or create collection of all rules ever changed in this source.
     const rules = Object.assign({}, source.rules);
     // Refrence or create object identifying the rule for this change.
     let rule = rules[ruleId];
     if (!rule) {
       rule = createRule({ selector, ancestors, ruleIndex }, rules);
-    }
-    // Copy or create collection of all CSS declarations ever added to this rule.
-    const add = Object.assign({}, rule.add);
-    // Copy or create collection of all CSS declarations ever removed from this rule.
-    const remove = Object.assign({}, rule.remove);
-
-    if (change.remove && change.remove.property) {
-      // Track the remove operation only if the property was not previously introduced
-      // by an add operation. This ensures repeated changes of the same property
-      // register as a single remove operation of its original value.
-      if (!add[change.remove.property]) {
-        remove[change.remove.property] = change.remove.value;
-      }
-
-      // Delete any previous add operation which would be canceled out by this remove.
-      if (add[change.remove.property] === change.remove.value) {
-        delete add[change.remove.property];
+      if (changeType.startsWith("rule-")) {
+        rule.changeType = changeType;
       }
     }
 
-    if (change.add && change.add.property) {
-      add[change.add.property] = change.add.value;
+    if (change.remove && change.remove.length) {
+      for (const decl of change.remove) {
+        // Find the position of any added declaration which matches the incoming
+        // declaration to be removed.
+        const addIndex = rule.add.findIndex(addDecl => {
+          return addDecl.index === decl.index;
+        });
+
+        // Track the remove operation only if the property was not previously introduced
+        // by an add operation. This ensures repeated changes of the same property
+        // register as a single remove operation of its original value.
+        if (addIndex < 0) {
+          rule.remove.push(decl);
+        }
+
+        // Delete any previous add operation which would be canceled out by this remove.
+        if (rule.add[addIndex] && rule.add[addIndex].value === decl.value) {
+          rule.add.splice(addIndex, 1);
+        }
+
+        // Update the indexes of previously tracked declarations which follow this removed
+        // one so future tracking continues to point to the right declarations.
+        if (changeType === "declaration-remove") {
+          rule.add = rule.add.map((addDecl => {
+            if (addDecl.index > decl.index) {
+              addDecl.index--;
+            }
+
+            return addDecl;
+          }));
+
+          rule.remove = rule.remove.map((removeDecl => {
+            if (removeDecl.index > decl.index) {
+              removeDecl.index--;
+            }
+
+            return removeDecl;
+          }));
+        }
+      }
     }
 
-    const property = change.add && change.add.property ||
-                     change.remove && change.remove.property;
+    if (change.add && change.add.length) {
+      for (const decl of change.add) {
+        // Find the position of any removed declaration which matches the incoming
+        // declaration to be added.
+        const removeIndex = rule.remove.findIndex(removeDecl => {
+          return removeDecl.index === decl.index;
+        });
 
-    // Remove tracked operations if they cancel each other out.
-    if (add[property] === remove[property]) {
-      delete add[property];
-      delete remove[property];
+        // Find the position of any added declaration which matches the incoming
+        // declaration to be added in case we need to replace it.
+        const addIndex = rule.add.findIndex(addDecl => {
+          return addDecl.index === decl.index;
+        });
+
+        if (rule.remove[removeIndex] &&
+            rule.remove[removeIndex].value === decl.value &&
+            rule.remove[removeIndex].property === decl.property) {
+          // Delete any previous remove operation which would be canceled out by this add.
+          rule.remove.splice(removeIndex, 1);
+        } else if (rule.add[addIndex]) {
+          // Replace previous add operation for declaration at this index.
+          rule.add.splice(addIndex, 1, decl);
+        } else {
+          // Track new add operation.
+          rule.add.push(decl);
+        }
+      }
     }
 
     // Remove information about the rule if none its declarations changed.
-    if (!Object.keys(add).length && !Object.keys(remove).length) {
+    if (!rule.add.length && !rule.remove.length) {
       removeRule(ruleId, rules);
       source.rules = { ...rules };
     } else {
-      source.rules = { ...rules, [ruleId]: { ...rule, add, remove } };
+      source.rules = { ...rules, [ruleId]: rule };
     }
 
     // Remove information about the source if none of its rules changed.

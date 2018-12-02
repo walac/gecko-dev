@@ -28,18 +28,15 @@ class GeckoViewContentChild extends GeckoViewChildModule {
       Utils: "resource://gre/modules/sessionstore/Utils.jsm",
     });
 
-    this.messageManager.addMessageListener("GeckoView:SaveState",
-                                           this);
-    this.messageManager.addMessageListener("GeckoView:RestoreState",
-                                           this);
     this.messageManager.addMessageListener("GeckoView:DOMFullscreenEntered",
                                            this);
     this.messageManager.addMessageListener("GeckoView:DOMFullscreenExited",
                                            this);
-    this.messageManager.addMessageListener("GeckoView:ZoomToInput",
-                                           this);
-    this.messageManager.addMessageListener("GeckoView:SetActive",
-                                           this);
+    this.messageManager.addMessageListener("GeckoView:RestoreState", this);
+    this.messageManager.addMessageListener("GeckoView:SaveState", this);
+    this.messageManager.addMessageListener("GeckoView:SetActive", this);
+    this.messageManager.addMessageListener("GeckoView:UpdateInitData", this);
+    this.messageManager.addMessageListener("GeckoView:ZoomToInput", this);
 
     const options = {
         mozSystemGroup: true,
@@ -245,6 +242,12 @@ class GeckoViewContentChild extends GeckoViewChildModule {
               content.windowUtils.mediaSuspend = aMsg.data.active ? Ci.nsISuspendedTypes.NONE_SUSPENDED : Ci.nsISuspendedTypes.SUSPENDED_PAUSE;
           }
         break;
+
+      case "GeckoView:UpdateInitData":
+        // Provide a hook for native code to detect a transfer.
+        Services.obs.notifyObservers(
+            docShell, "geckoview-content-global-transferred");
+        break;
     }
   }
 
@@ -254,31 +257,37 @@ class GeckoViewContentChild extends GeckoViewChildModule {
 
     switch (aEvent.type) {
       case "contextmenu":
-        function nearestParentHref(node) {
-          while (node && !node.href) {
-            node = node.parentNode;
+        function nearestParentAttribute(aNode, aAttribute) {
+          while (aNode && aNode.hasAttribute &&
+                 !aNode.hasAttribute(aAttribute)) {
+            aNode = aNode.parentNode;
           }
-          return node && node.href;
+          return aNode && aNode.getAttribute && aNode.getAttribute(aAttribute);
         }
 
         const node = aEvent.composedTarget;
-        const hrefNode = nearestParentHref(node);
+        const uri = nearestParentAttribute(node, "href");
+        const title = nearestParentAttribute(node, "title");
+        const alt = nearestParentAttribute(node, "alt");
         const elementType = ChromeUtils.getClassName(node);
         const isImage = elementType === "HTMLImageElement";
         const isMedia = elementType === "HTMLVideoElement" ||
                         elementType === "HTMLAudioElement";
+        const elementSrc = (isImage || isMedia) && (node.currentSrc || node.src);
 
-        if (hrefNode || isImage || isMedia) {
-          this.eventDispatcher.sendRequest({
+        if (uri || isImage || isMedia) {
+          const msg = {
             type: "GeckoView:ContextMenu",
             screenX: aEvent.screenX,
             screenY: aEvent.screenY,
-            uri: hrefNode,
+            uri,
+            title,
+            alt,
             elementType,
-            elementSrc: (isImage || isMedia)
-                        ? node.currentSrc || node.src
-                        : null,
-          });
+            elementSrc: elementSrc || null,
+          };
+
+          this.eventDispatcher.sendRequest(msg);
           aEvent.preventDefault();
         }
         break;

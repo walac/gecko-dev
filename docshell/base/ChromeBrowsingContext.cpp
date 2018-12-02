@@ -9,21 +9,14 @@
 namespace mozilla {
 namespace dom {
 
-ChromeBrowsingContext::ChromeBrowsingContext(uint64_t aBrowsingContextId,
+ChromeBrowsingContext::ChromeBrowsingContext(BrowsingContext* aParent,
+                                             BrowsingContext* aOpener,
                                              const nsAString& aName,
-                                             uint64_t aProcessId)
-  : BrowsingContext(aBrowsingContextId, aName)
-  , mProcessId(aProcessId)
-{
-  // You are only ever allowed to create ChromeBrowsingContexts in the
-  // parent process.
-  MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
-}
-
-ChromeBrowsingContext::ChromeBrowsingContext(nsIDocShell* aDocShell)
-  : BrowsingContext(aDocShell)
-  , mProcessId(0)
-{
+                                             uint64_t aBrowsingContextId,
+                                             uint64_t aProcessId,
+                                             BrowsingContext::Type aType)
+    : BrowsingContext(aParent, aOpener, aName, aBrowsingContextId, aType),
+      mProcessId(aProcessId) {
   // You are only ever allowed to create ChromeBrowsingContexts in the
   // parent process.
   MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
@@ -34,9 +27,7 @@ ChromeBrowsingContext::ChromeBrowsingContext(nsIDocShell* aDocShell)
 // BrowsingContext nodes of a BrowsingContext tree, not in a crashing
 // child process, are from that process and thus needs to be
 // cleaned. [Bug 1472108]
-/* static */ void
-ChromeBrowsingContext::CleanupContexts(uint64_t aProcessId)
-{
+/* static */ void ChromeBrowsingContext::CleanupContexts(uint64_t aProcessId) {
   nsTArray<RefPtr<BrowsingContext>> roots;
   BrowsingContext::GetRootBrowsingContexts(roots);
 
@@ -47,28 +38,23 @@ ChromeBrowsingContext::CleanupContexts(uint64_t aProcessId)
   }
 }
 
-/* static */ already_AddRefed<ChromeBrowsingContext>
-ChromeBrowsingContext::Get(uint64_t aId)
-{
+/* static */ already_AddRefed<ChromeBrowsingContext> ChromeBrowsingContext::Get(
+    uint64_t aId) {
   MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
   return BrowsingContext::Get(aId).downcast<ChromeBrowsingContext>();
 }
 
-/* static */ ChromeBrowsingContext*
-ChromeBrowsingContext::Cast(BrowsingContext* aContext)
-{
+/* static */ ChromeBrowsingContext* ChromeBrowsingContext::Cast(
+    BrowsingContext* aContext) {
   MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
   return static_cast<ChromeBrowsingContext*>(aContext);
 }
 
-/* static */ already_AddRefed<ChromeBrowsingContext>
-ChromeBrowsingContext::Create(
-  uint64_t aBrowsingContextId,
-  const nsAString& aName,
-  uint64_t aProcessId)
-{
-  return do_AddRef(new ChromeBrowsingContext(aBrowsingContextId, aName, aProcessId));
+/* static */ const ChromeBrowsingContext* ChromeBrowsingContext::Cast(
+    const BrowsingContext* aContext) {
+  MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
+  return static_cast<const ChromeBrowsingContext*>(aContext);
 }
 
-} // namespace dom
-} // namespace mozilla
+}  // namespace dom
+}  // namespace mozilla

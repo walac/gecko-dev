@@ -4,6 +4,7 @@
 
 // @flow
 import React, { Component } from "react";
+import PropTypes from "prop-types";
 import classNames from "classnames";
 import Svg from "../../shared/Svg";
 import {
@@ -27,10 +28,10 @@ function FrameLocation({ frame }: FrameLocationProps) {
   }
 
   return (
-    <div className="location">
+    <span className="location">
       {library}
       <Svg name={library.toLowerCase()} className="annotation-logo" />
-    </div>
+    </span>
   );
 }
 
@@ -45,7 +46,8 @@ type Props = {
   toggleBlackBox: Function,
   frameworkGroupingOn: boolean,
   displayFullUrl: boolean,
-  getFrameTitle?: string => string
+  getFrameTitle?: string => string,
+  disableContextMenu: boolean
 };
 
 type State = {
@@ -60,7 +62,7 @@ export default class Group extends Component<Props, State> {
     this.state = { expanded: false };
   }
 
-  onContextMenu(event: SyntheticKeyboardEvent<HTMLElement>) {
+  onContextMenu(event: SyntheticMouseEvent<HTMLElement>) {
     const {
       group,
       copyStackTrace,
@@ -91,7 +93,8 @@ export default class Group extends Component<Props, State> {
       toggleBlackBox,
       copyStackTrace,
       displayFullUrl,
-      getFrameTitle
+      getFrameTitle,
+      disableContextMenu
     } = this.props;
 
     const { expanded } = this.state;
@@ -115,6 +118,7 @@ export default class Group extends Component<Props, State> {
             toggleFrameworkGrouping={toggleFrameworkGrouping}
             displayFullUrl={displayFullUrl}
             getFrameTitle={getFrameTitle}
+            disableContextMenu={disableContextMenu}
           />
         ))}
       </div>
@@ -124,17 +128,23 @@ export default class Group extends Component<Props, State> {
   renderDescription() {
     const frame = this.props.group[0];
     const displayName = formatDisplayName(frame);
+
+    const l10NEntry = this.state.expanded
+      ? "callStack.group.collapseTooltip"
+      : "callStack.group.expandTooltip";
+    const { l10n } = this.context;
+    const title = l10n.getFormatStr(l10NEntry, frame.library);
+
     return (
       <li
         key={frame.id}
         className={classNames("group")}
         onClick={this.toggleFrames}
         tabIndex={0}
+        title={title}
       >
-        <div className="d-flex align-items-center min-width-0">
-          <div className="title">{displayName}</div>
-          <Badge>{this.props.group.length}</Badge>
-        </div>
+        <span className="title">{displayName}</span>
+        <Badge>{this.props.group.length}</Badge>
         <FrameLocation frame={frame} />
       </li>
     );
@@ -142,10 +152,11 @@ export default class Group extends Component<Props, State> {
 
   render() {
     const { expanded } = this.state;
+    const { disableContextMenu } = this.props;
     return (
       <div
         className={classNames("frames-group", { expanded })}
-        onContextMenu={e => this.onContextMenu(e)}
+        onContextMenu={disableContextMenu ? null : e => this.onContextMenu(e)}
       >
         {this.renderDescription()}
         {this.renderFrames()}
@@ -155,3 +166,4 @@ export default class Group extends Component<Props, State> {
 }
 
 Group.displayName = "Group";
+Group.contextTypes = { l10n: PropTypes.object };

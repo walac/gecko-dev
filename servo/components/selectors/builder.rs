@@ -17,13 +17,13 @@
 //! is non-trivial. This module encapsulates those details and presents an
 //! easy-to-use API for the parser.
 
-use parser::{Combinator, Component, SelectorImpl};
+use crate::parser::{Combinator, Component, SelectorImpl};
+use crate::sink::Push;
 use servo_arc::{Arc, HeaderWithLength, ThinArc};
-use sink::Push;
 use smallvec::{self, SmallVec};
 use std::cmp;
 use std::iter;
-use std::ops::{AddAssign, Add};
+use std::ops::{Add, AddAssign};
 use std::ptr;
 use std::slice;
 

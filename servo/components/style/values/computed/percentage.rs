@@ -4,11 +4,11 @@
 
 //! Computed percentages.
 
+use crate::values::animated::ToAnimatedValue;
+use crate::values::generics::NonNegative;
+use crate::values::{serialize_percentage, CSSFloat};
 use std::fmt;
 use style_traits::{CssWriter, ToCss};
-use values::{serialize_percentage, CSSFloat};
-use values::animated::ToAnimatedValue;
-use values::generics::NonNegative;
 
 /// A computed percentage.
 #[cfg_attr(feature = "servo", derive(Deserialize, Serialize))]

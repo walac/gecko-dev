@@ -25,9 +25,6 @@ using CSSRect from "Units.h";
 using CSSSize from "Units.h";
 using mozilla::LayoutDeviceIntPoint from "Units.h";
 using hal::ScreenOrientation from "mozilla/HalScreenConfiguration.h";
-using struct mozilla::layers::TextureFactoryIdentifier from "mozilla/layers/CompositorTypes.h";
-using mozilla::layers::CompositorOptions from "mozilla/layers/CompositorOptions.h";
-using mozilla::layers::LayersId from "mozilla/layers/LayersTypes.h";
 using mozilla::gfx::SurfaceFormat from "mozilla/gfx/Types.h";
 
 
@@ -120,9 +117,6 @@ struct CreatedWindowInfo
   bool windowOpened;
   FrameScriptInfo[] frameScripts;
   nsCString urlToLoad;
-  TextureFactoryIdentifier textureFactoryIdentifier;
-  LayersId layersId;
-  CompositorOptions compositorOptions;
   uint32_t maxTouchPoints;
   DimensionInfo dimensions;
   bool hasSiblings;
@@ -131,15 +125,34 @@ struct CreatedWindowInfo
 
 /**
  * PerformanceInfo is used to pass performance info stored
- * in WorkerPrivate & DocGroup instances
+ * in WorkerPrivate and DocGroup instances, as well as
+ * memory-related information.
  *
  * Each (host, pid, windowId) is unique to a given DocGroup or
  * Worker, and we collect the number of dispatches per Dispatch
- * category and total execution duration.
+ * category and total execution duration as well as the current
+ * Zone JS Heap usage.
  *
- * This IPDL struct reflects the data collected in Performance counters.
+ * This IPDL struct reflects the data collected in Performance counters,
+ * in addition of some memory usage information.
+ *
  * see xpcom/threads/PerformanceCounter.h
  */
+
+struct MediaMemoryInfo {
+  uint64_t audioSize;
+  uint64_t videoSize;
+  uint64_t resourcesSize;
+};
+
+struct PerformanceMemoryInfo {
+  MediaMemoryInfo media;
+  uint64_t domDom;
+  uint64_t domStyle;
+  uint64_t domOther;
+  uint64_t GCHeapUsage;
+};
+
 struct CategoryDispatch
 {
   // DispatchCategory value
@@ -164,6 +177,8 @@ struct PerformanceInfo
   bool isWorker;
   // True if the document window is the top window
   bool isTopLevel;
+  // Memory
+  PerformanceMemoryInfo memory;
   // Counters per category. For workers, a single entry
   CategoryDispatch[] items;
 };

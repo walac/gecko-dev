@@ -10,6 +10,8 @@
 #include "nscore.h"
 
 #include "DateTimeFormat.h"
+#include "MediaManager.h"
+#include "mozilla/dom/ServiceWorkerRegistrar.h"
 #include "nsAttrValue.h"
 #include "nsColorNames.h"
 #include "nsComputedDOMStyle.h"
@@ -109,6 +111,7 @@
 #include "mozilla/dom/ipc/IPCBlobInputStreamStorage.h"
 #include "mozilla/dom/U2FTokenManager.h"
 #include "mozilla/dom/PointerEventHandler.h"
+#include "mozilla/dom/RemoteWorkerService.h"
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "nsThreadManager.h"
 #include "mozilla/css/ImageLoader.h"
@@ -120,15 +123,12 @@ using namespace mozilla::dom::ipc;
 
 nsrefcnt nsLayoutStatics::sLayoutStaticRefcnt = 0;
 
-nsresult
-nsLayoutStatics::Initialize()
-{
-  NS_ASSERTION(sLayoutStaticRefcnt == 0,
-               "nsLayoutStatics isn't zero!");
+nsresult nsLayoutStatics::Initialize() {
+  NS_ASSERTION(sLayoutStaticRefcnt == 0, "nsLayoutStatics isn't zero!");
 
   sLayoutStaticRefcnt = 1;
-  NS_LOG_ADDREF(&sLayoutStaticRefcnt, sLayoutStaticRefcnt,
-                "nsLayoutStatics", 1);
+  NS_LOG_ADDREF(&sLayoutStaticRefcnt, sLayoutStaticRefcnt, "nsLayoutStatics",
+                1);
 
   nsresult rv;
 
@@ -258,10 +258,6 @@ nsLayoutStatics::Initialize()
 
   ServiceWorkerRegistrar::Initialize();
 
-#ifdef DEBUG
-  mozilla::LayerAnimationInfo::Initialize();
-#endif
-
   MediaDecoder::InitStatics();
 
   PromiseDebugging::Init();
@@ -278,9 +274,10 @@ nsLayoutStatics::Initialize()
   mozilla::dom::U2FTokenManager::Initialize();
 
   if (XRE_IsParentProcess()) {
-    // On content process we initialize DOMPrefs when PContentChild is fully
-    // initialized.
+    // On content process we initialize these components when PContentChild is
+    // fully initialized.
     mozilla::dom::DOMPrefs::Initialize();
+    mozilla::dom::RemoteWorkerService::Initialize();
   }
 
   nsThreadManager::InitializeShutdownObserver();
@@ -292,9 +289,7 @@ nsLayoutStatics::Initialize()
   return NS_OK;
 }
 
-void
-nsLayoutStatics::Shutdown()
-{
+void nsLayoutStatics::Shutdown() {
   // Don't need to shutdown nsWindowMemoryReporter, that will be done by the
   // memory reporter manager.
 

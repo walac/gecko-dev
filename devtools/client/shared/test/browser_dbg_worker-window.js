@@ -9,33 +9,22 @@ Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/shared/test/helper_workers.js",
   this);
 
-// The following "connectionClosed" rejection should not be left uncaught. This
-// test has been whitelisted until the issue is fixed.
-ChromeUtils.import("resource://testing-common/PromiseTestUtils.jsm", this);
-PromiseTestUtils.expectUncaughtRejection(/[object Object]/);
-
 const TAB_URL = EXAMPLE_URL + "doc_WorkerTargetActor.attachThread-tab.html";
 const WORKER_URL = "code_WorkerTargetActor.attachThread-worker.js";
 
 add_task(async function() {
   await pushPrefs(["devtools.scratchpad.enabled", true]);
 
-  DebuggerServer.init();
-  DebuggerServer.registerAllActors();
-
-  const client = new DebuggerClient(DebuggerServer.connectPipe());
-  await connect(client);
-
   const tab = await addTab(TAB_URL);
-  const { tabs } = await listTabs(client);
-  const [, targetFront] = await attachTarget(client, findTab(tabs, TAB_URL));
+  const target = await TargetFactory.forTab(tab);
+  await target.attach();
+  const targetFront = target.activeTab;
 
   await listWorkers(targetFront);
   await createWorkerInTab(tab, WORKER_URL);
 
   const { workers } = await listWorkers(targetFront);
-  const [, workerTargetFront] = await attachWorker(targetFront,
-                                             findWorker(workers, WORKER_URL));
+  const workerTargetFront = findWorker(workers, WORKER_URL);
 
   const toolbox = await gDevTools.showToolbox(TargetFactory.forWorker(workerTargetFront),
                                             "jsdebugger",
@@ -62,7 +51,7 @@ add_task(async function() {
 
   terminateWorkerInTab(tab, WORKER_URL);
   await waitForWorkerClose(workerTargetFront);
-  await close(client);
+  await target.destroy();
 
   await toolbox.destroy();
 });

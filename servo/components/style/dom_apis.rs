@@ -5,15 +5,15 @@
 //! Generic implementations of some DOM APIs so they can be shared between Servo
 //! and Gecko.
 
-use Atom;
-use context::QuirksMode;
-use dom::{TDocument, TElement, TNode, TShadowRoot};
-use invalidation::element::invalidator::{DescendantInvalidationLists, Invalidation};
-use invalidation::element::invalidator::{InvalidationProcessor, InvalidationVector};
-use selectors::{Element, NthIndexCache, SelectorList};
+use crate::context::QuirksMode;
+use crate::dom::{TDocument, TElement, TNode, TShadowRoot};
+use crate::invalidation::element::invalidator::{DescendantInvalidationLists, Invalidation};
+use crate::invalidation::element::invalidator::{InvalidationProcessor, InvalidationVector};
+use crate::Atom;
 use selectors::attr::CaseSensitivity;
 use selectors::matching::{self, MatchingContext, MatchingMode};
 use selectors::parser::{Combinator, Component, LocalName, SelectorImpl};
+use selectors::{Element, NthIndexCache, SelectorList};
 use smallvec::SmallVec;
 use std::borrow::Borrow;
 
@@ -338,7 +338,10 @@ fn local_name_matches<E>(element: E, local_name: &LocalName<E::Impl>) -> bool
 where
     E: TElement,
 {
-    let LocalName { ref name, ref lower_name } = *local_name;
+    let LocalName {
+        ref name,
+        ref lower_name,
+    } = *local_name;
     if element.is_html_element_in_html_document() {
         element.local_name() == lower_name.borrow()
     } else {
@@ -543,23 +546,15 @@ where
             let case_sensitivity = quirks_mode.classes_and_ids_case_sensitivity();
             collect_all_elements::<E, Q, _>(root, results, |element| {
                 element.has_class(class, case_sensitivity) &&
-                    matching::matches_selector_list(
-                        selector_list,
-                        &element,
-                        matching_context,
-                    )
+                    matching::matches_selector_list(selector_list, &element, matching_context)
             });
-        }
+        },
         SimpleFilter::LocalName(ref local_name) => {
             collect_all_elements::<E, Q, _>(root, results, |element| {
                 local_name_matches(element, local_name) &&
-                    matching::matches_selector_list(
-                        selector_list,
-                        &element,
-                        matching_context,
-                    )
+                    matching::matches_selector_list(selector_list, &element, matching_context)
             });
-        }
+        },
     }
 
     Ok(())
@@ -599,7 +594,7 @@ pub fn query_selector<E, Q>(
     E: TElement,
     Q: SelectorQuery<E>,
 {
-    use invalidation::element::invalidator::TreeStyleInvalidator;
+    use crate::invalidation::element::invalidator::TreeStyleInvalidator;
 
     let quirks_mode = root.owner_doc().quirks_mode();
 

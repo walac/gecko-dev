@@ -1,6 +1,6 @@
 import {mount} from "enzyme";
 import React from "react";
-import schema from "content-src/asrouter/templates/SubmitFormSnippet/SubmitFormSnippet.schema.json";
+import schema from "content-src/asrouter/templates/SendToDeviceSnippet/SendToDeviceSnippet.schema.json";
 import {SendToDeviceSnippet} from "content-src/asrouter/templates/SendToDeviceSnippet/SendToDeviceSnippet";
 import {SnippetsTestMessageProvider} from "lib/SnippetsTestMessageProvider.jsm";
 
@@ -41,20 +41,45 @@ describe("SendToDeviceSnippet", () => {
       onDismiss: sandbox.stub(),
       sendUserActionTelemetry: sandbox.stub(),
       onAction: sandbox.stub(),
-      form_method: "POST",
     };
-    assert.jsonSchema(props.content, schema);
-    return mount(<SendToDeviceSnippet {...props} />);
+    const comp = mount(<SendToDeviceSnippet {...props} />);
+    // Check schema with the final props the component receives (including defaults)
+    assert.jsonSchema(comp.children().get(0).props.content, schema);
+    return comp;
   }
 
   beforeEach(() => {
-    sandbox = sinon.sandbox.create();
+    sandbox = sinon.createSandbox();
     jsonResponse = {status: "ok"};
     fetchStub = sandbox.stub(global, "fetch")
       .returns(Promise.resolve({json: () => Promise.resolve(jsonResponse)}));
   });
   afterEach(() => {
     sandbox.restore();
+  });
+
+  it("should have the correct defaults", () => {
+    const defaults = {
+      id: "foo123",
+      onBlock() {},
+      content: {},
+      onDismiss: sandbox.stub(),
+      sendUserActionTelemetry: sandbox.stub(),
+      onAction: sandbox.stub(),
+      form_method: "POST",
+    };
+    const wrapper = mount(<SendToDeviceSnippet {...defaults} />);
+    // SendToDeviceSnippet is a wrapper around SubmitFormSnippet
+    const {props} = wrapper.children().get(0);
+
+    const defaultProperties = Object.keys(schema.properties)
+      .filter(prop => schema.properties[prop].default);
+    assert.lengthOf(defaultProperties, 6);
+    defaultProperties.forEach(prop => assert.propertyVal(props.content, prop, schema.properties[prop].default));
+
+    const defaultHiddenProperties = Object.keys(schema.properties.hidden_inputs.properties)
+      .filter(prop => schema.properties.hidden_inputs.properties[prop].default);
+    assert.lengthOf(defaultHiddenProperties, 0);
   });
 
   describe("form input", () => {

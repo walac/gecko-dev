@@ -279,7 +279,8 @@ Tools.memory = {
   tooltip: l10n("memory.tooltip"),
 
   isTargetSupported: function(target) {
-    return target.getTrait("heapSnapshots") && !target.isAddon;
+    return target.getTrait("heapSnapshots") && !target.isAddon
+      && !target.isWorkerTarget;
   },
 
   build: function(frame, target) {
@@ -304,7 +305,7 @@ Tools.netMonitor = {
   inMenu: true,
 
   isTargetSupported: function(target) {
-    return target.getTrait("networkMonitor");
+    return target.getTrait("networkMonitor") && !target.isWorkerTarget;
   },
 
   build: function(iframeWindow, toolbox) {
@@ -568,7 +569,7 @@ exports.ToolboxButtons = [
       if (clipboardEnabled) {
         args.clipboard = true;
       }
-      const screenshotFront = toolbox.target.getFront("screenshot");
+      const screenshotFront = await toolbox.target.getFront("screenshot");
       await screenshotFront.captureAndSave(toolbox.win, args);
     },
   },

@@ -34,8 +34,9 @@ import org.hamcrest.Matchers.*
 import org.junit.Test
 import org.junit.Before
 import org.junit.After
+import org.junit.Ignore
 import org.junit.runner.RunWith
-import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.ReuseSession
+import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.Setting
 
 const val DISPLAY_WIDTH = 480
 const val DISPLAY_HEIGHT = 640
@@ -500,11 +501,12 @@ class AccessibilityTest : BaseSessionTest() {
         return screenRect.contains(nodeBounds)
     }
 
-    @ReuseSession(false)
+    @Ignore // Bug 1506276 - We need to reliably wait for APZC here, and it's not trivial.
     @Test fun testScroll() {
         var nodeId = View.NO_ID
         sessionRule.session.loadString(
-                """<body style="margin: 0;">
+                """<meta name="viewport" content="width=device-width initial-scale=1">
+                <body style="margin: 0;">
                         <div style="height: 100vh;"></div>
                         <button>Hello</button>
                         <p style="margin: 0;">Lorem ipsum dolor sit amet, consectetur adipiscing elit,
@@ -595,6 +597,7 @@ class AccessibilityTest : BaseSessionTest() {
         })
     }
 
+    @Setting(key = Setting.Key.FULL_ACCESSIBILITY_TREE, value = "true")
     @Test fun autoFill() {
         // Wait for the accessibility nodes to populate.
         mainSession.loadTestPath(FORMS_HTML_PATH)
@@ -613,8 +616,13 @@ class AccessibilityTest : BaseSessionTest() {
             arrayOf("document", "$('#iframe').contentDocument").map { doc ->
                 mainSession.evaluateJS("""new Promise(resolve =>
                     $doc.querySelector('${entry.key}').addEventListener(
-                        'input', event => resolve([event.target.value, '${entry.value}']),
-                        { once: true }))""").asJSPromise()
+                        'input', event => {
+                          let eventInterface =
+                            event instanceof InputEvent ? "InputEvent" :
+                            event instanceof UIEvent ? "UIEvent" :
+                            event instanceof Event ? "Event" : "Unknown";
+                          resolve([event.target.value, '${entry.value}', eventInterface]);
+                        }, { once: true }))""").asJSPromise()
             }
         }
 
@@ -663,11 +671,13 @@ class AccessibilityTest : BaseSessionTest() {
         autoFillChild(View.NO_ID, createNodeInfo(View.NO_ID))
 
         // Wait on the promises and check for correct values.
-        for ((actual, expected) in promises.map { it.value.asJSList<String>() }) {
+        for ((actual, expected, eventInterface) in promises.map { it.value.asJSList<String>() }) {
             assertThat("Auto-filled value must match", actual, equalTo(expected))
+            assertThat("input event should be dispatched with InputEvent interface", eventInterface, equalTo("InputEvent"))
         }
     }
 
+    @Setting(key = Setting.Key.FULL_ACCESSIBILITY_TREE, value = "true")
     @Test fun autoFill_navigation() {
         fun countAutoFillNodes(cond: (AccessibilityNodeInfo) -> Boolean =
                                        { it.className == "android.widget.EditText" },
@@ -721,6 +731,7 @@ class AccessibilityTest : BaseSessionTest() {
                    countAutoFillNodes({ it.isFocused }), equalTo(0))
     }
 
+    @Setting(key = Setting.Key.FULL_ACCESSIBILITY_TREE, value = "true")
     @Test fun testTree() {
         sessionRule.session.loadString(
                 "<label for='name'>Name:</label><input id='name' type='text' value='Julie'><button>Submit</button>",
@@ -736,6 +747,7 @@ class AccessibilityTest : BaseSessionTest() {
 
         val entryNode = createNodeInfo(rootNode.getChildId(1))
         assertThat("Second node is an entry", entryNode.className.toString(), equalTo("android.widget.EditText"))
+        assertThat("Entry has vieIdwResourceName of 'name'", entryNode.viewIdResourceName, equalTo("name"))
         assertThat("Entry value is text", entryNode.text.toString(), equalTo("Julie"))
         if (Build.VERSION.SDK_INT >= 19) {
             assertThat("Entry hint is label",
@@ -756,6 +768,7 @@ class AccessibilityTest : BaseSessionTest() {
         assertThat("Text leaf has correct text", textLeaf.text.toString(), equalTo("Submit"))
     }
 
+    @Setting(key = Setting.Key.FULL_ACCESSIBILITY_TREE, value = "true")
     @Test fun testCollection() {
         sessionRule.session.loadString(
                 """<ul>
@@ -796,6 +809,7 @@ class AccessibilityTest : BaseSessionTest() {
         }
     }
 
+    @Setting(key = Setting.Key.FULL_ACCESSIBILITY_TREE, value = "true")
     @Test fun testRange() {
         sessionRule.session.loadString(
                 """<input type="range" aria-label="Rating" min="1" max="10" value="4">

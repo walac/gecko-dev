@@ -25,18 +25,18 @@ class ChangesView {
 
     this.onAddChange = this.onAddChange.bind(this);
     this.onClearChanges = this.onClearChanges.bind(this);
+    this.onChangesFront = this.onChangesFront.bind(this);
     this.destroy = this.destroy.bind(this);
-
-    // Get the Changes front, and listen to it.
-    this.changesFront = this.toolbox.target.getFront("changes");
-    this.changesFront.on("add-change", this.onAddChange);
-    this.changesFront.on("clear-changes", this.onClearChanges);
 
     this.init();
   }
 
   init() {
     const changesApp = ChangesApp({});
+
+    // listen to the front for initialization, add listeners
+    // when it is ready
+    this._getChangesFront();
 
     // Expose the provider to let inspector.js use it in setupSidebar.
     this.provider = createElement(Provider, {
@@ -46,24 +46,37 @@ class ChangesView {
     }, changesApp);
 
     this.inspector.target.on("will-navigate", this.onClearChanges);
-
-    // Sync the store to the changes stored on the server. The
-    // syncChangesToServer() method is async, but we don't await it since
-    // this method itself is NOT async. The call will be made in its own
-    // time, which is fine since it definitionally brings us up-to-date
-    // with the server at that moment.
-    this.syncChangesToServer();
   }
 
-  async syncChangesToServer() {
-    // Empty the store.
-    this.onClearChanges();
-
-    // Add back in all the changes from the changesFront.
-    const changes = await this.changesFront.allChanges();
-    changes.forEach((change) => {
-      this.onAddChange(change);
+  _getChangesFront() {
+    if (this.changesFrontPromise) {
+      return this.changesFrontPromise;
+    }
+    this.changesFrontPromise = new Promise(async resolve => {
+      const target = this.inspector.target;
+      const front = target.getFront("changes");
+      this.onChangesFront(front);
+      resolve(front);
     });
+    return this.changesFrontPromise;
+  }
+
+  async onChangesFront(changesFront) {
+    changesFront.on("add-change", this.onAddChange);
+    changesFront.on("clear-changes", this.onClearChanges);
+    try {
+      // Get all changes collected up to this point by the ChangesActor on the server,
+      // then push them to the Redux store here on the client.
+      const changes = await changesFront.allChanges();
+      changes.forEach(change => {
+        this.onAddChange(change);
+      });
+    } catch (e) {
+      // The connection to the server may have been cut, for
+      // example during test
+      // teardown. Here we just catch the error and silently
+      // ignore it.
+    }
   }
 
   onAddChange(change) {
@@ -78,12 +91,13 @@ class ChangesView {
   /**
    * Destruction function called when the inspector is destroyed.
    */
-  destroy() {
+  async destroy() {
     this.store.dispatch(resetChanges());
 
-    this.changesFront.off("add-change", this.onAddChange);
-    this.changesFront.off("clear-changes", this.onClearChanges);
-    this.changesFront = null;
+    // ensure we finish waiting for the front before destroying.
+    const changesFront = await this.changesFrontPromise;
+    changesFront.off("add-change", this.onAddChange);
+    changesFront.off("clear-changes", this.onClearChanges);
 
     this.document = null;
     this.inspector = null;

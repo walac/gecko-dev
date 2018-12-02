@@ -74,14 +74,14 @@ export default function showContextMenu(props) {
     "breakpointMenuItem.addCondition2.accesskey"
   );
 
-  const otherBreakpoints = breakpoints.filter(b => b !== breakpoint);
+  const otherBreakpoints = breakpoints.filter(b => b.id !== breakpoint.id);
   const enabledBreakpoints = breakpoints.filter(b => !b.disabled);
   const disabledBreakpoints = breakpoints.filter(b => b.disabled);
   const otherEnabledBreakpoints = breakpoints.filter(
-    b => !b.disabled && b !== breakpoint
+    b => !b.disabled && b.id !== breakpoint.id
   );
   const otherDisabledBreakpoints = breakpoints.filter(
-    b => b.disabled && b !== breakpoint
+    b => b.disabled && b.id !== breakpoint.id
   );
 
   const deleteSelfItem = {
@@ -89,7 +89,7 @@ export default function showContextMenu(props) {
     label: deleteSelfLabel,
     accesskey: deleteSelfKey,
     disabled: false,
-    click: () => removeBreakpoint(breakpoint.location)
+    click: () => removeBreakpoint(breakpoint.selectedLocation)
   };
 
   const deleteAllItem = {
@@ -113,7 +113,7 @@ export default function showContextMenu(props) {
     label: enableSelfLabel,
     accesskey: enableSelfKey,
     disabled: false,
-    click: () => toggleDisabledBreakpoint(breakpoint.location.line)
+    click: () => toggleDisabledBreakpoint(breakpoint.selectedLocation.line)
   };
 
   const enableAllItem = {
@@ -137,7 +137,7 @@ export default function showContextMenu(props) {
     label: disableSelfLabel,
     accesskey: disableSelfKey,
     disabled: false,
-    click: () => toggleDisabledBreakpoint(breakpoint.location.line)
+    click: () => toggleDisabledBreakpoint(breakpoint.selectedLocation.line)
   };
 
   const disableAllItem = {
@@ -160,7 +160,7 @@ export default function showContextMenu(props) {
     label: removeConditionLabel,
     accesskey: removeConditionKey,
     disabled: false,
-    click: () => setBreakpointCondition(breakpoint.location)
+    click: () => setBreakpointCondition(breakpoint.selectedLocation)
   };
 
   const addConditionItem = {
@@ -168,8 +168,8 @@ export default function showContextMenu(props) {
     label: addConditionLabel,
     accesskey: addConditionKey,
     click: () => {
-      selectSpecificLocation(breakpoint.location);
-      openConditionalPanel(breakpoint.location.line);
+      selectSpecificLocation(breakpoint.selectedLocation);
+      openConditionalPanel(breakpoint.selectedLocation.line);
     }
   };
 
@@ -178,16 +178,16 @@ export default function showContextMenu(props) {
     label: editConditionLabel,
     accesskey: editConditionKey,
     click: () => {
-      selectSpecificLocation(breakpoint.location);
-      openConditionalPanel(breakpoint.location.line);
+      selectSpecificLocation(breakpoint.selectedLocation);
+      openConditionalPanel(breakpoint.selectedLocation.line);
     }
   };
 
   const hideEnableSelfItem = !breakpoint.disabled;
-  const hideEnableAllItem = disabledBreakpoints.size === 0;
-  const hideEnableOthersItem = otherDisabledBreakpoints.size === 0;
-  const hideDisableAllItem = enabledBreakpoints.size === 0;
-  const hideDisableOthersItem = otherEnabledBreakpoints.size === 0;
+  const hideEnableAllItem = disabledBreakpoints.length === 0;
+  const hideEnableOthersItem = otherDisabledBreakpoints.length === 0;
+  const hideDisableAllItem = enabledBreakpoints.length === 0;
+  const hideDisableOthersItem = otherEnabledBreakpoints.length === 0;
   const hideDisableSelfItem = breakpoint.disabled;
 
   const items = [
@@ -201,7 +201,7 @@ export default function showContextMenu(props) {
     },
     { item: deleteSelfItem },
     { item: deleteAllItem },
-    { item: deleteOthersItem, hidden: () => breakpoints.size === 1 },
+    { item: deleteOthersItem, hidden: () => breakpoints.length === 1 },
     {
       item: { type: "separator" },
       hidden: () =>

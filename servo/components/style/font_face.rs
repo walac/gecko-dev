@@ -6,29 +6,31 @@
 //!
 //! [ff]: https://drafts.csswg.org/css-fonts/#at-font-face-rule
 
-use cssparser::{AtRuleParser, DeclarationListParser, DeclarationParser, Parser};
-use cssparser::{CowRcStr, SourceLocation};
+use crate::error_reporting::ContextualParseError;
+use crate::parser::{Parse, ParserContext};
+#[cfg(feature = "gecko")]
+use crate::properties::longhands::font_language_override;
+use crate::shared_lock::{SharedRwLockReadGuard, ToCssWithGuard};
+use crate::str::CssStringWriter;
+use crate::values::computed::font::FamilyName;
+use crate::values::generics::font::FontStyle as GenericFontStyle;
+#[cfg(feature = "gecko")]
+use crate::values::specified::font::SpecifiedFontFeatureSettings;
+use crate::values::specified::font::SpecifiedFontStyle;
+#[cfg(feature = "gecko")]
+use crate::values::specified::font::SpecifiedFontVariationSettings;
+use crate::values::specified::font::{AbsoluteFontWeight, FontStretch};
+use crate::values::specified::url::SpecifiedUrl;
+use crate::values::specified::Angle;
 #[cfg(feature = "gecko")]
 use cssparser::UnicodeRange;
-use error_reporting::ContextualParseError;
-use parser::{Parse, ParserContext};
-#[cfg(feature = "gecko")]
-use properties::longhands::font_language_override;
+use cssparser::{AtRuleParser, DeclarationListParser, DeclarationParser, Parser};
+use cssparser::{CowRcStr, SourceLocation};
 use selectors::parser::SelectorParseErrorKind;
-use shared_lock::{SharedRwLockReadGuard, ToCssWithGuard};
 use std::fmt::{self, Write};
-use str::CssStringWriter;
+use style_traits::values::SequenceWriter;
 use style_traits::{Comma, CssWriter, OneOrMoreSeparated, ParseError};
 use style_traits::{StyleParseErrorKind, ToCss};
-use style_traits::values::SequenceWriter;
-use values::computed::font::FamilyName;
-use values::generics::font::FontStyle as GenericFontStyle;
-use values::specified::Angle;
-use values::specified::font::{AbsoluteFontWeight, FontStretch};
-#[cfg(feature = "gecko")]
-use values::specified::font::{SpecifiedFontFeatureSettings, SpecifiedFontVariationSettings};
-use values::specified::font::SpecifiedFontStyle;
-use values::specified::url::SpecifiedUrl;
 
 /// A source for a font-face rule.
 #[cfg_attr(feature = "servo", derive(Deserialize, Serialize))]
@@ -53,9 +55,12 @@ impl OneOrMoreSeparated for Source {
 #[repr(u8)]
 #[allow(missing_docs)]
 pub enum FontFaceSourceListComponent {
-    Url(*const ::gecko_bindings::structs::mozilla::css::URLValue),
-    Local(*mut ::gecko_bindings::structs::nsAtom),
-    FormatHint { length: usize, utf8_bytes: *const u8 },
+    Url(*const crate::gecko_bindings::structs::mozilla::css::URLValue),
+    Local(*mut crate::gecko_bindings::structs::nsAtom),
+    FormatHint {
+        length: usize,
+        utf8_bytes: *const u8,
+    },
 }
 
 /// A `UrlSource` represents a font-face source that has been specified with a
@@ -133,7 +138,7 @@ macro_rules! impl_range {
                 Ok(())
             }
         }
-    }
+    };
 }
 
 /// The font-weight descriptor:
@@ -192,10 +197,7 @@ impl FontStretchRange {
             }
         }
 
-        let (min, max) = sort_range(
-            compute_stretch(&self.0),
-            compute_stretch(&self.1),
-        );
+        let (min, max) = sort_range(compute_stretch(&self.0), compute_stretch(&self.1));
         ComputedFontStretchRange(min, max)
     }
 }
@@ -277,7 +279,7 @@ impl FontStyle {
                     SpecifiedFontStyle::compute_angle_degrees(second),
                 );
                 ComputedFontStyleDescriptor::Oblique(min, max)
-            }
+            },
         }
     }
 }
@@ -340,7 +342,8 @@ impl<'a> FontFace<'a> {
                     } else {
                         true
                     }
-                }).cloned()
+                })
+                .cloned()
                 .collect(),
         )
     }
@@ -409,13 +412,13 @@ impl Parse for Source {
 macro_rules! is_descriptor_enabled {
     ("font-display") => {
         unsafe {
-            use gecko_bindings::structs::mozilla;
+            use crate::gecko_bindings::structs::mozilla;
             mozilla::StaticPrefs_sVarCache_layout_css_font_display_enabled
         }
     };
     ("font-variation-settings") => {
         unsafe {
-            use gecko_bindings::structs::mozilla;
+            use crate::gecko_bindings::structs::mozilla;
             mozilla::StaticPrefs_sVarCache_layout_css_font_variations_enabled != 0
         }
     };

@@ -20,6 +20,9 @@ const { Services } = jsmScope;
 // Steal various globals only available in JSM scope (and not Sandbox one)
 const {
   console,
+  DOMPoint,
+  DOMQuad,
+  DOMRect,
   HeapSnapshot,
   StructuredCloneHolder,
   TelemetryStopwatch,
@@ -283,6 +286,9 @@ exports.globals = {
     factory(this.require, this.exports, this.module);
   },
   DOMParser,
+  DOMPoint,
+  DOMQuad,
+  DOMRect,
   Element,
   Event,
   FormData,

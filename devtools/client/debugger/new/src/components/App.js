@@ -3,10 +3,11 @@
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 // @flow
-import PropTypes from "prop-types";
 import React, { Component } from "react";
 import { connect } from "react-redux";
-import { features } from "../utils/prefs";
+import PropTypes from "prop-types";
+
+import { prefs, features } from "../utils/prefs";
 import actions from "../actions";
 import A11yIntention from "./A11yIntention";
 import { ShortcutsModal } from "./ShortcutsModal";
@@ -93,7 +94,7 @@ class App extends Component<Props, State> {
   }
 
   getChildContext = () => {
-    return { shortcuts };
+    return { shortcuts, l10n: L10N };
   };
 
   componentDidMount() {
@@ -241,29 +242,42 @@ class App extends Component<Props, State> {
     }));
   }
 
+  // Important so that the tabs chevron updates appropriately when
+  // the user resizes the left or right columns
+  triggerEditorPaneResize() {
+    const editorPane = window.document.querySelector(".editor-pane");
+    if (editorPane) {
+      editorPane.dispatchEvent(new Event("resizeend"));
+    }
+  }
+
   renderLayout = () => {
     const { startPanelCollapsed, endPanelCollapsed } = this.props;
     const horizontal = this.isHorizontal();
 
     const maxSize = horizontal ? "70%" : "95%";
-    const primaryInitialSize = horizontal ? "250px" : "150px";
 
     return (
       <SplitBox
         style={{ width: "100vw" }}
-        initialHeight={400}
-        initialWidth={300}
+        initialSize={prefs.endPanelSize}
         minSize={30}
         maxSize={maxSize}
         splitterSize={1}
         vert={horizontal}
+        onResizeEnd={num => {
+          prefs.endPanelSize = num;
+        }}
         startPanel={
           <SplitBox
             style={{ width: "100vw" }}
-            initialSize={primaryInitialSize}
+            initialSize={prefs.startPanelSize}
             minSize={30}
             maxSize="85%"
             splitterSize={1}
+            onResizeEnd={num => {
+              prefs.startPanelSize = num;
+            }}
             startPanelCollapsed={startPanelCollapsed}
             startPanel={<PrimaryPanes horizontal={horizontal} />}
             endPanel={this.renderEditorPane()}
@@ -277,6 +291,7 @@ class App extends Component<Props, State> {
           />
         }
         endPanelCollapsed={endPanelCollapsed}
+        onResizeEnd={this.triggerEditorPaneResize}
       />
     );
   };
@@ -316,7 +331,10 @@ class App extends Component<Props, State> {
   }
 }
 
-App.childContextTypes = { shortcuts: PropTypes.object };
+App.childContextTypes = {
+  shortcuts: PropTypes.object,
+  l10n: PropTypes.object
+};
 
 const mapStateToProps = state => ({
   selectedSource: getSelectedSource(state),

@@ -4,8 +4,6 @@
 
 "use strict";
 
-const { AddonManager } = require("resource://gre/modules/AddonManager.jsm");
-
 const {
   DEBUG_TARGETS,
   UNWATCH_RUNTIME_START,
@@ -23,32 +21,6 @@ function debugTargetListenerMiddleware(store) {
     store.dispatch(Actions.requestTabs());
   };
 
-  const extensionsListener = {
-    onDisabled() {
-      onExtensionsUpdated();
-    },
-
-    onEnabled() {
-      onExtensionsUpdated();
-    },
-
-    onInstalled() {
-      onExtensionsUpdated();
-    },
-
-    onOperationCancelled() {
-      onExtensionsUpdated();
-    },
-
-    onUninstalled() {
-      onExtensionsUpdated();
-    },
-
-    onUninstalling() {
-      onExtensionsUpdated();
-    },
-  };
-
   const onWorkersUpdated = () => {
     store.dispatch(Actions.requestWorkers());
   };
@@ -57,43 +29,45 @@ function debugTargetListenerMiddleware(store) {
     switch (action.type) {
       case WATCH_RUNTIME_SUCCESS: {
         const { runtime } = action;
-        const { client } = runtime.runtimeDetails;
+        const { clientWrapper } = runtime.runtimeDetails;
 
         if (isSupportedDebugTarget(runtime.type, DEBUG_TARGETS.TAB)) {
-          client.mainRoot.on("tabListChanged", onTabsUpdated);
+          clientWrapper.addListener("tabListChanged", onTabsUpdated);
         }
 
         if (isSupportedDebugTarget(runtime.type, DEBUG_TARGETS.EXTENSION)) {
-          AddonManager.addAddonListener(extensionsListener);
+          clientWrapper.addListener("addonListChanged", onExtensionsUpdated);
         }
 
         if (isSupportedDebugTarget(runtime.type, DEBUG_TARGETS.WORKER)) {
-          client.mainRoot.on("workerListChanged", onWorkersUpdated);
-          client.mainRoot.on("serviceWorkerRegistrationListChanged", onWorkersUpdated);
-          client.mainRoot.on("processListChanged", onWorkersUpdated);
-          client.addListener("registration-changed", onWorkersUpdated);
-          client.addListener("push-subscription-modified", onWorkersUpdated);
+          clientWrapper.addListener("workerListChanged", onWorkersUpdated);
+          clientWrapper.addListener("serviceWorkerRegistrationListChanged",
+            onWorkersUpdated);
+          clientWrapper.addListener("processListChanged", onWorkersUpdated);
+          clientWrapper.addListener("registration-changed", onWorkersUpdated);
+          clientWrapper.addListener("push-subscription-modified", onWorkersUpdated);
         }
         break;
       }
       case UNWATCH_RUNTIME_START: {
         const { runtime } = action;
-        const { client } = runtime.runtimeDetails;
+        const { clientWrapper } = runtime.runtimeDetails;
 
         if (isSupportedDebugTarget(runtime.type, DEBUG_TARGETS.TAB)) {
-          client.mainRoot.off("tabListChanged", onTabsUpdated);
+          clientWrapper.removeListener("tabListChanged", onTabsUpdated);
         }
 
         if (isSupportedDebugTarget(runtime.type, DEBUG_TARGETS.EXTENSION)) {
-          AddonManager.removeAddonListener(extensionsListener);
+          clientWrapper.removeListener("addonListChanged", onExtensionsUpdated);
         }
 
         if (isSupportedDebugTarget(runtime.type, DEBUG_TARGETS.WORKER)) {
-          client.mainRoot.off("workerListChanged", onWorkersUpdated);
-          client.mainRoot.off("serviceWorkerRegistrationListChanged", onWorkersUpdated);
-          client.mainRoot.off("processListChanged", onWorkersUpdated);
-          client.removeListener("registration-changed", onWorkersUpdated);
-          client.removeListener("push-subscription-modified", onWorkersUpdated);
+          clientWrapper.removeListener("workerListChanged", onWorkersUpdated);
+          clientWrapper.removeListener("serviceWorkerRegistrationListChanged",
+            onWorkersUpdated);
+          clientWrapper.removeListener("processListChanged", onWorkersUpdated);
+          clientWrapper.removeListener("registration-changed", onWorkersUpdated);
+          clientWrapper.removeListener("push-subscription-modified", onWorkersUpdated);
         }
         break;
       }

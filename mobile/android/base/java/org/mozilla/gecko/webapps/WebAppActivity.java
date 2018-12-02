@@ -352,9 +352,12 @@ public class WebAppActivity extends AppCompatActivity
     }
 
     @Override // GeckoSession.ContentDelegate
-    public void onContextMenu(GeckoSession session, int screenX, int screenY,
-                              String uri, int elementType, String elementSrc) {
-        final String content = uri != null ? uri : elementSrc != null ? elementSrc : "";
+    public void onContextMenu(final GeckoSession session,
+                              int screenX, int screenY,
+                              final ContextElement element) {
+        final String content = element.linkUri != null
+                               ? element.linkUri
+                               : element.srcUri != null ? element.srcUri : "";
         final Uri validUri = WebApps.getValidURL(content);
         if (validUri == null) {
             return;
@@ -371,6 +374,10 @@ public class WebAppActivity extends AppCompatActivity
     @Override // GeckoSession.ContentDelegate
     public void onCrash(final GeckoSession session) {
         // Won't happen, as we don't use e10s in Fennec
+    }
+
+    @Override
+    public void onFirstComposite(final GeckoSession session) {
     }
 
     @Override // GeckoSession.ContentDelegate

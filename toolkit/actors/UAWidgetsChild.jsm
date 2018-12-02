@@ -56,10 +56,14 @@ class UAWidgetsChild extends ActorChild {
         uri = "chrome://global/content/elements/datetimebox.js";
         widgetName = "DateTimeBoxWidget";
         break;
-      case "applet":
       case "embed":
       case "object":
-        // TODO (pluginProblems)
+        uri = "chrome://global/content/elements/pluginProblem.js";
+        widgetName = "PluginProblemWidget";
+        break;
+      case "marquee":
+        uri = "chrome://global/content/elements/marquee.js";
+        widgetName = "MarqueeWidget";
         break;
     }
 
@@ -75,7 +79,16 @@ class UAWidgetsChild extends ActorChild {
       Services.scriptloader.loadSubScript(uri, sandbox, "UTF-8");
     }
 
-    let widget = new sandbox[widgetName](shadowRoot);
+    let widget;
+    try {
+      widget = new sandbox[widgetName](shadowRoot);
+    } catch (ex) {
+      // The widget may have thrown during construction.
+      // Report the failure and recover by clearing the Shadow DOM.
+      shadowRoot.innerHTML = "";
+      Cu.reportError(ex);
+      return;
+    }
     this.widgets.set(aElement, widget);
   }
 
@@ -85,7 +98,14 @@ class UAWidgetsChild extends ActorChild {
       return;
     }
     if (typeof widget.wrappedJSObject.destructor == "function") {
-      widget.wrappedJSObject.destructor();
+      try {
+        widget.wrappedJSObject.destructor();
+      } catch (ex) {
+        // The widget may have thrown during destruction.
+        // Report the failure and recover by clearing the Shadow DOM.
+        aElement.openOrClosedShadowRoot.innerHTML = "";
+        Cu.reportError(ex);
+      }
     }
     this.widgets.delete(aElement);
   }

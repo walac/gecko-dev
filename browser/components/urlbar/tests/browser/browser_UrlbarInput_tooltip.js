@@ -6,19 +6,27 @@
 function synthesizeMouseOver(element) {
   window.windowUtils.disableNonTestMouseEvents(true);
 
+  let promise = BrowserTestUtils.waitForEvent(gURLBar.inputField, "mouseover");
+
   EventUtils.synthesizeMouse(element, 1, 1, {type: "mouseover"});
   EventUtils.synthesizeMouse(element, 2, 2, {type: "mousemove"});
   EventUtils.synthesizeMouse(element, 3, 3, {type: "mousemove"});
   EventUtils.synthesizeMouse(element, 4, 4, {type: "mousemove"});
+
+  return promise;
 }
 
 function synthesizeMouseOut(element) {
+  let promise = BrowserTestUtils.waitForEvent(gURLBar.inputField, "mouseout");
+
   EventUtils.synthesizeMouse(element, 0, 0, {type: "mouseout"});
   EventUtils.synthesizeMouseAtCenter(document.documentElement, {type: "mousemove"});
   EventUtils.synthesizeMouseAtCenter(document.documentElement, {type: "mousemove"});
   EventUtils.synthesizeMouseAtCenter(document.documentElement, {type: "mousemove"});
 
   window.windowUtils.disableNonTestMouseEvents(false);
+
+  return promise;
 }
 
 async function expectTooltip(text) {
@@ -28,32 +36,36 @@ async function expectTooltip(text) {
   let element = gURLBar.inputField;
 
   let popupShownPromise = BrowserTestUtils.waitForEvent(tooltip, "popupshown");
-  synthesizeMouseOver(element);
+  await synthesizeMouseOver(element);
   await popupShownPromise;
 
   is(element.getAttribute("title"), text, "title attribute has expected text");
   is(tooltip.textContent, text, "tooltip shows expected text");
 
-  synthesizeMouseOut(element);
+  await synthesizeMouseOut(element);
 }
 
 async function expectNoTooltip() {
   ok(!gURLBar.hasAttribute("textoverflow"), "Urlbar isn't overflowing");
 
   let element = gURLBar.inputField;
-  synthesizeMouseOver(element);
+  await synthesizeMouseOver(element);
 
   is(element.getAttribute("title"), null, "title attribute shouldn't be set");
 
-  synthesizeMouseOut(element);
+  await synthesizeMouseOut(element);
 }
 
 add_task(async function() {
+  // Ensure the URL bar isn't focused.
+  gBrowser.selectedBrowser.focus();
+
   gURLBar.value = "short string";
   await expectNoTooltip();
 
   let longURL = "http://longurl.com/" + "foobar/".repeat(30);
   let overflowPromise = BrowserTestUtils.waitForEvent(gURLBar.inputField, "overflow");
+  await window.promiseDocumentFlushed(() => {});
   gURLBar.value = longURL;
   await overflowPromise;
   is(gURLBar.inputField.value, longURL.replace(/^http:\/\//, ""), "Urlbar value has http:// stripped");

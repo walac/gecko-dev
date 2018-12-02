@@ -43,13 +43,16 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.Locale;
 
 public class GeckoViewActivity extends AppCompatActivity {
     private static final String LOGTAG = "GeckoViewActivity";
-    private static final String DEFAULT_URL = "https://mozilla.org";
+    private static final String DEFAULT_URL = "about:blank";
     private static final String USE_MULTIPROCESS_EXTRA = "use_multiprocess";
+    private static final String FULL_ACCESSIBILITY_TREE_EXTRA = "full_accessibility_tree";
     private static final String SEARCH_URI_BASE = "https://www.google.com/search?q=";
     private static final String ACTION_SHUTDOWN = "org.mozilla.geckoview_example.SHUTDOWN";
     private static final int REQUEST_FILE_PICKER = 1;
@@ -60,6 +63,7 @@ public class GeckoViewActivity extends AppCompatActivity {
     private GeckoSession mGeckoSession;
     private GeckoView mGeckoView;
     private boolean mUseMultiprocess;
+    private boolean mFullAccessibilityTree;
     private boolean mUseTrackingProtection;
     private boolean mUsePrivateBrowsing;
     private boolean mKillProcessOnDestroy;
@@ -98,12 +102,14 @@ public class GeckoViewActivity extends AppCompatActivity {
         setSupportActionBar((Toolbar)findViewById(R.id.toolbar));
 
         mLocationView = new LocationView(this);
+        mLocationView.setId(R.id.url_bar);
         getSupportActionBar().setCustomView(mLocationView,
                 new ActionBar.LayoutParams(ActionBar.LayoutParams.MATCH_PARENT,
                         ActionBar.LayoutParams.WRAP_CONTENT));
         getSupportActionBar().setDisplayOptions(ActionBar.DISPLAY_SHOW_CUSTOM);
 
         mUseMultiprocess = getIntent().getBooleanExtra(USE_MULTIPROCESS_EXTRA, true);
+        mFullAccessibilityTree = getIntent().getBooleanExtra(FULL_ACCESSIBILITY_TREE_EXTRA, false);
         mProgressView = (ProgressBar) findViewById(R.id.page_progress);
 
         if (sGeckoRuntime == null) {
@@ -139,6 +145,7 @@ public class GeckoViewActivity extends AppCompatActivity {
             }
 
             mUseMultiprocess = mGeckoSession.getSettings().getBoolean(GeckoSessionSettings.USE_MULTIPROCESS);
+            mFullAccessibilityTree = mGeckoSession.getSettings().getBoolean(GeckoSessionSettings.FULL_ACCESSIBILITY_TREE);
 
             mGeckoView.setSession(mGeckoSession);
         } else {
@@ -156,6 +163,8 @@ public class GeckoViewActivity extends AppCompatActivity {
         session.getSettings().setBoolean(GeckoSessionSettings.USE_PRIVATE_MODE, mUsePrivateBrowsing);
         session.getSettings().setBoolean(
             GeckoSessionSettings.USE_TRACKING_PROTECTION, mUseTrackingProtection);
+        session.getSettings().setBoolean(
+                GeckoSessionSettings.FULL_ACCESSIBILITY_TREE, mFullAccessibilityTree);
 
         connectSession(session);
 
@@ -164,6 +173,7 @@ public class GeckoViewActivity extends AppCompatActivity {
 
     private void connectSession(GeckoSession session) {
         session.setContentDelegate(new ExampleContentDelegate());
+        session.setHistoryDelegate(new ExampleHistoryDelegate());
         final ExampleTrackingProtectionDelegate tp = new ExampleTrackingProtectionDelegate();
         session.setTrackingProtectionDelegate(tp);
         session.setProgressDelegate(new ExampleProgressDelegate(tp));
@@ -409,6 +419,32 @@ public class GeckoViewActivity extends AppCompatActivity {
         return mErrorTemplate.replace("$ERROR", error);
     }
 
+    private class ExampleHistoryDelegate implements GeckoSession.HistoryDelegate {
+        private final HashSet<String> mVisitedURLs;
+
+        private ExampleHistoryDelegate() {
+            mVisitedURLs = new HashSet<String>();
+        }
+
+        @Override
+        public GeckoResult<Boolean> onVisited(GeckoSession session, String url,
+                                              String lastVisitedURL, int flags) {
+            Log.i(LOGTAG, "Visited URL: " + url);
+
+            mVisitedURLs.add(url);
+            return GeckoResult.fromValue(true);
+        }
+
+        @Override
+        public GeckoResult<boolean[]> getVisited(GeckoSession session, String[] urls) {
+            boolean[] visited = new boolean[urls.length];
+            for (int i = 0; i < urls.length; i++) {
+                visited[i] = mVisitedURLs.contains(urls[i]);
+            }
+            return GeckoResult.fromValue(visited);
+        }
+    }
+
     private class ExampleContentDelegate implements GeckoSession.ContentDelegate {
         @Override
         public void onTitleChange(GeckoSession session, String title) {
@@ -440,12 +476,16 @@ public class GeckoViewActivity extends AppCompatActivity {
         }
 
         @Override
-        public void onContextMenu(GeckoSession session, int screenX, int screenY,
-                                  String uri, int elementType, String elementSrc) {
+        public void onContextMenu(final GeckoSession session,
+                                  int screenX, int screenY,
+                                  final ContextElement element) {
             Log.d(LOGTAG, "onContextMenu screenX=" + screenX +
-                          " screenY=" + screenY + " uri=" + uri +
-                          " elementType=" + elementType +
-                          " elementSrc=" + elementSrc);
+                          " screenY=" + screenY +
+                          " type=" + element.type +
+                          " linkUri=" + element.linkUri +
+                          " title=" + element.title +
+                          " alt=" + element.altText +
+                          " srcUri=" + element.srcUri);
         }
 
         @Override
@@ -464,6 +504,11 @@ public class GeckoViewActivity extends AppCompatActivity {
             Log.e(LOGTAG, "Crashed, reopening session");
             session.open(sGeckoRuntime);
             session.loadUri(DEFAULT_URL);
+        }
+
+        @Override
+        public void onFirstComposite(final GeckoSession session) {
+            Log.d(LOGTAG, "onFirstComposite");
         }
     }
 
@@ -552,6 +597,8 @@ public class GeckoViewActivity extends AppCompatActivity {
                 resId = R.string.request_geolocation;
             } else if (PERMISSION_DESKTOP_NOTIFICATION == type) {
                 resId = R.string.request_notification;
+            } else if (PERMISSION_AUTOPLAY_MEDIA == type) {
+                resId = R.string.request_autoplay;
             } else {
                 Log.w(LOGTAG, "Unknown permission: " + type);
                 callback.reject();
@@ -637,7 +684,7 @@ public class GeckoViewActivity extends AppCompatActivity {
             Log.d(LOGTAG, "onLoadRequest=" + request.uri +
                   " triggerUri=" + request.triggerUri +
                   " where=" + request.target +
-                  " isUserTriggered=" + request.isUserTriggered);
+                  " isRedirect=" + request.isRedirect);
 
             return GeckoResult.fromValue(AllowOrDeny.ALLOW);
         }

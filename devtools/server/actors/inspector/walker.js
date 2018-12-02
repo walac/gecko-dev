@@ -120,8 +120,13 @@ exports.setValueSummaryLength = function(val) {
 var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
   /**
    * Create the WalkerActor
-   * @param DebuggerServerConnection conn
-   *    The server connection.
+   * @param {DebuggerServerConnection} conn
+   *        The server connection.
+   * @param {TargetActor} targetActor
+   *        The top-level Actor for this tab.
+   * @param {Object} options
+   *        - {Boolean} showAllAnonymousContent: Show all native anonymous content
+   *        - {Boolean} showUserAgentShadowRoots: Show shadow roots for user-agent widgets
    */
   initialize: function(conn, targetActor, options) {
     protocol.Actor.prototype.initialize.call(this, conn);
@@ -134,6 +139,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     this.customElementWatcher = new CustomElementWatcher(targetActor.chromeEventHandler);
 
     this.showAllAnonymousContent = options.showAllAnonymousContent;
+    this.showUserAgentShadowRoots = options.showUserAgentShadowRoots;
 
     this.walkerSearch = new WalkerSearch(this);
 
@@ -507,14 +513,24 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     // Quick checks to prevent creating a new walker if possible.
     if (isBeforePseudoElement(node.rawNode) ||
         isAfterPseudoElement(node.rawNode) ||
+        isShadowHost(node.rawNode) ||
         node.rawNode.nodeType != Node.ELEMENT_NODE ||
         node.rawNode.children.length > 0) {
       return undefined;
     }
 
-    const walker = isDirectShadowHostChild(node.rawNode)
-      ? this.getNonAnonymousWalker(node.rawNode)
-      : this.getDocumentWalker(node.rawNode);
+    let walker;
+    try {
+      // By default always try to use an anonymous walker. Even for DirectShadowHostChild,
+      // children should be available through an anonymous walker (unless the child is not
+      // slotted, see catch block).
+      walker = this.getDocumentWalker(node.rawNode);
+    } catch (e) {
+      // Using an anonymous walker might throw, for instance on unslotted shadow host
+      // children.
+      walker = this.getNonAnonymousWalker(node.rawNode);
+    }
+
     const firstChild = walker.firstChild();
 
     // Bail out if:
@@ -706,8 +722,14 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     const directShadowHostChild = isDirectShadowHostChild(node.rawNode);
     const shadowHost = isShadowHost(node.rawNode);
     const shadowRoot = isShadowRoot(node.rawNode);
-    const templateElement = isTemplateElement(node.rawNode);
 
+    // UA Widgets are internal Firefox widgets such as videocontrols implemented
+    // using shadow DOM. By default, their shadow root should be hidden for web
+    // developers.
+    const isUAWidget = shadowHost && node.rawNode.openOrClosedShadowRoot.isUAWidget();
+    const hideShadowRoot = isUAWidget && !this.showUserAgentShadowRoots;
+
+    const templateElement = isTemplateElement(node.rawNode);
     if (templateElement) {
       // <template> tags should have a single child pointing to the element's template
       // content.
@@ -831,7 +853,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
 
       nodes = [
         // #shadow-root
-        node.rawNode.openOrClosedShadowRoot,
+        ...(hideShadowRoot ? [] : [node.rawNode.openOrClosedShadowRoot]),
         // ::before
         ...(hasBefore ? [first] : []),
         // shadow host direct children

@@ -1586,12 +1586,6 @@ class CGAbstractMethod(CGThing):
         maybeNewline = " " if self.inline else "\n"
         return ' '.join(decorators) + maybeNewline
 
-    def _auto_profiler_label(self):
-        profiler_label_and_jscontext = self.profiler_label_and_jscontext()
-        if profiler_label_and_jscontext:
-            return 'AUTO_PROFILER_LABEL_FAST("%s", DOM, %s);' % profiler_label_and_jscontext
-        return None
-
     def declare(self):
         if self.inline:
             return self._define(True)
@@ -1616,9 +1610,9 @@ class CGAbstractMethod(CGThing):
     def definition_prologue(self, fromDeclare):
         prologue = "%s%s%s(%s)\n{\n" % (self._template(), self._decorators(),
                                         self.name, self._argstring(fromDeclare))
-        profiler_label = self._auto_profiler_label()
+        profiler_label = self.auto_profiler_label()
         if profiler_label:
-            prologue += "  %s\n\n" % profiler_label
+            prologue += indent(profiler_label) + "\n"
 
         return prologue
 
@@ -1632,7 +1626,7 @@ class CGAbstractMethod(CGThing):
     Override this method to return a pair of (descriptive string, name of a
     JSContext* variable) in order to generate a profiler label for this method.
     """
-    def profiler_label_and_jscontext(self):
+    def auto_profiler_label(self):
         return None # Override me!
 
 class CGAbstractStaticMethod(CGAbstractMethod):
@@ -1875,13 +1869,19 @@ class CGClassConstructor(CGAbstractStaticMethod):
                                      constructorName=ctorName)
         return preamble + "\n" + callGenerator.define()
 
-    def profiler_label_and_jscontext(self):
+    def auto_profiler_label(self):
         name = self._ctor.identifier.name
         if name != "constructor":
             ctorName = name
         else:
             ctorName = self.descriptor.interface.identifier.name
-        return ("%s constructor" % ctorName, "cx")
+        return fill(
+            """
+            AUTO_PROFILER_LABEL_DYNAMIC_FAST(
+              "${ctorName}", "constructor", DOM, cx,
+              uint32_t(js::ProfilingStackFrame::Flags::RELEVANT_FOR_JS));
+            """,
+            ctorName=ctorName)
 
 # Encapsulate the constructor in a helper method to share genConstructorBody with CGJSImplMethod.
 class CGConstructNavigatorObject(CGAbstractMethod):
@@ -2288,10 +2288,9 @@ class MethodDefiner(PropertyDefiner):
                     raise TypeError("Legacy QueryInterface member shouldn't be static")
                 signatures = m.signatures()
 
-                def argTypeIsIID(arg):
-                    return arg.type.inner.isExternal() and arg.type.inner.identifier.name == 'IID'
-                if len(signatures) > 1 or len(signatures[0][1]) > 1 or not argTypeIsIID(signatures[0][1][0]):
-                    raise TypeError("There should be only one QueryInterface method with 1 argument of type IID")
+                if (len(signatures) > 1 or len(signatures[0][1]) > 1 or
+                    not signatures[0][1][0].type.isAny()):
+                    raise TypeError("There should be only one QueryInterface method with 1 argument of type any")
 
                 # Make sure to not stick QueryInterface on abstract interfaces.
                 if (not self.descriptor.interface.hasInterfacePrototypeObject() or
@@ -2980,20 +2979,13 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
         # if we don't need to create anything, why are we generating this?
         assert needInterfaceObject or needInterfacePrototypeObject
 
-        def maybecrash(reason):
-            if self.descriptor.name == "Document":
-                return 'MOZ_CRASH("Bug 1405521/1488480: %s");\n' % reason
-            return ""
-
         getParentProto = fill(
             """
             JS::${type}<JSObject*> parentProto(${getParentProto});
             if (!parentProto) {
-              $*{maybeCrash}
               return;
             }
             """,
-            maybeCrash=maybecrash("Can't get Node.prototype"),
             type=parentProtoType,
             getParentProto=getParentProto)
 
@@ -3001,11 +2993,9 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             """
             JS::${type}<JSObject*> constructorProto(${getConstructorProto});
             if (!constructorProto) {
-              $*{maybeCrash}
               return;
             }
             """,
-            maybeCrash=maybecrash("Can't get Node"),
             type=constructorProtoType,
             getConstructorProto=getConstructorProto)
 
@@ -3021,12 +3011,7 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
                            for properties in idsToInit]
             idsInitedFlag = CGGeneric("static bool sIdsInited = false;\n")
             setFlag = CGGeneric("sIdsInited = true;\n")
-            initIdConditionals = [CGIfWrapper(CGGeneric(fill(
-                """
-                $*{maybeCrash}
-                return;
-                """,
-                maybeCrash=maybecrash("Can't init IDs"))), call)
+            initIdConditionals = [CGIfWrapper(CGGeneric("return;\n"), call)
                                   for call in initIdCalls]
             initIds = CGList([idsInitedFlag,
                               CGIfWrapper(CGList(initIdConditionals + [setFlag]),
@@ -3113,9 +3098,6 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
                                         ${name}, aDefineOnGlobal,
                                         ${unscopableNames},
                                         ${isGlobal});
-            if (protoCache && !*protoCache) {
-              $*{maybeCrash}
-            }
             """,
             protoClass=protoClass,
             parentProto=parentProto,
@@ -3130,8 +3112,7 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             chromeProperties=chromeProperties,
             name='"' + self.descriptor.interface.identifier.name + '"' if needInterfaceObject else "nullptr",
             unscopableNames="unscopableNames" if self.haveUnscopables else "nullptr",
-            isGlobal=toStringBool(isGlobal),
-            maybeCrash=maybecrash("dom::CreateInterfaceObjects failed for Document"))
+            isGlobal=toStringBool(isGlobal))
 
         # If we fail after here, we must clear interface and prototype caches
         # using this code: intermediate failure must not expose the interface in
@@ -3233,12 +3214,10 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
                   JS::Rooted<JSObject*> holderProto(aCx, ${holderProto});
                   unforgeableHolder = JS_NewObjectWithoutMetadata(aCx, ${holderClass}, holderProto);
                   if (!unforgeableHolder) {
-                    $*{maybeCrash}
                     $*{failureCode}
                   }
                 }
                 """,
-                maybeCrash=maybecrash("Can't create unforgeable holder"),
                 holderProto=holderProto,
                 holderClass=holderClass,
                 failureCode=failureCode))
@@ -3523,7 +3502,7 @@ class CGConstructorEnabled(CGAbstractMethod):
         return body.define()
 
 
-def CreateBindingJSObject(descriptor, properties, failureCode = ""):
+def CreateBindingJSObject(descriptor, properties):
     objDecl = "BindingJSObjectCreator<%s> creator(aCx);\n" % descriptor.nativeType
 
     # We don't always need to root obj, but there are a variety
@@ -3548,14 +3527,12 @@ def CreateBindingJSObject(descriptor, properties, failureCode = ""):
             """
             creator.CreateObject(aCx, sClass.ToJSClass(), proto, aObject, aReflector);
             """)
-    return objDecl + create + fill(
+    return objDecl + create + dedent(
         """
         if (!aReflector) {
-          $*{failureCode}
           return false;
         }
-        """,
-        failureCode=failureCode)
+        """)
 
 
 def InitUnforgeablePropertiesOnHolder(descriptor, properties, failureCode,
@@ -3574,22 +3551,12 @@ def InitUnforgeablePropertiesOnHolder(descriptor, properties, failureCode,
 
     unforgeables = []
 
-    if descriptor.name == "Document":
-        maybeCrash = dedent(
-            """
-            MOZ_CRASH("Bug 1405521/1488480: Can't define unforgeable attributes");
-            """);
-    else:
-        maybeCrash = "";
-
     defineUnforgeableAttrs = fill(
         """
         if (!DefineUnforgeableAttributes(aCx, ${holderName}, %s)) {
-          $*{maybeCrash}
           $*{failureCode}
         }
         """,
-        maybeCrash=maybeCrash,
         failureCode=failureCode,
         holderName=holderName)
     defineUnforgeableMethods = fill(
@@ -3735,15 +3702,14 @@ def SetImmutablePrototype(descriptor, failureCode):
         failureCode=failureCode)
 
 
-def DeclareProto(noProto = "", wrapFail = ""):
+def DeclareProto():
     """
     Declare the canonicalProto and proto we have for our wrapping operation.
     """
-    return fill(
+    return dedent(
         """
         JS::Handle<JSObject*> canonicalProto = GetProtoObjectHandle(aCx);
         if (!canonicalProto) {
-          $*{noProto}
           return false;
         }
         JS::Rooted<JSObject*> proto(aCx);
@@ -3754,16 +3720,13 @@ def DeclareProto(noProto = "", wrapFail = ""):
           // to wrap the proto here.
           if (js::GetContextCompartment(aCx) != js::GetObjectCompartment(proto)) {
             if (!JS_WrapObject(aCx, &proto)) {
-              $*{wrapFail}
               return false;
             }
           }
         } else {
           proto = canonicalProto;
         }
-        """,
-        noProto=noProto,
-        wrapFail=wrapFail)
+        """)
 
 
 class CGWrapWithCacheMethod(CGAbstractMethod):
@@ -3790,47 +3753,6 @@ class CGWrapWithCacheMethod(CGAbstractMethod):
             return false;
             """)
 
-        isDocument = False
-        iface = self.descriptor.interface
-        while iface:
-            if iface.identifier.name == "Document":
-                isDocument = True
-                break
-            iface = iface.parent
-
-        if isDocument:
-            noGlobal = fill(
-                """
-                MOZ_CRASH("Looks like bug 1488480/1405521, with ${name} not having a global");
-                """,
-                name = self.descriptor.name)
-            noProto = fill(
-                """
-                MOZ_CRASH("Looks like bug 1488480/1405521, with ${name} not having a proto");
-                """,
-                name = self.descriptor.name)
-            protoWrapFail = fill(
-                """
-                MOZ_CRASH("Looks like bug 1488480/1405521, with ${name} failing to wrap a custom proto");
-                """,
-                name = self.descriptor.name)
-            createObjectFailed = fill(
-                """
-                MOZ_CRASH("Looks like bug 1488480/1405521, with ${name} failing to CreateObject/CreateProxyObject");
-                """,
-                name = self.descriptor.name)
-            expandoAllocFail = fill(
-                """
-                MOZ_CRASH("Looks like bug 1488480/1405521, with ${name} failing to EnsureExpandoObject or JS_InitializePropertiesFromCompatibleNativeObject");
-                """,
-                name = self.descriptor.name)
-        else:
-            noGlobal = ""
-            noProto = ""
-            protoWrapFail = ""
-            createObjectFailed = ""
-            expandoAllocFail = ""
-
         return fill(
             """
             static_assert(!IsBaseOf<NonRefcountedDOMObject, ${nativeType}>::value,
@@ -3846,7 +3768,6 @@ class CGWrapWithCacheMethod(CGAbstractMethod):
 
             JS::Rooted<JSObject*> global(aCx, FindAssociatedGlobal(aCx, aObject->GetParentObject()));
             if (!global) {
-              $*{noGlobal}
               return false;
             }
             MOZ_ASSERT(JS_IsGlobalObject(global));
@@ -3887,14 +3808,11 @@ class CGWrapWithCacheMethod(CGAbstractMethod):
 
             return true;
             """,
-            noGlobal=noGlobal,
             nativeType=self.descriptor.nativeType,
             assertInheritance=AssertInheritanceChain(self.descriptor),
-            declareProto=DeclareProto(noProto, protoWrapFail),
-            createObject=CreateBindingJSObject(self.descriptor, self.properties,
-                                               createObjectFailed),
+            declareProto=DeclareProto(),
+            createObject=CreateBindingJSObject(self.descriptor, self.properties),
             unforgeable=CopyUnforgeablePropertiesToInstance(self.descriptor,
-                                                            expandoAllocFail +
                                                             failureCode),
             slots=InitMemberSlots(self.descriptor, failureCode),
             setImmutablePrototype=SetImmutablePrototype(self.descriptor,
@@ -7803,17 +7721,14 @@ class CGPerSignatureCall(CGThing):
 
         if (idlNode.getExtendedAttribute('CEReactions') is not None and
             not getter):
-            cgThings.append(CGGeneric(fill(
+            cgThings.append(CGGeneric(dedent(
                 """
                 Maybe<AutoCEReaction> ceReaction;
-                if (CustomElementRegistry::IsCustomElementEnabled(cx, ${obj})) {
-                  DocGroup* docGroup = self->GetDocGroup();
-                  if (docGroup) {
-                    ceReaction.emplace(docGroup->CustomElementReactionsStack(), cx);
-                  }
+                DocGroup* docGroup = self->GetDocGroup();
+                if (docGroup) {
+                  ceReaction.emplace(docGroup->CustomElementReactionsStack(), cx);
                 }
-                """,
-                obj=objectName)))
+                """)))
 
         # If this is a method that was generated by a maplike/setlike
         # interface, use the maplike/setlike generator to fill in the body.
@@ -8671,16 +8586,8 @@ class CGAbstractStaticBindingMethod(CGAbstractStaticMethod):
             """)
         return unwrap + self.generate_code().define()
 
-    def profiler_label_and_jscontext(self):
-        # Our args are JSNativeArguments() which contain a "JSContext* cx"
-        # argument. We let our subclasses choose the label.
-        return (self.profiler_label(), "cx")
-
     def generate_code(self):
         assert False  # Override me
-
-    def profiler_label(self):
-        assert False # Override me
 
 
 def MakeNativeName(name):
@@ -8708,10 +8615,18 @@ class CGSpecializedMethod(CGAbstractStaticMethod):
         return CGMethodCall(nativeName, self.method.isStatic(), self.descriptor,
                             self.method).define()
 
-    def profiler_label_and_jscontext(self):
+    def auto_profiler_label(self):
         interface_name = self.descriptor.interface.identifier.name
         method_name = self.method.identifier.name
-        return ("%s.%s" % (interface_name, method_name), "cx")
+        return fill(
+            """
+            AUTO_PROFILER_LABEL_DYNAMIC_FAST(
+              "${interface_name}", "${method_name}", DOM, cx,
+              uint32_t(js::ProfilingStackFrame::Flags::STRING_TEMPLATE_METHOD) |
+              uint32_t(js::ProfilingStackFrame::Flags::RELEVANT_FOR_JS));
+            """,
+            interface_name=interface_name,
+            method_name=method_name)
 
     @staticmethod
     def makeNativeName(descriptor, method):
@@ -8968,10 +8883,18 @@ class CGStaticMethod(CGAbstractStaticBindingMethod):
                                                         self.method)
         return CGMethodCall(nativeName, True, self.descriptor, self.method)
 
-    def profiler_label(self):
+    def auto_profiler_label(self):
         interface_name = self.descriptor.interface.identifier.name
         method_name = self.method.identifier.name
-        return "%s.%s" % (interface_name, method_name)
+        return fill(
+            """
+            AUTO_PROFILER_LABEL_DYNAMIC_FAST(
+              "${interface_name}", "${method_name}", DOM, cx,
+              uint32_t(js::ProfilingStackFrame::Flags::STRING_TEMPLATE_METHOD) |
+              uint32_t(js::ProfilingStackFrame::Flags::RELEVANT_FOR_JS));
+            """,
+            interface_name=interface_name,
+            method_name=method_name)
 
 
 class CGSpecializedGetter(CGAbstractStaticMethod):
@@ -9075,10 +8998,18 @@ class CGSpecializedGetter(CGAbstractStaticMethod):
                 cgGetterCall(self.attr.type, nativeName,
                              self.descriptor, self.attr).define())
 
-    def profiler_label_and_jscontext(self):
+    def auto_profiler_label(self):
         interface_name = self.descriptor.interface.identifier.name
         attr_name = self.attr.identifier.name
-        return ("get %s.%s" % (interface_name, attr_name), "cx")
+        return fill(
+            """
+            AUTO_PROFILER_LABEL_DYNAMIC_FAST(
+              "${interface_name}", "${attr_name}", DOM, cx,
+              uint32_t(js::ProfilingStackFrame::Flags::STRING_TEMPLATE_GETTER) |
+              uint32_t(js::ProfilingStackFrame::Flags::RELEVANT_FOR_JS));
+            """,
+            interface_name=interface_name,
+            attr_name=attr_name)
 
     @staticmethod
     def makeNativeName(descriptor, attr):
@@ -9138,10 +9069,18 @@ class CGStaticGetter(CGAbstractStaticBindingMethod):
         return CGGetterCall(self.attr.type, nativeName, self.descriptor,
                             self.attr)
 
-    def profiler_label(self):
+    def auto_profiler_label(self):
         interface_name = self.descriptor.interface.identifier.name
         attr_name = self.attr.identifier.name
-        return "get %s.%s" % (interface_name, attr_name)
+        return fill(
+            """
+            AUTO_PROFILER_LABEL_DYNAMIC_FAST(
+              "${interface_name}", "${attr_name}", DOM, cx,
+              uint32_t(js::ProfilingStackFrame::Flags::STRING_TEMPLATE_GETTER) |
+              uint32_t(js::ProfilingStackFrame::Flags::RELEVANT_FOR_JS));
+            """,
+            interface_name=interface_name,
+            attr_name=attr_name)
 
 
 class CGSpecializedSetter(CGAbstractStaticMethod):
@@ -9165,10 +9104,18 @@ class CGSpecializedSetter(CGAbstractStaticMethod):
         return CGSetterCall(self.attr.type, nativeName, self.descriptor,
                             self.attr).define()
 
-    def profiler_label_and_jscontext(self):
+    def auto_profiler_label(self):
         interface_name = self.descriptor.interface.identifier.name
         attr_name = self.attr.identifier.name
-        return ("set %s.%s" % (interface_name, attr_name), "cx")
+        return fill(
+            """
+            AUTO_PROFILER_LABEL_DYNAMIC_FAST(
+              "${interface_name}", "${attr_name}", DOM, cx,
+              uint32_t(js::ProfilingStackFrame::Flags::STRING_TEMPLATE_SETTER) |
+              uint32_t(js::ProfilingStackFrame::Flags::RELEVANT_FOR_JS));
+            """,
+            interface_name=interface_name,
+            attr_name=attr_name)
 
     @staticmethod
     def makeNativeName(descriptor, attr):
@@ -9199,10 +9146,18 @@ class CGStaticSetter(CGAbstractStaticBindingMethod):
                             self.attr)
         return CGList([checkForArg, call])
 
-    def profiler_label(self):
+    def auto_profiler_label(self):
         interface_name = self.descriptor.interface.identifier.name
         attr_name = self.attr.identifier.name
-        return "set %s.%s" % (interface_name, attr_name)
+        return fill(
+            """
+            AUTO_PROFILER_LABEL_DYNAMIC_FAST(
+              "${interface_name}", "${attr_name}", DOM, cx,
+              uint32_t(js::ProfilingStackFrame::Flags::STRING_TEMPLATE_SETTER) |
+              uint32_t(js::ProfilingStackFrame::Flags::RELEVANT_FOR_JS));
+            """,
+            interface_name=interface_name,
+            attr_name=attr_name)
 
 
 class CGSpecializedForwardingSetter(CGSpecializedSetter):
@@ -13041,6 +12996,30 @@ class CGDictionary(CGThing):
                       "aOther")],
             body=body.define())
 
+    def canHaveEqualsOperator(self):
+        return all(m.type.isString() or m.type.isPrimitive() for (m,_) in
+                   self.memberInfo)
+
+    def equalsOperator(self):
+        body = CGList([])
+
+        for m, _ in self.memberInfo:
+            memberName = self.makeMemberName(m.identifier.name)
+            memberTest = CGGeneric(fill(
+                """
+                if (${memberName} != aOther.${memberName}) {
+                    return false;
+                }
+                """,
+                memberName=memberName))
+            body.append(memberTest)
+        body.append(CGGeneric("return true;\n"))
+        return ClassMethod(
+            "operator==", "bool",
+            [Argument("const %s&" % self.makeClassName(self.dictionary),
+                      "aOther")
+            ], const=True, body=body.define())
+
     def getStructs(self):
         d = self.dictionary
         selfName = self.makeClassName(d)
@@ -13120,6 +13099,9 @@ class CGDictionary(CGThing):
             methods.append(self.assignmentOperator())
         else:
             disallowCopyConstruction = True
+
+        if self.canHaveEqualsOperator():
+            methods.append(self.equalsOperator())
 
         struct = CGClass(selfName,
                          bases=[ClassBase(self.base())],
@@ -13921,6 +13903,13 @@ class CGBindingRoot(CGThing):
         bindingDeclareHeaders["jsapi.h"] = any(descriptorHasCrossOriginProperties(d) for d in descriptors)
         bindingDeclareHeaders["jspubtd.h"] = not bindingDeclareHeaders["jsapi.h"]
         bindingDeclareHeaders["js/RootingAPI.h"] = not bindingDeclareHeaders["jsapi.h"]
+
+        def descriptorHasIteratorAlias(desc):
+            def hasIteratorAlias(m):
+                return m.isMethod() and "@@iterator" in m.aliases
+            return any(hasIteratorAlias(m) for m in desc.interface.members)
+
+        bindingHeaders["js/Symbol.h"] = any(descriptorHasIteratorAlias(d) for d in descriptors)
 
         def descriptorRequiresPreferences(desc):
             iface = desc.interface

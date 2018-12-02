@@ -68,6 +68,9 @@ It is augmented as it progresses through the system, with various information:
     // Properties added by the Model.
     tokens; // {array} tokens extracted from the searchString, each token is an
             // object in the form {type, value}.
+    results; // {array} list of UrlbarMatch objects.
+    preselected; // {boolean} whether the first match should be preselected.
+    autofill; // {boolean} whether the first match is an autofill match.
   }
 
 
@@ -143,6 +146,8 @@ implementation details may vary deeply among different providers.
   UrlbarProvider {
     name; // {string} A simple name to track the provider.
     type; // {integer} One of UrlbarUtils.PROVIDER_TYPE.
+    sources; // {array} List of UrlbarUtils.MATCH_SOURCE, representing the
+             // data sources used by this provider.
     // The returned promise should be resolved when the provider is done
     // searching AND returning matches.
     // Each new UrlbarMatch should be passed to the AddCallback function.
@@ -272,6 +277,10 @@ Represents the base *View* implementation, communicates with the *Controller*.
     onQueryStarted(queryContext);
     // Invoked when new matches are available.
     onQueryResults(queryContext);
+    // Invoked when the query has been canceled.
+    onQueryCancelled(queryContext);
+    // Invoked when the query is done.
+    onQueryFinished(queryContext);
   }
 
 UrlbarMatch
@@ -293,11 +302,30 @@ properties, supported by all of the matches.
   UrlbarMatch {
     constructor(matchType, payload);
 
-    // Common properties:
-    url: {string} The url pointed by this match.
+    type: {integer} One of UrlbarUtils.MATCH_TYPE.
+    source: {integer} One of UrlbarUtils.MATCH_SOURCE.
     title: {string} A title that may be used as a label for this match.
+    icon: {string} Url of an icon for this match.
+    payload: {object} Object containing properties for the specific MATCH_TYPE.
   }
 
+The following MATCH_TYPEs are supported:
+
+.. highlight:: JavaScript
+.. code::
+
+    // Payload: { icon, url, userContextId }
+    TAB_SWITCH: 1,
+    // Payload: { icon, suggestion, keyword, query }
+    SEARCH: 2,
+    // Payload: { icon, url, title, tags }
+    URL: 3,
+    // Payload: { icon, url, keyword, postData }
+    KEYWORD: 4,
+    // Payload: { icon, keyword, title, content }
+    OMNIBOX: 5,
+    // Payload: { icon, url, device, title }
+    REMOTE_TAB: 6,
 
 Shared Modules
 ==============

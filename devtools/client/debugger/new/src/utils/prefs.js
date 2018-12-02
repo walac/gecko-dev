@@ -29,6 +29,8 @@ if (isDevelopment()) {
   pref("devtools.debugger.breakpoints-visible", true);
   pref("devtools.debugger.start-panel-collapsed", false);
   pref("devtools.debugger.end-panel-collapsed", false);
+  pref("devtools.debugger.start-panel-size", 300);
+  pref("devtools.debugger.end-panel-size", 300);
   pref("devtools.debugger.tabs", "[]");
   pref("devtools.debugger.tabsBlackBoxed", "[]");
   pref("devtools.debugger.ui.framework-grouping-on", true);
@@ -48,7 +50,6 @@ if (isDevelopment()) {
   pref("devtools.debugger.features.root", true);
   pref("devtools.debugger.features.map-scopes", true);
   pref("devtools.debugger.features.remove-command-bar-options", true);
-  pref("devtools.debugger.features.code-coverage", false);
   pref("devtools.debugger.features.event-listeners", false);
   pref("devtools.debugger.features.code-folding", false);
   pref("devtools.debugger.features.outline", true);
@@ -78,6 +79,8 @@ export const prefs = new PrefsHelper("devtools", {
   xhrBreakpointsVisible: ["Bool", "debugger.xhr-breakpoints-visible"],
   startPanelCollapsed: ["Bool", "debugger.start-panel-collapsed"],
   endPanelCollapsed: ["Bool", "debugger.end-panel-collapsed"],
+  startPanelSize: ["Int", "debugger.start-panel-size"],
+  endPanelSize: ["Int", "debugger.end-panel-size"],
   frameworkGroupingOn: ["Bool", "debugger.ui.framework-grouping-on"],
   tabs: ["Json", "debugger.tabs", []],
   tabsBlackBoxed: ["Json", "debugger.tabsBlackBoxed", []],
@@ -101,7 +104,6 @@ export const features = new PrefsHelper("devtools.debugger.features", {
   mapScopes: ["Bool", "map-scopes"],
   removeCommandBarOptions: ["Bool", "remove-command-bar-options"],
   workers: ["Bool", "workers"],
-  codeCoverage: ["Bool", "code-coverage"],
   eventListeners: ["Bool", "event-listeners"],
   outline: ["Bool", "outline"],
   codeFolding: ["Bool", "code-folding"],

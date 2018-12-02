@@ -8,30 +8,29 @@
 // compile it out so that people remember it exists, thus the cfg'd Sender
 // import.
 
-use Atom;
-use bezier::Bezier;
-use context::SharedStyleContext;
-use dom::{OpaqueNode, TElement};
-use font_metrics::FontMetricsProvider;
-use properties::{self, CascadeMode, ComputedValues, LonghandId};
-use properties::animated_properties::AnimatedProperty;
-use properties::longhands::animation_direction::computed_value::single_value::T as AnimationDirection;
-use properties::longhands::animation_play_state::computed_value::single_value::T as AnimationPlayState;
-use rule_tree::CascadeLevel;
+use crate::bezier::Bezier;
+use crate::context::SharedStyleContext;
+use crate::dom::{OpaqueNode, TElement};
+use crate::font_metrics::FontMetricsProvider;
+use crate::properties::animated_properties::AnimatedProperty;
+use crate::properties::longhands::animation_direction::computed_value::single_value::T as AnimationDirection;
+use crate::properties::longhands::animation_play_state::computed_value::single_value::T as AnimationPlayState;
+use crate::properties::{self, CascadeMode, ComputedValues, LonghandId};
+use crate::rule_tree::CascadeLevel;
+use crate::stylesheets::keyframes_rule::{KeyframesAnimation, KeyframesStep, KeyframesStepValue};
+use crate::timer::Timer;
+use crate::values::computed::box_::TransitionProperty;
+use crate::values::computed::Time;
+use crate::values::computed::TimingFunction;
+use crate::values::generics::box_::AnimationIterationCount;
+use crate::values::generics::easing::{StepPosition, TimingFunction as GenericTimingFunction};
+use crate::Atom;
 use servo_arc::Arc;
 #[cfg(feature = "servo")]
 use servo_channel::Sender;
 use std::fmt;
 #[cfg(feature = "gecko")]
 use std::sync::mpsc::Sender;
-use stylesheets::keyframes_rule::{KeyframesAnimation, KeyframesStep, KeyframesStepValue};
-use timer::Timer;
-use values::computed::Time;
-use values::computed::TimingFunction;
-use values::computed::box_::TransitionProperty;
-use values::generics::box_::AnimationIterationCount;
-use values::generics::easing::{StepPosition, TimingFunction as GenericTimingFunction};
-
 
 /// This structure represents a keyframes animation current iteration state.
 ///
@@ -316,7 +315,8 @@ impl PropertyAnimation {
                         old_style,
                         new_style,
                     )
-                }).collect(),
+                })
+                .collect(),
             TransitionProperty::Longhand(longhand_id) => {
                 let animation = PropertyAnimation::from_longhand(
                     longhand_id,
@@ -367,8 +367,9 @@ impl PropertyAnimation {
                 let mut current_step = (time * (steps as f64)).floor() as i32;
 
                 if pos == StepPosition::Start ||
-                   pos == StepPosition::JumpStart ||
-                   pos == StepPosition::JumpBoth {
+                    pos == StepPosition::JumpStart ||
+                    pos == StepPosition::JumpBoth
+                {
                     current_step = current_step + 1;
                 }
 
@@ -472,7 +473,8 @@ pub fn start_transitions_if_applicable(
                         duration: box_style.transition_duration_mod(i).seconds() as f64,
                         property_animation,
                     },
-                )).unwrap();
+                ))
+                .unwrap();
 
             had_animations = true;
         }
@@ -759,7 +761,8 @@ where
                             } else {
                                 None
                             }
-                        }).unwrap_or(animation.steps.len() - 1);
+                        })
+                        .unwrap_or(animation.steps.len() - 1);
                 },
                 _ => unreachable!(),
             }

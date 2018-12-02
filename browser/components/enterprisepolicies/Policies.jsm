@@ -144,8 +144,10 @@ var Policies = {
           let platform = AppConstants.platform;
           if (platform == "win") {
             dirs = [
-              // Ugly, but there is no official way to get %USERNAME\AppData\Local\Mozilla.
+              // Ugly, but there is no official way to get %USERNAME\AppData\Roaming\Mozilla.
               Services.dirsvc.get("XREUSysExt", Ci.nsIFile).parent,
+              // Even more ugly, but there is no official way to get %USERNAME\AppData\Local\Mozilla.
+              Services.dirsvc.get("DefProfLRt", Ci.nsIFile).parent.parent,
             ];
           } else if (platform == "macosx" || platform == "linux") {
             dirs = [
@@ -154,37 +156,47 @@ var Policies = {
               Services.dirsvc.get("XRESysNativeManifests", Ci.nsIFile),
             ];
           }
-          for (let dir of dirs) {
-            dir.append(platform == "linux" ? "certificates" : "Certificates");
-            for (let certfilename of param.Install) {
-              let certfile = dir.clone();
-              certfile.append(certfilename);
-              let file;
-              try {
-                file = await File.createFromNsIFile(certfile);
-              } catch (e) {
-                log.info(`Unable to open certificate - ${certfile.path}`);
-                continue;
+          dirs.unshift(Services.dirsvc.get("XREAppDist", Ci.nsIFile));
+          for (let certfilename of param.Install) {
+            let certfile;
+            try {
+              certfile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+              certfile.initWithPath(certfilename);
+            } catch (e) {
+              for (let dir of dirs) {
+                certfile = dir.clone();
+                certfile.append(platform == "linux" ? "certificates" : "Certificates");
+                certfile.append(certfilename);
+                if (certfile.exists()) {
+                  break;
+                }
               }
-              let reader = new FileReader();
-              reader.onloadend = function() {
-                if (reader.readyState != reader.DONE) {
-                  log.error(`Unable to read certificate - ${certfile.path}`);
-                  return;
-                }
-                let cert = reader.result;
-                try {
-                  if (/-----BEGIN CERTIFICATE-----/.test(cert)) {
-                    gCertDB.addCertFromBase64(pemToBase64(cert), "CTu,CTu,");
-                  } else {
-                    gCertDB.addCert(cert, "CTu,CTu,");
-                  }
-                } catch (e) {
-                  log.error(`Unable to add certificate - ${certfile.path}`);
-                }
-              };
-              reader.readAsBinaryString(file);
             }
+            let file;
+            try {
+              file = await File.createFromNsIFile(certfile);
+            } catch (e) {
+              log.error(`Unable to find certificate - ${certfilename}`);
+              continue;
+            }
+            let reader = new FileReader();
+            reader.onloadend = function() {
+              if (reader.readyState != reader.DONE) {
+                log.error(`Unable to read certificate - ${certfile.path}`);
+                return;
+              }
+              let cert = reader.result;
+              try {
+                if (/-----BEGIN CERTIFICATE-----/.test(cert)) {
+                  gCertDB.addCertFromBase64(pemToBase64(cert), "CTu,CTu,");
+                } else {
+                  gCertDB.addCert(cert, "CTu,CTu,");
+                }
+              } catch (e) {
+                log.error(`Unable to add certificate - ${certfile.path}`);
+              }
+            };
+            reader.readAsBinaryString(file);
           }
         })();
       }
@@ -489,8 +501,28 @@ var Policies = {
 
   "Extensions": {
     onBeforeUIStartup(manager, param) {
+      let uninstallingPromise = Promise.resolve();
+      if ("Uninstall" in param) {
+        uninstallingPromise = runOncePerModification("extensionsUninstall", JSON.stringify(param.Uninstall), async () => {
+          // If we're uninstalling add-ons, re-run the extensionsInstall runOnce even if it hasn't
+          // changed, which will allow add-ons to be updated.
+          Services.prefs.clearUserPref("browser.policies.runOncePerModification.extensionsInstall");
+          let addons = await AddonManager.getAddonsByIDs(param.Uninstall);
+          for (let addon of addons) {
+            if (addon) {
+              try {
+                await addon.uninstall();
+              } catch (e) {
+                // This can fail for add-ons that can't be uninstalled.
+                // Just ignore.
+              }
+            }
+          }
+        });
+      }
       if ("Install" in param) {
-        runOncePerModification("extensionsInstall", JSON.stringify(param.Install), () => {
+        runOncePerModification("extensionsInstall", JSON.stringify(param.Install), async () => {
+          await uninstallingPromise;
           for (let location of param.Install) {
             let url;
             if (location.includes("://")) {
@@ -539,21 +571,6 @@ var Policies = {
               install.addListener(listener);
               install.install();
             });
-          }
-        });
-      }
-      if ("Uninstall" in param) {
-        runOncePerModification("extensionsUninstall", JSON.stringify(param.Uninstall), async () => {
-          let addons = await AddonManager.getAddonsByIDs(param.Uninstall);
-          for (let addon of addons) {
-            if (addon) {
-              try {
-                addon.uninstall();
-              } catch (e) {
-                // This can fail for add-ons that can't be uninstalled.
-                // Just ignore.
-              }
-            }
           }
         });
       }
@@ -1044,6 +1061,8 @@ function runOnce(actionName, callback) {
  * callback once when the policy is set, then never again.
  * runOncePerModification runs the callback once each time the policy value
  * changes from its previous value.
+ * If the callback that was passed is an async function, you can await on this
+ * function to await for the callback.
  *
  * @param {string} actionName
  *        A given name which will be used to track if this callback has run.
@@ -1055,16 +1074,19 @@ function runOnce(actionName, callback) {
  *        string.
  * @param {Function} callback
  *        The callback to be run when the pref value changes
+ * @returns Promise
+ *        A promise that will resolve once the callback finishes running.
+ *
  */
-function runOncePerModification(actionName, policyValue, callback) {
+async function runOncePerModification(actionName, policyValue, callback) {
   let prefName = `browser.policies.runOncePerModification.${actionName}`;
   let oldPolicyValue = Services.prefs.getStringPref(prefName, undefined);
   if (policyValue === oldPolicyValue) {
     log.debug(`Not running action ${actionName} again because the policy's value is unchanged`);
-    return;
+    return Promise.resolve();
   }
   Services.prefs.setStringPref(prefName, policyValue);
-  callback();
+  return callback();
 }
 
 let gChromeURLSBlocked = false;

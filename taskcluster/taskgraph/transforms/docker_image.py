@@ -8,6 +8,7 @@ import os
 import re
 
 from collections import deque
+import taskgraph
 from taskgraph.transforms.base import TransformSequence
 from taskgraph.transforms.task import _run_task_suffix
 from .. import GECKO
@@ -17,7 +18,6 @@ from taskgraph.util.docker import (
 from taskgraph.util.cached_tasks import add_optimization
 from taskgraph.util.schema import (
     Schema,
-    validate_schema,
 )
 from voluptuous import (
     Optional,
@@ -54,13 +54,7 @@ docker_image_schema = Schema({
 })
 
 
-@transforms.add
-def validate(config, tasks):
-    for task in tasks:
-        validate_schema(
-            docker_image_schema, task,
-            "In docker image {!r}:".format(task.get('name', 'unknown')))
-        yield task
+transforms.add_validate(docker_image_schema)
 
 
 def order_image_tasks(config, tasks):
@@ -76,7 +70,7 @@ def order_image_tasks(config, tasks):
         parent = task.get('parent')
         if parent and parent not in emitted:
             if parent not in task_names:
-                raise Exception('Missing parant image for {}-{}: {}'.format(
+                raise Exception('Missing parent image for {}-{}: {}'.format(
                     config.kind, task['name'], parent))
             pending.append(task)
             continue
@@ -91,15 +85,10 @@ def fill_template(config, tasks):
         if task.kind != 'packages':
             continue
         name = task.label.replace('packages-', '')
-        for route in task.task.get('routes', []):
-            if route.startswith('index.') and '.hash.' in route:
-                # Only keep the hash part of the route.
-                h = route.rsplit('.', 1)[1]
-                assert DIGEST_RE.match(h)
-                available_packages[name] = h
-                break
+        available_packages[name] = task.attributes['cache_digest']
 
     context_hashes = {}
+    image_digests = {}
 
     for task in order_image_tasks(config, tasks):
         image_name = task.pop('name')
@@ -124,11 +113,17 @@ def fill_template(config, tasks):
         if parent:
             args['DOCKER_IMAGE_PARENT'] = '{}:{}'.format(parent, context_hashes[parent])
 
-        context_path = os.path.join('taskcluster', 'docker', definition)
-        context_hash = generate_context_hash(
-            GECKO, context_path, image_name, args)
+        if not taskgraph.fast:
+            context_path = os.path.join('taskcluster', 'docker', definition)
+            context_hash = generate_context_hash(
+                GECKO, context_path, image_name, args)
+        else:
+            context_hash = '0'*40
         digest_data = [context_hash]
         context_hashes[image_name] = context_hash
+
+        if parent:
+            digest_data += [image_digests[parent]]
 
         description = 'Build the docker image {} for use by dependent tasks'.format(
             image_name)
@@ -179,6 +174,8 @@ def fill_template(config, tasks):
                 'docker-in-docker': True,
                 'taskcluster-proxy': True,
                 'max-run-time': 7200,
+                # Retry on apt-get errors.
+                'retry-exit-status': [100],
             },
         }
         # Retry for 'funsize-update-generator' if exit status code is -1
@@ -231,7 +228,7 @@ def fill_template(config, tasks):
             deps = taskdesc.setdefault('dependencies', {})
             deps[parent] = 'build-docker-image-{}'.format(parent)
             worker['env']['DOCKER_IMAGE_PARENT_TASK'] = {
-                'task-reference': '<{}>'.format(parent)
+                'task-reference': '<{}>'.format(parent),
             }
 
         if len(digest_data) > 1:
@@ -244,5 +241,7 @@ def fill_template(config, tasks):
             cache_name=image_name,
             **kwargs
         )
+
+        image_digests[image_name] = taskdesc['attributes']['cache_digest']
 
         yield taskdesc

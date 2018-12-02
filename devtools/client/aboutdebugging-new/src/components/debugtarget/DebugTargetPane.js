@@ -11,6 +11,7 @@ const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const DebugTargetList = createFactory(require("./DebugTargetList"));
 
 const Actions = require("../../actions/index");
+const Types = require("../../types/index");
 
 /**
  * This component provides list for debug target and name area.
@@ -24,7 +25,7 @@ class DebugTargetPane extends PureComponent {
       dispatch: PropTypes.func.isRequired,
       isCollapsed: PropTypes.bool.isRequired,
       name: PropTypes.string.isRequired,
-      targets: PropTypes.arrayOf(PropTypes.object).isRequired,
+      targets: PropTypes.arrayOf(Types.debugTarget).isRequired,
     };
   }
 
@@ -49,8 +50,8 @@ class DebugTargetPane extends PureComponent {
       },
       dom.a(
         {
-          className: "undecorated-link js-debug-target-pane-title",
-          href: "#",
+          className: "undecorated-link debug-target-pane__title " +
+            "js-debug-target-pane-title",
           onClick: e => this.toggleCollapsibility(),
         },
         dom.h2(

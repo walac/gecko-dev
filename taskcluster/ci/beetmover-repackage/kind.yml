@@ -23,10 +23,13 @@ kind-dependencies:
     - repackage-signing-l10n
     - partials
     - partials-signing
+    - repackage-signing-msi
+    - mar-signing
+    - mar-signing-l10n
 
 primary-dependency:
-    - repackage-signing-l10n
-    - repackage-signing
+    - repackage
+    - repackage-l10n
 
 only-for-build-platforms:
     - linux-nightly/opt
