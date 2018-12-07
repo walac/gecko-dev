@@ -1,14 +1,15 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use crate::cg;
 use darling::util::IdentList;
-use quote::Tokens;
+use proc_macro2::TokenStream;
+use quote::TokenStreamExt;
 use syn::{DeriveInput, Path};
 use synstructure::{Structure, VariantInfo};
 
-pub fn derive(mut input: DeriveInput) -> Tokens {
+pub fn derive(mut input: DeriveInput) -> TokenStream {
     let animation_input_attrs = cg::parse_input_attrs::<AnimationInputAttrs>(&input);
     let no_bound = animation_input_attrs.no_bound.unwrap_or_default();
     let mut where_clause = input.generics.where_clause.take();
@@ -67,7 +68,7 @@ pub fn derive(mut input: DeriveInput) -> Tokens {
     }
 }
 
-fn derive_variant_arm(variant: &VariantInfo) -> Result<Tokens, ()> {
+fn derive_variant_arm(variant: &VariantInfo) -> Result<TokenStream, ()> {
     let variant_attrs = cg::parse_variant_attrs_from_ast::<AnimationVariantAttrs>(&variant.ast());
     if variant_attrs.error {
         return Err(());

@@ -534,6 +534,16 @@ pub(crate) mod desc {
                 count: 4,
                 kind: VertexAttributeKind::U16,
             },
+            VertexAttribute {
+                name: "aClipLocalPos",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipTileRect",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            }
         ],
     };
 
@@ -1826,6 +1836,7 @@ impl Renderer {
             dual_source_blending_is_enabled: true,
             dual_source_blending_is_supported: ext_dual_source_blending,
             chase_primitive: options.chase_primitive,
+            enable_picture_caching: options.enable_picture_caching,
         };
 
         let device_pixel_ratio = options.device_pixel_ratio;

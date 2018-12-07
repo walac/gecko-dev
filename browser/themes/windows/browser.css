@@ -94,9 +94,22 @@
  * illegible.
  */
 @media (-moz-windows-default-theme) {
-  @media not all and (-moz-os-version: windows-win7) {
+  @media not (-moz-os-version: windows-win7) {
     #toolbar-menubar:not(:-moz-lwtheme):-moz-window-inactive {
       color: ThreeDShadow;
+    }
+  }
+}
+
+@media not (-moz-os-version: windows-win7) {
+  @media not (-moz-os-version: windows-win8) {
+    /* On Windows 10, when temporarily showing the menu bar, make it at least as
+     * tall as the tab bar such that the window controls don't appear to move up. */
+    :root[tabsintitlebar] #toolbar-menubar[autohide="true"] {
+      height: calc(var(--tab-min-height) - @navbarTabsShadowSize@);
+    }
+    :root[tabsintitlebar][sizemode="normal"] #toolbar-menubar[autohide="true"] {
+      height: calc(var(--tab-min-height) + var(--space-above-tabbar) - @navbarTabsShadowSize@);
     }
   }
 }
@@ -337,7 +350,7 @@
   }
 }
 
-/* titlebar command buttons */
+/* window control buttons */
 
 .titlebar-min {
   -moz-appearance: -moz-window-button-minimize;
@@ -347,7 +360,7 @@
   -moz-appearance: -moz-window-button-maximize;
 }
 
-#main-window[sizemode="maximized"] .titlebar-max {
+:root[sizemode="maximized"] .titlebar-max {
   -moz-appearance: -moz-window-button-restore;
 }
 
@@ -359,6 +372,11 @@
   .titlebar-min {
     margin-inline-end: 2px;
   }
+}
+
+:root[tabletmode] .titlebar-min,
+:root[tabletmode] .titlebar-max {
+  display: none;
 }
 
 /* ::::: bookmark menus ::::: */
@@ -956,9 +974,8 @@ notification[value="translation"] {
 
 /* End customization mode */
 
-/* Prevent titlebar items (window caption buttons, private browsing indicator,
- * accessibility indicator, etc) from overlapping the nav bar's shadow on the
- * tab bar. */
+/* Prevent window controls from overlapping the nav bar's shadow on the tab
+ * bar. */
 #TabsToolbar > .titlebar-buttonbox-container {
   margin-bottom: @navbarTabsShadowSize@;
 }

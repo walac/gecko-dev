@@ -28,14 +28,17 @@ groupbox[data-category] {
   margin: 0 0 32px;
 }
 
+html|h1 {
+  margin: 0 0 8px;
+  font-size: 1.46em;
+  font-weight: 300;
+  line-height: 1.3em;
+}
+
 html|h2 {
   margin: 16px 0 4px;
   font-size: 1.14em;
   line-height: normal;
-}
-
-.header-name {
-  margin-bottom: 8px;
 }
 
 description.indent,
@@ -847,18 +850,12 @@ menulist[indicator=true] > menupopup menuitem[indicator=true]:not([image]) > .me
   min-width: 20em;
 }
 
-#LanguagesDialog > .dialog-button-box > .dialog-button[dlgtype="help"],
-#BrowserLanguagesDialog > .dialog-button-box > .dialog-button[dlgtype="help"] {
-  margin-inline-start: 0;
+#selectedLocales {
+  height: 150px;
 }
 
-#LanguagesDialog > .dialog-button-box > .dialog-button[dlgtype="accept"],
-#BrowserLanguagesDialog > .dialog-button-box > .dialog-button[dlgtype="accept"] {
-  margin-inline-end: 0;
-}
-
-#requestedLocales {
-  min-height: 200px;
+#selectedLocales > richlistitem {
+  padding-inline-start: 13px;
 }
 
 #availableLanguages,
@@ -869,6 +866,10 @@ menulist[indicator=true] > menupopup menuitem[indicator=true]:not([image]) > .me
 
 #warning-message > .message-bar-description {
   width: 32em;
+}
+
+#warning-message {
+  margin-top: 8px;
 }
 
 .add-web-language,

@@ -27,6 +27,7 @@
 #include "mozilla/dom/Attr.h"
 #include "mozilla/EventListenerManager.h"
 #include "nsFrame.h"
+#include "nsFrameState.h"
 #include "nsGlobalWindow.h"
 #include "nsGkAtoms.h"
 #include "nsImageFrame.h"
@@ -113,6 +114,7 @@
 #include "mozilla/dom/PointerEventHandler.h"
 #include "mozilla/dom/RemoteWorkerService.h"
 #include "mozilla/dom/BlobURLProtocolHandler.h"
+#include "mozilla/dom/ReportingHeader.h"
 #include "nsThreadManager.h"
 #include "mozilla/css/ImageLoader.h"
 
@@ -141,6 +143,7 @@ nsresult nsLayoutStatics::Initialize() {
 #ifdef DEBUG
   nsCSSPseudoElements::AssertAtoms();
   nsCSSAnonBoxes::AssertAtoms();
+  DebugVerifyFrameStateBits();
 #endif
 
   StartupJSEnvironment();
@@ -285,6 +288,9 @@ nsresult nsLayoutStatics::Initialize() {
   mozilla::Fuzzyfox::Start();
 
   ClearSiteData::Initialize();
+
+  // Reporting API.
+  ReportingHeader::Initialize();
 
   return NS_OK;
 }

@@ -1,13 +1,13 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use crate::cg;
-use quote;
-use syn::DeriveInput;
+use proc_macro2::{Span, TokenStream};
+use syn::{DeriveInput, Ident};
 use synstructure::BindStyle;
 
-pub fn derive(mut input: DeriveInput) -> quote::Tokens {
+pub fn derive(mut input: DeriveInput) -> TokenStream {
     let mut where_clause = input.generics.where_clause.take();
     for param in input.generics.type_params() {
         cg::add_predicate(
@@ -33,7 +33,7 @@ pub fn derive(mut input: DeriveInput) -> quote::Tokens {
     let animated_value_type = cg::fmap_trait_output(
         &input,
         &parse_quote!(crate::values::animated::ToAnimatedValue),
-        "AnimatedValue".into(),
+        Ident::new("AnimatedValue", Span::call_site()),
     );
 
     quote! {

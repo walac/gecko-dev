@@ -1,6 +1,6 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #![allow(unsafe_code)]
 
@@ -581,7 +581,7 @@ impl<'le> GeckoElement<'le> {
     #[inline(always)]
     fn attrs(&self) -> &[structs::AttrArray_InternalAttr] {
         unsafe {
-            let attrs = match self.0._base.mAttrs.mImpl.mPtr.as_ref() {
+            let attrs = match self.0.mAttrs.mImpl.mPtr.as_ref() {
                 Some(attrs) => attrs,
                 None => return &[],
             };

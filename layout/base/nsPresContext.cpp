@@ -217,7 +217,6 @@ nsPresContext::nsPresContext(nsIDocument* aDocument, nsPresContextType aType)
       mDrawImageBackground(true),  // always draw the background
       mDrawColorBackground(true),
       // mNeverAnimate is initialised below, in constructor body
-      mIsRenderingOnlySelection(false),
       mPaginated(aType != eContext_Galley),
       mCanPaginatedScroll(false),
       mDoScaledTwips(true),
@@ -1720,6 +1719,11 @@ void nsPresContext::CacheAllLangs() {
   mFontGroupCacheDirty = false;
 }
 
+void nsPresContext::ContentLanguageChanged() {
+  mFontGroupCacheDirty = true;
+  PostRebuildAllStyleDataEvent(nsChangeHint(0), eRestyle_ForceDescendants);
+}
+
 void nsPresContext::RebuildAllStyleData(nsChangeHint aExtraHint,
                                         nsRestyleHint aRestyleHint) {
   if (!mShell) {
@@ -1753,11 +1757,6 @@ void nsPresContext::PostRebuildAllStyleDataEvent(nsChangeHint aExtraHint,
   }
   RestyleManager()->PostRebuildAllStyleDataEvent(aExtraHint, aRestyleHint);
 }
-
-struct MediaFeatureHints {
-  nsRestyleHint restyleHint;
-  nsChangeHint changeHint;
-};
 
 static bool MediaFeatureValuesChangedAllDocumentsCallback(
     nsIDocument* aDocument, void* aChange) {
