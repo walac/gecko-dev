@@ -13,7 +13,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time;
 
-use firefox_args::Arg;
+use crate::firefox_args::Arg;
 
 pub trait Runner {
     type Process;
@@ -310,8 +310,8 @@ pub mod platform {
 
 #[cfg(target_os = "macos")]
 pub mod platform {
-    use path::{find_binary, is_binary};
-    use std::env;
+    use crate::path::{find_binary, is_binary};
+    use dirs;
     use std::path::PathBuf;
 
     /// Searches the system path for `firefox-bin`, then looks for
@@ -322,7 +322,7 @@ pub mod platform {
             return Some(path);
         }
 
-        let home = env::home_dir();
+        let home = dirs::home_dir();
         for &(prefix_home, trial_path) in [
             (
                 false,

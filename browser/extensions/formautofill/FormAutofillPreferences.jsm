@@ -36,6 +36,8 @@ const {
 this.log = null;
 FormAutofill.defineLazyLogGetter(this, EXPORTED_SYMBOLS[0]);
 
+const HTML_NS = "http://www.w3.org/1999/xhtml";
+
 function FormAutofillPreferences() {
   this.bundle = Services.strings.createBundle(BUNDLE_URI);
 }
@@ -51,7 +53,7 @@ FormAutofillPreferences.prototype = {
     this.createPreferenceGroup(document);
     this.attachEventListeners();
 
-    return this.refs.formAutofillGroupBox;
+    return this.refs.formAutofillFragment;
   },
 
   /**
@@ -69,16 +71,14 @@ FormAutofillPreferences.prototype = {
    */
   createPreferenceGroup(document) {
     let learnMoreURL = Services.urlFormatter.formatURLPref("app.support.baseURL") + "autofill-card-address";
-    let formAutofillGroupBox = document.createXULElement("groupbox");
-    let formAutofillGroupBoxCaption = document.createXULElement("caption");
-    let formAutofillGroupBoxCaptionLabel = document.createXULElement("label");
+    let formAutofillFragment = document.createDocumentFragment();
+    let formAutofillGroupBoxLabel = document.createXULElement("label");
+    let formAutofillGroupBoxLabelHeading = document.createElementNS(HTML_NS, "h2");
     let formAutofillGroupBoxDescription = document.createXULElement("description");
     let formAutofillGroup = document.createXULElement("vbox");
     let addressAutofill = document.createXULElement("hbox");
     let addressAutofillCheckboxGroup = document.createXULElement("hbox");
     let addressAutofillCheckbox = document.createXULElement("checkbox");
-    let addressAutofillCheckboxLabel = document.createXULElement("label");
-    let addressAutofillCheckboxLabelSpacer = document.createXULElement("spacer");
     let addressAutofillLearnMore = document.createXULElement("label");
     let savedAddressesBtn = document.createXULElement("button");
     // Wrappers are used to properly compute the search tooltip positions
@@ -86,25 +86,21 @@ FormAutofillPreferences.prototype = {
     let savedCreditCardsBtnWrapper = document.createXULElement("hbox");
 
     savedAddressesBtn.className = "accessory-button";
-    addressAutofillCheckboxLabelSpacer.className = "tail-with-learn-more";
+    addressAutofillCheckbox.className = "tail-with-learn-more";
     addressAutofillLearnMore.className = "learnMore text-link";
 
     formAutofillGroup.id = "formAutofillGroup";
     addressAutofill.id = "addressAutofill";
     addressAutofillLearnMore.id = "addressAutofillLearnMore";
 
-    formAutofillGroupBox.setAttribute("id", "formAutofillGroupBox");
-    formAutofillGroupBox.setAttribute("data-category", "panePrivacy");
-    formAutofillGroupBox.setAttribute("data-subcategory", "form-autofill");
-    formAutofillGroupBoxCaptionLabel.textContent = this.bundle.GetStringFromName("autofillHeader");
+    formAutofillGroupBoxLabelHeading.textContent = this.bundle.GetStringFromName("autofillHeader");
     formAutofillGroupBoxDescription.textContent =
       this.bundle.formatStringFromName("autofillDescription",
                                        [FormAutofillUtils.brandBundle.GetStringFromName("brandShortName")],
                                        1);
 
     addressAutofill.setAttribute("data-subcategory", "address-autofill");
-    addressAutofillCheckboxLabel.textContent = this.bundle.GetStringFromName("autofillAddressesCheckbox");
-    addressAutofillCheckbox.setAttribute("aria-label", addressAutofillCheckboxLabel.textContent);
+    addressAutofillCheckbox.setAttribute("label", this.bundle.GetStringFromName("autofillAddressesCheckbox"));
     addressAutofillLearnMore.textContent = this.bundle.GetStringFromName("learnMoreLabel");
     savedAddressesBtn.setAttribute("label", this.bundle.GetStringFromName("savedAddressesBtnLabel"));
     // Align the start to keep the savedAddressesBtn as original size
@@ -124,26 +120,22 @@ FormAutofillPreferences.prototype = {
 
     addressAutofillCheckboxGroup.align = "center";
     addressAutofillCheckboxGroup.flex = 1;
-    addressAutofillCheckboxLabel.flex = 1;
 
-    formAutofillGroupBoxCaption.appendChild(formAutofillGroupBoxCaptionLabel);
-    formAutofillGroupBox.appendChild(formAutofillGroupBoxCaption);
-    formAutofillGroupBox.appendChild(formAutofillGroupBoxDescription);
-    formAutofillGroupBox.appendChild(formAutofillGroup);
+    formAutofillGroupBoxLabel.appendChild(formAutofillGroupBoxLabelHeading);
+    formAutofillFragment.appendChild(formAutofillGroupBoxLabel);
+    formAutofillFragment.appendChild(formAutofillGroupBoxDescription);
+    formAutofillFragment.appendChild(formAutofillGroup);
     formAutofillGroup.appendChild(addressAutofill);
     addressAutofill.appendChild(addressAutofillCheckboxGroup);
     addressAutofillCheckboxGroup.appendChild(addressAutofillCheckbox);
-    addressAutofillCheckboxGroup.appendChild(addressAutofillCheckboxLabel);
-    addressAutofillCheckboxLabel.appendChild(addressAutofillCheckboxLabelSpacer);
-    addressAutofillCheckboxLabel.appendChild(addressAutofillLearnMore);
+    addressAutofillCheckboxGroup.appendChild(addressAutofillLearnMore);
     addressAutofill.appendChild(savedAddressesBtnWrapper);
     savedAddressesBtnWrapper.appendChild(savedAddressesBtn);
 
     this.refs = {
-      formAutofillGroupBox,
+      formAutofillFragment,
       formAutofillGroup,
       addressAutofillCheckbox,
-      addressAutofillCheckboxLabel,
       savedAddressesBtn,
     };
 
@@ -151,20 +143,17 @@ FormAutofillPreferences.prototype = {
       let creditCardAutofill = document.createXULElement("hbox");
       let creditCardAutofillCheckboxGroup = document.createXULElement("hbox");
       let creditCardAutofillCheckbox = document.createXULElement("checkbox");
-      let creditCardAutofillCheckboxLabel = document.createXULElement("label");
-      let creditCardAutofillCheckboxLabelSpacer = document.createXULElement("spacer");
       let creditCardAutofillLearnMore = document.createXULElement("label");
       let savedCreditCardsBtn = document.createXULElement("button");
       savedCreditCardsBtn.className = "accessory-button";
-      creditCardAutofillCheckboxLabelSpacer.className = "tail-with-learn-more";
+      creditCardAutofillCheckbox.className = "tail-with-learn-more";
       creditCardAutofillLearnMore.className = "learnMore text-link";
 
       creditCardAutofill.id = "creditCardAutofill";
       creditCardAutofillLearnMore.id = "creditCardAutofillLearnMore";
 
       creditCardAutofill.setAttribute("data-subcategory", "credit-card-autofill");
-      creditCardAutofillCheckboxLabel.textContent = this.bundle.GetStringFromName("autofillCreditCardsCheckbox");
-      creditCardAutofillCheckbox.setAttribute("aria-label", creditCardAutofillCheckboxLabel.textContent);
+      creditCardAutofillCheckbox.setAttribute("label", this.bundle.GetStringFromName("autofillCreditCardsCheckbox"));
       creditCardAutofillLearnMore.textContent = this.bundle.GetStringFromName("learnMoreLabel");
       savedCreditCardsBtn.setAttribute("label", this.bundle.GetStringFromName("savedCreditCardsBtnLabel"));
       // Align the start to keep the savedCreditCardsBtn as original size
@@ -184,19 +173,15 @@ FormAutofillPreferences.prototype = {
 
       creditCardAutofillCheckboxGroup.align = "center";
       creditCardAutofillCheckboxGroup.flex = 1;
-      creditCardAutofillCheckboxLabel.flex = 1;
 
       formAutofillGroup.appendChild(creditCardAutofill);
       creditCardAutofill.appendChild(creditCardAutofillCheckboxGroup);
       creditCardAutofillCheckboxGroup.appendChild(creditCardAutofillCheckbox);
-      creditCardAutofillCheckboxGroup.appendChild(creditCardAutofillCheckboxLabel);
-      creditCardAutofillCheckboxLabel.appendChild(creditCardAutofillCheckboxLabelSpacer);
-      creditCardAutofillCheckboxLabel.appendChild(creditCardAutofillLearnMore);
+      creditCardAutofillCheckboxGroup.appendChild(creditCardAutofillLearnMore);
       creditCardAutofill.appendChild(savedCreditCardsBtnWrapper);
       savedCreditCardsBtnWrapper.appendChild(savedCreditCardsBtn);
 
       this.refs.creditCardAutofillCheckbox = creditCardAutofillCheckbox;
-      this.refs.creditCardAutofillCheckboxLabel = creditCardAutofillCheckboxLabel;
       this.refs.savedCreditCardsBtn = savedCreditCardsBtn;
     }
   },

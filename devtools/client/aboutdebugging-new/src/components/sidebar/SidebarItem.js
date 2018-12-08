@@ -4,58 +4,54 @@
 
 "use strict";
 
-const { PureComponent } = require("devtools/client/shared/vendor/react");
+const { createFactory, PureComponent } = require("devtools/client/shared/vendor/react");
 const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
-
-const Actions = require("../../actions/index");
+const Link = createFactory(require("devtools/client/shared/vendor/react-router-dom").Link);
 
 /**
- * This component displays an item of the Sidebar component.
+ * This component is used as a wrapper by items in the sidebar.
  */
 class SidebarItem extends PureComponent {
   static get propTypes() {
     return {
-      connectComponent: PropTypes.any,
-      dispatch: PropTypes.func.isRequired,
-      icon: PropTypes.string.isRequired,
-      id: PropTypes.string.isRequired,
+      children: PropTypes.node.isRequired,
+      className: PropTypes.string,
       isSelected: PropTypes.bool.isRequired,
-      name: PropTypes.string.isRequired,
-      runtimeId: PropTypes.string,
-      selectable: PropTypes.bool.isRequired,
+      to: PropTypes.string,
     };
   }
 
-  onItemClick() {
-    const { id, dispatch, runtimeId } = this.props;
-    dispatch(Actions.selectPage(id, runtimeId));
+  renderContent() {
+    const { children, to } = this.props;
+
+    if (to) {
+      return Link(
+        {
+          className: "sidebar-item__link js-sidebar-link",
+          to,
+        },
+        children
+      );
+    }
+
+    return children;
   }
 
   render() {
-    const { connectComponent, icon, isSelected, name, selectable } = this.props;
+    const {className, isSelected, to } = this.props;
 
     return dom.li(
       {
         className: "sidebar-item js-sidebar-item" +
+                   (className ? ` ${className}` : "") +
                    (isSelected ?
                       " sidebar-item--selected js-sidebar-item-selected" :
                       ""
                    ) +
-                   (selectable ? " sidebar-item--selectable" : ""),
-        onClick: selectable ? () => this.onItemClick() : null
+                   (to ? " sidebar-item--selectable" : ""),
       },
-      dom.img({
-        className: "sidebar-item__icon",
-        src: icon,
-      }),
-      dom.span(
-        {
-          className: "ellipsis-text",
-          title: name,
-        },
-        name),
-      connectComponent ? connectComponent : null
+      this.renderContent()
     );
   }
 }

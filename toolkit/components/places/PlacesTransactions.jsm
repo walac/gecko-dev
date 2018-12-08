@@ -59,9 +59,6 @@ var EXPORTED_SYMBOLS = ["PlacesTransactions"];
  * values:
  *  - url: a URL object, an nsIURI object, or a href.
  *  - urls: an array of urls, as above.
- *  - feedUrl: an url (as above), holding the url for a live bookmark.
- *  - siteUrl an url (as above), holding the url for the site with which
- *            a live bookmark is associated.
  *  - tag - a string.
  *  - tags: an array of strings.
  *  - guid, parentGuid, newParentGuid: a valid Places GUID string.
@@ -88,7 +85,7 @@ var EXPORTED_SYMBOLS = ["PlacesTransactions"];
  * be executed and take effect.  |transact| is an asynchronous method that takes
  * no arguments, and returns a promise that resolves once the transaction is
  * executed.  Executing one of the transactions for creating items (NewBookmark,
- * NewFolder, NewSeparator or NewLivemark) resolve to the new item's GUID.
+ * NewFolder, NewSeparator) resolve to the new item's GUID.
  * There's no resolution value for other transactions.
  * If a transaction fails to execute, |transact| rejects and the transactions
  * history is not affected.
@@ -726,23 +723,6 @@ function checkProperty(obj, prop, required, checkFn) {
   return !required;
 }
 
-DefineTransaction.annotationObjectValidate = function(obj) {
-  if (obj &&
-      checkProperty(obj, "name", true, v => typeof(v) == "string" && v.length > 0) &&
-      checkProperty(obj, "expires", false, Number.isInteger) &&
-      checkProperty(obj, "flags", false, Number.isInteger) &&
-      checkProperty(obj, "value", false, isPrimitive) ) {
-    // Nothing else should be set
-    let validKeys = ["name", "value", "flags", "expires"];
-    if (Object.keys(obj).every(k => validKeys.includes(k))) {
-      // Annotations objects are passed through to the backend, to avoid memory
-      // leaks, we must clone the object.
-      return {...obj};
-    }
-  }
-  throw new Error("Invalid annotation object");
-};
-
 DefineTransaction.childObjectValidate = function(obj) {
   if (obj &&
       checkProperty(obj, "title", false, v => typeof(v) == "string") &&
@@ -899,7 +879,7 @@ DefineTransaction.verifyInput = function(input,
 
 // Update the documentation at the top of this module if you add or
 // remove properties.
-DefineTransaction.defineInputProps(["url", "feedUrl", "siteUrl"],
+DefineTransaction.defineInputProps(["url"],
                                    DefineTransaction.urlValidate, null);
 DefineTransaction.defineInputProps(["guid", "parentGuid", "newParentGuid"],
                                    DefineTransaction.guidValidate);
@@ -911,14 +891,11 @@ DefineTransaction.defineInputProps(["keyword", "oldKeyword", "oldTag", "tag",
 DefineTransaction.defineInputProps(["index", "newIndex"],
                                    DefineTransaction.indexValidate,
                                    PlacesUtils.bookmarks.DEFAULT_INDEX);
-DefineTransaction.defineInputProps(["annotation"],
-                                   DefineTransaction.annotationObjectValidate);
 DefineTransaction.defineInputProps(["child"],
                                    DefineTransaction.childObjectValidate);
 DefineTransaction.defineArrayInputProp("guids", "guid");
 DefineTransaction.defineArrayInputProp("urls", "url");
 DefineTransaction.defineArrayInputProp("tags", "tag");
-DefineTransaction.defineArrayInputProp("annotations", "annotation");
 DefineTransaction.defineArrayInputProp("children", "child");
 DefineTransaction.defineArrayInputProp("excludingAnnotations",
                                        "excludingAnnotation");
@@ -945,23 +922,6 @@ DefineTransaction.defineArrayInputProp("excludingAnnotations",
 // TODO: Replace most of this with insertTree.
 function createItemsFromBookmarksTree(tree, restoring = false,
                                       excludingAnnotations = []) {
-  function extractLivemarkDetails(annos) {
-    let feedURI = null, siteURI = null;
-    annos = annos.filter(anno => {
-      switch (anno.name) {
-        case PlacesUtils.LMANNO_FEEDURI:
-          feedURI = Services.io.newURI(anno.value);
-          return false;
-        case PlacesUtils.LMANNO_SITEURI:
-          siteURI = Services.io.newURI(anno.value);
-          return false;
-        default:
-          return true;
-      }
-    });
-    return [feedURI, siteURI, annos];
-  }
-
   async function createItem(item,
                             parentGuid,
                             index = PlacesUtils.bookmarks.DEFAULT_INDEX) {
@@ -993,33 +953,17 @@ function createItemsFromBookmarksTree(tree, restoring = false,
         break;
       }
       case PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER: {
-        // Either a folder or a livemark
-        let feedURI, siteURI;
-        [feedURI, siteURI, annos] = extractLivemarkDetails(annos);
-        if (!feedURI) {
-          info.type = PlacesUtils.bookmarks.TYPE_FOLDER;
-          if (typeof(item.title) == "string")
-            info.title = item.title;
-          guid = (await PlacesUtils.bookmarks.insert(info)).guid;
-          if ("children" in item) {
-            for (let child of item.children) {
-              await createItem(child, guid);
-            }
+        info.type = PlacesUtils.bookmarks.TYPE_FOLDER;
+        if (typeof(item.title) == "string")
+          info.title = item.title;
+        guid = (await PlacesUtils.bookmarks.insert(info)).guid;
+        if ("children" in item) {
+          for (let child of item.children) {
+            await createItem(child, guid);
           }
-          if (restoring)
-            shouldResetLastModified = true;
-        } else {
-          info.parentId = await PlacesUtils.promiseItemId(parentGuid);
-          info.feedURI = feedURI;
-          info.siteURI = siteURI;
-          if (info.dateAdded)
-            info.dateAdded = PlacesUtils.toPRTime(info.dateAdded);
-          if (info.lastModified)
-            info.lastModified = PlacesUtils.toPRTime(info.lastModified);
-          if (typeof(item.title) == "string")
-            info.title = item.title;
-          guid = (await PlacesUtils.livemarks.addLivemark(info)).guid;
         }
+        if (restoring)
+          shouldResetLastModified = true;
         break;
       }
       case PlacesUtils.TYPE_X_MOZ_PLACE_SEPARATOR: {
@@ -1070,9 +1014,9 @@ var PT = PlacesTransactions;
  * When this transaction is executed, it's resolved to the new bookmark's GUID.
  */
 PT.NewBookmark = DefineTransaction(["parentGuid", "url"],
-                                   ["index", "title", "annotations", "tags"]);
+                                   ["index", "title", "tags"]);
 PT.NewBookmark.prototype = Object.seal({
-  async execute({ parentGuid, url, index, title, annotations, tags }) {
+  async execute({ parentGuid, url, index, title, tags }) {
     let info = { parentGuid, index, url, title };
     // Filter tags to exclude already existing ones.
     if (tags.length > 0) {
@@ -1083,11 +1027,6 @@ PT.NewBookmark.prototype = Object.seal({
 
     async function createItem() {
       info = await PlacesUtils.bookmarks.insert(info);
-      if (annotations.length > 0) {
-        let itemId = await PlacesUtils.promiseItemId(info.guid);
-        PlacesUtils.setAnnotationsForItem(itemId, annotations,
-          Ci.nsINavBookmarksService.SOURCE_DEFAULT, true);
-      }
       if (tags.length > 0) {
         PlacesUtils.tagging.tagURI(Services.io.newURI(url.href), tags);
       }
@@ -1119,9 +1058,9 @@ PT.NewBookmark.prototype = Object.seal({
  * When this transaction is executed, it's resolved to the new folder's GUID.
  */
 PT.NewFolder = DefineTransaction(["parentGuid", "title"],
-                                 ["index", "annotations", "children"]);
+                                 ["index", "children"]);
 PT.NewFolder.prototype = Object.seal({
-  async execute({ parentGuid, title, index, annotations, children }) {
+  async execute({ parentGuid, title, index, children }) {
     let folderGuid;
     let info = {
       children: [{
@@ -1158,12 +1097,6 @@ PT.NewFolder.prototype = Object.seal({
         bmInfo[0].index = index;
         bmInfo = await PlacesUtils.bookmarks.update(bmInfo[0]);
       }
-
-      if (annotations.length > 0) {
-        let itemId = await PlacesUtils.promiseItemId(folderGuid);
-        PlacesUtils.setAnnotationsForItem(itemId, annotations,
-          Ci.nsINavBookmarksService.SOURCE_DEFAULT, true);
-      }
     }
     await createItem();
 
@@ -1194,49 +1127,6 @@ PT.NewSeparator.prototype = Object.seal({
     this.undo = PlacesUtils.bookmarks.remove.bind(PlacesUtils.bookmarks, info);
     this.redo = PlacesUtils.bookmarks.insert.bind(PlacesUtils.bookmarks, info);
     return info.guid;
-  },
-});
-
-/**
- * Transaction for creating a live bookmark (see mozIAsyncLivemarks for the
- * semantics).
- *
- * Required Input Properties: feedUrl, title, parentGuid.
- * Optional Input Properties: siteUrl, index, annotations.
- *
- * When this transaction is executed, it's resolved to the new livemark's
- * GUID.
- */
-PT.NewLivemark = DefineTransaction(["feedUrl", "title", "parentGuid"],
-                                   ["siteUrl", "index", "annotations"]);
-PT.NewLivemark.prototype = Object.seal({
-  async execute({ feedUrl, title, parentGuid, siteUrl, index, annotations }) {
-    let livemarkInfo = { title,
-                         feedURI: Services.io.newURI(feedUrl.href),
-                         siteURI: siteUrl ? Services.io.newURI(siteUrl.href) : null,
-                         index,
-                         parentGuid};
-    let createItem = async function() {
-      let livemark = await PlacesUtils.livemarks.addLivemark(livemarkInfo);
-      if (annotations.length > 0) {
-        PlacesUtils.setAnnotationsForItem(livemark.id, annotations,
-          Ci.nsINavBookmarksService.SOURCE_DEFAULT, true);
-      }
-      return livemark;
-    };
-
-    let livemark = await createItem();
-    livemarkInfo.guid = livemark.guid;
-    livemarkInfo.dateAdded = livemark.dateAdded;
-    livemarkInfo.lastModified = livemark.lastModified;
-
-    this.undo = async function() {
-      await PlacesUtils.livemarks.removeLivemark(livemark);
-    };
-    this.redo = async function() {
-      livemark = await createItem();
-    };
-    return livemark.guid;
   },
 });
 
@@ -1465,18 +1355,13 @@ PT.Remove.prototype = {
     }
 
     let removeThem = async function() {
-      let bmsToRemove = [];
-      for (let info of removedItems) {
-        if (info.annos &&
-            info.annos.some(anno => anno.name == PlacesUtils.LMANNO_FEEDURI)) {
-          await PlacesUtils.livemarks.removeLivemark({ guid: info.guid });
-        } else {
-          bmsToRemove.push({guid: info.guid});
-        }
-      }
-
-      if (bmsToRemove.length) {
-        await PlacesUtils.bookmarks.remove(bmsToRemove);
+      if (removedItems.length) {
+        // We have to pass just the guids as although remove() accepts full
+        // info items, promiseBookmarksTree returns dateAdded and lastModified
+        // as PRTime rather than date types.
+        await PlacesUtils.bookmarks.remove(removedItems.map(info => {
+          return { guid: info.guid};
+        }));
       }
     };
     await removeThem();

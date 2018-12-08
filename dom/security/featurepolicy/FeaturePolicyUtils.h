@@ -15,31 +15,41 @@ class nsIDocument;
 namespace mozilla {
 namespace dom {
 
-class FeaturePolicyUtils final
-{
-public:
-  static bool
-  IsFeatureAllowed(nsIDocument* aDocument,
-                   const nsAString& aFeatureName);
+class FeaturePolicyUtils final {
+ public:
+  enum FeaturePolicyValue {
+    // Feature always allowed.
+    eAll,
 
-  static bool
-  IsSupportedFeature(const nsAString& aFeatureName);
+    // Feature allowed for documents that are same-origin with this one.
+    eSelf,
 
-  static void
-  ForEachFeature(const std::function<void(const char*)>& aCallback);
+    // Feature denied.
+    eNone,
+  };
 
-  static void
-  DefaultAllowListFeature(const nsAString& aFeatureName,
-                          const nsAString& aDefaultOrigin,
-                          nsAString& aDefaultAllowList);
+  // This method returns true if aFeatureName is allowed for aDocument.
+  // Use this method everywhere you need to check feature-policy directives.
+  static bool IsFeatureAllowed(nsIDocument* aDocument,
+                               const nsAString& aFeatureName);
 
-  static bool
-  AllowDefaultFeature(const nsAString& aFeatureName,
-                      const nsAString& aDefaultOrigin,
-                      const nsAString& aOrigin);
+  // Returns true if aFeatureName is a known feature policy name.
+  static bool IsSupportedFeature(const nsAString& aFeatureName);
+
+  // Runs aCallback for each known feature policy, with the feature name as
+  // argument.
+  static void ForEachFeature(const std::function<void(const char*)>& aCallback);
+
+  // Returns the default policy value for aFeatureName.
+  static FeaturePolicyValue DefaultAllowListFeature(
+      const nsAString& aFeatureName);
+
+ private:
+  static void ReportViolation(nsIDocument* aDocument,
+                              const nsAString& aFeatureName);
 };
 
-} // dom namespace
-} // mozilla namespace
+}  // namespace dom
+}  // namespace mozilla
 
-#endif // mozilla_dom_FeaturePolicyUtils_h
+#endif  // mozilla_dom_FeaturePolicyUtils_h

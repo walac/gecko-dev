@@ -39,7 +39,7 @@ Object.defineProperty(this, "WebConsoleUtils", {
     return require("devtools/client/webconsole/utils").Utils;
   },
   configurable: true,
-  enumerable: true
+  enumerable: true,
 });
 
 this.EXPORTED_SYMBOLS = ["VariablesView", "escapeHTML"];
@@ -1028,7 +1028,7 @@ VariablesView.prototype = {
   _searchboxContainer: null,
   _searchboxPlaceholder: "",
   _emptyTextNode: null,
-  _emptyTextValue: ""
+  _emptyTextValue: "",
 };
 
 VariablesView.NON_SORTABLE_CLASSES = [
@@ -1042,7 +1042,7 @@ VariablesView.NON_SORTABLE_CLASSES = [
   "Uint32Array",
   "Float32Array",
   "Float64Array",
-  "NodeList"
+  "NodeList",
 ];
 
 /**
@@ -2761,7 +2761,7 @@ Variable.prototype = extend(Scope.prototype, {
 
       let nodeFront = this._nodeFront;
       if (!nodeFront) {
-        nodeFront = await this.toolbox.walker.getNodeActorFromObjectActor(this._valueGrip.actor);
+        nodeFront = await this.toolbox.walker.gripToNodeFront(this._valueGrip);
       }
 
       if (nodeFront) {
@@ -2779,18 +2779,13 @@ Variable.prototype = extend(Scope.prototype, {
    * In case this variable is a DOMNode and part of a variablesview that has been
    * linked to the toolbox's inspector, then highlight the corresponding node
    */
-  highlightDomNode: function() {
+  highlightDomNode: async function() {
     if (this.toolbox) {
-      if (this._nodeFront) {
-        // If the nodeFront has been retrieved before, no need to ask the server
-        // again for it
-        this.toolbox.highlighterUtils.highlightNodeFront(this._nodeFront);
-        return;
+      await this.toolbox.initInspector();
+      if (!this._nodeFront) {
+        this.nodeFront = await this.toolbox.walker.gripToNodeFront(this._valueGrip);
       }
-
-      this.toolbox.highlighterUtils.highlightDomValueGrip(this._valueGrip).then(front => {
-        this._nodeFront = front;
-      });
+      await this.toolbox.highlighter.highlight(this._nodeFront);
     }
   },
 
@@ -2800,7 +2795,7 @@ Variable.prototype = extend(Scope.prototype, {
    */
   unhighlightDomNode: function() {
     if (this.toolbox) {
-      this.toolbox.highlighterUtils.unhighlight();
+      this.toolbox.highlighter.unhighlight();
     }
   },
 
@@ -2897,7 +2892,7 @@ Variable.prototype = extend(Scope.prototype, {
           this._separatorLabel.hidden = false;
           this._valueLabel.hidden = false;
         }
-      }
+      },
     }, e);
   },
 
@@ -2914,7 +2909,7 @@ Variable.prototype = extend(Scope.prototype, {
           this._disable();
         }
         this.ownerView.eval(this, aString);
-      }
+      },
     }, e);
   },
 
@@ -2987,7 +2982,7 @@ Variable.prototype = extend(Scope.prototype, {
       value: undefined,
       configurable: true,
       enumerable: true,
-      writable: true
+      writable: true,
     }, {relaxed: true});
 
     // Force showing the separator.
@@ -2999,7 +2994,7 @@ Variable.prototype = extend(Scope.prototype, {
           this._disable();
         }
         this.ownerView.new(this, aKey, aValue);
-      }
+      },
     }, e);
   },
 
@@ -3018,7 +3013,7 @@ Variable.prototype = extend(Scope.prototype, {
   _valueString: "",
   _valueClassName: "",
   _prevExpandable: false,
-  _prevExpanded: false
+  _prevExpanded: false,
 });
 
 /**
@@ -3068,7 +3063,7 @@ Property.prototype = extend(Variable.prototype, {
 
     this._absoluteName = this.ownerView.absoluteName + "[" + escapeString(this._nameString) + "]";
     return this._absoluteName;
-  }
+  },
 });
 
 /**
@@ -3128,7 +3123,7 @@ VariablesView.prototype.commitHierarchy = function() {
 // It would be a bad idea to re-expand them or perform expensive operations.
 VariablesView.prototype.commitHierarchyIgnoredItems = extend(null, {
   "window": true,
-  "this": true
+  "this": true,
 });
 
 /**
@@ -4140,7 +4135,7 @@ EditableNameAndValue.prototype = extend(EditableName.prototype, {
     const valueEditable = EditableValue.create(this._variable, {
       onSave: aValue => {
         this._onSave([key, aValue]);
-      }
+      },
     });
     valueEditable._reset = () => {
       this._variable.remove();
@@ -4151,5 +4146,5 @@ EditableNameAndValue.prototype = extend(EditableName.prototype, {
   _save: function(e) {
     // Both _save and _next activate the value edit box.
     this._next(e);
-  }
+  },
 });

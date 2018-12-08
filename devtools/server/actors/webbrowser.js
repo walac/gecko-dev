@@ -66,7 +66,7 @@ exports.createRootActor = function createRootActor(connection) {
       new ServiceWorkerRegistrationActorList(connection),
     processList: new ProcessActorList(),
     globalActorFactories: ActorRegistry.globalActorFactories,
-    onShutdown: sendShutdownEvent
+    onShutdown: sendShutdownEvent,
   });
 };
 
@@ -318,7 +318,7 @@ BrowserTabList.prototype.getTab = function({ outerWindowID, tabId }) {
     if (window && window.isChromeWindow) {
       return Promise.reject({
         error: "forbidden",
-        message: "Window with outerWindowID '" + outerWindowID + "' is chrome"
+        message: "Window with outerWindowID '" + outerWindowID + "' is chrome",
       });
     }
     if (window) {
@@ -336,7 +336,7 @@ BrowserTabList.prototype.getTab = function({ outerWindowID, tabId }) {
     }
     return Promise.reject({
       error: "noTab",
-      message: "Unable to find tab with outerWindowID '" + outerWindowID + "'"
+      message: "Unable to find tab with outerWindowID '" + outerWindowID + "'",
     });
   } else if (typeof tabId == "number") {
     // Tabs OOP
@@ -349,7 +349,7 @@ BrowserTabList.prototype.getTab = function({ outerWindowID, tabId }) {
     }
     return Promise.reject({
       error: "noTab",
-      message: "Unable to find tab with tabId '" + tabId + "'"
+      message: "Unable to find tab with tabId '" + tabId + "'",
     });
   }
 
@@ -361,7 +361,7 @@ BrowserTabList.prototype.getTab = function({ outerWindowID, tabId }) {
   }
   return Promise.reject({
     error: "noTab",
-    message: "Unable to find any selected browser"
+    message: "Unable to find any selected browser",
   });
 };
 
@@ -378,7 +378,7 @@ Object.defineProperty(BrowserTabList.prototype, "onListChanged", {
     }
     this._onListChanged = v;
     this._checkListening();
-  }
+  },
 });
 
 /**
@@ -531,7 +531,10 @@ BrowserTabList.prototype.receiveMessage = DevToolsUtils.makeInfallible(
  */
 BrowserTabList.prototype.handleEvent =
 DevToolsUtils.makeInfallible(function(event) {
-  const browser = event.target.linkedBrowser;
+  // If event target has `linkedBrowser`, the event target can be assumed <tab> element.
+  // Else (in Android case), because event target is assumed <browser> element,
+  // use the target as it is.
+  const browser = event.target.linkedBrowser || event.target;
   switch (event.type) {
     case "TabOpen":
     case "TabSelect": {
@@ -710,16 +713,53 @@ Object.defineProperty(BrowserAddonList.prototype, "onListChanged", {
     }
     this._onListChanged = v;
     this._adjustListener();
-  }
+  },
 });
 
-BrowserAddonList.prototype.onInstalled = function(addon) {
-  this._notifyListChanged();
-  this._adjustListener();
+/**
+ * AddonManager listener must implement onDisabled.
+ */
+BrowserAddonList.prototype.onDisabled = function(addon) {
+  this._onAddonManagerUpdated();
 };
 
+/**
+ * AddonManager listener must implement onEnabled.
+ */
+BrowserAddonList.prototype.onEnabled = function(addon) {
+  this._onAddonManagerUpdated();
+};
+
+/**
+ * AddonManager listener must implement onInstalled.
+ */
+BrowserAddonList.prototype.onInstalled = function(addon) {
+  this._onAddonManagerUpdated();
+};
+
+/**
+ * AddonManager listener must implement onOperationCancelled.
+ */
+BrowserAddonList.prototype.onOperationCancelled = function(addon) {
+  this._onAddonManagerUpdated();
+};
+
+/**
+ * AddonManager listener must implement onUninstalling.
+ */
+BrowserAddonList.prototype.onUninstalling = function(addon) {
+  this._onAddonManagerUpdated();
+};
+
+/**
+ * AddonManager listener must implement onUninstalled.
+ */
 BrowserAddonList.prototype.onUninstalled = function(addon) {
   this._actorByAddonId.delete(addon.id);
+  this._onAddonManagerUpdated();
+};
+
+BrowserAddonList.prototype._onAddonManagerUpdated = function(addon) {
   this._notifyListChanged();
   this._adjustListener();
 };

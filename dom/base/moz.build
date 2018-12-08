@@ -117,7 +117,6 @@ EXPORTS += [
     'nsWindowSizes.h',
     'nsWrapperCache.h',
     'nsWrapperCacheInlines.h',
-    'nsXMLNameSpaceMap.h',
     'XPathGenerator.h',
 ]
 
@@ -129,7 +128,6 @@ if CONFIG['MOZ_WEBRTC']:
 
 EXPORTS.mozilla += [
     'CORSMode.h',
-    'FeedWriterEnabled.h',
     'FlushType.h',
     'FullscreenChange.h',
     'RangeBoundary.h',
@@ -205,6 +203,8 @@ EXPORTS.mozilla.dom += [
     'NodeInfoInlines.h',
     'NodeIterator.h',
     'ParentProcessMessageManager.h',
+    'PlacesBookmark.h',
+    'PlacesBookmarkAddition.h',
     'PlacesEvent.h',
     'PlacesObservers.h',
     'PlacesVisit.h',
@@ -220,6 +220,7 @@ EXPORTS.mozilla.dom += [
     'StructuredCloneBlob.h',
     'StructuredCloneHolder.h',
     'StructuredCloneTags.h',
+    'StructuredCloneTester.h',
     'StyleSheetList.h',
     'SubtleCrypto.h',
     'SyncMessageSender.h',
@@ -361,7 +362,6 @@ UNIFIED_SOURCES += [
     'nsWrapperCache.cpp',
     'nsXHTMLContentSerializer.cpp',
     'nsXMLContentSerializer.cpp',
-    'nsXMLNameSpaceMap.cpp',
     'ParentProcessMessageManager.cpp',
     'Pose.cpp',
     'PostMessageEvent.cpp',
@@ -373,8 +373,10 @@ UNIFIED_SOURCES += [
     'Selection.cpp',
     'SelectionChangeEventDispatcher.cpp',
     'ShadowRoot.cpp',
+    'StorageAccessPermissionRequest.cpp',
     'StructuredCloneBlob.cpp',
     'StructuredCloneHolder.cpp',
+    'StructuredCloneTester.cpp',
     'StyleSheetList.cpp',
     'SubtleCrypto.cpp',
     'TabGroup.cpp',
@@ -422,7 +424,7 @@ SOURCES += [
     'nsDOMWindowUtils.cpp',
     # Conflicts with windows.h's definition of SendMessage.
     'nsFrameMessageManager.cpp',
-    # These files have a #error "Never include windows.h in this file!"
+    # These files have a #error "Never include unwrapped windows.h in this file!"
     'nsGlobalWindowInner.cpp',
     'nsGlobalWindowOuter.cpp',
     # Conflicts with windows.h's definition of LoadImage.

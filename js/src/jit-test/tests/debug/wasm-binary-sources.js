@@ -1,10 +1,9 @@
+// |jit-test| skip-if: !wasmDebuggingIsSupported()
+
 // Tests that wasm module scripts have access to binary sources.
 
 load(libdir + "asserts.js");
 load(libdir + "array-compare.js");
-
-if (!wasmDebuggingIsSupported())
-  quit();
 
 var g = newGlobal();
 var dbg = new Debugger(g);
@@ -21,10 +20,6 @@ var source = s.source;
 
 // The text is never generated with the native Debugger API.
 assertEq(source.text.includes('module'), false);
-assertThrowsInstanceOf(() => source.binary, Error);
-
-// Enable binary sources.
-dbg.allowWasmBinarySource = true;
 
 g.eval(`o = new WebAssembly.Instance(new WebAssembly.Module(wasmTextToBinary('(module (func) (export "" 0))')));`);
 assertEq(s.format, "wasm");

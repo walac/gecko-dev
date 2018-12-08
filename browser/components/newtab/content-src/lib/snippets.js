@@ -62,9 +62,7 @@ export class SnippetsMap extends Map {
     }
   }
 
-  disableOnboarding() {
-    this._dispatch(ac.AlsoToMain({type: at.DISABLE_ONBOARDING}));
-  }
+  disableOnboarding() {}
 
   showFirefoxAccounts() {
     this._dispatch(ac.AlsoToMain({type: at.SHOW_FIREFOX_ACCOUNTS}));
@@ -249,18 +247,6 @@ export class SnippetsProvider {
     }
   }
 
-  _noSnippetFallback() {
-    // TODO
-  }
-
-  _forceOnboardingVisibility(shouldBeVisible) {
-    const onboardingEl = document.getElementById("onboarding-notification-bar");
-
-    if (onboardingEl) {
-      onboardingEl.style.display = shouldBeVisible ? "" : "none";
-    }
-  }
-
   _showRemoteSnippets() {
     const snippetsEl = document.getElementById(this.elementId);
     const payload = this.snippetsMap.get("snippets");
@@ -282,6 +268,8 @@ export class SnippetsProvider {
     // eslint-disable-next-line no-unsanitized/property
     snippetsEl.innerHTML = payload;
 
+    this._logIfDevtools("Successfully added snippets.");
+
     // Scripts injected by innerHTML are inactive, so we have to relocate them
     // through DOM manipulation to activate their contents.
     for (const scriptEl of snippetsEl.getElementsByTagName("script")) {
@@ -300,6 +288,13 @@ export class SnippetsProvider {
     }
   }
 
+  // istanbul ignore next
+  _logIfDevtools(text) {
+    if (this.devtoolsEnabled) {
+      console.log("Legacy snippets:", text); // eslint-disable-line no-console
+    }
+  }
+
   /**
    * init - Fetch the snippet payload and show snippets
    *
@@ -314,7 +309,10 @@ export class SnippetsProvider {
       appData: {},
       elementId: "snippets",
       connect: true,
+      devtoolsEnabled: false,
     }, options);
+
+    this._logIfDevtools("Initializing...");
 
     // Add listener so we know when snippets are blocked on other pages
     if (global.RPMAddMessageListener) {
@@ -347,18 +345,18 @@ export class SnippetsProvider {
     try {
       this._showRemoteSnippets();
     } catch (e) {
-      this._noSnippetFallback(e);
+      this._logIfDevtools("Problem inserting remote snippets!");
+      console.error(e); // eslint-disable-line no-console
     }
 
     window.dispatchEvent(new Event(SNIPPETS_ENABLED_EVENT));
 
-    this._forceOnboardingVisibility(true);
     this.initialized = true;
+    this._logIfDevtools("Finished initializing.");
   }
 
   uninit() {
     window.dispatchEvent(new Event(SNIPPETS_DISABLED_EVENT));
-    this._forceOnboardingVisibility(false);
     if (global.RPMRemoveMessageListener) {
       global.RPMRemoveMessageListener("ActivityStream:MainToContent", this._onAction);
     }
@@ -405,14 +403,11 @@ export function addSnippetsSubscriber(store) {
       !snippets.initialized &&
       // Don't call init multiple times
       !initializing &&
-      location.href !== "about:welcome"
+      location.href !== "about:welcome" &&
+      location.hash !== "#asrouter"
     ) {
       initializing = true;
-      await snippets.init({appData: state.Snippets});
-      // istanbul ignore if
-      if (state.Prefs.values["asrouter.devtoolsEnabled"]) {
-        console.log("Legacy snippets initialized"); // eslint-disable-line no-console
-      }
+      await snippets.init({appData: state.Snippets, devtoolsEnabled: state.Prefs.values["asrouter.devtoolsEnabled"]});
       initializing = false;
 
     /** If we should remove snippets... */

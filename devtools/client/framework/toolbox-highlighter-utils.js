@@ -5,7 +5,6 @@
 "use strict";
 
 const promise = require("promise");
-const flags = require("devtools/shared/flags");
 
 /**
  * Client-side highlighter shared module.
@@ -28,38 +27,21 @@ const flags = require("devtools/shared/flags");
  * @return {Object} the highlighterUtils public API
  */
 exports.getHighlighterUtils = function(toolbox) {
-  if (!toolbox || !toolbox.target) {
+  if (!toolbox) {
     throw new Error("Missing or invalid toolbox passed to getHighlighterUtils");
   }
 
   // Exported API properties will go here
   const exported = {};
 
-  // The current toolbox target
-  let target = toolbox.target;
-
   // Is the highlighter currently in pick mode
   let isPicking = false;
-
-  // Is the box model already displayed, used to prevent dispatching
-  // unnecessary requests, especially during toolbox shutdown
-  let isNodeFrontHighlighted = false;
 
   /**
    * Release this utils, nullifying the references to the toolbox
    */
   exported.release = function() {
-    toolbox = target = null;
-  };
-
-  /**
-   * Does the target have the highlighter actor.
-   * The devtools must be backwards compatible with at least B2G 1.3 (28),
-   * which doesn't have the highlighter actor. This can be removed as soon as
-   * the minimal supported version becomes 1.4 (29)
-   */
-  const isRemoteHighlightable = exported.isRemoteHighlightable = function() {
-    return target.client.traits.highlightable;
+    toolbox = null;
   };
 
   /**
@@ -115,22 +97,13 @@ exports.getHighlighterUtils = function(toolbox) {
       await toolbox.selectTool("inspector", "inspect_dom");
       toolbox.on("select", cancelPicker);
 
-      if (isRemoteHighlightable()) {
-        toolbox.walker.on("picker-node-hovered", onPickerNodeHovered);
-        toolbox.walker.on("picker-node-picked", onPickerNodePicked);
-        toolbox.walker.on("picker-node-previewed", onPickerNodePreviewed);
-        toolbox.walker.on("picker-node-canceled", onPickerNodeCanceled);
+      toolbox.walker.on("picker-node-hovered", onPickerNodeHovered);
+      toolbox.walker.on("picker-node-picked", onPickerNodePicked);
+      toolbox.walker.on("picker-node-previewed", onPickerNodePreviewed);
+      toolbox.walker.on("picker-node-canceled", onPickerNodeCanceled);
 
-        await toolbox.highlighter.pick(doFocus);
-        toolbox.emit("picker-started");
-      } else {
-        // If the target doesn't have the highlighter actor, we can use the
-        // walker's pick method instead, knowing that it only responds when a node
-        // is picked (instead of emitting events)
-        toolbox.emit("picker-started");
-        const node = await toolbox.walker.pick();
-        onPickerNodePicked({node: node});
-      }
+      await toolbox.highlighter.pick(doFocus);
+      toolbox.emit("picker-started");
     });
 
   /**
@@ -147,17 +120,11 @@ exports.getHighlighterUtils = function(toolbox) {
 
     toolbox.pickerButton.isChecked = false;
 
-    if (isRemoteHighlightable()) {
-      await toolbox.highlighter.cancelPick();
-      toolbox.walker.off("picker-node-hovered", onPickerNodeHovered);
-      toolbox.walker.off("picker-node-picked", onPickerNodePicked);
-      toolbox.walker.off("picker-node-previewed", onPickerNodePreviewed);
-      toolbox.walker.off("picker-node-canceled", onPickerNodeCanceled);
-    } else {
-      // If the target doesn't have the highlighter actor, use the walker's
-      // cancelPick method instead
-      await toolbox.walker.cancelPick();
-    }
+    await toolbox.highlighter.cancelPick();
+    toolbox.walker.off("picker-node-hovered", onPickerNodeHovered);
+    toolbox.walker.off("picker-node-picked", onPickerNodePicked);
+    toolbox.walker.off("picker-node-previewed", onPickerNodePreviewed);
+    toolbox.walker.off("picker-node-canceled", onPickerNodeCanceled);
 
     toolbox.off("select", cancelPicker);
     toolbox.emit("picker-stopped");
@@ -205,86 +172,6 @@ exports.getHighlighterUtils = function(toolbox) {
     cancelPicker();
     toolbox.win.focus();
   }
-
-  /**
-   * Show the box model highlighter on a node in the content page.
-   * The node needs to be a NodeFront, as defined by the inspector actor
-   * @see devtools/server/actors/inspector/inspector.js
-   * @param {NodeFront} nodeFront The node to highlight
-   * @param {Object} options
-   * @return A promise that resolves when the node has been highlighted
-   */
-  const highlightNodeFront = exported.highlightNodeFront = requireInspector(
-  async function(nodeFront, options = {}) {
-    if (!nodeFront) {
-      return;
-    }
-
-    isNodeFrontHighlighted = true;
-    if (isRemoteHighlightable()) {
-      await toolbox.highlighter.showBoxModel(nodeFront, options);
-    } else {
-      // If the target doesn't have the highlighter actor, revert to the
-      // walker's highlight method, which draws a simple outline
-      await toolbox.walker.highlight(nodeFront);
-    }
-
-    toolbox.emit("node-highlight", nodeFront);
-  });
-
-  /**
-   * This is a convenience method in case you don't have a nodeFront but a
-   * valueGrip. This is often the case with VariablesView properties.
-   * This method will simply translate the grip into a nodeFront and call
-   * highlightNodeFront, so it has the same signature.
-   * @see highlightNodeFront
-   */
-  exported.highlightDomValueGrip =
-    requireInspector(async function(valueGrip, options = {}) {
-      const nodeFront = await gripToNodeFront(valueGrip);
-      if (nodeFront) {
-        await highlightNodeFront(nodeFront, options);
-      } else {
-        throw new Error("The ValueGrip passed could not be translated to a NodeFront");
-      }
-    });
-
-  /**
-   * Translate a debugger value grip into a node front usable by the inspector
-   * @param {ValueGrip}
-   * @return a promise that resolves to the node front when done
-   */
-  const gripToNodeFront = exported.gripToNodeFront = requireInspector(
-  async function(grip) {
-    return toolbox.walker.getNodeActorFromObjectActor(grip.actor);
-  });
-
-  /**
-   * Hide the highlighter.
-   * @param {Boolean} forceHide Only really matters in test mode (when
-   * flags.testing is true). In test mode, hovering over several nodes
-   * in the markup view doesn't hide/show the highlighter to ease testing. The
-   * highlighter stays visible at all times, except when the mouse leaves the
-   * markup view, which is when this param is passed to true
-   * @return a promise that resolves when the highlighter is hidden
-   */
-  exported.unhighlight = async function(forceHide = false) {
-    forceHide = forceHide || !flags.testing;
-
-    // Note that if isRemoteHighlightable is true, there's no need to hide the
-    // highlighter as the walker uses setTimeout to hide it after some time
-    if (isNodeFrontHighlighted && forceHide && toolbox.highlighter &&
-        isRemoteHighlightable()) {
-      isNodeFrontHighlighted = false;
-      await toolbox.highlighter.hideBoxModel();
-    }
-
-    // unhighlight is called when destroying the toolbox, which means that by
-    // now, the toolbox reference might have been nullified already.
-    if (toolbox) {
-      toolbox.emit("node-unhighlight");
-    }
-  };
 
   /**
    * If the main, box-model, highlighter isn't enough, or if multiple highlighters

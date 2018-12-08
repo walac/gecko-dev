@@ -16,16 +16,17 @@
 #include "nsDependentString.h"
 #include "nsString.h"
 #include "pk11pub.h"
-#include "pkix/pkixtypes.h"
+#include "mozpkix/pkixtypes.h"
 
-namespace mozilla { namespace psm {
+namespace mozilla {
+namespace psm {
 
-struct EVInfo
-{
+struct EVInfo {
   // See bug 1338873 about making these fields const.
   const char* dottedOid;
-  const char* oidName; // Set this to null to signal an invalid structure,
-                  // (We can't have an empty list, so we'll use a dummy entry)
+  const char*
+      oidName;  // Set this to null to signal an invalid structure,
+                // (We can't have an empty list, so we'll use a dummy entry)
   unsigned char sha256Fingerprint[SHA256_LENGTH];
   const char* issuerBase64;
   const char* serialBase64;
@@ -87,6 +88,7 @@ static const size_t NUM_TEST_EV_ROOTS = 2;
 #endif
 
 static const struct EVInfo kEVInfos[] = {
+// clang-format off
   // IMPORTANT! When extending this list, if you add another entry that uses
   // the same dottedOid as an existing entry, use the same oidName.
 #ifdef DEBUG
@@ -94,8 +96,8 @@ static const struct EVInfo kEVInfos[] = {
   // 1.3.6.1.4.1.13769.666.666.666.1.500.9.1.
   // (multiple entries with the same OID is ok)
   // If you add or remove debug EV certs you must also modify NUM_TEST_EV_ROOTS
-  // so that the correct number of certs are skipped as these debug EV certs are
-  // NOT part of the default trust store.
+  // so that the correct number of certs are skipped as these debug EV certs
+  // are NOT part of the default trust store.
   {
     // This is the PSM xpcshell testing EV certificate. It can be generated
     // using pycert.py and the following specification:
@@ -333,8 +335,8 @@ static const struct EVInfo kEVInfos[] = {
   },
   {
     // CN=GlobalSign Root CA,OU=Root CA,O=GlobalSign nv-sa,C=BE
-    "1.3.6.1.4.1.4146.1.1",
-    "GlobalSign EV OID",
+    "2.23.140.1.1",
+    "CA/Browser Forum EV OID",
     { 0xEB, 0xD4, 0x10, 0x40, 0xE4, 0xBB, 0x3E, 0xC7, 0x42, 0xC9, 0xE3,
       0x81, 0xD3, 0x1E, 0xF2, 0xA4, 0x1A, 0x48, 0xB6, 0x68, 0x5C, 0x96,
       0xE7, 0xCE, 0xF3, 0xC1, 0xDF, 0x6C, 0xD4, 0x33, 0x1C, 0x99 },
@@ -344,8 +346,8 @@ static const struct EVInfo kEVInfos[] = {
   },
   {
     // CN=GlobalSign,O=GlobalSign,OU=GlobalSign Root CA - R2
-    "1.3.6.1.4.1.4146.1.1",
-    "GlobalSign EV OID",
+    "2.23.140.1.1",
+    "CA/Browser Forum EV OID",
     { 0xCA, 0x42, 0xDD, 0x41, 0x74, 0x5F, 0xD0, 0xB8, 0x1E, 0xB9, 0x02,
       0x36, 0x2C, 0xF9, 0xD8, 0xBF, 0x71, 0x9D, 0xA1, 0xBD, 0x1B, 0x1E,
       0xFC, 0x94, 0x6F, 0x5B, 0x4C, 0x99, 0xF4, 0x2C, 0x1B, 0x9E },
@@ -355,8 +357,8 @@ static const struct EVInfo kEVInfos[] = {
   },
   {
     // CN=GlobalSign,O=GlobalSign,OU=GlobalSign Root CA - R3
-    "1.3.6.1.4.1.4146.1.1",
-    "GlobalSign EV OID",
+    "2.23.140.1.1",
+    "CA/Browser Forum EV OID",
     { 0xCB, 0xB5, 0x22, 0xD7, 0xB7, 0xF1, 0x27, 0xAD, 0x6A, 0x01, 0x13,
       0x86, 0x5B, 0xDF, 0x1C, 0xD4, 0x10, 0x2E, 0x7D, 0x07, 0x59, 0xAF,
       0x63, 0x5A, 0x7C, 0xF4, 0x72, 0x0D, 0xC9, 0x63, 0xC5, 0x3B },
@@ -682,14 +684,25 @@ static const struct EVInfo kEVInfos[] = {
   },
   {
     // CN=GlobalSign,O=GlobalSign,OU=GlobalSign ECC Root CA - R5
-    "1.3.6.1.4.1.4146.1.1",
-    "GlobalSign EV OID",
+    "2.23.140.1.1",
+    "CA/Browser Forum EV OID",
     { 0x17, 0x9F, 0xBC, 0x14, 0x8A, 0x3D, 0xD0, 0x0F, 0xD2, 0x4E, 0xA1,
       0x34, 0x58, 0xCC, 0x43, 0xBF, 0xA7, 0xF5, 0x9C, 0x81, 0x82, 0xD7,
       0x83, 0xA5, 0x13, 0xF6, 0xEB, 0xEC, 0x10, 0x0C, 0x89, 0x24 },
     "MFAxJDAiBgNVBAsTG0dsb2JhbFNpZ24gRUNDIFJvb3QgQ0EgLSBSNTETMBEGA1UE"
     "ChMKR2xvYmFsU2lnbjETMBEGA1UEAxMKR2xvYmFsU2lnbg==",
     "YFlJ4CYuu1X5CneKcflK2Gw=",
+  },
+  {
+    // CN=GlobalSign,O=GlobalSign,OU=GlobalSign Root CA - R6
+    "2.23.140.1.1",
+    "CA/Browser Forum EV OID",
+    { 0x2C, 0xAB, 0xEA, 0xFE, 0x37, 0xD0, 0x6C, 0xA2, 0x2A, 0xBA, 0x73,
+      0x91, 0xC0, 0x03, 0x3D, 0x25, 0x98, 0x29, 0x52, 0xC4, 0x53, 0x64,
+      0x73, 0x49, 0x76, 0x3A, 0x3A, 0xB5, 0xAD, 0x6C, 0xCF, 0x69 },
+    "MEwxIDAeBgNVBAsTF0dsb2JhbFNpZ24gUm9vdCBDQSAtIFI2MRMwEQYDVQQKEwpH"
+    "bG9iYWxTaWduMRMwEQYDVQQDEwpHbG9iYWxTaWdu",
+    "Rea7A4Mzw4VlSOb/RVE=",
   },
   {
     // CN=Entrust.net Certification Authority (2048),OU=(c) 1999 Entrust.net Limited,OU=www.entrust.net/CPS_2048 incorp. by ref. (limits liab.),O=Entrust.net
@@ -881,18 +894,19 @@ static const struct EVInfo kEVInfos[] = {
     "ViBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQSBSMg==",
     "VrYpzTS8ePY=",
   },
+    // clang-format on
 };
 
 static SECOidTag sEVInfoOIDTags[ArrayLength(kEVInfos)];
 
 static_assert(SEC_OID_UNKNOWN == 0,
-  "We depend on zero-initialized globals being interpreted as SEC_OID_UNKNOWN.");
-static_assert(ArrayLength(sEVInfoOIDTags) == ArrayLength(kEVInfos),
-  "These arrays are used in parallel and must have the same length.");
+              "We depend on zero-initialized globals being interpreted as "
+              "SEC_OID_UNKNOWN.");
+static_assert(
+    ArrayLength(sEVInfoOIDTags) == ArrayLength(kEVInfos),
+    "These arrays are used in parallel and must have the same length.");
 
-static SECOidTag
-RegisterOID(const SECItem& oidItem, const char* oidName)
-{
+static SECOidTag RegisterOID(const SECItem& oidItem, const char* oidName) {
   SECOidData od;
   od.oid.len = oidItem.len;
   od.oid.data = oidItem.data;
@@ -905,9 +919,7 @@ RegisterOID(const SECItem& oidItem, const char* oidName)
 
 static SECOidTag sCABForumEVOIDTag = SEC_OID_UNKNOWN;
 
-static bool
-isEVPolicy(SECOidTag policyOIDTag)
-{
+static bool isEVPolicy(SECOidTag policyOIDTag) {
   if (policyOIDTag != SEC_OID_UNKNOWN && policyOIDTag == sCABForumEVOIDTag) {
     return true;
   }
@@ -921,19 +933,16 @@ isEVPolicy(SECOidTag policyOIDTag)
   return false;
 }
 
-bool
-CertIsAuthoritativeForEVPolicy(const UniqueCERTCertificate& cert,
-                               const mozilla::pkix::CertPolicyId& policy)
-{
+bool CertIsAuthoritativeForEVPolicy(const UniqueCERTCertificate& cert,
+                                    const mozilla::pkix::CertPolicyId& policy) {
   MOZ_ASSERT(cert);
   if (!cert) {
     return false;
   }
 
   unsigned char fingerprint[SHA256_LENGTH];
-  SECStatus srv =
-    PK11_HashBuf(SEC_OID_SHA256, fingerprint, cert->derCert.data,
-                 AssertedCast<int32_t>(cert->derCert.len));
+  SECStatus srv = PK11_HashBuf(SEC_OID_SHA256, fingerprint, cert->derCert.data,
+                               AssertedCast<int32_t>(cert->derCert.len));
   if (srv != SECSuccess) {
     return false;
   }
@@ -963,15 +972,13 @@ CertIsAuthoritativeForEVPolicy(const UniqueCERTCertificate& cert,
   return false;
 }
 
-nsresult
-LoadExtendedValidationInfo()
-{
+nsresult LoadExtendedValidationInfo() {
   static const char* sCABForumOIDString = "2.23.140.1.1";
   static const char* sCABForumOIDDescription = "CA/Browser Forum EV OID";
 
   ScopedAutoSECItem cabforumOIDItem;
-  if (SEC_StringToOID(nullptr, &cabforumOIDItem, sCABForumOIDString, 0)
-        != SECSuccess) {
+  if (SEC_StringToOID(nullptr, &cabforumOIDItem, sCABForumOIDString, 0) !=
+      SECSuccess) {
     return NS_ERROR_FAILURE;
   }
   sCABForumEVOIDTag = RegisterOID(cabforumOIDItem, sCABForumOIDDescription);
@@ -990,8 +997,8 @@ LoadExtendedValidationInfo()
     // unnecessary to check this in non-debug builds since we will safely fall
     // back to DV if the EV information is incorrect.
     nsAutoCString derIssuer;
-    nsresult rv = Base64Decode(nsDependentCString(entry.issuerBase64),
-                               derIssuer);
+    nsresult rv =
+        Base64Decode(nsDependentCString(entry.issuerBase64), derIssuer);
     MOZ_ASSERT(NS_SUCCEEDED(rv), "Could not base64-decode built-in EV issuer");
     if (NS_FAILED(rv)) {
       return rv;
@@ -1006,10 +1013,10 @@ LoadExtendedValidationInfo()
 
     CERTIssuerAndSN ias;
     ias.derIssuer.data =
-      BitwiseCast<unsigned char*, const char*>(derIssuer.get());
+        BitwiseCast<unsigned char*, const char*>(derIssuer.get());
     ias.derIssuer.len = derIssuer.Length();
     ias.serialNumber.data =
-      BitwiseCast<unsigned char*, const char*>(serialNumber.get());
+        BitwiseCast<unsigned char*, const char*>(serialNumber.get());
     ias.serialNumber.len = serialNumber.Length();
     ias.serialNumber.type = siUnsignedInteger;
 
@@ -1056,11 +1063,10 @@ LoadExtendedValidationInfo()
 
 // Helper function for GetFirstEVPolicy(): returns the first suitable policy
 // from the given list of policies.
-bool
-GetFirstEVPolicyFromPolicyList(const UniqueCERTCertificatePolicies& policies,
-                       /*out*/ mozilla::pkix::CertPolicyId& policy,
-                       /*out*/ SECOidTag& policyOidTag)
-{
+bool GetFirstEVPolicyFromPolicyList(
+    const UniqueCERTCertificatePolicies& policies,
+    /*out*/ mozilla::pkix::CertPolicyId& policy,
+    /*out*/ SECOidTag& policyOidTag) {
   for (size_t i = 0; policies->policyInfos[i]; i++) {
     const CERTPolicyInfo* policyInfo = policies->policyInfos[i];
     SECOidTag policyInfoOID = policyInfo->oid;
@@ -1087,23 +1093,22 @@ GetFirstEVPolicyFromPolicyList(const UniqueCERTCertificatePolicies& policies,
   return false;
 }
 
-bool
-GetFirstEVPolicy(CERTCertificate& cert,
-                 /*out*/ mozilla::pkix::CertPolicyId& policy,
-                 /*out*/ SECOidTag& policyOidTag)
-{
+bool GetFirstEVPolicy(CERTCertificate& cert,
+                      /*out*/ mozilla::pkix::CertPolicyId& policy,
+                      /*out*/ SECOidTag& policyOidTag) {
   if (!cert.extensions) {
     return false;
   }
 
   for (size_t i = 0; cert.extensions[i]; i++) {
     const CERTCertExtension* extension = cert.extensions[i];
-    if (SECOID_FindOIDTag(&extension->id) != SEC_OID_X509_CERTIFICATE_POLICIES) {
+    if (SECOID_FindOIDTag(&extension->id) !=
+        SEC_OID_X509_CERTIFICATE_POLICIES) {
       continue;
     }
 
     UniqueCERTCertificatePolicies policies(
-      CERT_DecodeCertificatePoliciesExtension(&extension->value));
+        CERT_DecodeCertificatePoliciesExtension(&extension->value));
     if (!policies) {
       continue;
     }
@@ -1116,4 +1121,5 @@ GetFirstEVPolicy(CERTCertificate& cert,
   return false;
 }
 
-} } // namespace mozilla::psm
+}  // namespace psm
+}  // namespace mozilla

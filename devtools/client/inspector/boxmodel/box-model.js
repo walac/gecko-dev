@@ -145,7 +145,7 @@ BoxModel.prototype = {
 
       const styleEntries = await this.inspector.pageStyle.getApplied(node, {
         // We don't need styles applied to pseudo elements of the current node.
-        skipPseudo: true
+        skipPseudo: true,
       });
       this.elementRules = styleEntries.map(e => e.rule);
 
@@ -181,7 +181,12 @@ BoxModel.prototype = {
       this._updateReasons = [];
 
       return null;
-    }).bind(this))().catch(console.error);
+    }).bind(this))().catch(error => {
+      // If we failed because we were being destroyed while waiting for a request, ignore.
+      if (this.document) {
+        console.error(error);
+      }
+    });
 
     this._lastRequest = lastRequest;
   },
@@ -194,8 +199,7 @@ BoxModel.prototype = {
       return;
     }
 
-    const toolbox = this.inspector.toolbox;
-    toolbox.highlighterUtils.unhighlight();
+    this.inspector.highlighter.unhighlight();
   },
 
   /**
@@ -279,7 +283,7 @@ BoxModel.prototype = {
       initial: initialValue,
       contentType: InplaceEditor.CONTENT_TYPES.CSS_VALUE,
       property: {
-        name: property
+        name: property,
       },
       start: self => {
         self.elt.parentNode.classList.add("boxmodel-editing");
@@ -290,7 +294,7 @@ BoxModel.prototype = {
         }
 
         const properties = [
-          { name: property, value: value }
+          { name: property, value: value },
         ];
 
         if (property.substring(0, 7) == "border-") {
@@ -333,10 +337,8 @@ BoxModel.prototype = {
       return;
     }
 
-    const toolbox = this.inspector.toolbox;
     const nodeFront = this.inspector.selection.nodeFront;
-
-    toolbox.highlighterUtils.highlightNodeFront(nodeFront, options);
+    this.inspector.highlighter.highlight(nodeFront, options);
   },
 
   /**

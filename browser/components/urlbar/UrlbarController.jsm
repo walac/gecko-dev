@@ -6,33 +6,13 @@
 
 var EXPORTED_SYMBOLS = ["QueryContext", "UrlbarController"];
 
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-
-// XXX This is a fake manager to provide a basic integration test whilst we
-// are still constructing the manager.
-// eslint-disable-next-line require-jsdoc
-const ProvidersManager = {
-  queryStart(queryContext, controller) {
-    queryContext.results = [];
-    for (let i = 0; i < queryContext.maxResults; i++) {
-      const SWITCH_TO_TAB = Math.random() < .3;
-      let url = "http://www." + queryContext.searchString;
-      while (Math.random() < .9) {
-        url += queryContext.searchString;
-      }
-      let title = queryContext.searchString;
-      while (Math.random() < .5) {
-        title += queryContext.isPrivate ? " private" : " foo bar";
-      }
-      queryContext.results.push({
-        title,
-        type: SWITCH_TO_TAB ? "switchtotab" : "normal",
-        url,
-      });
-    }
-    controller.receiveResults(queryContext);
-  },
-};
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  AppConstants: "resource://gre/modules/AppConstants.jsm",
+  // BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
+  UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
+  UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.jsm",
+});
 
 /**
  * QueryContext defines a user's autocomplete input from within the Address Bar.
@@ -97,22 +77,54 @@ class QueryContext {
  * - onQueryStarted(queryContext)
  * - onQueryResults(queryContext)
  * - onQueryCancelled(queryContext)
+ * - onQueryFinished(queryContext)
  */
 class UrlbarController {
   /**
    * Initialises the class. The manager may be overridden here, this is for
    * test purposes.
    *
-   * @param {object} [options]
+   * @param {object} options
    *   The initial options for UrlbarController.
+   * @param {object} options.browserWindow
+   *   The browser window this controller is operating within.
    * @param {object} [options.manager]
    *   Optional fake providers manager to override the built-in providers manager.
    *   Intended for use in unit tests only.
    */
   constructor(options = {}) {
-    this.manager = options.manager || ProvidersManager;
+    if (!options.browserWindow) {
+      throw new Error("Missing options: browserWindow");
+    }
+    if (!options.browserWindow.location ||
+        options.browserWindow.location.href != AppConstants.BROWSER_CHROME_URL) {
+      throw new Error("browserWindow should be an actual browser window.");
+    }
+
+    this.manager = options.manager || UrlbarProvidersManager;
+    this.browserWindow = options.browserWindow;
 
     this._listeners = new Set();
+  }
+
+  /**
+   * Hooks up the controller with an input.
+   *
+   * @param {UrlbarInput} input
+   *   The UrlbarInput instance associated with this controller.
+   */
+  setInput(input) {
+    this.input = input;
+  }
+
+  /**
+   * Hooks up the controller with a view.
+   *
+   * @param {UrlbarView} view
+   *   The UrlbarView instance associated with this controller.
+   */
+  setView(view) {
+    this.view = view;
   }
 
   /**
@@ -120,21 +132,24 @@ class UrlbarController {
    *
    * @param {QueryContext} queryContext The query details.
    */
-  handleQuery(queryContext) {
-    queryContext.autoFill = Services.prefs.getBoolPref("browser.urlbar.autoFill", true);
+  async startQuery(queryContext) {
+    queryContext.autoFill = UrlbarPrefs.get("autoFill");
 
     this._notify("onQueryStarted", queryContext);
 
-    this.manager.queryStart(queryContext, this);
+    await this.manager.startQuery(queryContext, this);
+
+    this._notify("onQueryFinished", queryContext);
   }
 
   /**
-   * Cancels an in-progress query.
+   * Cancels an in-progress query. Note, queries may continue running if they
+   * can't be canceled.
    *
    * @param {QueryContext} queryContext The query details.
    */
   cancelQuery(queryContext) {
-    this.manager.queryCancel(queryContext);
+    this.manager.cancelQuery(queryContext);
 
     this._notify("onQueryCancelled", queryContext);
   }
@@ -168,6 +183,63 @@ class UrlbarController {
    */
   removeQueryListener(listener) {
     this._listeners.delete(listener);
+  }
+
+  /**
+   * When switching tabs, clear some internal caches to handle cases like
+   * backspace, autofill or repeated searches.
+   */
+  tabContextChanged() {
+    // TODO: implementation needed (bug 1496685)
+  }
+
+  /**
+   * Receives keyboard events from the input and handles those that should
+   * navigate within the view or pick the currently selected item.
+   *
+   * @param {KeyboardEvent} event
+   *   The DOM KeyboardEvent.
+   */
+  handleKeyNavigation(event) {
+    // Handle readline/emacs-style navigation bindings on Mac.
+    if (AppConstants.platform == "macosx" &&
+        this.view.isOpen &&
+        event.ctrlKey &&
+        (event.key == "n" || event.key == "p")) {
+      this.view.selectNextItem({ reverse: event.key == "p" });
+      event.preventDefault();
+      return;
+    }
+
+    switch (event.keyCode) {
+      case KeyEvent.DOM_VK_RETURN:
+        if (AppConstants.platform == "macosx" &&
+            event.metaKey) {
+          // Prevent beep on Mac.
+          event.preventDefault();
+        }
+        // TODO: We may have an autoFill entry, so we should use that instead.
+        // TODO: We should have an input bufferrer so that we can use search results
+        // if appropriate.
+        this.input.handleCommand(event);
+        return;
+      case KeyEvent.DOM_VK_TAB:
+        this.view.selectNextItem({ reverse: event.shiftKey });
+        event.preventDefault();
+        break;
+      case KeyEvent.DOM_VK_DOWN:
+        if (!event.ctrlKey && !event.altKey) {
+          this.view.selectNextItem();
+          event.preventDefault();
+        }
+        break;
+      case KeyEvent.DOM_VK_UP:
+        if (!event.ctrlKey && !event.altKey) {
+          this.view.selectNextItem({ reverse: true });
+          event.preventDefault();
+        }
+        break;
+    }
   }
 
   /**

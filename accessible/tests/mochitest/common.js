@@ -731,13 +731,12 @@ function getTextFromClipboard() {
   Services.clipboard.getData(trans, Services.clipboard.kGlobalClipboard);
 
   var str = {};
-  var strLength = {};
-  trans.getTransferData("text/unicode", str, strLength);
+  trans.getTransferData("text/unicode", str);
 
   if (str)
     str = str.value.QueryInterface(Ci.nsISupportsString);
   if (str)
-    return str.data.substring(0, strLength.value / 2);
+    return str.data;
 
   return "";
 }
@@ -929,7 +928,7 @@ function normalizeAccTreeObj(aObj) {
   if (roleName in nsIAccessibleRole) {
     return {
       role: nsIAccessibleRole[roleName],
-      children: aObj[key]
+      children: aObj[key],
     };
   }
   return aObj;

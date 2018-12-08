@@ -55,7 +55,7 @@ function waitForDispatch(dbg, type) {
       },
       run: (dispatch, getState, action) => {
         resolve(action);
-      }
+      },
     });
   });
 }
@@ -166,7 +166,7 @@ function createContext(panel) {
     selectors,
     getState: store.getState,
     win: panel.panelWin,
-    store
+    store,
   };
 }
 exports.createContext = createContext;
@@ -239,7 +239,7 @@ async function addBreakpoint(dbg, line, url) {
   const location = {
     sourceId: source.id,
     line,
-    column: 0
+    column: 0,
   };
   const onDispatched = waitForDispatch(dbg, "ADD_BREAKPOINT");
   dbg.actions.addBreakpoint(location);
@@ -249,11 +249,11 @@ exports.addBreakpoint = addBreakpoint;
 
 async function removeBreakpoints(dbg, line, url) {
   dump(`remove all breakpoints\n`);
-  const breakpoints = dbg.selectors.getBreakpoints(dbg.getState());
+  const breakpoints = dbg.selectors.getBreakpointsList(dbg.getState());
 
-  const onBreakpointsCleared =  waitForState(
+  const onBreakpointsCleared = waitForState(
     dbg,
-    state => !dbg.selectors.getBreakpoints(state).length
+    state => dbg.selectors.getBreakpointCount(state) === 0
   );
   await dbg.actions.removeBreakpoints(breakpoints);
   return onBreakpointsCleared;

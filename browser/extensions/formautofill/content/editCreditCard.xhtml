@@ -30,18 +30,6 @@
     <label id="cc-exp-month-container" class="container">
       <select id="cc-exp-month" required="required">
         <option/>
-        <option value="1">01</option>
-        <option value="2">02</option>
-        <option value="3">03</option>
-        <option value="4">04</option>
-        <option value="5">05</option>
-        <option value="6">06</option>
-        <option value="7">07</option>
-        <option value="8">08</option>
-        <option value="9">09</option>
-        <option value="10">10</option>
-        <option value="11">11</option>
-        <option value="12">12</option>
       </select>
       <span data-localization="cardExpiresMonth" class="label-text"/>
     </label>
@@ -61,15 +49,7 @@
       <span data-localization="cardNetwork" class="label-text"/>
     </label>
     <label id="cc-csc-container" class="container" hidden="hidden">
-      <!-- Keep these attributes in-sync with securityCodeInput in payment-method-picker.js -->
-      <input id="cc-csc"
-             type="text"
-             autocomplete="off"
-             size="3"
-             required="required"
-             pattern="[0-9]{3,}"
-             disabled="disabled"/>
-      <span data-localization="cardCVV" class="label-text"/>
+      <!-- The CSC container will get filled in by forms that need a CSC (using csc-input.js) -->
     </label>
     <div id="billingAddressGUID-container" class="billingAddressRow container rich-picker">
       <select id="billingAddressGUID" required="required">
@@ -90,7 +70,11 @@
         isCCNumber,
         getCreditCardNetworks,
       } = FormAutofillUtils;
-      let record = window.arguments && window.arguments[0];
+      let args = window.arguments || [];
+      let {
+        record,
+      } = args[0] || {};
+
       let addresses = {};
       for (let address of await formAutofillStorage.addresses.getAll()) {
         addresses[address.guid] = address;

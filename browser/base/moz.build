@@ -13,10 +13,6 @@ SPHINX_TREES['tabbrowser'] = 'content/docs/tabbrowser'
 with Files('content/docs/sslerrorreport/**'):
     SCHEDULES.exclusive = ['docs']
 
-MOCHITEST_MANIFESTS += [
-    'content/test/general/mochitest.ini',
-]
-
 MOCHITEST_CHROME_MANIFESTS += [
     'content/test/chrome/chrome.ini',
 ]
@@ -41,6 +37,7 @@ BROWSER_CHROME_MANIFESTS += [
     'content/test/performance/lowdpi/browser.ini',
     'content/test/permissions/browser.ini',
     'content/test/plugins/browser.ini',
+    'content/test/plugins/xbl/browser.ini',
     'content/test/popupNotifications/browser.ini',
     'content/test/popups/browser.ini',
     'content/test/referrer/browser.ini',

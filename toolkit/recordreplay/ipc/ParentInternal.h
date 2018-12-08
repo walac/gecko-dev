@@ -52,14 +52,12 @@ void InitializeForwarding();
 // Terminate all children and kill this process.
 void Shutdown();
 
-// Monitor used for synchronizing between the main and channel or message loop threads.
+// Monitor used for synchronizing between the main and channel or message loop
+// threads.
 static Monitor* gMonitor;
 
 // Allow the child process to resume execution.
 void Resume(bool aForward);
-
-// Pause the child process at the next opportunity.
-void Pause();
 
 // Direct the child process to warp to a specific point.
 void TimeWarp(const js::ExecutionPoint& target);
@@ -68,13 +66,21 @@ void TimeWarp(const js::ExecutionPoint& target);
 // response.
 void SendRequest(const js::CharBuffer& aBuffer, js::CharBuffer* aResponse);
 
-// Set or clear a breakpoint in the child process.
-void SetBreakpoint(size_t aId, const js::BreakpointPosition& aPosition);
+// Set the breakpoints installed in the child process.
+void AddBreakpoint(const js::BreakpointPosition& aPosition);
+void ClearBreakpoints();
 
 // If possible, make sure the active child is replaying, and that requests
 // which might trigger an unhandled divergence can be processed (recording
 // children cannot process such requests).
 void MaybeSwitchToReplayingChild();
+
+// Block until the active child has paused somewhere.
+void WaitUntilActiveChildIsPaused();
+
+// Notify the parent that the debugger has paused and will allow the user to
+// interact with it and potentially start rewinding.
+void MarkActiveChildExplicitPause();
 
 ///////////////////////////////////////////////////////////////////////////////
 // Graphics
@@ -86,8 +92,14 @@ void InitializeGraphicsMemory();
 void SendGraphicsMemoryToChild();
 
 // Update the graphics painted in the UI process, per painting data received
-// from a child process, or null for the last paint performed.
+// from a child process, or null if a repaint was triggered and failed due to
+// an unhandled recording divergence.
 void UpdateGraphicsInUIProcess(const PaintMessage* aMsg);
+
+// If necessary, update graphics after the active child sends a paint message
+// or reaches a checkpoint.
+void MaybeUpdateGraphicsAtPaint(const PaintMessage& aMsg);
+void MaybeUpdateGraphicsAtCheckpoint(size_t aCheckpointId);
 
 // ID for the mach message sent from a child process to the middleman to
 // request a port for the graphics shmem.
@@ -100,20 +112,23 @@ static const int32_t GraphicsMemoryMessageId = 43;
 // Fixed size of the graphics shared memory buffer.
 static const size_t GraphicsMemorySize = 4096 * 4096 * 4;
 
+// Return whether the environment variable activating repaint stress mode is
+// set. This makes various changes in both the middleman and child processes to
+// trigger a child to diverge from the recording and repaint on every vsync,
+// making sure that repainting can handle all the system interactions that
+// occur while painting the current tab.
+bool InRepaintStressMode();
+
 ///////////////////////////////////////////////////////////////////////////////
 // Child Processes
 ///////////////////////////////////////////////////////////////////////////////
 
 // Information about the role which a child process is fulfilling, and governs
 // how the process responds to incoming messages.
-class ChildRole
-{
-public:
+class ChildRole {
+ public:
   // See ParentIPC.cpp for the meaning of these role types.
-#define ForEachRoleType(Macro)                      \
-  Macro(Active)                                     \
-  Macro(Standby)                                    \
-  Macro(Inert)
+#define ForEachRoleType(Macro) Macro(Active) Macro(Standby) Macro(Inert)
 
   enum Type {
 #define DefineType(Name) Name,
@@ -123,22 +138,22 @@ public:
 
   static const char* TypeString(Type aType) {
     switch (aType) {
-#define GetTypeString(Name) case Name: return #Name;
-    ForEachRoleType(GetTypeString)
+#define GetTypeString(Name) \
+  case Name:                \
+    return #Name;
+      ForEachRoleType(GetTypeString)
 #undef GetTypeString
-    default: MOZ_CRASH("Bad ChildRole type");
+          default : MOZ_CRASH("Bad ChildRole type");
     }
   }
 
-protected:
+ protected:
   ChildProcessInfo* mProcess;
   Type mType;
 
-  explicit ChildRole(Type aType)
-    : mProcess(nullptr), mType(aType)
-  {}
+  explicit ChildRole(Type aType) : mProcess(nullptr), mType(aType) {}
 
-public:
+ public:
   void SetProcess(ChildProcessInfo* aProcess) {
     MOZ_RELEASE_ASSERT(!mProcess);
     mProcess = aProcess;
@@ -168,22 +183,18 @@ extern ipc::GeckoChildProcessHost* gRecordingProcess;
 
 // Any information needed to spawn a recording child process, in addition to
 // the contents of the introduction message.
-struct RecordingProcessData
-{
+struct RecordingProcessData {
   // File descriptors that will need to be remapped for the child process.
   const base::SharedMemoryHandle& mPrefsHandle;
   const ipc::FileDescriptor& mPrefMapHandle;
 
   RecordingProcessData(const base::SharedMemoryHandle& aPrefsHandle,
                        const ipc::FileDescriptor& aPrefMapHandle)
-    : mPrefsHandle(aPrefsHandle)
-    , mPrefMapHandle(aPrefMapHandle)
-  {}
+      : mPrefsHandle(aPrefsHandle), mPrefMapHandle(aPrefMapHandle) {}
 };
 
 // Information about a recording or replaying child process.
-class ChildProcessInfo
-{
+class ChildProcessInfo {
   // Channel for communicating with the process.
   Channel* mChannel;
 
@@ -241,9 +252,6 @@ class ChildProcessInfo
   // to the process.
   size_t mNumRecoveredMessages;
 
-  // The number of times we have restarted this process.
-  size_t mNumRestarts;
-
   // Current role of this process.
   UniquePtr<ChildRole> mRole;
 
@@ -256,6 +264,11 @@ class ChildProcessInfo
 
   // Whether we need this child to pause while the recording is updated.
   bool mPauseNeeded;
+
+  // Flags for whether we have received messages from the child indicating it
+  // is crashing.
+  bool mHasBegunFatalError;
+  bool mHasFatalError;
 
   void OnIncomingMessage(size_t aChannelId, const Message& aMsg);
   void OnIncomingRecoveryMessage(const Message& aMsg);
@@ -276,11 +289,11 @@ class ChildProcessInfo
   void Recover(bool aPaused, Message* aPausedMessage, size_t aLastCheckpoint,
                Message** aMessages, size_t aNumMessages);
 
-  bool CanRestart();
-  void AttemptRestart(const char* aWhy);
-  void LaunchSubprocess(const Maybe<RecordingProcessData>& aRecordingProcessData);
+  void OnCrash(const char* aWhy);
+  void LaunchSubprocess(
+      const Maybe<RecordingProcessData>& aRecordingProcessData);
 
-public:
+ public:
   ChildProcessInfo(UniquePtr<ChildRole> aRole,
                    const Maybe<RecordingProcessData>& aRecordingProcessData);
   ~ChildProcessInfo();
@@ -291,41 +304,38 @@ public:
   size_t LastCheckpoint() { return mLastCheckpoint; }
   bool IsRecovering() { return mRecoveryStage != RecoveryStage::None; }
   bool PauseNeeded() { return mPauseNeeded; }
-  const InfallibleVector<size_t>& MajorCheckpoints() { return mMajorCheckpoints; }
+  const InfallibleVector<size_t>& MajorCheckpoints() {
+    return mMajorCheckpoints;
+  }
 
   bool IsPaused() { return mPaused; }
   bool IsPausedAtCheckpoint();
   bool IsPausedAtRecordingEndpoint();
 
   // Get all breakpoints currently installed for this process.
-  void GetInstalledBreakpoints(Vector<SetBreakpointMessage*>& aBreakpoints);
+  void GetInstalledBreakpoints(
+      InfallibleVector<AddBreakpointMessage*>& aBreakpoints);
 
   typedef std::function<bool(js::BreakpointPosition::Kind)> BreakpointFilter;
-
-  // Return whether this process is paused at a breakpoint matching a filter.
-  bool IsPausedAtMatchingBreakpoint(const BreakpointFilter& aFilter);
-
-  // Get the ids of all installed breakpoints matching a filter.
-  void GetMatchingInstalledBreakpoints(const BreakpointFilter& aFilter,
-                                       Vector<uint32_t>& aBreakpointIds);
 
   // Get the checkpoint at or earlier to the process' position. This is either
   // the last reached checkpoint or the previous one.
   size_t MostRecentCheckpoint() {
-    return (GetDisposition() == BeforeLastCheckpoint) ? mLastCheckpoint - 1 : mLastCheckpoint;
+    return (GetDisposition() == BeforeLastCheckpoint) ? mLastCheckpoint - 1
+                                                      : mLastCheckpoint;
   }
 
   // Get the checkpoint which needs to be saved in order for this process
   // (or another at the same place) to rewind.
   size_t RewindTargetCheckpoint() {
     switch (GetDisposition()) {
-    case BeforeLastCheckpoint:
-    case AtLastCheckpoint:
-      // This will return CheckpointId::Invalid if we are the beginning of the
-      // recording.
-      return LastCheckpoint() - 1;
-    case AfterLastCheckpoint:
-      return LastCheckpoint();
+      case BeforeLastCheckpoint:
+      case AtLastCheckpoint:
+        // This will return CheckpointId::Invalid if we are the beginning of the
+        // recording.
+        return LastCheckpoint() - 1;
+      case AfterLastCheckpoint:
+        return LastCheckpoint();
     }
   }
 
@@ -349,10 +359,7 @@ public:
     return id;
   }
 
-  void SetPauseNeeded() {
-    MOZ_RELEASE_ASSERT(!mPauseNeeded);
-    mPauseNeeded = true;
-  }
+  void SetPauseNeeded() { mPauseNeeded = true; }
 
   void ClearPauseNeeded() {
     MOZ_RELEASE_ASSERT(IsPaused());
@@ -374,15 +381,17 @@ public:
   // callback succeeds.
   void WaitUntil(const std::function<bool()>& aCallback);
 
-  void WaitUntilPaused() { WaitUntil([=]() { return IsPaused(); }); }
+  void WaitUntilPaused() {
+    WaitUntil([=]() { return IsPaused(); });
+  }
 
   static bool MaybeProcessPendingMessage(ChildProcessInfo* aProcess);
 
   static void SetIntroductionMessage(IntroductionMessage* aMessage);
 };
 
-} // namespace parent
-} // namespace recordreplay
-} // namespace mozilla
+}  // namespace parent
+}  // namespace recordreplay
+}  // namespace mozilla
 
-#endif // mozilla_recordreplay_ParentInternal_h
+#endif  // mozilla_recordreplay_ParentInternal_h

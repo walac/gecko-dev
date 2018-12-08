@@ -70,15 +70,29 @@ def prefs(node):
     return rv
 
 
-def lsan_allowed(node):
+def set_prop(name, node):
     try:
-        node_items = node.get("lsan-allowed")
+        node_items = node.get(name)
         if isinstance(node_items, (str, unicode)):
             rv = {node_items}
         else:
             rv = set(node_items)
     except KeyError:
         rv = set()
+    return rv
+
+
+def leak_threshold(node):
+    rv = {}
+    try:
+        node_items = node.get("leak-threshold")
+        if isinstance(node_items, (str, unicode)):
+            node_items = [node_items]
+        for item in node_items:
+            process, value = item.rsplit(":", 1)
+            rv[process.strip()] = int(value.strip())
+    except KeyError:
+        pass
     return rv
 
 
@@ -154,7 +168,19 @@ class ExpectedManifest(ManifestItem):
 
     @property
     def lsan_allowed(self):
-        return lsan_allowed(self)
+        return set_prop("lsan-allowed", self)
+
+    @property
+    def leak_allowed(self):
+        return set_prop("leak-allowed", self)
+
+    @property
+    def leak_threshold(self):
+        return leak_threshold(self)
+
+    @property
+    def lsan_max_stack_depth(self):
+        return int_prop("lsan-max-stack-depth", self)
 
 
 class DirectoryManifest(ManifestItem):
@@ -188,8 +214,19 @@ class DirectoryManifest(ManifestItem):
 
     @property
     def lsan_allowed(self):
-        return lsan_allowed(self)
+        return set_prop("lsan-allowed", self)
 
+    @property
+    def leak_allowed(self):
+        return set_prop("leak-allowed", self)
+
+    @property
+    def leak_threshold(self):
+        return leak_threshold(self)
+
+    @property
+    def lsan_max_stack_depth(self):
+        return int_prop("lsan-max-stack-depth", self)
 
 class TestNode(ManifestItem):
     def __init__(self, name):
@@ -249,7 +286,19 @@ class TestNode(ManifestItem):
 
     @property
     def lsan_allowed(self):
-        return lsan_allowed(self)
+        return set_prop("lsan-allowed", self)
+
+    @property
+    def leak_allowed(self):
+        return set_prop("leak-allowed", self)
+
+    @property
+    def leak_threshold(self):
+        return leak_threshold(self)
+
+    @property
+    def lsan_max_stack_depth(self):
+        return int_prop("lsan-max-stack-depth", self)
 
     def append(self, node):
         """Add a subtest to the current test

@@ -11,9 +11,26 @@
 namespace mozilla {
 namespace a11y {
 
-typedef RootAccessible RootAccessibleWrap;
+class DocProxyAccessibleWrap;
 
-} // namespace a11y
-} // namespace mozilla
+class RootAccessibleWrap : public RootAccessible {
+ public:
+  RootAccessibleWrap(nsIDocument* aDocument, nsIPresShell* aPresShell);
+  virtual ~RootAccessibleWrap();
+
+  AccessibleWrap* GetContentAccessible();
+
+  AccessibleWrap* FindAccessibleById(int32_t aID);
+
+  // Recursively searches for the accessible ID within the document tree.
+  AccessibleWrap* FindAccessibleById(DocAccessibleWrap* aDocument, int32_t aID);
+
+  // Recursively searches for the accessible ID within the proxy document tree.
+  AccessibleWrap* FindAccessibleById(DocProxyAccessibleWrap* aDocument,
+                                     int32_t aID);
+};
+
+}  // namespace a11y
+}  // namespace mozilla
 
 #endif

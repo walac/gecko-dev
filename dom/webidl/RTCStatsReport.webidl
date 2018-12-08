@@ -143,21 +143,24 @@ dictionary RTCIceCandidatePairStats : RTCStats {
   unsigned long componentId; // moz
 };
 
-enum RTCStatsIceCandidateType {
+enum RTCIceCandidateType {
   "host",
-  "serverreflexive",
-  "peerreflexive",
-  "relayed"
+  "srflx",
+  "prflx",
+  "relay"
 };
 
 dictionary RTCIceCandidateStats : RTCStats {
-  DOMString componentId;
-  DOMString candidateId;
-  DOMString ipAddress;
-  DOMString transport;
-  DOMString mozLocalTransport; // needs standardization
-  long portNumber;
-  RTCStatsIceCandidateType candidateType;
+  DOMString address;
+  long port;
+  DOMString protocol;
+  RTCIceCandidateType candidateType;
+  long priority;
+  DOMString relayProtocol;
+  // Because we use this internally but don't support RTCIceCandidateStats,
+  // we need to keep the field as ChromeOnly. Bug 1225723
+  [ChromeOnly]
+  DOMString transportId;
 };
 
 dictionary RTCCodecStats : RTCStats {

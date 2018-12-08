@@ -1,3 +1,5 @@
+// |jit-test| skip-if: !wasmGcEnabled()
+
 // Attempt to test intercalls from ion to baseline and back.
 //
 // We get into this situation when the modules are compiled with different
@@ -10,9 +12,6 @@
 // Some logging with printf confirms that refmod is baseline-compiled and
 // nonrefmod is ion-compiled at present, with --wasm-gc enabled.
 
-if (!wasmGcEnabled())
-    quit(0);
-
 // Ion can't talk about references yet *but* we can call indirect from Ion to a
 // baseline module that has exported a function that accepts or returns anyref,
 // without the caller knowing this or having to declare it.  All such calls
@@ -21,7 +20,7 @@ if (!wasmGcEnabled())
 
 var refmod = new WebAssembly.Module(wasmTextToBinary(
     `(module
-      (gc_feature_opt_in 1)
+      (gc_feature_opt_in 2)
 
       (import $tbl "" "tbl" (table 4 anyfunc))
       (import $print "" "print" (func (param i32)))
@@ -36,10 +35,10 @@ var refmod = new WebAssembly.Module(wasmTextToBinary(
 
       (func $g (result anyref)
        (call $print (i32.const 2))
-       (ref.null anyref))
+       (ref.null))
 
       (func (export "test_h")
-       (call_indirect $htype (ref.null anyref) (i32.const 2)))
+       (call_indirect $htype (ref.null) (i32.const 2)))
 
       (func (export "test_i")
        (drop (call_indirect $itype (i32.const 3))))

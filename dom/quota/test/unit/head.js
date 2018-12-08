@@ -9,6 +9,8 @@ const NS_ERROR_UNEXPECTED = Cr.NS_ERROR_UNEXPECTED;
 const NS_ERROR_STORAGE_BUSY = Cr.NS_ERROR_STORAGE_BUSY;
 const NS_ERROR_FILE_NO_DEVICE_SPACE = Cr.NS_ERROR_FILE_NO_DEVICE_SPACE;
 
+Cu.import("resource://gre/modules/Services.jsm");
+
 function is(a, b, msg)
 {
   Assert.equal(a, b, msg);
@@ -116,6 +118,14 @@ function init(callback)
   return request;
 }
 
+function initTemporaryStorage(callback)
+{
+  let request = SpecialPowers._getQuotaManager().initTemporaryStorage();
+  request.callback = callback;
+
+  return request;
+}
+
 function initOrigin(principal, persistence, callback)
 {
   let request =
@@ -213,7 +223,9 @@ function installPackage(packageName)
     let file = getRelativeFile(entryName);
 
     if (zipentry.isDirectory) {
-      file.create(Ci.nsIFile.DIRECTORY_TYPE, parseInt("0755", 8));
+      if (!file.exists()) {
+        file.create(Ci.nsIFile.DIRECTORY_TYPE, parseInt("0755", 8));
+      }
     } else {
       let istream = zipReader.getInputStream(entryName);
 

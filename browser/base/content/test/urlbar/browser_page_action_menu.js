@@ -8,10 +8,11 @@ registerCleanupFunction(function() {
 });
 
 const lastModifiedFixture = 1507655615.87; // Approx Oct 10th 2017
-const mockRemoteClients = [
-  { id: "0", name: "foo", type: "mobile", serverLastModified: lastModifiedFixture },
-  { id: "1", name: "bar", type: "desktop", serverLastModified: lastModifiedFixture },
-  { id: "2", name: "baz", type: "mobile", serverLastModified: lastModifiedFixture },
+const mockTargets = [
+  { id: "0", name: "foo", type: "phone", clientRecord: {id: "cli0", serverLastModified: lastModifiedFixture, type: "phone"} },
+  { id: "1", name: "bar", type: "desktop", clientRecord: {id: "cli1", serverLastModified: lastModifiedFixture, type: "desktop"} },
+  { id: "2", name: "baz", type: "phone", clientRecord: {id: "cli2", serverLastModified: lastModifiedFixture, type: "phone"} },
+  { id: "3", name: "no client record device", type: "phone" },
 ];
 
 add_task(async function bookmark() {
@@ -268,8 +269,8 @@ add_task(async function sendToDevice_syncNotReady_configured() {
     sandbox.stub(Weave.Service, "sync").callsFake(() => {
       syncReady.get(() => true);
       lastSync.get(() => Date.now());
-      sandbox.stub(gSync, "remoteClients").get(() => mockRemoteClients);
-      sandbox.stub(Weave.Service.clientsEngine, "getClientType").callsFake(id => mockRemoteClients.find(c => c.id == id).type);
+      sandbox.stub(gSync, "sendTabTargets").get(() => mockTargets);
+      sandbox.stub(Weave.Service.clientsEngine, "getClientType").callsFake(id => mockTargets.find(c => c.clientRecord && c.clientRecord.id == id).clientRecord.type);
     });
 
     let onShowingSubview = BrowserPageActions.sendToDevice.onShowingSubview;
@@ -314,13 +315,13 @@ add_task(async function sendToDevice_syncNotReady_configured() {
             disabled: true,
           },
         ];
-        for (let client of mockRemoteClients) {
+        for (let target of mockTargets) {
           expectedItems.push({
             attrs: {
-              clientId: client.id,
-              label: client.name,
-              clientType: client.type,
-              tooltiptext: gSync.formatLastSyncDate(new Date(lastModifiedFixture * 1000)),
+              clientId: target.id,
+              label: target.name,
+              clientType: target.type,
+              tooltiptext: target.clientRecord ? gSync.formatLastSyncDate(new Date(lastModifiedFixture * 1000)) : "",
             },
           });
         }
@@ -405,8 +406,8 @@ add_task(async function sendToDevice_noDevices() {
     sandbox.stub(Weave.Service.clientsEngine, "isFirstSync").get(() => false);
     sandbox.stub(UIState, "get").returns({ status: UIState.STATUS_SIGNED_IN });
     sandbox.stub(gSync, "isSendableURI").returns(true);
-    sandbox.stub(gSync, "remoteClients").get(() => []);
-    sandbox.stub(Weave.Service.clientsEngine, "getClientType").callsFake(id => mockRemoteClients.find(c => c.id == id).type);
+    sandbox.stub(gSync, "sendTabTargets").get(() => []);
+    sandbox.stub(Weave.Service.clientsEngine, "getClientType").callsFake(id => mockTargets.find(c => c.clientRecord && c.clientRecord.id == id).clientRecord.type);
 
     let cleanUp = () => {
       sandbox.restore();
@@ -471,8 +472,8 @@ add_task(async function sendToDevice_devices() {
     sandbox.stub(Weave.Service.clientsEngine, "isFirstSync").get(() => false);
     sandbox.stub(UIState, "get").returns({ status: UIState.STATUS_SIGNED_IN });
     sandbox.stub(gSync, "isSendableURI").returns(true);
-    sandbox.stub(gSync, "remoteClients").get(() => mockRemoteClients);
-    sandbox.stub(Weave.Service.clientsEngine, "getClientType").callsFake(id => mockRemoteClients.find(c => c.id == id).type);
+    sandbox.stub(gSync, "sendTabTargets").get(() => mockTargets);
+    sandbox.stub(Weave.Service.clientsEngine, "getClientType").callsFake(id => mockTargets.find(c => c.clientRecord && c.clientRecord.id == id).clientRecord.type);
 
     let cleanUp = () => {
       sandbox.restore();
@@ -499,12 +500,12 @@ add_task(async function sendToDevice_devices() {
         disabled: true,
       },
     ];
-    for (let client of mockRemoteClients) {
+    for (let target of mockTargets) {
       expectedItems.push({
         attrs: {
-          clientId: client.id,
-          label: client.name,
-          clientType: client.type,
+          clientId: target.id,
+          label: target.name,
+          clientType: target.type,
         },
       });
     }
@@ -527,6 +528,64 @@ add_task(async function sendToDevice_devices() {
   });
 });
 
+add_task(async function sendToDevice_title() {
+  // Open two tabs that are sendable.
+  await BrowserTestUtils.withNewTab("http://example.com/a", async otherBrowser => {
+    await BrowserTestUtils.withNewTab("http://example.com/b", async () => {
+      await promiseSyncReady();
+      const sandbox = sinon.sandbox.create();
+      sandbox.stub(gSync, "syncReady").get(() => true);
+      sandbox.stub(Weave.Service.clientsEngine, "isFirstSync").get(() => false);
+      sandbox.stub(UIState, "get").returns({ status: UIState.STATUS_SIGNED_IN });
+      sandbox.stub(gSync, "isSendableURI").returns(true);
+      sandbox.stub(gSync, "sendTabTargets").get(() => []);
+      sandbox.stub(Weave.Service.clientsEngine, "getClientType").callsFake(id => mockTargets.find(c => c.clientRecord && c.clientRecord.id == id).clientRecord.type);
+
+      let cleanUp = () => {
+        sandbox.restore();
+      };
+      registerCleanupFunction(cleanUp);
+
+      // Open the panel.  Only one tab is selected, so the action's title should
+      // be "Send Tab to Device".
+      await promisePageActionPanelOpen();
+      let sendToDeviceButton =
+        document.getElementById("pageAction-panel-sendToDevice");
+      Assert.ok(!sendToDeviceButton.disabled);
+
+      Assert.equal(sendToDeviceButton.label, "Send Tab to Device");
+      Assert.equal(PageActions.actionForID("sendToDevice").getTitle(window),
+                   "Send Tab to Device");
+
+      // Hide the panel.
+      let hiddenPromise = promisePageActionPanelHidden();
+      BrowserPageActions.panelNode.hidePopup();
+      await hiddenPromise;
+
+      // Add the other tab to the selection.
+      gBrowser.addToMultiSelectedTabs(gBrowser.getTabForBrowser(otherBrowser),
+                                      false);
+
+      // Open the panel again.  Now the action's title should be "Send 2 Tabs to
+      // Device".
+      await promisePageActionPanelOpen();
+      Assert.ok(!sendToDeviceButton.disabled);
+      Assert.equal(sendToDeviceButton.label, "Send 2 Tabs to Device");
+      Assert.equal(PageActions.actionForID("sendToDevice").getTitle(window),
+                   "Send 2 Tabs to Device");
+
+      // Hide the panel.
+      hiddenPromise = promisePageActionPanelHidden();
+      BrowserPageActions.panelNode.hidePopup();
+      await hiddenPromise;
+
+      cleanUp();
+
+      await UIState.reset();
+    });
+  });
+});
+
 add_task(async function sendToDevice_inUrlbar() {
   // Open a tab that's sendable.
   await BrowserTestUtils.withNewTab("http://example.com/", async () => {
@@ -536,8 +595,8 @@ add_task(async function sendToDevice_inUrlbar() {
     sandbox.stub(Weave.Service.clientsEngine, "isFirstSync").get(() => false);
     sandbox.stub(UIState, "get").returns({ status: UIState.STATUS_SIGNED_IN });
     sandbox.stub(gSync, "isSendableURI").returns(true);
-    sandbox.stub(gSync, "remoteClients").get(() => mockRemoteClients);
-    sandbox.stub(Weave.Service.clientsEngine, "getClientType").callsFake(id => mockRemoteClients.find(c => c.id == id).type);
+    sandbox.stub(gSync, "sendTabTargets").get(() => mockTargets);
+    sandbox.stub(Weave.Service.clientsEngine, "getClientType").callsFake(id => mockTargets.find(c => c.clientRecord && c.clientRecord.id == id).clientRecord.type);
 
     let cleanUp = () => {
       sandbox.restore();
@@ -570,12 +629,12 @@ add_task(async function sendToDevice_inUrlbar() {
         disabled: true,
       },
     ];
-    for (let client of mockRemoteClients) {
+    for (let target of mockTargets) {
       expectedItems.push({
         attrs: {
-          clientId: client.id,
-          label: client.name,
-          clientType: client.type,
+          clientId: target.id,
+          label: target.name,
+          clientType: target.type,
         },
       });
     }

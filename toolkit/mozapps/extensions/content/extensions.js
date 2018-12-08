@@ -125,14 +125,6 @@ function initialize(event) {
     gViewController.doCommand(event.target.id);
   });
 
-  let detailScreenshot = document.getElementById("detail-screenshot");
-  detailScreenshot.addEventListener("load", function(event) {
-    this.removeAttribute("loading");
-  });
-  detailScreenshot.addEventListener("error", function(event) {
-    this.setAttribute("loading", "error");
-  });
-
   let addonPage = document.getElementById("addons-page");
   addonPage.addEventListener("dragenter", function(event) {
     gDragDrop.onDragOver(event);
@@ -149,6 +141,20 @@ function initialize(event) {
   if (!isDiscoverEnabled()) {
     gViewDefault = "addons://list/extension";
   }
+
+  let helpButton = document.getElementById("helpButton");
+  let helpUrl = Services.urlFormatter.formatURLPref("app.support.baseURL") + "addons-help";
+  helpButton.setAttribute("href", helpUrl);
+
+  document.getElementById("preferencesButton")
+    .addEventListener("click", () => {
+      let mainWindow = getMainWindow();
+      if ("switchToTabHavingURI" in mainWindow) {
+        mainWindow.switchToTabHavingURI("about:preferences", true, {
+          triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+        });
+      }
+    });
 
   gViewController.initialize();
   gCategories.initialize();
@@ -270,6 +276,18 @@ function isDiscoverEnabled() {
   }
 
   return true;
+}
+
+function setSearchLabel(type) {
+  let searchLabel = document.getElementById("search-label");
+  if (type == "extension" || type == "theme") {
+    searchLabel
+      .textContent = gStrings.ext.GetStringFromName(`searchLabel.${type}`);
+    searchLabel.hidden = false;
+  } else {
+    searchLabel.textContent = "";
+    searchLabel.hidden = true;
+  }
 }
 
 /**
@@ -834,6 +852,16 @@ var gViewController = {
     this.currentViewObj.node.setAttribute("loading", "true");
     this.currentViewObj.node.focus();
 
+    let headingName = document.getElementById("heading-name");
+    try {
+      headingName.textContent = gStrings.ext.GetStringFromName(`listHeading.${view.param}`);
+      setSearchLabel(view.param);
+    } catch (e) {
+      // In tests we sometimes render this view with a type we don't support, that's fine.
+      headingName.textContent = "";
+    }
+
+
     if (aViewId == aPreviousView)
       this.currentViewObj.refresh(view.param, ++this.currentViewRequest, aState);
     else
@@ -1135,7 +1163,10 @@ var gViewController = {
                   addon: aAddon,
                   icon: aAddon.iconURL,
                   permissions: perms,
-                  resolve() { aAddon.enable(); },
+                  resolve() {
+                    aAddon.markAsSeen();
+                    aAddon.enable();
+                  },
                   reject() {},
                 },
               },
@@ -1456,7 +1487,7 @@ function shouldShowVersionNumber(aAddon) {
 function createItem(aObj, aIsInstall) {
   let item = document.createXULElement("richlistitem");
 
-  item.setAttribute("class", "addon addon-view");
+  item.setAttribute("class", "addon addon-view card");
   item.setAttribute("name", aObj.name);
   item.setAttribute("type", aObj.type);
 
@@ -1537,6 +1568,15 @@ function sortElements(aElements, aSortBy, aAscending) {
     return (UISTATE_ORDER.indexOf(a) - UISTATE_ORDER.indexOf(b));
   }
 
+  // Prioritize themes that have screenshots.
+  function hasPreview(aHasStr, bHasStr) {
+    let aHas = aHasStr == "true";
+    let bHas = bHasStr == "true";
+    if (aHas == bHas)
+      return 0;
+    return aHas ? -1 : 1;
+  }
+
   function getValue(aObj, aKey) {
     if (!aObj)
       return null;
@@ -1583,6 +1623,8 @@ function sortElements(aElements, aSortBy, aAscending) {
       aSortFuncs[i] = dateCompare;
     else if (NUMERIC_FIELDS.includes(sortBy))
       aSortFuncs[i] = numberCompare;
+    else if (sortBy == "hasPreview")
+      aSortFuncs[i] = hasPreview;
   }
 
 
@@ -1604,8 +1646,9 @@ function sortElements(aElements, aSortBy, aAscending) {
       if (aValue != bValue) {
         var result = aSortFuncs[i](aValue, bValue);
 
-        if (result != 0)
+        if (result != 0) {
           return result;
+        }
       }
     }
 
@@ -1620,8 +1663,8 @@ function sortList(aList, aSortBy, aAscending) {
   var elements = Array.slice(aList.childNodes, 0);
   sortElements(elements, [aSortBy], aAscending);
 
-  while (aList.listChild)
-    aList.removeChild(aList.lastChild);
+  while (aList.lastChild)
+    aList.lastChild.remove();
 
   for (let element of elements)
     aList.appendChild(element);
@@ -1722,7 +1765,7 @@ var gCategories = {
     category.setAttribute("hidden", aStartHidden);
 
     var node;
-    for (node of this.node.children) {
+    for (node of this.node.itemChildren) {
       var nodePriority = parseInt(node.getAttribute("priority"));
       // If the new type's priority is higher than this one then this is the
       // insertion point
@@ -1998,7 +2041,7 @@ var gDiscoverView = {
     }
 
     gPendingInitializations++;
-    let aAddons = await AddonManager.getAllAddons();
+    let aAddons = await AddonManager.getAddonsByTypes(["extension", "theme"]);
     var list = {};
     for (let addon of aAddons) {
       var prefName = PREF_GETADDONS_CACHE_ID_ENABLED.replace("%ID%",
@@ -2135,8 +2178,7 @@ var gDiscoverView = {
     aRequest.cancel(Cr.NS_BINDING_ABORTED);
   },
 
-  onSecurityChange(aWebProgress, aRequest, aOldState, aState,
-                   aContentBlockingLogJSON) {
+  onSecurityChange(aWebProgress, aRequest, aState) {
     // Don't care about security if the page is not https
     if (!this.homepageURL.schemeIs("https"))
       return;
@@ -2348,13 +2390,6 @@ var gListView = {
     } else {
       document.getElementById("plugindeprecation-notice").hidden = true;
     }
-
-    if (Preferences.get("extensions.getAddons.themes.browseURL", "")) {
-      document.getElementById("getthemes-learnmore-link")
-        .setAttribute("href", Services.urlFormatter.formatURLPref("extensions.getAddons.themes.browseURL"));
-    } else {
-      document.getElementById("getthemes-container").hidden = true;
-    }
   },
 
   show(aType, aRequest) {
@@ -2401,9 +2436,16 @@ var gListView = {
 
       this.showEmptyNotice(elements.length == 0);
       if (elements.length > 0) {
-        sortElements(elements, ["uiState", "name"], true);
-        for (let element of elements)
+        let sortBy;
+        if (aType == "theme") {
+          sortBy = ["uiState", "hasPreview", "name"];
+        } else {
+          sortBy = ["uiState", "name"];
+        }
+        sortElements(elements, sortBy, true);
+        for (let element of elements) {
           this._listBox.appendChild(element);
+        }
       }
 
       this.filterDisabledUnsigned(showOnlyDisabledUnsigned);
@@ -2569,6 +2611,16 @@ var gDetailView = {
   },
 
   _updateView(aAddon, aIsRemote, aScrollToPreferences) {
+    setSearchLabel(aAddon.type);
+
+    // Set the preview image for themes, if available.
+    if (aAddon.type == "theme") {
+      let previewURL = aAddon.screenshots && aAddon.screenshots[0] && aAddon.screenshots[0].url;
+      if (previewURL) {
+        this.node.querySelector(".card-heading-image").src = previewURL;
+      }
+    }
+
     AddonManager.addManagerListener(this);
     this.clearLoading();
 
@@ -2591,7 +2643,7 @@ var gDetailView = {
     gCategories.select(category);
 
     document.getElementById("detail-name").textContent = aAddon.name;
-    var icon = AddonManager.getPreferredIconURL(aAddon, 64, window);
+    var icon = AddonManager.getPreferredIconURL(aAddon, 32, window);
     document.getElementById("detail-icon").src = icon ? icon : "";
     document.getElementById("detail-creator").setCreator(aAddon.creator, aAddon.homepageURL);
 
@@ -2601,24 +2653,6 @@ var gDetailView = {
       version.value = aAddon.version;
     } else {
       version.hidden = true;
-    }
-
-    var screenshotbox = document.getElementById("detail-screenshot-box");
-    var screenshot = document.getElementById("detail-screenshot");
-    if (aAddon.screenshots && aAddon.screenshots.length > 0) {
-      if (aAddon.screenshots[0].thumbnailURL) {
-        screenshot.src = aAddon.screenshots[0].thumbnailURL;
-        screenshot.width = aAddon.screenshots[0].thumbnailWidth;
-        screenshot.height = aAddon.screenshots[0].thumbnailHeight;
-      } else {
-        screenshot.src = aAddon.screenshots[0].url;
-        screenshot.width = aAddon.screenshots[0].width;
-        screenshot.height = aAddon.screenshots[0].height;
-      }
-      screenshot.setAttribute("loading", "true");
-      screenshotbox.hidden = false;
-    } else {
-      screenshotbox.hidden = true;
     }
 
     var desc = document.getElementById("detail-desc");
@@ -3058,10 +3092,9 @@ var gDetailView = {
       let policy = ExtensionParent.WebExtensionPolicy.getByID(this._addon.id);
       browser.sameProcessAsFrameLoader = policy.extension.groupFrameLoader;
     }
-    let remote = !E10SUtils.canLoadURIInProcess(optionsURL, Services.appinfo.PROCESS_TYPE_DEFAULT);
 
     let readyPromise;
-    if (remote) {
+    if (E10SUtils.canLoadURIInRemoteType(optionsURL, E10SUtils.EXTENSION_REMOTE_TYPE)) {
       browser.setAttribute("remote", "true");
       browser.setAttribute("remoteType", E10SUtils.EXTENSION_REMOTE_TYPE);
       readyPromise = promiseEvent("XULFrameLoaderCreated", browser);

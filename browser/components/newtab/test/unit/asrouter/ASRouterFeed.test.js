@@ -11,7 +11,7 @@ describe("ASRouterFeed", () => {
   let storage;
   beforeEach(() => {
     Router = new _ASRouter({providers: [FAKE_LOCAL_PROVIDER]});
-    sandbox = sinon.sandbox.create();
+    sandbox = sinon.createSandbox();
     storage = {
       get: sandbox.stub().returns(Promise.resolve([])),
       set: sandbox.stub().returns(Promise.resolve()),
@@ -63,7 +63,7 @@ describe("ASRouterFeed", () => {
     });
   });
   describe("#onAction: UNINIT", () => {
-    it("should uninitialize the ASRouter and restore onboarding", async () => {
+    it("should uninitialize the ASRouter", async () => {
       await Router.init(new FakeRemotePageManager(), storage, () => {});
       sinon.stub(Router, "uninit");
 

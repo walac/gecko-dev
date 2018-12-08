@@ -40,27 +40,28 @@ exports.debugLocalAddon = async function(addonID) {
     addonID,
     onClose: () => {
       browserToolboxProcess = null;
-    }
+    },
   });
 };
 
 /**
  * Start debugging an addon in a remote instance of Firefox.
  *
- * @param {Object} addonForm
- *        Necessary to create an addon debugging target.
+ * @param {String} id
+ *        The addon id to debug.
  * @param {DebuggerClient} client
  *        Required for remote debugging.
  */
-exports.debugRemoteAddon = async function(addonForm, client) {
+exports.debugRemoteAddon = async function(id, client) {
+  const addonTargetFront = await client.mainRoot.getAddon({ id });
+
   // Close previous addon debugging toolbox.
   closeToolbox();
 
   const options = {
-    form: addonForm,
+    activeTab: addonTargetFront,
     chrome: true,
     client,
-    isBrowsingContext: addonForm.isWebExtension
   };
 
   const target = await TargetFactory.forRemoteTab(options);
@@ -70,11 +71,6 @@ exports.debugRemoteAddon = async function(addonForm, client) {
   remoteAddonToolbox.once("destroy", () => {
     remoteAddonToolbox = null;
   });
-};
-
-exports.getAddonForm = async function(addonID, client) {
-  const { addons } = await client.listAddons();
-  return addons.find(addon => addon.id === addonID);
 };
 
 /**

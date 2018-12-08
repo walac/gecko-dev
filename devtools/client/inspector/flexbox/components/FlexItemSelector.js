@@ -25,7 +25,7 @@ class FlexItemSelector extends PureComponent {
     return {
       flexItem: PropTypes.shape(Types.flexItem).isRequired,
       flexItems: PropTypes.arrayOf(PropTypes.shape(Types.flexItem)).isRequired,
-      onToggleFlexItemShown: PropTypes.func.isRequired,
+      setSelectedNode: PropTypes.func.isRequired,
     };
   }
 
@@ -35,10 +35,12 @@ class FlexItemSelector extends PureComponent {
   }
 
   onShowFlexItemMenu(event) {
+    event.stopPropagation();
+
     const {
       flexItem,
       flexItems,
-      onToggleFlexItemShown,
+      setSelectedNode,
     } = this.props;
     const menuItems = [];
 
@@ -48,7 +50,7 @@ class FlexItemSelector extends PureComponent {
         label: getSelectorFromGrip(grip),
         type: "checkbox",
         checked: item === flexItem,
-        click: () => onToggleFlexItemShown(item.nodeFront),
+        click: () => setSelectedNode(item.nodeFront),
       });
     }
 

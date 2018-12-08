@@ -29,15 +29,12 @@ with Files('*configure*'):
     BUG_COMPONENT = ('Firefox Build System', 'General')
 
 with Files('mach'):
-    BUG_COMPONENT = ('Core', 'mach')
+    BUG_COMPONENT = ('Firefox Build System', 'Mach Core')
 
 with Files('*moz*'):
     BUG_COMPONENT = ('Firefox Build System', 'General')
 
 with Files('GNUmakefile'):
-    BUG_COMPONENT = ('Firefox Build System', 'General')
-
-with Files('Pipfile*'):
     BUG_COMPONENT = ('Firefox Build System', 'General')
 
 with Files('*gradle*'):

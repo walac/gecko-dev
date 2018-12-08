@@ -8,6 +8,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Unused.h"
+#include "nsContentUtils.h"
 #include "nsIChannel.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
@@ -20,21 +21,15 @@ using namespace mozilla;
 
 LazyLogModule gSecureBrowserUILog("nsSecureBrowserUI");
 
-nsSecureBrowserUIImpl::nsSecureBrowserUIImpl()
-  : mOldState(0)
-  , mState(0)
-{
+nsSecureBrowserUIImpl::nsSecureBrowserUIImpl() : mState(0) {
   MOZ_ASSERT(NS_IsMainThread());
 }
 
-NS_IMPL_ISUPPORTS(nsSecureBrowserUIImpl,
-                  nsISecureBrowserUI,
-                  nsIWebProgressListener,
-                  nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS(nsSecureBrowserUIImpl, nsISecureBrowserUI,
+                  nsIWebProgressListener, nsISupportsWeakReference)
 
 NS_IMETHODIMP
-nsSecureBrowserUIImpl::Init(nsIDocShell* aDocShell)
-{
+nsSecureBrowserUIImpl::Init(nsIDocShell* aDocShell) {
   MOZ_ASSERT(NS_IsMainThread());
   NS_ENSURE_ARG(aDocShell);
 
@@ -63,22 +58,7 @@ nsSecureBrowserUIImpl::Init(nsIDocShell* aDocShell)
 }
 
 NS_IMETHODIMP
-nsSecureBrowserUIImpl::GetOldState(uint32_t* aOldState)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  NS_ENSURE_ARG(aOldState);
-
-  MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug, ("GetOldState %p", this));
-  // Only sync our state with the docshell in GetState().
-  MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug, ("  mOldState: %x", mOldState));
-
-  *aOldState = mOldState;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsSecureBrowserUIImpl::GetState(uint32_t* aState)
-{
+nsSecureBrowserUIImpl::GetState(uint32_t* aState) {
   MOZ_ASSERT(NS_IsMainThread());
   NS_ENSURE_ARG(aState);
 
@@ -94,28 +74,7 @@ nsSecureBrowserUIImpl::GetState(uint32_t* aState)
 }
 
 NS_IMETHODIMP
-nsSecureBrowserUIImpl::GetContentBlockingLogJSON(nsAString& aContentBlockingLogJSON)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-
-  MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug, ("GetContentBlockingLogJSON %p", this));
-  aContentBlockingLogJSON.Truncate();
-  nsCOMPtr<nsIDocShell> docShell = do_QueryReferent(mDocShell);
-  if (docShell) {
-    nsIDocument* doc = docShell->GetDocument();
-    if (doc) {
-      aContentBlockingLogJSON = doc->GetContentBlockingLog()->Stringify();
-    }
-  }
-  MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
-          ("  ContentBlockingLogJSON: %s", NS_ConvertUTF16toUTF8(aContentBlockingLogJSON).get()));
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsSecureBrowserUIImpl::GetSecInfo(nsITransportSecurityInfo** result)
-{
+nsSecureBrowserUIImpl::GetSecInfo(nsITransportSecurityInfo** result) {
   MOZ_ASSERT(NS_IsMainThread());
   NS_ENSURE_ARG_POINTER(result);
 
@@ -126,9 +85,7 @@ nsSecureBrowserUIImpl::GetSecInfo(nsITransportSecurityInfo** result)
 }
 
 // Ask the docShell if we've blocked or loaded any mixed or tracking content.
-void
-nsSecureBrowserUIImpl::CheckForBlockedContent()
-{
+void nsSecureBrowserUIImpl::CheckForBlockedContent() {
   nsCOMPtr<nsIDocShell> docShell = do_QueryReferent(mDocShell);
   if (!docShell) {
     return;
@@ -137,24 +94,24 @@ nsSecureBrowserUIImpl::CheckForBlockedContent()
   // For content docShells, the mixed content security state is set on the root
   // docShell.
   if (docShell->ItemType() == nsIDocShellTreeItem::typeContent) {
-    nsCOMPtr<nsIDocShellTreeItem> docShellTreeItem(do_QueryInterface(docShell));
+    nsCOMPtr<nsIDocShellTreeItem> docShellTreeItem(docShell);
     nsCOMPtr<nsIDocShellTreeItem> sameTypeRoot;
     Unused << docShellTreeItem->GetSameTypeRootTreeItem(
-      getter_AddRefs(sameTypeRoot));
+        getter_AddRefs(sameTypeRoot));
     MOZ_ASSERT(
-      sameTypeRoot,
-      "No document shell root tree item from document shell tree item!");
+        sameTypeRoot,
+        "No document shell root tree item from document shell tree item!");
     docShell = do_QueryInterface(sameTypeRoot);
     if (!docShell) {
       return;
     }
   }
 
-  mOldState = mState;
-
   // Has mixed content been loaded or blocked in nsMixedContentBlocker?
-  // This only applies to secure documents.
-  if (mState & STATE_IS_SECURE) {
+  // This only applies to secure documents even if they're affected by mixed
+  // content blocking in which case the STATE_IS_BROKEN bit would be set rather
+  // than STATE_IS_SECURE.
+  if (((mState & STATE_IS_SECURE) != 0) || ((mState & STATE_IS_BROKEN) != 0)) {
     if (docShell->GetHasMixedActiveContentLoaded()) {
       mState |= STATE_IS_BROKEN | STATE_LOADED_MIXED_ACTIVE_CONTENT;
       mState &= ~STATE_IS_SECURE;
@@ -181,10 +138,6 @@ nsSecureBrowserUIImpl::CheckForBlockedContent()
     mState |= STATE_BLOCKED_TRACKING_CONTENT;
   }
 
-  if (docShell->GetHasSlowTrackingContentBlocked()) {
-    mState |= STATE_BLOCKED_SLOW_TRACKING_CONTENT;
-  }
-
   if (docShell->GetHasTrackingContentLoaded()) {
     mState |= STATE_LOADED_TRACKING_CONTENT;
   }
@@ -204,15 +157,81 @@ nsSecureBrowserUIImpl::CheckForBlockedContent()
   if (docShell->GetHasAllCookiesBeenBlocked()) {
     mState |= STATE_COOKIES_BLOCKED_ALL;
   }
+
+  if (docShell->GetHasCookiesLoaded()) {
+    mState |= STATE_COOKIES_LOADED;
+  }
+}
+
+// Helper function to determine if the given URI can be considered secure.
+// Essentially, only "https" URIs can be considered secure. However, the URI we
+// have may be e.g. view-source:https://example.com or
+// wyciwyg://https://example.com, in which case we have to evaluate the
+// innermost URI.
+static nsresult URICanBeConsideredSecure(
+    nsIURI* uri, /* out */ bool& canBeConsideredSecure) {
+  MOZ_ASSERT(uri);
+  NS_ENSURE_ARG(uri);
+
+  canBeConsideredSecure = false;
+
+  nsCOMPtr<nsIURI> innermostURI = NS_GetInnermostURI(uri);
+  if (!innermostURI) {
+    MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
+            ("  couldn't get innermost URI"));
+    return NS_ERROR_FAILURE;
+  }
+  MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
+          ("  innermost URI is '%s'", innermostURI->GetSpecOrDefault().get()));
+
+  // Unfortunately, wyciwyg URIs don't know about innermost URIs, so we have to
+  // manually get the innermost URI if we have such a URI.
+  bool isWyciwyg;
+  nsresult rv = innermostURI->SchemeIs("wyciwyg", &isWyciwyg);
+  if (NS_FAILED(rv)) {
+    MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
+            ("  nsIURI->SchemeIs failed"));
+    return rv;
+  }
+
+  if (isWyciwyg) {
+    nsCOMPtr<nsIURI> nonWyciwygURI;
+    rv = nsContentUtils::RemoveWyciwygScheme(innermostURI,
+                                             getter_AddRefs(nonWyciwygURI));
+    if (NS_FAILED(rv)) {
+      MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
+              ("  nsContentUtils::RemoveWyciwygScheme failed"));
+      return rv;
+    }
+    if (!nonWyciwygURI) {
+      MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
+              ("  apparently that wasn't a valid wyciwyg URI"));
+      return NS_ERROR_FAILURE;
+    }
+    innermostURI = nonWyciwygURI;
+    MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
+            ("  innermost URI is now '%s'",
+             innermostURI->GetSpecOrDefault().get()));
+  }
+
+  bool isHttps;
+  rv = innermostURI->SchemeIs("https", &isHttps);
+  if (NS_FAILED(rv)) {
+    MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
+            ("  nsIURI->SchemeIs failed"));
+    return rv;
+  }
+
+  canBeConsideredSecure = isHttps;
+
+  return NS_OK;
 }
 
 // Helper function to get the securityInfo from a channel as a
 // nsITransportSecurityInfo. The out parameter will be set to null if there is
 // no securityInfo set.
-static void
-GetSecurityInfoFromChannel(nsIChannel* channel,
-                           nsITransportSecurityInfo** securityInfoOut)
-{
+static void GetSecurityInfoFromChannel(
+    nsIChannel* channel, nsITransportSecurityInfo** securityInfoOut) {
   MOZ_ASSERT(channel);
   MOZ_ASSERT(securityInfoOut);
 
@@ -229,14 +248,12 @@ GetSecurityInfoFromChannel(nsIChannel* channel,
     return;
   }
   nsCOMPtr<nsITransportSecurityInfo> securityInfo(
-    do_QueryInterface(securityInfoSupports));
+      do_QueryInterface(securityInfoSupports));
   securityInfo.forget(securityInfoOut);
 }
 
-nsresult
-nsSecureBrowserUIImpl::UpdateStateAndSecurityInfo(nsIChannel* channel,
-                                                  nsIURI* uri)
-{
+nsresult nsSecureBrowserUIImpl::UpdateStateAndSecurityInfo(nsIChannel* channel,
+                                                           nsIURI* uri) {
   MOZ_ASSERT(channel);
   MOZ_ASSERT(uri);
 
@@ -246,13 +263,27 @@ nsSecureBrowserUIImpl::UpdateStateAndSecurityInfo(nsIChannel* channel,
   mState = STATE_IS_INSECURE;
   mTopLevelSecurityInfo = nullptr;
 
+  // Only https is considered secure (it is possible to have e.g. an http URI
+  // with a channel that has a securityInfo that indicates the connection is
+  // secure - e.g. h2/alt-svc or by visiting an http URI over an https proxy).
+  bool canBeConsideredSecure;
+  nsresult rv = URICanBeConsideredSecure(uri, canBeConsideredSecure);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+  if (!canBeConsideredSecure) {
+    MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
+            ("  URI can't be considered secure"));
+    return NS_OK;
+  }
+
   nsCOMPtr<nsITransportSecurityInfo> securityInfo;
   GetSecurityInfoFromChannel(channel, getter_AddRefs(securityInfo));
   if (securityInfo) {
     MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
             ("  we have a security info %p", securityInfo.get()));
 
-    nsresult rv = securityInfo->GetSecurityState(&mState);
+    rv = securityInfo->GetSecurityState(&mState);
     if (NS_FAILED(rv)) {
       return rv;
     }
@@ -288,13 +319,12 @@ nsSecureBrowserUIImpl::UpdateStateAndSecurityInfo(nsIChannel* channel,
 // CheckForBlockedContent).
 // When we receive a notification from the top-level nsIWebProgress, we extract
 // any relevant security information and set our state accordingly. We then call
-// OnSecurityChange to notify any downstream listeners of the security state.
+// OnSecurityChange on the docShell corresponding to the nsIWebProgress we were
+// initialized with to notify any downstream listeners of the security state.
 NS_IMETHODIMP
 nsSecureBrowserUIImpl::OnLocationChange(nsIWebProgress* aWebProgress,
-                                        nsIRequest* aRequest,
-                                        nsIURI* aLocation,
-                                        uint32_t aFlags)
-{
+                                        nsIRequest* aRequest, nsIURI* aLocation,
+                                        uint32_t aFlags) {
   MOZ_ASSERT(NS_IsMainThread());
 
   NS_ENSURE_ARG(aWebProgress);
@@ -315,81 +345,75 @@ nsSecureBrowserUIImpl::OnLocationChange(nsIWebProgress* aWebProgress,
     return NS_OK;
   }
 
-  // Clear any state that varies by location.
-  if (!(aFlags & LOCATION_CHANGE_SAME_DOCUMENT)) {
-    mOldState = 0;
-    mState = 0;
-    mTopLevelSecurityInfo = nullptr;
+  // If this is a same-document location change, we don't need to update our
+  // state or notify anyone.
+  if (aFlags & LOCATION_CHANGE_SAME_DOCUMENT) {
+    return NS_OK;
   }
 
-  // NB: aRequest may be null. It may also not be QI-able to nsIChannel.
-  nsCOMPtr<nsIChannel> channel(do_QueryInterface(aRequest));
-  if (channel) {
-    MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
-            ("  we have a channel %p", channel.get()));
-    nsresult rv = UpdateStateAndSecurityInfo(channel, aLocation);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+  mState = 0;
+  mTopLevelSecurityInfo = nullptr;
 
-    nsCOMPtr<nsISecurityEventSink> eventSink;
-    NS_QueryNotificationCallbacks(channel, eventSink);
-    if (NS_WARN_IF(!eventSink)) {
-      return NS_ERROR_INVALID_ARG;
-    }
-    mozilla::dom::ContentBlockingLog* contentBlockingLog = nullptr;
-    nsCOMPtr<nsIDocShell> docShell = do_QueryReferent(mDocShell);
-    if (docShell) {
-      nsIDocument* doc = docShell->GetDocument();
-      if (doc) {
-        contentBlockingLog = doc->GetContentBlockingLog();
+  if (aFlags & LOCATION_CHANGE_ERROR_PAGE) {
+    mState = STATE_IS_INSECURE;
+    mTopLevelSecurityInfo = nullptr;
+  } else {
+    // NB: aRequest may be null. It may also not be QI-able to nsIChannel.
+    nsCOMPtr<nsIChannel> channel(do_QueryInterface(aRequest));
+    if (channel) {
+      MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
+              ("  we have a channel %p", channel.get()));
+      nsresult rv = UpdateStateAndSecurityInfo(channel, aLocation);
+      // Even if this failed, we still want to notify downstream so that we
+      // don't leave a stale security indicator. We set everything to "not
+      // secure" to be safe.
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
+                ("  Failed to update security info. "
+                 "Setting everything to 'not secure' to be safe."));
+        mState = STATE_IS_INSECURE;
+        mTopLevelSecurityInfo = nullptr;
       }
     }
+  }
+
+  nsCOMPtr<nsIDocShell> docShell = do_QueryReferent(mDocShell);
+  nsCOMPtr<nsISecurityEventSink> eventSink = do_QueryInterface(docShell);
+  if (eventSink) {
     MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
-            ("  calling OnSecurityChange %p %x\n", aRequest, mState));
-    Unused << eventSink->OnSecurityChange(aRequest, mOldState, mState,
-                                          contentBlockingLog);
+            ("  calling OnSecurityChange %p %x", aRequest, mState));
+    Unused << eventSink->OnSecurityChange(aRequest, mState);
+  } else {
+    MOZ_LOG(gSecureBrowserUILog, LogLevel::Debug,
+            ("  no docShell or couldn't QI it to nsISecurityEventSink?"));
   }
 
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsSecureBrowserUIImpl::OnStateChange(nsIWebProgress*,
-                                     nsIRequest*,
-                                     uint32_t,
-                                     nsresult)
-{
+nsSecureBrowserUIImpl::OnStateChange(nsIWebProgress*, nsIRequest*, uint32_t,
+                                     nsresult) {
   MOZ_ASSERT_UNREACHABLE("Should have been excluded in AddProgressListener()");
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsSecureBrowserUIImpl::OnProgressChange(nsIWebProgress*,
-                                        nsIRequest*,
-                                        int32_t,
-                                        int32_t,
-                                        int32_t,
-                                        int32_t)
-{
+nsSecureBrowserUIImpl::OnProgressChange(nsIWebProgress*, nsIRequest*, int32_t,
+                                        int32_t, int32_t, int32_t) {
   MOZ_ASSERT_UNREACHABLE("Should have been excluded in AddProgressListener()");
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsSecureBrowserUIImpl::OnStatusChange(nsIWebProgress*,
-                                      nsIRequest*,
-                                      nsresult,
-                                      const char16_t*)
-{
+nsSecureBrowserUIImpl::OnStatusChange(nsIWebProgress*, nsIRequest*, nsresult,
+                                      const char16_t*) {
   MOZ_ASSERT_UNREACHABLE("Should have been excluded in AddProgressListener()");
   return NS_OK;
 }
 
-nsresult
-nsSecureBrowserUIImpl::OnSecurityChange(nsIWebProgress*, nsIRequest*, uint32_t,
-                                        uint32_t, const nsAString&)
-{
+nsresult nsSecureBrowserUIImpl::OnSecurityChange(nsIWebProgress*, nsIRequest*,
+                                                 uint32_t) {
   MOZ_ASSERT_UNREACHABLE("Should have been excluded in AddProgressListener()");
   return NS_OK;
 }

@@ -27,11 +27,10 @@
 namespace mozilla {
 namespace recordreplay {
 
-MOZ_NEVER_INLINE void
-BusyWait()
-{
+MOZ_NEVER_INLINE void BusyWait() {
   static volatile int value = 1;
-  while (value) {}
+  while (value) {
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -51,21 +50,22 @@ char* gRecordingFilename;
 // Current process ID.
 static int gPid;
 
+// ID of the process which produced the recording.
+static int gRecordingPid;
+
 // Whether to spew record/replay messages to stderr.
 static bool gSpewEnabled;
 
 extern "C" {
 
-MOZ_EXPORT void
-RecordReplayInterface_Initialize(int aArgc, char* aArgv[])
-{
+MOZ_EXPORT void RecordReplayInterface_Initialize(int aArgc, char* aArgv[]) {
   // Parse command line options for the process kind and recording file.
   Maybe<ProcessKind> processKind;
   Maybe<char*> recordingFile;
   for (int i = 0; i < aArgc; i++) {
     if (!strcmp(aArgv[i], gProcessKindOption)) {
       MOZ_RELEASE_ASSERT(processKind.isNothing() && i + 1 < aArgc);
-      processKind.emplace((ProcessKind) atoi(aArgv[i + 1]));
+      processKind.emplace((ProcessKind)atoi(aArgv[i + 1]));
     }
     if (!strcmp(aArgv[i], gRecordingFileOption)) {
       MOZ_RELEASE_ASSERT(recordingFile.isNothing() && i + 1 < aArgc);
@@ -78,21 +78,21 @@ RecordReplayInterface_Initialize(int aArgc, char* aArgv[])
   gRecordingFilename = strdup(recordingFile.ref());
 
   switch (processKind.ref()) {
-  case ProcessKind::Recording:
-    gIsRecording = gIsRecordingOrReplaying = true;
-    fprintf(stderr, "RECORDING %d %s\n", getpid(), recordingFile.ref());
-    break;
-  case ProcessKind::Replaying:
-    gIsReplaying = gIsRecordingOrReplaying = true;
-    fprintf(stderr, "REPLAYING %d %s\n", getpid(), recordingFile.ref());
-    break;
-  case ProcessKind::MiddlemanRecording:
-  case ProcessKind::MiddlemanReplaying:
-    gIsMiddleman = true;
-    fprintf(stderr, "MIDDLEMAN %d %s\n", getpid(), recordingFile.ref());
-    break;
-  default:
-    MOZ_CRASH("Bad ProcessKind");
+    case ProcessKind::Recording:
+      gIsRecording = gIsRecordingOrReplaying = true;
+      fprintf(stderr, "RECORDING %d %s\n", getpid(), recordingFile.ref());
+      break;
+    case ProcessKind::Replaying:
+      gIsReplaying = gIsRecordingOrReplaying = true;
+      fprintf(stderr, "REPLAYING %d %s\n", getpid(), recordingFile.ref());
+      break;
+    case ProcessKind::MiddlemanRecording:
+    case ProcessKind::MiddlemanReplaying:
+      gIsMiddleman = true;
+      fprintf(stderr, "MIDDLEMAN %d %s\n", getpid(), recordingFile.ref());
+      break;
+    default:
+      MOZ_CRASH("Bad ProcessKind");
   }
 
   if (IsRecordingOrReplaying() && TestEnv("WAIT_AT_START")) {
@@ -111,6 +111,7 @@ RecordReplayInterface_Initialize(int aArgc, char* aArgv[])
   EarlyInitializeRedirections();
 
   if (!IsRecordingOrReplaying()) {
+    InitializeMiddlemanCalls();
     return;
   }
 
@@ -120,16 +121,19 @@ RecordReplayInterface_Initialize(int aArgc, char* aArgv[])
   InitializeCurrentTime();
 
   gRecordingFile = new File();
-  if (!gRecordingFile->Open(recordingFile.ref(), IsRecording() ? File::WRITE : File::READ)) {
+  if (gRecordingFile->Open(recordingFile.ref(),
+                           IsRecording() ? File::WRITE : File::READ)) {
+    InitializeRedirections();
+  } else {
     gInitializationFailureMessage = strdup("Bad recording file");
-    return;
   }
 
-  if (!InitializeRedirections()) {
-    MOZ_RELEASE_ASSERT(gInitializationFailureMessage);
-    return;
+  if (gInitializationFailureMessage) {
+    fprintf(stderr, "Initialization Failure: %s\n",
+            gInitializationFailureMessage);
   }
 
+  LateInitializeRedirections();
   Thread::InitializeThreads();
 
   Thread* thread = Thread::GetById(MainThreadId);
@@ -144,67 +148,63 @@ RecordReplayInterface_Initialize(int aArgc, char* aArgv[])
   Thread::SpawnAllThreads();
   InitializeCountdownThread();
   SetupDirtyMemoryHandler();
+  InitializeMiddlemanCalls();
+  Lock::InitializeLocks();
 
   // Don't create a stylo thread pool when recording or replaying.
-  putenv((char*) "STYLO_THREADS=1");
+  putenv((char*)"STYLO_THREADS=1");
 
   thread->SetPassThrough(false);
 
-  Lock::InitializeLocks();
   InitializeRewindState();
+  gRecordingPid = RecordReplayValue(gPid);
 
   gInitialized = true;
 }
 
 MOZ_EXPORT size_t
-RecordReplayInterface_InternalRecordReplayValue(size_t aValue)
-{
+RecordReplayInterface_InternalRecordReplayValue(size_t aValue) {
   Thread* thread = Thread::Current();
-  if (thread->PassThroughEvents()) {
+  RecordingEventSection res(thread);
+  if (!res.CanAccessEvents()) {
     return aValue;
   }
-  EnsureNotDivergedFromRecording();
 
-  MOZ_RELEASE_ASSERT(thread->CanAccessRecording());
   thread->Events().RecordOrReplayThreadEvent(ThreadEvent::Value);
   thread->Events().RecordOrReplayValue(&aValue);
   return aValue;
 }
 
-MOZ_EXPORT void
-RecordReplayInterface_InternalRecordReplayBytes(void* aData, size_t aSize)
-{
+MOZ_EXPORT void RecordReplayInterface_InternalRecordReplayBytes(void* aData,
+                                                                size_t aSize) {
   Thread* thread = Thread::Current();
-  if (thread->PassThroughEvents()) {
+  RecordingEventSection res(thread);
+  if (!res.CanAccessEvents()) {
     return;
   }
-  EnsureNotDivergedFromRecording();
 
-  MOZ_RELEASE_ASSERT(thread->CanAccessRecording());
   thread->Events().RecordOrReplayThreadEvent(ThreadEvent::Bytes);
   thread->Events().CheckInput(aSize);
   thread->Events().RecordOrReplayBytes(aData, aSize);
 }
 
-MOZ_EXPORT void
-RecordReplayInterface_InternalInvalidateRecording(const char* aWhy)
-{
+MOZ_EXPORT void RecordReplayInterface_InternalInvalidateRecording(
+    const char* aWhy) {
   if (IsRecording()) {
     child::ReportFatalError(Nothing(), "Recording invalidated: %s", aWhy);
   } else {
-    child::ReportFatalError(Nothing(), "Recording invalidated while replaying: %s", aWhy);
+    child::ReportFatalError(Nothing(),
+                            "Recording invalidated while replaying: %s", aWhy);
   }
   Unreachable();
 }
 
-} // extern "C"
+}  // extern "C"
 
 // How many recording endpoints have been flushed to the recording.
 static size_t gNumEndpoints;
 
-void
-FlushRecording()
-{
+void FlushRecording() {
   MOZ_RELEASE_ASSERT(IsRecording());
   MOZ_RELEASE_ASSERT(Thread::CurrentIsMainThread());
 
@@ -224,9 +224,7 @@ FlushRecording()
 }
 
 // Try to load another recording index, returning whether one was found.
-static bool
-LoadNextRecordingIndex()
-{
+static bool LoadNextRecordingIndex() {
   Thread::WaitForIdleThreads();
 
   InfallibleVector<Stream*> updatedStreams;
@@ -248,9 +246,7 @@ LoadNextRecordingIndex()
   return found;
 }
 
-bool
-HitRecordingEndpoint()
-{
+bool HitRecordingEndpoint() {
   MOZ_RELEASE_ASSERT(IsReplaying());
   MOZ_RELEASE_ASSERT(Thread::CurrentIsMainThread());
 
@@ -278,9 +274,7 @@ HitRecordingEndpoint()
   return false;
 }
 
-void
-HitEndOfRecording()
-{
+void HitEndOfRecording() {
   MOZ_RELEASE_ASSERT(IsReplaying());
   MOZ_RELEASE_ASSERT(!AreThreadEventsPassedThrough());
 
@@ -296,15 +290,9 @@ HitEndOfRecording()
   }
 }
 
-bool
-SpewEnabled()
-{
-  return gSpewEnabled;
-}
+bool SpewEnabled() { return gSpewEnabled; }
 
-void
-InternalPrint(const char* aFormat, va_list aArgs)
-{
+void InternalPrint(const char* aFormat, va_list aArgs) {
   char buf1[2048];
   VsprintfLiteral(buf1, aFormat, aArgs);
   char buf2[2048];
@@ -312,18 +300,20 @@ InternalPrint(const char* aFormat, va_list aArgs)
   DirectPrint(buf2);
 }
 
-const char*
-ThreadEventName(ThreadEvent aEvent)
-{
+const char* ThreadEventName(ThreadEvent aEvent) {
   switch (aEvent) {
-#define EnumToString(Kind) case ThreadEvent::Kind: return #Kind;
+#define EnumToString(Kind) \
+  case ThreadEvent::Kind:  \
+    return #Kind;
     ForEachThreadEvent(EnumToString)
 #undef EnumToString
-  case ThreadEvent::CallStart: break;
+        case ThreadEvent::CallStart : break;
   }
-  size_t callId = (size_t) aEvent - (size_t) ThreadEvent::CallStart;
-  return gRedirections[callId].mName;
+  size_t callId = (size_t)aEvent - (size_t)ThreadEvent::CallStart;
+  return GetRedirection(callId).mName;
 }
+
+int GetRecordingPid() { return gRecordingPid; }
 
 ///////////////////////////////////////////////////////////////////////////////
 // Record/Replay Assertions
@@ -331,51 +321,49 @@ ThreadEventName(ThreadEvent aEvent)
 
 extern "C" {
 
-MOZ_EXPORT void
-RecordReplayInterface_InternalRecordReplayAssert(const char* aFormat, va_list aArgs)
-{
+MOZ_EXPORT void RecordReplayInterface_InternalRecordReplayAssert(
+    const char* aFormat, va_list aArgs) {
   Thread* thread = Thread::Current();
-  if (thread->PassThroughEvents() || thread->HasDivergedFromRecording()) {
+  RecordingEventSection res(thread);
+  if (!res.CanAccessEvents()) {
     return;
   }
-  MOZ_RELEASE_ASSERT(thread->CanAccessRecording());
 
   // Add the asserted string to the recording.
   char text[1024];
   VsprintfLiteral(text, aFormat, aArgs);
 
+  // This must be kept in sync with Stream::RecordOrReplayThreadEvent, which
+  // peeks at the input string written after the thread event.
   thread->Events().RecordOrReplayThreadEvent(ThreadEvent::Assert);
   thread->Events().CheckInput(text);
 }
 
-MOZ_EXPORT void
-RecordReplayInterface_InternalRecordReplayAssertBytes(const void* aData, size_t aSize)
-{
+MOZ_EXPORT void RecordReplayInterface_InternalRecordReplayAssertBytes(
+    const void* aData, size_t aSize) {
   Thread* thread = Thread::Current();
-  if (thread->PassThroughEvents() || thread->HasDivergedFromRecording()) {
+  RecordingEventSection res(thread);
+  if (!res.CanAccessEvents()) {
     return;
   }
-  MOZ_RELEASE_ASSERT(thread->CanAccessRecording());
 
   thread->Events().RecordOrReplayThreadEvent(ThreadEvent::AssertBytes);
   thread->Events().CheckInput(aData, aSize);
 }
 
-} // extern "C"
+}  // extern "C"
 
 static ValueIndex* gGenericThings;
 static StaticMutexNotRecorded gGenericThingsMutex;
 
 extern "C" {
 
-MOZ_EXPORT void
-RecordReplayInterface_InternalRegisterThing(void* aThing)
-{
+MOZ_EXPORT void RecordReplayInterface_InternalRegisterThing(void* aThing) {
   if (AreThreadEventsPassedThrough()) {
     return;
   }
 
-  AutoOrderedAtomicAccess at;
+  AutoOrderedAtomicAccess at(&gGenericThings);
   StaticMutexAutoLock lock(gGenericThingsMutex);
   if (!gGenericThings) {
     gGenericThings = new ValueIndex();
@@ -386,18 +374,14 @@ RecordReplayInterface_InternalRegisterThing(void* aThing)
   gGenericThings->Insert(aThing);
 }
 
-MOZ_EXPORT void
-RecordReplayInterface_InternalUnregisterThing(void* aThing)
-{
+MOZ_EXPORT void RecordReplayInterface_InternalUnregisterThing(void* aThing) {
   StaticMutexAutoLock lock(gGenericThingsMutex);
   if (gGenericThings) {
     gGenericThings->Remove(aThing);
   }
 }
 
-MOZ_EXPORT size_t
-RecordReplayInterface_InternalThingIndex(void* aThing)
-{
+MOZ_EXPORT size_t RecordReplayInterface_InternalThingIndex(void* aThing) {
   if (!aThing) {
     return 0;
   }
@@ -409,15 +393,14 @@ RecordReplayInterface_InternalThingIndex(void* aThing)
   return index;
 }
 
-MOZ_EXPORT const char*
-RecordReplayInterface_InternalVirtualThingName(void* aThing)
-{
+MOZ_EXPORT const char* RecordReplayInterface_InternalVirtualThingName(
+    void* aThing) {
   void* vtable = *(void**)aThing;
   const char* name = SymbolNameRaw(vtable);
   return name ? name : "(unknown)";
 }
 
-} // extern "C"
+}  // extern "C"
 
-} // namespace recordreplay
-} // namespace mozilla
+}  // namespace recordreplay
+}  // namespace mozilla

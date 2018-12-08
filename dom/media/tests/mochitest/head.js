@@ -407,6 +407,9 @@ function setupEnvironment() {
 
   var defaultMochitestPrefs = {
     'set': [
+      // We can't use the Fake H.264 GMP encoder with a real decoder until
+      // bug 1509012 is done. So force using the Fake H.264 GMP decoder for now.
+      ['media.navigator.mediadatadecoder_h264_enabled', false],
       ['media.peerconnection.enabled', true],
       ['media.peerconnection.identity.enabled', true],
       ['media.peerconnection.identity.timeout', 120000],
@@ -422,8 +425,7 @@ function setupEnvironment() {
       ['media.getusermedia.screensharing.enabled', true],
       ['media.getusermedia.window.focus_source.enabled', false],
       ['media.recorder.audio_node.enabled', true],
-      ['media.webaudio.audiocontextoptions-samplerate.enabled', true],
-      ['media.cubeb_max_input_streams', 10000]
+      ['media.webaudio.audiocontextoptions-samplerate.enabled', true]
     ]
   };
 

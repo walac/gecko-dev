@@ -11,47 +11,38 @@
 #include "nsTArray.h"
 #include "nsCOMPtr.h"
 
+class nsIPrincipal;
+
 namespace mozilla {
 namespace dom {
 
-class Feature final
-{
-public:
+class Feature final {
+ public:
   explicit Feature(const nsAString& aFeatureName);
 
   ~Feature();
 
-  const nsAString&
-  Name() const;
+  const nsAString& Name() const;
 
-  void
-  SetAllowsNone();
+  void SetAllowsNone();
 
-  bool
-  AllowsNone() const;
+  bool AllowsNone() const;
 
-  void
-  SetAllowsAll();
+  void SetAllowsAll();
 
-  bool
-  AllowsAll() const;
+  bool AllowsAll() const;
 
-  void
-  AppendOriginToWhiteList(const nsAString& aOrigin);
+  void AppendToAllowList(nsIPrincipal* aPrincipal);
 
-  void
-  GetWhiteListedOrigins(nsTArray<nsString>& aList) const;
+  void GetAllowList(nsTArray<nsCOMPtr<nsIPrincipal>>& aList) const;
 
-  bool
-  WhiteListContains(const nsAString& aOrigin) const;
+  bool AllowListContains(nsIPrincipal* aPrincipal) const;
 
-  bool
-  IsWhiteList() const;
+  bool HasAllowList() const;
 
-  bool
-  Allows(const nsAString& aOrigin) const;
+  bool Allows(nsIPrincipal* aPrincipal) const;
 
-private:
+ private:
   nsString mFeatureName;
 
   enum Policy {
@@ -62,15 +53,15 @@ private:
     eAll,
 
     // denotes a policy of "feature bar.com foo.com"
-    eWhiteList,
+    eAllowList,
   };
 
   Policy mPolicy;
 
-  nsTArray<nsString> mWhiteListedOrigins;
+  nsTArray<nsCOMPtr<nsIPrincipal>> mAllowList;
 };
 
-} // dom namespace
-} // mozilla namespace
+}  // namespace dom
+}  // namespace mozilla
 
-#endif // mozilla_dom_Feature_h
+#endif  // mozilla_dom_Feature_h

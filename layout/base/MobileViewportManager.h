@@ -20,19 +20,17 @@ class nsViewportInfo;
 namespace mozilla {
 namespace dom {
 class EventTarget;
-} // namespace dom
-} // namespace mozilla
+}  // namespace dom
+}  // namespace mozilla
 
-class MobileViewportManager final : public nsIDOMEventListener
-                                  , public nsIObserver
-{
-public:
+class MobileViewportManager final : public nsIDOMEventListener,
+                                    public nsIObserver {
+ public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIDOMEVENTLISTENER
   NS_DECL_NSIOBSERVER
 
-  MobileViewportManager(nsIPresShell* aPresShell,
-                        nsIDocument* aDocument);
+  MobileViewportManager(nsIPresShell* aPresShell, nsIDocument* aDocument);
   void Destroy();
 
   /* Provide a resolution to use during the first paint instead of the default
@@ -44,10 +42,21 @@ public:
   void SetRestoreResolution(float aResolution,
                             mozilla::LayoutDeviceIntSize aDisplaySize);
 
-private:
+  /* Compute the "intrinsic resolution", which is the smallest resolution at
+   * which the layout viewport fills the visual viewport. (In typical
+   * scenarios, where the aspect ratios of the two viewports match, it's the
+   * resolution at which they are the same size.)
+   *
+   * The returned resolution is suitable for passing to
+   * nsIPresShell::SetResolutionAndScaleTo(). It's not in typed units for
+   * reasons explained at the declaration of FrameMetrics::mPresShellResolution.
+   */
+  float ComputeIntrinsicResolution() const;
+
+ private:
   void SetRestoreResolution(float aResolution);
 
-public:
+ public:
   /* Notify the MobileViewportManager that a reflow was requested in the
    * presShell.*/
   void RequestReflow();
@@ -56,12 +65,13 @@ public:
    * updated, and the visual viewport size needs to be updated. */
   void ResolutionUpdated();
 
-private:
-  ~MobileViewportManager();
-
   /* Called to compute the initial viewport on page load or before-first-paint,
-   * whichever happens first. */
+   * whichever happens first. Also called directly if we are created after the
+   * presShell is initialized. */
   void SetInitialViewport();
+
+ private:
+  ~MobileViewportManager();
 
   /* Main helper method to update the CSS viewport and any other properties that
    * need updating. */
@@ -71,30 +81,63 @@ private:
   void RefreshVisualViewportSize();
 
   /* Helper to clamp the given zoom by the min/max in the viewport info. */
-  mozilla::CSSToScreenScale ClampZoom(const mozilla::CSSToScreenScale& aZoom,
-                                      const nsViewportInfo& aViewportInfo);
+  mozilla::CSSToScreenScale ClampZoom(
+      const mozilla::CSSToScreenScale& aZoom,
+      const nsViewportInfo& aViewportInfo) const;
 
-  /* Helper to update the given resolution according to changed display and viewport widths. */
-  mozilla::LayoutDeviceToLayerScale
-  ScaleResolutionWithDisplayWidth(const mozilla::LayoutDeviceToLayerScale& aRes,
-                                  const float& aDisplayWidthChangeRatio,
-                                  const mozilla::CSSSize& aNewViewport,
-                                  const mozilla::CSSSize& aOldViewport);
+  /* Helper to update the given zoom according to changed display and viewport
+   * widths. */
+  mozilla::CSSToScreenScale ScaleZoomWithDisplayWidth(
+      const mozilla::CSSToScreenScale& aZoom,
+      const float& aDisplayWidthChangeRatio,
+      const mozilla::CSSSize& aNewViewport,
+      const mozilla::CSSSize& aOldViewport);
 
-  /* Updates the presShell resolution and returns the new zoom. */
-  mozilla::CSSToScreenScale UpdateResolution(const nsViewportInfo& aViewportInfo,
-                                             const mozilla::ScreenIntSize& aDisplaySize,
-                                             const mozilla::CSSSize& aViewport,
-                                             const mozilla::Maybe<float>& aDisplayWidthChangeRatio);
+  /* Helper enum for UpdateResolution().
+   * UpdateResolution() is called twice during RefreshViewportSize():
+   * First, to choose an initial resolution based on the viewport size.
+   * Second, after reflow when we know the content size, to make any
+   * necessary adjustments to the resolution.
+   * This enumeration discriminates between the two situations.
+   */
+  enum class UpdateType { ViewportSize, ContentSize };
+
+  /* Updates the presShell resolution and the visual viewport size. */
+  void UpdateResolution(const nsViewportInfo& aViewportInfo,
+                        const mozilla::ScreenIntSize& aDisplaySize,
+                        const mozilla::CSSSize& aViewportOrContentSize,
+                        const mozilla::Maybe<float>& aDisplayWidthChangeRatio,
+                        UpdateType aType);
 
   void UpdateVisualViewportSize(const mozilla::ScreenIntSize& aDisplaySize,
                                 const mozilla::CSSToScreenScale& aZoom);
 
-  /* Updates the displayport margins for the presShell's root scrollable frame */
+  /* Updates the displayport margins for the presShell's root scrollable frame
+   */
   void UpdateDisplayPortMargins();
 
+  /* Helper function for ComputeIntrinsicResolution(). */
+  mozilla::CSSToScreenScale ComputeIntrinsicScale(
+      const nsViewportInfo& aViewportInfo,
+      const mozilla::ScreenIntSize& aDisplaySize,
+      const mozilla::CSSSize& aViewportSize) const;
+
+  /*
+   * Returns the screen size subtracted the scrollbar sizes from |aDisplaySize|.
+   */
+  mozilla::ScreenIntSize GetCompositionSize(
+      const mozilla::ScreenIntSize& aDisplaySize) const;
+
+  /*
+   * Shrink the content to fit it to the display width if no initial-scale is
+   * specified and if the content is still wider than the display width.
+   */
+  void ShrinkToDisplaySizeIfNeeded(nsViewportInfo& aViewportInfo,
+                                   const mozilla::ScreenIntSize& aDisplaySize);
+
   nsCOMPtr<nsIDocument> mDocument;
-  nsIPresShell* MOZ_NON_OWNING_REF mPresShell; // raw ref since the presShell owns this
+  // raw ref since the presShell owns this
+  nsIPresShell* MOZ_NON_OWNING_REF mPresShell;
   nsCOMPtr<mozilla::dom::EventTarget> mEventTarget;
   bool mIsFirstPaint;
   bool mPainted;

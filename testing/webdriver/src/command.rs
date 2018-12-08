@@ -1,9 +1,11 @@
-use actions::ActionSequence;
-use capabilities::{BrowserCapabilities, Capabilities, CapabilitiesMatching,
-                   LegacyNewSessionParameters, SpecNewSessionParameters};
-use common::{Date, FrameId, LocatorStrategy, WebElement, MAX_SAFE_INTEGER};
-use error::{ErrorStatus, WebDriverError, WebDriverResult};
-use httpapi::{Route, VoidWebDriverExtensionRoute, WebDriverExtensionRoute};
+use crate::actions::ActionSequence;
+use crate::capabilities::{
+    BrowserCapabilities, Capabilities, CapabilitiesMatching, LegacyNewSessionParameters,
+    SpecNewSessionParameters,
+};
+use crate::common::{Date, FrameId, LocatorStrategy, WebElement, MAX_SAFE_INTEGER};
+use crate::error::{ErrorStatus, WebDriverError, WebDriverResult};
+use crate::httpapi::{Route, VoidWebDriverExtensionRoute, WebDriverExtensionRoute};
 use regex::Captures;
 use serde::de::{self, Deserialize, Deserializer};
 use serde_json::{self, Value};
@@ -329,7 +331,7 @@ impl<U: WebDriverExtensionRoute> WebDriverMessage<U> {
                 WebDriverCommand::TakeElementScreenshot(element)
             }
             Route::Status => WebDriverCommand::Status,
-            Route::Extension(ref extension) => try!(extension.command(params, &body_data)),
+            Route::Extension(ref extension) => extension.command(params, &body_data)?,
         };
         Ok(WebDriverMessage::new(session_id, command))
     }
@@ -426,13 +428,12 @@ pub struct LocatorParameters {
     pub value: String,
 }
 
-/// Wrapper around the two supported variants of new session paramters
+/// Wrapper around the two supported variants of new session paramters.
 ///
 /// The Spec variant is used for storing spec-compliant parameters whereas
-/// the legacy variant is used to store desiredCapabilities/requiredCapabilities
+/// the legacy variant is used to store `desiredCapabilities`/`requiredCapabilities`
 /// parameters, and is intended to minimise breakage as we transition users to
 /// the spec design.
-
 #[derive(Debug, PartialEq)]
 pub enum NewSessionParameters {
     Spec(SpecNewSessionParameters),
@@ -450,6 +451,7 @@ impl<'de> Deserialize<'de> for NewSessionParameters {
             return Ok(NewSessionParameters::Spec(caps));
         }
 
+        warn!("You are using deprecated legacy session negotiation patterns (desiredCapabilities/requiredCapabilities), see https://developer.mozilla.org/en-US/docs/Web/WebDriver/Capabilities#Legacy");
         let legacy = LegacyNewSessionParameters::deserialize(value).map_err(de::Error::custom)?;
         Ok(NewSessionParameters::Legacy(legacy))
     }
@@ -611,9 +613,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use capabilities::SpecNewSessionParameters;
+    use crate::capabilities::SpecNewSessionParameters;
+    use crate::test::check_deserialize;
     use serde_json;
-    use test::check_deserialize;
 
     #[test]
     fn test_json_actions_parameters_missing_actions_field() {

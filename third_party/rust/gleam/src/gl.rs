@@ -283,12 +283,52 @@ declare_gl_apis! {
                             format: GLenum,
                             ty: GLenum,
                             offset: usize);
+    fn tex_storage_2d(&self,
+                      target: GLenum,
+                      levels: GLint,
+                      internal_format: GLenum,
+                      width: GLsizei,
+                      height: GLsizei);
+    fn tex_storage_3d(&self,
+                      target: GLenum,
+                      levels: GLint,
+                      internal_format: GLenum,
+                      width: GLsizei,
+                      height: GLsizei,
+                      depth: GLsizei);
     fn get_tex_image_into_buffer(&self,
                                 target: GLenum,
                                 level: GLint,
                                 format: GLenum,
                                 ty: GLenum,
                                 output: &mut [u8]);
+    unsafe fn copy_image_sub_data(&self,
+                                  src_name: GLuint,
+                                  src_target: GLenum,
+                                  src_level: GLint,
+                                  src_x: GLint,
+                                  src_y: GLint,
+                                  src_z: GLint,
+                                  dst_name: GLuint,
+                                  dst_target: GLenum,
+                                  dst_level: GLint,
+                                  dst_x: GLint,
+                                  dst_y: GLint,
+                                  dst_z: GLint,
+                                  src_width: GLsizei,
+                                  src_height: GLsizei,
+                                  src_depth: GLsizei);
+
+    fn invalidate_framebuffer(&self,
+                              target: GLenum,
+                              attachments: &[GLenum]);
+    fn invalidate_sub_framebuffer(&self,
+                                  target: GLenum,
+                                  attachments: &[GLenum],
+                                  xoffset: GLint,
+                                  yoffset: GLint,
+                                  width: GLsizei,
+                                  height: GLsizei);
 
     unsafe fn get_integer_v(&self, name: GLenum, result: &mut [GLint]);
     unsafe fn get_integer_64v(&self, name: GLenum, result: &mut [GLint64]);

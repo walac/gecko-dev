@@ -26,8 +26,18 @@ XPCOMUtils.defineLazyGetter(this, "logger", () =>
 // List of available local providers, each is implemented in its own jsm module
 // and will track different queries internally by queryContext.
 var localProviderModules = {
-  UrlbarProviderOpenTabs: "resource:///modules/UrlbarProviderOpenTabs.jsm",
+  UrlbarProviderUnifiedComplete: "resource:///modules/UrlbarProviderUnifiedComplete.jsm",
 };
+
+// List of available local muxers, each is implemented in its own jsm module.
+var localMuxerModules = {
+  UrlbarMuxerUnifiedComplete: "resource:///modules/UrlbarMuxerUnifiedComplete.jsm",
+};
+
+// To improve dataflow and reduce UI work, when a match is added by a
+// non-immediate provider, we notify it to the controller after a delay, so
+// that we can chunk matches coming in that timeframe into a single call.
+const CHUNK_MATCHES_DELAY_MS = 16;
 
 /**
  * Class used to create a manager.
@@ -54,6 +64,13 @@ class ProvidersManager {
     // running a query that shouldn't be interrupted, and if so it should
     // bump this through disableInterrupt and enableInterrupt.
     this.interruptLevel = 0;
+
+    // This maps muxer names to muxers.
+    this.muxers = new Map();
+    for (let [symbol, module] of Object.entries(localMuxerModules)) {
+      let {[symbol]: muxer} = ChromeUtils.import(module, {});
+      this.registerMuxer(muxer);
+    }
   }
 
   /**
@@ -61,10 +78,15 @@ class ProvidersManager {
    * @param {object} provider
    */
   registerProvider(provider) {
-    logger.info(`Registering provider ${provider.name}`);
+    if (!provider || !provider.name ||
+        (typeof provider.startQuery != "function") ||
+        (typeof provider.cancelQuery != "function")) {
+      throw new Error(`Trying to register an invalid provider`);
+    }
     if (!Object.values(UrlbarUtils.PROVIDER_TYPE).includes(provider.type)) {
       throw new Error(`Unknown provider type ${provider.type}`);
     }
+    logger.info(`Registering provider ${provider.name}`);
     this.providers.get(provider.type).set(provider.name, provider);
   }
 
@@ -78,13 +100,41 @@ class ProvidersManager {
   }
 
   /**
+   * Registers a muxer object with the manager.
+   * @param {object} muxer a UrlbarMuxer object
+   */
+  registerMuxer(muxer) {
+    if (!muxer || !muxer.name || (typeof muxer.sort != "function")) {
+      throw new Error(`Trying to register an invalid muxer`);
+    }
+    logger.info(`Registering muxer ${muxer.name}`);
+    this.muxers.set(muxer.name, muxer);
+  }
+
+  /**
+   * Unregisters a previously registered muxer object.
+   * @param {object} muxer a UrlbarMuxer object or name.
+   */
+  unregisterMuxer(muxer) {
+    let muxerName = typeof muxer == "string" ? muxer : muxer.name;
+    logger.info(`Unregistering muxer ${muxerName}`);
+    this.muxers.delete(muxerName);
+  }
+
+  /**
    * Starts querying.
    * @param {object} queryContext The query context object
    * @param {object} controller a UrlbarController instance
    */
   async startQuery(queryContext, controller) {
     logger.info(`Query start ${queryContext.searchString}`);
-    let query = Object.seal(new Query(queryContext, controller, this.providers));
+    let muxerName = queryContext.muxer || "MuxerUnifiedComplete";
+    logger.info(`Using muxer ${muxerName}`);
+    let muxer = this.muxers.get(muxerName);
+    if (!muxer) {
+      throw new Error(`Muxer with name ${muxerName} not found`);
+    }
+    let query = new Query(queryContext, controller, muxer, this.providers);
     this.queries.set(queryContext, query);
     await query.start();
   }
@@ -140,20 +190,25 @@ class Query {
    *        The query context
    * @param {object} controller
    *        The controller to be notified
+   * @param {object} muxer
+   *        The muxer to sort matches
    * @param {object} providers
    *        Map of all the providers by type and name
    */
-  constructor(queryContext, controller, providers) {
+  constructor(queryContext, controller, muxer, providers) {
     this.context = queryContext;
     this.context.results = [];
+    this.muxer = muxer;
     this.controller = controller;
     this.providers = providers;
-    // Track the delay timer.
-    this.sleepResolve = Promise.resolve();
-    this.sleepTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
     this.started = false;
     this.canceled = false;
     this.complete = false;
+    // Array of acceptable MATCH_SOURCE values for this query. Providers not
+    // returning any of these will be skipped, as well as matches not part of
+    // this subset (Note we still expect the provider to do its own internal
+    // filtering, our additional filtering will be for sanity).
+    this.acceptableSources = [];
   }
 
   /**
@@ -165,20 +220,24 @@ class Query {
     }
     this.started = true;
     UrlbarTokenizer.tokenize(this.context);
+    this.acceptableSources = getAcceptableMatchSources(this.context);
+    logger.debug(`Acceptable sources ${this.acceptableSources}`);
 
     let promises = [];
     for (let provider of this.providers.get(UrlbarUtils.PROVIDER_TYPE.IMMEDIATE).values()) {
       if (this.canceled) {
         break;
       }
-      promises.push(provider.startQuery(this.context, this.add));
+      if (this._providerHasAcceptableSources(provider)) {
+        promises.push(provider.startQuery(this.context, this.add.bind(this)));
+      }
     }
 
-    await new Promise(resolve => {
-      let time = UrlbarPrefs.get("delay");
-      this.sleepResolve = resolve;
-      this.sleepTimer.initWithCallback(resolve, time, Ci.nsITimer.TYPE_ONE_SHOT);
-    });
+    // Tracks the delay timer. We will fire (in this specific case, cancel would
+    // do the same, since the callback is empty) the timer when the search is
+    // canceled, unblocking start().
+    this._sleepTimer = new SkippableTimer(() => {}, UrlbarPrefs.get("delay"));
+    await this._sleepTimer.promise;
 
     for (let providerType of [UrlbarUtils.PROVIDER_TYPE.NETWORK,
                               UrlbarUtils.PROVIDER_TYPE.PROFILE,
@@ -187,11 +246,21 @@ class Query {
         if (this.canceled) {
           break;
         }
-        promises.push(provider.startQuery(this.context, this.add.bind(this)));
+        if (this._providerHasAcceptableSources(provider)) {
+          promises.push(provider.startQuery(this.context, this.add.bind(this)));
+        }
       }
     }
 
-    await Promise.all(promises.map(p => p.catch(Cu.reportError)));
+    logger.info(`Queried ${promises.length} providers`);
+    if (promises.length) {
+      await Promise.all(promises.map(p => p.catch(Cu.reportError)));
+
+      if (this._chunkTimer) {
+        // All the providers are done returning results, so we can stop chunking.
+        await this._chunkTimer.fire();
+      }
+    }
 
     // Nothing should be failing above, since we catch all the promises, thus
     // this is not in a finally for now.
@@ -207,13 +276,17 @@ class Query {
       return;
     }
     this.canceled = true;
-    this.sleepTimer.cancel();
     for (let providers of this.providers.values()) {
       for (let provider of providers.values()) {
         provider.cancelQuery(this.context);
       }
     }
-    this.sleepResolve();
+    if (this._chunkTimer) {
+      this._chunkTimer.cancel().catch(Cu.reportError);
+    }
+    if (this._sleepTimer) {
+      this._sleepTimer.fire().catch(Cu.reportError);
+    }
   }
 
   /**
@@ -223,15 +296,162 @@ class Query {
    */
   add(provider, match) {
     // Stop returning results as soon as we've been canceled.
-    if (this.canceled) {
+    if (this.canceled || !this.acceptableSources.includes(match.source)) {
       return;
     }
-    // TODO:
-    //  * coalesce results in timed chunks: we don't want to notify every single
-    //    result as soon as it arrives, we'll rather collect results for a few
-    //    ms, then send them
-    //  * pass results to a muxer before sending them back to the controller.
+
+    // Filter out javascript results for safety. The provider is supposed to do
+    // it, but we don't want to risk leaking these out.
+    if (match.payload.url && match.payload.url.startsWith("javascript:") &&
+        !this.context.searchString.startsWith("javascript:") &&
+        UrlbarPrefs.get("filter.javascript")) {
+      return;
+    }
+
     this.context.results.push(match);
-    this.controller.receiveResults(this.context);
+
+    let notifyResults = () => {
+      if (this._chunkTimer) {
+        this._chunkTimer.cancel().catch(Cu.reportError);
+        delete this._chunkTimer;
+      }
+      this.muxer.sort(this.context);
+      this.controller.receiveResults(this.context);
+    };
+
+    // If the provider is not of immediate type, chunk results, to improve the
+    // dataflow and reduce UI flicker.
+    if (provider.type == UrlbarUtils.PROVIDER_TYPE.IMMEDIATE) {
+      notifyResults();
+    } else if (!this._chunkTimer) {
+      this._chunkTimer = new SkippableTimer(notifyResults, CHUNK_MATCHES_DELAY_MS);
+    }
   }
+
+  /**
+   * Returns whether a provider's sources are acceptable for this query.
+   * @param {object} provider A provider object.
+   * @returns {boolean}whether the provider sources are acceptable.
+   */
+  _providerHasAcceptableSources(provider) {
+    return provider.sources.some(s => this.acceptableSources.includes(s));
+  }
+}
+
+/**
+ * Class used to create a timer that can be manually fired, to immediately
+ * invoke the callback, or canceled, as necessary.
+ * Examples:
+ *   let timer = new SkippableTimer();
+ *   // Invokes the callback immediately without waiting for the delay.
+ *   await timer.fire();
+ *   // Cancel the timer, the callback won't be invoked.
+ *   await timer.cancel();
+ *   // Wait for the timer to have elapsed.
+ *   await timer.promise;
+ */
+class SkippableTimer {
+  /**
+   * Creates a skippable timer for the given callback and time.
+   * @param {function} callback To be invoked when requested
+   * @param {number} time A delay in milliseconds to wait for
+   */
+  constructor(callback, time) {
+    let timerPromise = new Promise(resolve => {
+      this._timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+      this._timer.initWithCallback(() => {
+        logger.debug(`Elapsed ${time}ms timer`);
+        resolve();
+      }, time, Ci.nsITimer.TYPE_ONE_SHOT);
+      logger.debug(`Started ${time}ms timer`);
+    });
+
+    let firePromise = new Promise(resolve => {
+      this.fire = () => {
+        logger.debug(`Skipped ${time}ms timer`);
+        resolve();
+        return this.promise;
+      };
+    });
+
+    this.promise = Promise.race([timerPromise, firePromise]).then(() => {
+      // If we've been canceled, don't call back.
+      if (this._timer) {
+        callback();
+      }
+    });
+  }
+
+  /**
+   * Allows to cancel the timer and the callback won't be invoked.
+   * It is not strictly necessary to await for this, the promise can just be
+   * used to ensure all the internal work is complete.
+   * @returns {promise} Resolved once all the cancelation work is complete.
+   */
+  cancel() {
+    logger.debug(`Canceling timer for ${this._timer.delay}ms`);
+    this._timer.cancel();
+    delete this._timer;
+    return this.fire();
+  }
+}
+
+/**
+ * Gets an array of the provider sources accepted for a given QueryContext.
+ * @param {object} context The QueryContext to examine
+ * @returns {array} Array of accepted sources
+ */
+function getAcceptableMatchSources(context) {
+  let acceptedSources = [];
+  // There can be only one restrict token about sources.
+  let restrictToken = context.tokens.find(t => [ UrlbarTokenizer.TYPE.RESTRICT_HISTORY,
+                                                 UrlbarTokenizer.TYPE.RESTRICT_BOOKMARK,
+                                                 UrlbarTokenizer.TYPE.RESTRICT_TAG,
+                                                 UrlbarTokenizer.TYPE.RESTRICT_OPENPAGE,
+                                                 UrlbarTokenizer.TYPE.RESTRICT_SEARCH,
+                                               ].includes(t.type));
+  let restrictTokenType = restrictToken ? restrictToken.type : undefined;
+  for (let source of Object.values(UrlbarUtils.MATCH_SOURCE)) {
+    switch (source) {
+      case UrlbarUtils.MATCH_SOURCE.BOOKMARKS:
+        if (UrlbarPrefs.get("suggest.bookmark") &&
+            (!restrictTokenType ||
+             restrictTokenType === UrlbarTokenizer.TYPE.RESTRICT_BOOKMARK ||
+             restrictTokenType === UrlbarTokenizer.TYPE.RESTRICT_TAG)) {
+          acceptedSources.push(source);
+        }
+        break;
+      case UrlbarUtils.MATCH_SOURCE.HISTORY:
+        if (UrlbarPrefs.get("suggest.history") &&
+            (!restrictTokenType ||
+             restrictTokenType === UrlbarTokenizer.TYPE.RESTRICT_HISTORY)) {
+          acceptedSources.push(source);
+        }
+        break;
+      case UrlbarUtils.MATCH_SOURCE.SEARCH:
+        if (UrlbarPrefs.get("suggest.searches") &&
+            (!restrictTokenType ||
+             restrictTokenType === UrlbarTokenizer.TYPE.RESTRICT_SEARCH)) {
+          acceptedSources.push(source);
+        }
+        break;
+      case UrlbarUtils.MATCH_SOURCE.TABS:
+        if (UrlbarPrefs.get("suggest.openpage") &&
+            (!restrictTokenType ||
+             restrictTokenType === UrlbarTokenizer.TYPE.RESTRICT_OPENPAGE)) {
+          acceptedSources.push(source);
+        }
+        break;
+      case UrlbarUtils.MATCH_SOURCE.OTHER_NETWORK:
+        if (!context.isPrivate) {
+          acceptedSources.push(source);
+        }
+        break;
+      case UrlbarUtils.MATCH_SOURCE.OTHER_LOCAL:
+      default:
+        acceptedSources.push(source);
+        break;
+    }
+  }
+  return acceptedSources;
 }

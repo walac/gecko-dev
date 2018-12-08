@@ -37,14 +37,16 @@ const { connect } = require("devtools/client/shared/vendor/react-redux");
 // History Modules
 const {
   getHistory,
-  getHistoryValue
+  getHistoryValue,
 } = require("devtools/client/webconsole/selectors/history");
+const {getAutocompleteState} = require("devtools/client/webconsole/selectors/autocomplete");
 const historyActions = require("devtools/client/webconsole/actions/history");
+const autocompleteActions = require("devtools/client/webconsole/actions/autocomplete");
 
 // Constants used for defining the direction of JSTerm input history navigation.
 const {
   HISTORY_BACK,
-  HISTORY_FORWARD
+  HISTORY_FORWARD,
 } = require("devtools/client/webconsole/constants");
 
 /**
@@ -77,6 +79,10 @@ class JSTerm extends Component {
       codeMirrorEnabled: PropTypes.bool,
       // Update position in the history after executing an expression (action).
       updateHistoryPosition: PropTypes.func.isRequired,
+      // Update autocomplete popup state.
+      autocompleteUpdate: PropTypes.func.isRequired,
+      // Data to be displayed in the autocomplete popup.
+      autocompleteData: PropTypes.object.isRequired,
     };
   }
 
@@ -94,39 +100,15 @@ class JSTerm extends Component {
     this._inputEventHandler = this._inputEventHandler.bind(this);
     this._blurEventHandler = this._blurEventHandler.bind(this);
     this.onContextMenu = this.onContextMenu.bind(this);
+    this.imperativeUpdate = this.imperativeUpdate.bind(this);
 
     this.SELECTED_FRAME = -1;
-
-    /**
-     * Array that caches the user input suggestions received from the server.
-     * @private
-     * @type array
-     */
-    this._autocompleteCache = null;
-
-    /**
-     * The input that caused the last request to the server, whose response is
-     * cached in the _autocompleteCache array.
-     * @private
-     * @type string
-     */
-    this._autocompleteQuery = null;
-
-    /**
-     * The frameActorId used in the last autocomplete query. Whenever this changes
-     * the autocomplete cache must be invalidated.
-     * @private
-     * @type string
-     */
-    this._lastFrameActorId = null;
 
     /**
      * Last input value.
      * @type string
      */
     this.lastInputValue = "";
-
-    this.currentAutoCompletionRequestId = null;
 
     this.autocompletePopup = null;
     this.inputNode = null;
@@ -144,7 +126,7 @@ class JSTerm extends Component {
       onClick: this.acceptProposedCompletion.bind(this),
       listId: "webConsole_autocompletePopupListBox",
       position: "bottom",
-      autoSelect: true
+      autoSelect: true,
     };
 
     const doc = this.hud.document;
@@ -190,6 +172,13 @@ class JSTerm extends Component {
           return null;
         };
 
+        const onArrowLeft = () => {
+          if (this.autocompletePopup.isOpen || this.getAutoCompletionText()) {
+            this.clearCompletion();
+          }
+          return "CodeMirror.Pass";
+        };
+
         this.editor = new Editor({
           autofocus: true,
           enableCodeFolding: false,
@@ -200,6 +189,7 @@ class JSTerm extends Component {
           styleActiveLine: false,
           tabIndex: "0",
           viewportMargin: Infinity,
+          disableSearchAddon: true,
           extraKeys: {
             "Enter": () => {
               // No need to handle shift + Enter as it's natively handled by CodeMirror.
@@ -247,12 +237,9 @@ class JSTerm extends Component {
             "Down": onArrowDown,
             "Cmd-Down": onArrowDown,
 
-            "Left": () => {
-              if (this.autocompletePopup.isOpen || this.getAutoCompletionText()) {
-                this.clearCompletion();
-              }
-              return "CodeMirror.Pass";
-            },
+            "Left": onArrowLeft,
+            "Ctrl-Left": onArrowLeft,
+            "Cmd-Left": onArrowLeft,
 
             "Right": () => {
               // We only want to complete on Right arrow if the completion text is
@@ -335,6 +322,10 @@ class JSTerm extends Component {
                 return null;
               }
 
+              if (this.getAutoCompletionText()) {
+                this.clearCompletion();
+              }
+
               return "CodeMirror.Pass";
             },
 
@@ -350,12 +341,16 @@ class JSTerm extends Component {
                 return null;
               }
 
+              if (this.getAutoCompletionText()) {
+                this.clearCompletion();
+              }
+
               return "CodeMirror.Pass";
             },
 
             "Ctrl-Space": () => {
               if (!this.autocompletePopup.isOpen) {
-                this.updateAutocompletion(true);
+                this.fetchAutocompletionProperties(true);
                 return null;
               }
 
@@ -365,7 +360,7 @@ class JSTerm extends Component {
             "Esc": false,
             "Cmd-F": false,
             "Ctrl-F": false,
-          }
+          },
         });
 
         this.editor.on("changes", this._inputEventHandler);
@@ -402,11 +397,30 @@ class JSTerm extends Component {
     this.lastInputValue && this.setInputValue(this.lastInputValue);
   }
 
-  shouldComponentUpdate(nextProps, nextState) {
+  componentWillReceiveProps(nextProps) {
+    this.imperativeUpdate(nextProps);
+  }
+
+  shouldComponentUpdate(nextProps) {
     // XXX: For now, everything is handled in an imperative way and we
     // only want React to do the initial rendering of the component.
     // This should be modified when the actual refactoring will take place.
     return false;
+  }
+
+  /**
+   * Do all the imperative work needed after a Redux store update.
+   *
+   * @param {Object} nextProps: props passed from shouldComponentUpdate.
+   */
+  imperativeUpdate(nextProps) {
+    if (
+      nextProps &&
+      nextProps.autocompleteData !== this.props.autocompleteData &&
+      nextProps.autocompleteData.pendingRequestId === null
+    ) {
+      this.updateAutocompletionPopup(nextProps.autocompleteData);
+    }
   }
 
   /**
@@ -475,7 +489,7 @@ class JSTerm extends Component {
           this.props.clearHistory();
           break;
         case "inspectObject":
-          this.inspectObjectActor(helperResult.object);
+          this.hud.inspectObjectActor(helperResult.object);
           break;
         case "error":
           try {
@@ -511,16 +525,6 @@ class JSTerm extends Component {
     }
 
     return null;
-  }
-
-  inspectObjectActor(objectActor) {
-    this.hud.consoleOutput.dispatchMessageAdd({
-      helperResult: {
-        type: "inspectObject",
-        object: objectActor
-      }
-    }, true);
-    return this.hud.consoleOutput;
   }
 
   screenshotNotify(results) {
@@ -560,6 +564,7 @@ class JSTerm extends Component {
     const { ConsoleCommand } = require("devtools/client/webconsole/types");
     const cmdMessage = new ConsoleCommand({
       messageText: executeString,
+      timeStamp: Date.now(),
     });
     this.hud.proxy.dispatchMessageAdd(cmdMessage);
 
@@ -575,7 +580,7 @@ class JSTerm extends Component {
     const options = {
       frame: this.SELECTED_FRAME,
       selectedNodeActor,
-      mapped: mappedExpressionRes ? mappedExpressionRes.mapped : null
+      mapped: mappedExpressionRes ? mappedExpressionRes.mapped : null,
     };
 
     // Even if requestEvaluation rejects (because of webConsoleClient.evaluateJSAsync),
@@ -616,7 +621,7 @@ class JSTerm extends Component {
     // Send telemetry event. If we are in the browser toolbox we send -1 as the
     // toolbox session id.
     this.props.serviceContainer.recordTelemetryEvent("execute_js", {
-      "lines": str.split(/\n/).length
+      "lines": str.split(/\n/).length,
     });
 
     let frameActor = null;
@@ -725,7 +730,7 @@ class JSTerm extends Component {
           const lines = newValue.split("\n");
           this.editor.setCursor({
             line: lines.length - 1,
-            ch: lines[lines.length - 1].length
+            ch: lines[lines.length - 1].length,
           });
           this.editor.setAutoCompletionText();
         });
@@ -781,7 +786,7 @@ class JSTerm extends Component {
     const value = this.getInputValue();
     if (this.lastInputValue !== value) {
       this.resizeInput();
-      this.updateAutocompletion();
+      this.fetchAutocompletionProperties();
       this.lastInputValue = value;
     }
   }
@@ -868,8 +873,14 @@ class JSTerm extends Component {
 
       if (event.key === " " && !this.autocompletePopup.isOpen) {
         // Open the autocompletion popup on Ctrl-Space (if it wasn't displayed).
-        this.updateAutocompletion(true);
+        this.fetchAutocompletionProperties(true);
         event.preventDefault();
+      }
+
+      if (event.keyCode === KeyCodes.DOM_VK_LEFT &&
+        (this.autocompletePopup.isOpen || this.getAutoCompletionText())
+      ) {
+        this.clearCompletion();
       }
 
       return;
@@ -954,6 +965,8 @@ class JSTerm extends Component {
         if (this.autocompletePopup.isOpen) {
           this.autocompletePopup.selectItemAtIndex(0);
           event.preventDefault();
+        } else if (this.getAutoCompletionText()) {
+          this.clearCompletion();
         } else if (inputValue.length <= 0) {
           this.hud.outputScroller.scrollTop = 0;
           event.preventDefault();
@@ -964,6 +977,8 @@ class JSTerm extends Component {
         if (this.autocompletePopup.isOpen) {
           this.autocompletePopup.selectItemAtIndex(this.autocompletePopup.itemCount - 1);
           event.preventDefault();
+        } else if (this.getAutoCompletionText()) {
+          this.clearCompletion();
         } else if (inputValue.length <= 0) {
           this.hud.outputScroller.scrollTop = this.hud.outputScroller.scrollHeight;
           event.preventDefault();
@@ -1112,136 +1127,70 @@ class JSTerm extends Component {
   }
 
   /**
+   * Retrieves properties maching the current input for the selected frame, either from
+   * the server or from a cache if possible.
+   * Will bail-out if there's some text selection in the input.
    *
    * @param {Boolean} force: True to not perform any check before trying to show the
    *                         autocompletion popup. Defaults to false.
+   * @fires autocomplete-updated
+   * @returns void
    */
-  async updateAutocompletion(force = false) {
+  async fetchAutocompletionProperties(force = false) {
     const inputValue = this.getInputValue();
-    const {editor, inputNode} = this;
-    const frameActor = this.getFrameActor(this.SELECTED_FRAME);
-
+    const frameActorId = this.getFrameActor(this.SELECTED_FRAME);
     const cursor = this.getSelectionStart();
 
-    // Complete if:
-    // - `force` is true OR
-    //   - The input is not empty
-    //   - AND there is not text selected
-    //   - AND the input or frameActor are different from previous completion
-    //   - AND there is not an alphanumeric (+ "_" and "$") right after the cursor
-    if (!force && (
-      !inputValue ||
+    const {editor, inputNode} = this;
+    if (
       (inputNode && inputNode.selectionStart != inputNode.selectionEnd) ||
-      (editor && editor.getSelection()) ||
-      (
-        !force &&
-        this.lastInputValue === inputValue &&
-        frameActor === this._lastFrameActorId
-      ) ||
-      /^[a-zA-Z0-9_$]/.test(inputValue.substring(cursor))
-    )) {
+      (editor && editor.getSelection())
+    ) {
       this.clearCompletion();
       this.emit("autocomplete-updated");
       return;
     }
 
-    const input = this.getInputValueBeforeCursor();
-
-    // If the current input starts with the previous input, then we already
-    // have a list of suggestions and we just need to filter the cached
-    // suggestions. When the current input ends with a non-alphanumeric character we ask
-    // the server again for suggestions.
-
-    // Check if last character is non-alphanumeric
-    if (!/[a-zA-Z0-9]$/.test(input) || frameActor != this._lastFrameActorId) {
-      this._autocompleteQuery = null;
-      this._autocompleteCache = null;
+    let selectedNodeActor = null;
+    const inspectorSelection = this.hud.owner.getInspectorSelection();
+    if (inspectorSelection && inspectorSelection.nodeFront) {
+      selectedNodeActor = inspectorSelection.nodeFront.actorID;
     }
 
-    if (this._autocompleteQuery && input.startsWith(this._autocompleteQuery)) {
-      let filterBy = input;
-      if (this._autocompleteCache.isElementAccess) {
-        // if we're performing an element access, we can simply retrieve whatever comes
-        // after the last opening bracket.
-        filterBy = input.substring(input.lastIndexOf("[") + 1);
-      } else {
-        // Find the last non-alphanumeric other than "_", ":", or "$" if it exists.
-        const lastNonAlpha = input.match(/[^a-zA-Z0-9_$:][a-zA-Z0-9_$:]*$/);
-        // If input contains non-alphanumerics, use the part after the last one
-        // to filter the cache.
-        if (lastNonAlpha) {
-          filterBy = input.substring(input.lastIndexOf(lastNonAlpha) + 1);
-        }
-      }
-
-      const stripWrappingQuotes = s => s.replace(/^['"`](.+(?=['"`]$))['"`]$/g, "$1");
-      const filterByLc = filterBy.toLocaleLowerCase();
-      const looseMatching = !filterBy || filterBy[0].toLocaleLowerCase() === filterBy[0];
-      const needStripQuote = this._autocompleteCache.isElementAccess
-        && !/^[`"']/.test(filterBy);
-      const newList = this._autocompleteCache.matches.filter(l => {
-        if (needStripQuote) {
-          l = stripWrappingQuotes(l);
-        }
-
-        if (looseMatching) {
-          return l.toLocaleLowerCase().startsWith(filterByLc);
-        }
-
-        return l.startsWith(filterBy);
-      });
-
-      this._receiveAutocompleteProperties(null, {
-        matches: newList,
-        matchProp: filterBy,
-        isElementAccess: this._autocompleteCache.isElementAccess,
-      });
-      return;
-    }
-    const requestId = gSequenceId();
-    this._lastFrameActorId = frameActor;
-    this.currentAutoCompletionRequestId = requestId;
-
-    const message = await this.webConsoleClient.autocomplete(input, cursor, frameActor);
-    this._receiveAutocompleteProperties(requestId, message);
+    this.props.autocompleteUpdate({
+      inputValue,
+      cursor,
+      frameActorId,
+      force,
+      client: this.webConsoleClient,
+      selectedNodeActor,
+    });
   }
 
   /**
-   * Handler for the autocompletion results. This method takes
-   * the completion result received from the server and updates the UI
-   * accordingly.
+   * Takes the data returned by the server and update the autocomplete popup state (i.e.
+   * its visibility and items).
    *
-   * @param number requestId
-   *        Request ID.
-   * @param object message
-   *        The JSON message which holds the completion results received from
-   *        the content process.
+   * @param {Object} data
+   *        The autocompletion data as returned by the webconsole actor's autocomplete
+   *        service. Should be of the following shape:
+   *        {
+   *          matches: {Array} array of the properties matching the input,
+   *          matchProp: {String} The string used to filter the properties,
+   *          isElementAccess: {Boolean} True when the input is an element access,
+   *                           i.e. `document["addEve`.
+   *        }
+   * @fires autocomplete-updated
    */
-  _receiveAutocompleteProperties(requestId, message) {
-    if (this.currentAutoCompletionRequestId !== requestId) {
-      return;
-    }
-    this.currentAutoCompletionRequestId = null;
-
-    // Cache whatever came from the server if the last char is
-    // alphanumeric, '.' or '['.
-    const inputUntilCursor = this.getInputValueBeforeCursor();
-
-    if (requestId != null && /[a-zA-Z0-9.\[]$/.test(inputUntilCursor)) {
-      this._autocompleteCache = {
-        matches: message.matches,
-        matchProp: message.matchProp,
-        isElementAccess: message.isElementAccess,
-      };
-      this._autocompleteQuery = inputUntilCursor;
-    }
-
-    const {matches, matchProp, isElementAccess} = message;
+  updateAutocompletionPopup(data) {
+    const {matches, matchProp, isElementAccess} = data;
     if (!matches.length) {
       this.clearCompletion();
       this.emit("autocomplete-updated");
       return;
     }
+
+    const inputUntilCursor = this.getInputValueBeforeCursor();
 
     const items = matches.map(label => {
       let preLabel = label.substring(0, matchProp.length);
@@ -1461,7 +1410,7 @@ class JSTerm extends Component {
       // Set the cursor on the same line it was already at, after the autocompleted text
       this.editor.setCursor({
         line: editorCursor.line,
-        ch: editorCursor.ch + str.length - numberOfCharsToReplaceCharsBeforeCursor
+        ch: editorCursor.ch + str.length - numberOfCharsToReplaceCharsBeforeCursor,
       });
     }
   }
@@ -1588,13 +1537,7 @@ class JSTerm extends Component {
   }
 
   onContextMenu(e) {
-    // The toolbox does it's own edit menu handling with
-    // toolbox-textbox-context-popup and friends. For now, fall
-    // back to use that if running inside the toolbox, but use our
-    // own menu when running in the Browser Console (see Bug 1476097).
-    if (this.props.hud.isBrowserConsole) {
-      this.props.serviceContainer.openEditContextMenu(e);
-    }
+    this.props.serviceContainer.openEditContextMenu(e);
   }
 
   destroy() {
@@ -1645,7 +1588,7 @@ class JSTerm extends Component {
     }
 
     const {
-      onPaste
+      onPaste,
     } = this.props;
 
     return (
@@ -1687,15 +1630,21 @@ function mapStateToProps(state) {
   return {
     history: getHistory(state),
     getValueFromHistory: (direction) => getHistoryValue(state, direction),
+    autocompleteData: getAutocompleteState(state),
   };
 }
 
 function mapDispatchToProps(dispatch) {
   return {
+
     appendToHistory: (expr) => dispatch(historyActions.appendToHistory(expr)),
     clearHistory: () => dispatch(historyActions.clearHistory()),
     updateHistoryPosition: (direction, expression) =>
       dispatch(historyActions.updateHistoryPosition(direction, expression)),
+    autocompleteUpdate: options => dispatch(
+      autocompleteActions.autocompleteUpdate(options)
+    ),
+    autocompleteBailOut: () => dispatch(autocompleteActions.autocompleteBailOut()),
   };
 }
 

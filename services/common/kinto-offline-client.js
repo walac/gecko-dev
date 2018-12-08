@@ -33,7 +33,7 @@ const global = this;
 var EXPORTED_SYMBOLS = ["Kinto"];
 
 /*
- * Version 12.0.2 - 2ad36df
+ * Version 12.2.4 - 8fb687a
  */
 
 (function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.Kinto = f()}})(function(){var define,module,exports;return (function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
@@ -71,16 +71,15 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 ChromeUtils.import("resource://gre/modules/Timer.jsm");
 ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 XPCOMUtils.defineLazyGlobalGetters(global, ["fetch", "indexedDB"]);
-const {
-  EventEmitter
-} = ChromeUtils.import("resource://gre/modules/EventEmitter.jsm", {});
-const {
-  generateUUID
-} = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator); // Use standalone kinto-http module landed in FFx.
+ChromeUtils.defineModuleGetter(global, "EventEmitter", "resource://gre/modules/EventEmitter.jsm"); // Use standalone kinto-http module landed in FFx.
 
-const {
-  KintoHttpClient
-} = ChromeUtils.import("resource://services-common/kinto-http-client.js");
+ChromeUtils.defineModuleGetter(global, "KintoHttpClient", "resource://services-common/kinto-http-client.js");
+XPCOMUtils.defineLazyGetter(global, "generateUUID", () => {
+  const {
+    generateUUID
+  } = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator);
+  return generateUUID;
+});
 
 class Kinto extends _KintoBase.default {
   static get adapters() {
@@ -486,22 +485,34 @@ const cursorHandlers = {
  */
 
 function createListRequest(cid, store, filters, done) {
-  // Introspect filters and check if they leverage an indexed field.
-  const indexField = Object.keys(filters).find(field => {
+  const filterFields = Object.keys(filters); // If no filters, get all results in one bulk.
+
+  if (filterFields.length == 0) {
+    const request = store.index("cid").getAll(IDBKeyRange.only(cid));
+
+    request.onsuccess = event => done(event.target.result);
+
+    return request;
+  } // Introspect filters and check if they leverage an indexed field.
+
+
+  const indexField = filterFields.find(field => {
     return INDEXED_FIELDS.includes(field);
   });
 
   if (!indexField) {
-    // Get all records for this collection (ie. cid)
+    // Iterate on all records for this collection (ie. cid)
     const request = store.index("cid").openCursor(IDBKeyRange.only(cid));
     request.onsuccess = cursorHandlers.all(filters, done);
     return request;
   } // If `indexField` was used already, don't filter again.
 
 
-  const remainingFilters = (0, _utils.omitKeys)(filters, indexField); // value specified in the filter (eg. `filters: { _status: ["created", "updated"] }`)
+  const remainingFilters = (0, _utils.omitKeys)(filters, [indexField]); // value specified in the filter (eg. `filters: { _status: ["created", "updated"] }`)
 
-  const value = filters[indexField]; // WHERE IN equivalent clause
+  const value = filters[indexField]; // For the "id" field, use the primary key.
+
+  const indexStore = indexField == "id" ? store : store.index(indexField); // WHERE IN equivalent clause
 
   if (Array.isArray(value)) {
     if (value.length === 0) {
@@ -510,13 +521,22 @@ function createListRequest(cid, store, filters, done) {
 
     const values = value.map(i => [cid, i]).sort();
     const range = IDBKeyRange.bound(values[0], values[values.length - 1]);
-    const request = store.index(indexField).openCursor(range);
+    const request = indexStore.openCursor(range);
     request.onsuccess = cursorHandlers.in(values, remainingFilters, done);
+    return request;
+  } // If no filters on custom attribute, get all results in one bulk.
+
+
+  if (remainingFilters.length == 0) {
+    const request = indexStore.getAll(IDBKeyRange.only([cid, value]));
+
+    request.onsuccess = event => done(event.target.result);
+
     return request;
   } // WHERE field = value clause
 
 
-  const request = store.index(indexField).openCursor(IDBKeyRange.only([cid, value]));
+  const request = indexStore.openCursor(IDBKeyRange.only([cid, value]));
   request.onsuccess = cursorHandlers.all(remainingFilters, done);
   return request;
 }
@@ -577,9 +597,7 @@ class IDB extends _base.default {
         }); // An index to obtain all the records in a collection.
 
         recordsStore.createIndex("cid", "_cid"); // Here we create indices for every known field in records by collection.
-        // Record id (generated by IdSchema, UUID by default)
-
-        recordsStore.createIndex("id", ["_cid", "id"]); // Local record status ("synced", "created", "updated", "deleted")
+        // Local record status ("synced", "created", "updated", "deleted")
 
         recordsStore.createIndex("_status", ["_cid", "_status"]); // Last modified field
 
@@ -752,10 +770,13 @@ class IDB extends _base.default {
       };
       createListRequest(this.cid, store, filters, records => {
         // Store obtained records by id.
-        const preloaded = records.reduce((acc, record) => {
-          acc[record.id] = (0, _utils.omitKeys)(record, ["_cid"]);
-          return acc;
-        }, {});
+        const preloaded = {};
+
+        for (const record of records) {
+          delete record["_cid"];
+          preloaded[record.id] = record;
+        }
+
         runCallback(preloaded);
       });
     }, {
@@ -805,7 +826,11 @@ class IDB extends _base.default {
         createListRequest(this.cid, store, filters, _results => {
           // we have received all requested records that match the filters,
           // we now park them within current scope and hide the `_cid` attribute.
-          results = _results.map(r => (0, _utils.omitKeys)(r, ["_cid"]));
+          for (const result of _results) {
+            delete result["_cid"];
+          }
+
+          results = _results;
         });
       }); // The resulting list of records is sorted.
       // XXX: with some efforts, this could be fully implemented using IDB API.
@@ -870,7 +895,21 @@ class IDB extends _base.default {
   async loadDump(records) {
     try {
       await this.execute(transaction => {
-        records.forEach(record => transaction.update(record));
+        // Since the put operations are asynchronous, we chain
+        // them together. The last one will be waited for the
+        // `transaction.oncomplete` callback. (see #execute())
+        let i = 0;
+        putNext();
+
+        function putNext() {
+          if (i == records.length) {
+            return;
+          } // On error, `transaction.onerror` is called.
+
+
+          transaction.update(records[i]).onsuccess = putNext;
+          ++i;
+        }
       });
       const previousLastModified = await this.getLastModified();
       const lastModified = Math.max(...records.map(record => record.last_modified));
@@ -909,7 +948,7 @@ function transactionProxy(adapter, store, preloaded = []) {
     },
 
     update(record) {
-      store.put({ ...record,
+      return store.put({ ...record,
         _cid
       });
     },
@@ -2153,10 +2192,15 @@ class Collection {
    *
    * Options:
    * - {String} strategy: The selected sync strategy.
+   * - {String} expectedTimestamp: A timestamp to use as a "cache busting" query parameter.
+   * - {Array<String>} exclude: A list of record ids to exclude from pull.
+   * - {Object} headers: The HTTP headers to use in the request.
+   * - {int} retry: The number of retries to do if the HTTP request fails.
+   * - {int} lastModified: The timestamp to use in `?_since` query.
    *
    * @param  {KintoClient.Collection} client           Kinto client Collection instance.
    * @param  {SyncResultObject}       syncResultObject The sync result object.
-   * @param  {Object}                 options
+   * @param  {Object}                 options          The options object.
    * @return {Promise}
    */
 
@@ -2184,6 +2228,12 @@ class Collection {
       const exclude_id = options.exclude.slice(0, 50).map(r => r.id).join(",");
       filters = {
         exclude_id
+      };
+    }
+
+    if (options.expectedTimestamp) {
+      filters = { ...filters,
+        _expected: options.expectedTimestamp
       };
     } // First fetch remote changes from the server
 
@@ -2257,6 +2307,11 @@ class Collection {
   /**
    * Publish local changes to the remote server and updates the passed
    * {@link SyncResultObject} with publication results.
+   *
+   * Options:
+   * - {String} strategy: The selected sync strategy.
+   * - {Object} headers: The HTTP headers to use in the request.
+   * - {int} retry: The number of retries to do if the HTTP request fails.
    *
    * @param  {KintoClient.Collection} client           Kinto client Collection instance.
    * @param  {SyncResultObject}       syncResultObject The sync result object.
@@ -2413,6 +2468,7 @@ class Collection {
    *
    * Options:
    * - {Object} headers: HTTP headers to attach to outgoing requests.
+   * - {String} expectedTimestamp: A timestamp to use as a "cache busting" query parameter.
    * - {Number} retry: Number of retries when server fails to process the request (default: 1).
    * - {Collection.strategy} strategy: See {@link Collection.strategy}.
    * - {Boolean} ignoreBackoff: Force synchronization even if server is currently
@@ -2434,7 +2490,8 @@ class Collection {
     ignoreBackoff: false,
     bucket: null,
     collection: null,
-    remote: null
+    remote: null,
+    expectedTimestamp: null
   }) {
     options = { ...options,
       bucket: options.bucket || this.bucket,
@@ -3083,13 +3140,14 @@ function deepEqual(a, b) {
 
 
 function omitKeys(obj, keys = []) {
-  return Object.keys(obj).reduce((acc, key) => {
-    if (!keys.includes(key)) {
-      acc[key] = obj[key];
-    }
+  const result = { ...obj
+  };
 
-    return acc;
-  }, {});
+  for (const key of keys) {
+    delete result[key];
+  }
+
+  return result;
 }
 
 function arrayEqual(a, b) {

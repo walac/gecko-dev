@@ -131,13 +131,14 @@ function navigateInHistory(aTarget, aDirection, aWaitForTargetEvent = "navigate"
 }
 
 function navigate(aTarget, aUrl, aWaitForTargetEvent = "navigate") {
-  executeSoon(() => aTarget.activeTab.navigateTo(aUrl));
+  executeSoon(() => aTarget.activeTab.navigateTo({ url: aUrl }));
   return once(aTarget, aWaitForTargetEvent);
 }
 
-function reload(aTarget, aWaitForTargetEvent = "navigate") {
-  executeSoon(() => aTarget.activeTab.reload());
-  return once(aTarget, aWaitForTargetEvent);
+async function reload(aTarget, aWaitForTargetEvent = "navigate") {
+  const onTargetEvent = once(aTarget, aWaitForTargetEvent);
+  await aTarget.activeTab.reload();
+  return onTargetEvent;
 }
 
 function initBackend(aUrl) {
@@ -152,7 +153,7 @@ function initBackend(aUrl) {
 
     await target.attach();
 
-    const front = target.getFront("webgl");
+    const front = await target.getFront("webgl");
     return { target, front };
   })();
 }
@@ -176,7 +177,7 @@ function teardown(aPanel) {
 
   return promise.all([
     once(aPanel, "destroyed"),
-    removeTab(aPanel.target.tab)
+    removeTab(aPanel.target.tab),
   ]);
 }
 

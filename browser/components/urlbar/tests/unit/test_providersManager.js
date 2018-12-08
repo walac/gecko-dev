@@ -4,37 +4,44 @@
 "use strict";
 
 add_task(async function test_providers() {
-  // First unregister all the existing providers.
-  for (let providers of UrlbarProvidersManager.providers.values()) {
-    for (let provider of providers.values()) {
-      // While here check all providers have name and type.
-      Assert.ok(Object.values(UrlbarUtils.PROVIDER_TYPE).includes(provider.type),
-        `The provider "${provider.name}" should have a valid type`);
-      Assert.ok(provider.name, "All providers should have a name");
-      UrlbarProvidersManager.unregisterProvider(provider);
-    }
-  }
-  let match = new UrlbarMatch(UrlbarUtils.MATCH_TYPE.TAB_SWITCH, { url: "http://mozilla.org/foo/" });
-  UrlbarProvidersManager.registerProvider({
-    get name() {
-      return "TestProvider";
-    },
-    get type() {
-      return UrlbarUtils.PROVIDER_TYPE.PROFILE;
-    },
-    async startQuery(context, add) {
-      Assert.ok(context, "context is passed-in");
-      Assert.equal(typeof add, "function", "add is a callback");
-      this._context = context;
-      add(this, match);
-    },
-    cancelQuery(context) {
-      Assert.equal(this._context, context, "context is the same");
-    },
-  });
+  Assert.throws(() => UrlbarProvidersManager.registerProvider(),
+                /invalid provider/,
+                "Should throw with no arguments");
+  Assert.throws(() => UrlbarProvidersManager.registerProvider({}),
+                /invalid provider/,
+                "Should throw with empty object");
+  Assert.throws(() => UrlbarProvidersManager.registerProvider({
+                  name: "",
+                }),
+                /invalid provider/,
+                "Should throw with empty name");
+  Assert.throws(() => UrlbarProvidersManager.registerProvider({
+                  name: "test",
+                  startQuery: "no",
+                }),
+                /invalid provider/,
+                "Should throw with invalid startQuery");
+  Assert.throws(() => UrlbarProvidersManager.registerProvider({
+                  name: "test",
+                  startQuery: () => {},
+                  cancelQuery: "no",
+                }),
+                /invalid provider/,
+                "Should throw with invalid cancelQuery");
+
+  let match = new UrlbarMatch(UrlbarUtils.MATCH_TYPE.TAB_SWITCH,
+                              UrlbarUtils.MATCH_SOURCE.TABS,
+                              { url: "http://mozilla.org/foo/" });
+  registerBasicTestProvider([match]);
 
   let context = createContext();
-  let controller = new UrlbarController();
+  let controller = new UrlbarController({
+    browserWindow: {
+      location: {
+        href: AppConstants.BROWSER_CHROME_URL,
+      },
+    },
+  });
   let resultsPromise = promiseControllerNotification(controller, "onQueryResults");
 
   await UrlbarProvidersManager.startQuery(context, controller);

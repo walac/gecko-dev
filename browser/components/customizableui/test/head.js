@@ -23,7 +23,7 @@ var gCUITestUtils = new CustomizableUITestUtils(window);
 Services.prefs.setBoolPref("browser.uiCustomization.skipSourceNodeCheck", true);
 registerCleanupFunction(() => Services.prefs.clearUserPref("browser.uiCustomization.skipSourceNodeCheck"));
 
-var {synthesizeDragStart, synthesizeDrop} = EventUtils;
+var {synthesizeDragStart, synthesizeDrop, synthesizeMouseAtCenter} = EventUtils;
 
 const kNSXUL = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 
@@ -50,6 +50,7 @@ function createToolbarWithPlacements(id, placements = []) {
     defaultPlacements: placements,
   });
   gNavToolbox.appendChild(tb);
+  CustomizableUI.registerToolbarNode(tb);
   return tb;
 }
 
@@ -90,6 +91,7 @@ function createOverflowableToolbarWithPlacements(id, placements) {
   tb.setAttribute("overflowbutton", chevron.id);
 
   gNavToolbox.appendChild(tb);
+  CustomizableUI.registerToolbarNode(tb);
   return tb;
 }
 
@@ -189,6 +191,8 @@ function simulateItemDrag(aToDrag, aTarget, aEvent = {}) {
   ev._domDispatchOnly = true;
   synthesizeDrop(aToDrag.parentNode, aTarget, null, null,
                  aToDrag.ownerGlobal, aTarget.ownerGlobal, ev);
+  // Ensure dnd suppression is cleared.
+  synthesizeMouseAtCenter(aTarget, { type: "mouseup" }, aTarget.ownerGlobal);
 }
 
 function endCustomizing(aWindow = window) {

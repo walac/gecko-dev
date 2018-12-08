@@ -7,7 +7,7 @@ const { combineReducers } = require("devtools/client/shared/vendor/redux");
 const { recordingState: {
   NOT_YET_KNOWN,
 }} = require("devtools/client/performance-new/utils");
-
+const { DEFAULT_WINDOW_LENGTH } = require("devtools/shared/performance-new/common");
 /**
  * The current state of the recording.
  * @param state - A recordingState key.
@@ -85,6 +85,21 @@ function entries(state = 10000000, action) {
 }
 
 /**
+ * The window length of profiler's circular buffer. Defaults to 20 sec.
+ * @param {number} state
+ */
+function duration(state = DEFAULT_WINDOW_LENGTH, action) {
+  switch (action.type) {
+    case "CHANGE_DURATION":
+      return action.duration;
+    case "INITIALIZE_STORE":
+      return action.recordingSettingsFromPreferences.duration;
+    default:
+      return state;
+  }
+}
+
+/**
  * The features that are enabled for the profiler.
  * @param {array} state
  */
@@ -131,8 +146,21 @@ function initializedValues(state = null, action) {
       return {
         perfFront: action.perfFront,
         receiveProfile: action.receiveProfile,
-        setRecordingPreferences: action.setRecordingPreferences
+        setRecordingPreferences: action.setRecordingPreferences,
       };
+    default:
+      return state;
+  }
+}
+
+/**
+ * The current actor version
+ * @param {number} state
+ */
+function actorVersion(state = 0, action) {
+  switch (action.type) {
+    case "INITIALIZE_STORE":
+      return action.actorVersion;
     default:
       return state;
   }
@@ -144,7 +172,9 @@ module.exports = combineReducers({
   isSupportedPlatform,
   interval,
   entries,
+  duration,
   features,
   threads,
   initializedValues,
+  actorVersion,
 });

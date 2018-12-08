@@ -9,23 +9,25 @@
 
 #include "nsIMacPreferencesReader.h"
 
-#define  NS_MACPREFERENCESREADER_CID \
-{ 0x95790842, 0x75a0, 0x430d, \
-  { 0x98, 0xbf, 0xf5, 0xce, 0x37, 0x88, 0xea, 0x6d } }
+#define NS_MACPREFERENCESREADER_CID                  \
+  {                                                  \
+    0xb0f20595, 0x88ce, 0x4738, {                    \
+      0xa1, 0xa4, 0x24, 0xde, 0x78, 0xeb, 0x80, 0x51 \
+    }                                                \
+  }
 #define NS_MACPREFERENCESREADER_CONTRACTID \
   "@mozilla.org/mac-preferences-reader;1"
 
 //-----------------------------------------------------------------------------
 
-class nsMacPreferencesReader : public nsIMacPreferencesReader
-{
-public:
+class nsMacPreferencesReader : public nsIMacPreferencesReader {
+ public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIMACPREFERENCESREADER
 
-  nsMacPreferencesReader() {};
+  nsMacPreferencesReader(){};
 
-protected:
+ protected:
   virtual ~nsMacPreferencesReader() = default;
 };
 

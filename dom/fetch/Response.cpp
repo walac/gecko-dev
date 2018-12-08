@@ -67,53 +67,53 @@ NS_INTERFACE_MAP_END
 Response::Response(nsIGlobalObject* aGlobal,
                    InternalResponse* aInternalResponse,
                    AbortSignalImpl* aSignalImpl)
-  : FetchBody<Response>(aGlobal)
-  , mInternalResponse(aInternalResponse)
-  , mSignalImpl(aSignalImpl)
-{
-  MOZ_ASSERT(aInternalResponse->Headers()->Guard() == HeadersGuardEnum::Immutable ||
-             aInternalResponse->Headers()->Guard() == HeadersGuardEnum::Response);
+    : FetchBody<Response>(aGlobal),
+      mInternalResponse(aInternalResponse),
+      mSignalImpl(aSignalImpl) {
+  MOZ_ASSERT(
+      aInternalResponse->Headers()->Guard() == HeadersGuardEnum::Immutable ||
+      aInternalResponse->Headers()->Guard() == HeadersGuardEnum::Response);
   SetMimeType();
 
   mozilla::HoldJSObjects(this);
 }
 
-Response::~Response()
-{
-  mozilla::DropJSObjects(this);
-}
+Response::~Response() { mozilla::DropJSObjects(this); }
 
-/* static */ already_AddRefed<Response>
-Response::Error(const GlobalObject& aGlobal)
-{
+/* static */ already_AddRefed<Response> Response::Error(
+    const GlobalObject& aGlobal) {
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
-  RefPtr<InternalResponse> error = InternalResponse::NetworkError(NS_ERROR_FAILURE);
+  RefPtr<InternalResponse> error =
+      InternalResponse::NetworkError(NS_ERROR_FAILURE);
   RefPtr<Response> r = new Response(global, error, nullptr);
   return r.forget();
 }
 
-/* static */ already_AddRefed<Response>
-Response::Redirect(const GlobalObject& aGlobal, const nsAString& aUrl,
-                   uint16_t aStatus, ErrorResult& aRv)
-{
+/* static */ already_AddRefed<Response> Response::Redirect(
+    const GlobalObject& aGlobal, const nsAString& aUrl, uint16_t aStatus,
+    ErrorResult& aRv) {
   nsAutoString parsedURL;
 
   if (NS_IsMainThread()) {
     nsCOMPtr<nsIURI> baseURI;
-    nsCOMPtr<nsPIDOMWindowInner> inner(do_QueryInterface(aGlobal.GetAsSupports()));
+    nsCOMPtr<nsPIDOMWindowInner> inner(
+        do_QueryInterface(aGlobal.GetAsSupports()));
     nsIDocument* doc = inner ? inner->GetExtantDoc() : nullptr;
     if (doc) {
       baseURI = doc->GetBaseURI();
     }
     nsCOMPtr<nsIURI> resolvedURI;
-    aRv = NS_NewURI(getter_AddRefs(resolvedURI), aUrl, nullptr, baseURI);
-    if (NS_WARN_IF(aRv.Failed())) {
+    nsresult rv =
+        NS_NewURI(getter_AddRefs(resolvedURI), aUrl, nullptr, baseURI);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      aRv.ThrowTypeError<MSG_INVALID_URL>(aUrl);
       return nullptr;
     }
 
     nsAutoCString spec;
-    aRv = resolvedURI->GetSpec(spec);
-    if (NS_WARN_IF(aRv.Failed())) {
+    rv = resolvedURI->GetSpec(spec);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      aRv.ThrowTypeError<MSG_INVALID_URL>(aUrl);
       return nullptr;
     }
 
@@ -132,7 +132,8 @@ Response::Redirect(const GlobalObject& aGlobal, const nsAString& aUrl,
     url->Stringify(parsedURL);
   }
 
-  if (aStatus != 301 && aStatus != 302 && aStatus != 303 && aStatus != 307 && aStatus != 308) {
+  if (aStatus != 301 && aStatus != 302 && aStatus != 303 && aStatus != 307 &&
+      aStatus != 308) {
     aRv.ThrowRangeError<MSG_INVALID_REDIRECT_STATUSCODE_ERROR>();
     return nullptr;
   }
@@ -140,6 +141,7 @@ Response::Redirect(const GlobalObject& aGlobal, const nsAString& aUrl,
   Optional<Nullable<fetch::ResponseBodyInit>> body;
   ResponseInit init;
   init.mStatus = aStatus;
+  init.mStatusText.AssignASCII("");
   RefPtr<Response> r = Response::Constructor(aGlobal, body, init, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
@@ -156,11 +158,10 @@ Response::Redirect(const GlobalObject& aGlobal, const nsAString& aUrl,
   return r.forget();
 }
 
-/*static*/ already_AddRefed<Response>
-Response::Constructor(const GlobalObject& aGlobal,
-                      const Optional<Nullable<fetch::ResponseBodyInit>>& aBody,
-                      const ResponseInit& aInit, ErrorResult& aRv)
-{
+/*static*/ already_AddRefed<Response> Response::Constructor(
+    const GlobalObject& aGlobal,
+    const Optional<Nullable<fetch::ResponseBodyInit>>& aBody,
+    const ResponseInit& aInit, ErrorResult& aRv) {
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
 
   if (aInit.mStatus < 200 || aInit.mStatus > 599) {
@@ -184,7 +185,7 @@ Response::Constructor(const GlobalObject& aGlobal,
   }
 
   RefPtr<InternalResponse> internalResponse =
-    new InternalResponse(aInit.mStatus, aInit.mStatusText);
+      new InternalResponse(aInit.mStatus, aInit.mStatusText);
 
   // Grab a valid channel info from the global so this response is 'valid' for
   // interception.
@@ -213,7 +214,7 @@ Response::Constructor(const GlobalObject& aGlobal,
     // Instead of using Fill, create an object to allow the constructor to
     // unwrap the HeadersInit.
     RefPtr<Headers> headers =
-      Headers::Create(global, aInit.mHeaders.Value(), aRv);
+        Headers::Create(global, aInit.mHeaders.Value(), aRv);
     if (aRv.Failed()) {
       return nullptr;
     }
@@ -236,29 +237,39 @@ Response::Constructor(const GlobalObject& aGlobal,
 
     const fetch::ResponseBodyInit& body = aBody.Value().Value();
     if (body.IsReadableStream()) {
+      aRv.MightThrowJSException();
+
+      JSContext* cx = aGlobal.Context();
       const ReadableStream& readableStream = body.GetAsReadableStream();
 
-      JS::Rooted<JSObject*> readableStreamObj(aGlobal.Context(),
-                                              readableStream.Obj());
+      JS::Rooted<JSObject*> readableStreamObj(cx, readableStream.Obj());
 
-      if (JS::ReadableStreamIsDisturbed(readableStreamObj) ||
-          JS::ReadableStreamIsLocked(readableStreamObj) ||
-          !JS::ReadableStreamIsReadable(readableStreamObj)) {
+      bool disturbed;
+      bool locked;
+      if (!JS::ReadableStreamIsDisturbed(cx, readableStreamObj, &disturbed) ||
+          !JS::ReadableStreamIsLocked(cx, readableStreamObj, &locked)) {
+        aRv.StealExceptionFromJSContext(cx);
+        return nullptr;
+      }
+      if (disturbed || locked) {
         aRv.ThrowTypeError<MSG_FETCH_BODY_CONSUMED_ERROR>();
         return nullptr;
       }
 
-      r->SetReadableStreamBody(aGlobal.Context(), readableStreamObj);
+      r->SetReadableStreamBody(cx, readableStreamObj);
 
-      if (JS::ReadableStreamGetMode(readableStreamObj) ==
-            JS::ReadableStreamMode::ExternalSource) {
+      JS::ReadableStreamMode streamMode;
+      if (!JS::ReadableStreamGetMode(cx, readableStreamObj, &streamMode)) {
+        aRv.StealExceptionFromJSContext(cx);
+        return nullptr;
+      }
+      if (streamMode == JS::ReadableStreamMode::ExternalSource) {
         // If this is a DOM generated ReadableStream, we can extract the
         // inputStream directly.
-        void* underlyingSource = nullptr;
-        if (!JS::ReadableStreamGetExternalUnderlyingSource(aGlobal.Context(),
-                                                           readableStreamObj,
-                                                           &underlyingSource)) {
-          aRv.StealExceptionFromJSContext(aGlobal.Context());
+        JS::ReadableStreamUnderlyingSource* underlyingSource = nullptr;
+        if (!JS::ReadableStreamGetExternalUnderlyingSource(
+                cx, readableStreamObj, &underlyingSource)) {
+          aRv.StealExceptionFromJSContext(cx);
           return nullptr;
         }
 
@@ -269,7 +280,11 @@ Response::Constructor(const GlobalObject& aGlobal,
 
         // The releasing of the external source is needed in order to avoid an
         // extra stream lock.
-        JS::ReadableStreamReleaseExternalUnderlyingSource(readableStreamObj);
+        if (!JS::ReadableStreamReleaseExternalUnderlyingSource(
+                cx, readableStreamObj)) {
+          aRv.StealExceptionFromJSContext(cx);
+          return nullptr;
+        }
         if (NS_WARN_IF(aRv.Failed())) {
           return nullptr;
         }
@@ -285,10 +300,8 @@ Response::Constructor(const GlobalObject& aGlobal,
       }
     } else {
       uint64_t size = 0;
-      aRv = ExtractByteStreamFromBody(body,
-                                      getter_AddRefs(bodyStream),
-                                      contentTypeWithCharset,
-                                      size);
+      aRv = ExtractByteStreamFromBody(body, getter_AddRefs(bodyStream),
+                                      contentTypeWithCharset, size);
       if (NS_WARN_IF(aRv.Failed())) {
         return nullptr;
       }
@@ -317,10 +330,35 @@ Response::Constructor(const GlobalObject& aGlobal,
   return r.forget();
 }
 
-already_AddRefed<Response>
-Response::Clone(JSContext* aCx, ErrorResult& aRv)
-{
-  if (BodyUsed()) {
+already_AddRefed<Response> Response::Clone(JSContext* aCx, ErrorResult& aRv) {
+  bool bodyUsed = GetBodyUsed(aRv);
+  if (NS_WARN_IF(aRv.Failed())) {
+    return nullptr;
+  }
+
+  if (!bodyUsed && mReadableStreamBody) {
+    aRv.MightThrowJSException();
+
+    AutoJSAPI jsapi;
+    if (!jsapi.Init(mOwner)) {
+      aRv.Throw(NS_ERROR_FAILURE);
+      return nullptr;
+    }
+
+    JSContext* cx = jsapi.cx();
+    JS::Rooted<JSObject*> body(cx, mReadableStreamBody);
+    bool locked;
+    // We just need to check the 'locked' state because GetBodyUsed() already
+    // checked the 'disturbed' state.
+    if (!JS::ReadableStreamIsLocked(cx, body, &locked)) {
+      aRv.StealExceptionFromJSContext(cx);
+      return nullptr;
+    }
+
+    bodyUsed = locked;
+  }
+
+  if (bodyUsed) {
     aRv.ThrowTypeError<MSG_FETCH_BODY_CONSUMED_ERROR>();
     return nullptr;
   }
@@ -329,8 +367,7 @@ Response::Clone(JSContext* aCx, ErrorResult& aRv)
   nsCOMPtr<nsIInputStream> inputStream;
 
   JS::Rooted<JSObject*> body(aCx);
-  MaybeTeeReadableStreamBody(aCx, &body,
-                             getter_AddRefs(streamReader),
+  MaybeTeeReadableStreamBody(aCx, &body, getter_AddRefs(streamReader),
                              getter_AddRefs(inputStream), aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
@@ -340,9 +377,8 @@ Response::Clone(JSContext* aCx, ErrorResult& aRv)
   MOZ_ASSERT_IF(body, inputStream);
 
   RefPtr<InternalResponse> ir =
-    mInternalResponse->Clone(body
-      ? InternalResponse::eDontCloneInputStream
-      : InternalResponse::eCloneInputStream);
+      mInternalResponse->Clone(body ? InternalResponse::eDontCloneInputStream
+                                    : InternalResponse::eCloneInputStream);
 
   RefPtr<Response> response = new Response(mOwner, ir, GetSignalImpl());
 
@@ -359,10 +395,9 @@ Response::Clone(JSContext* aCx, ErrorResult& aRv)
   return response.forget();
 }
 
-already_AddRefed<Response>
-Response::CloneUnfiltered(JSContext* aCx, ErrorResult& aRv)
-{
-  if (BodyUsed()) {
+already_AddRefed<Response> Response::CloneUnfiltered(JSContext* aCx,
+                                                     ErrorResult& aRv) {
+  if (GetBodyUsed(aRv)) {
     aRv.ThrowTypeError<MSG_FETCH_BODY_CONSUMED_ERROR>();
     return nullptr;
   }
@@ -371,8 +406,7 @@ Response::CloneUnfiltered(JSContext* aCx, ErrorResult& aRv)
   nsCOMPtr<nsIInputStream> inputStream;
 
   JS::Rooted<JSObject*> body(aCx);
-  MaybeTeeReadableStreamBody(aCx, &body,
-                             getter_AddRefs(streamReader),
+  MaybeTeeReadableStreamBody(aCx, &body, getter_AddRefs(streamReader),
                              getter_AddRefs(inputStream), aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
@@ -382,9 +416,8 @@ Response::CloneUnfiltered(JSContext* aCx, ErrorResult& aRv)
   MOZ_ASSERT_IF(body, inputStream);
 
   RefPtr<InternalResponse> clone =
-    mInternalResponse->Clone(body
-      ? InternalResponse::eDontCloneInputStream
-      : InternalResponse::eCloneInputStream);
+      mInternalResponse->Clone(body ? InternalResponse::eDontCloneInputStream
+                                    : InternalResponse::eCloneInputStream);
 
   RefPtr<InternalResponse> ir = clone->Unfiltered();
   RefPtr<Response> ref = new Response(mOwner, ir, GetSignalImpl());
@@ -402,23 +435,17 @@ Response::CloneUnfiltered(JSContext* aCx, ErrorResult& aRv)
   return ref.forget();
 }
 
-void
-Response::SetBody(nsIInputStream* aBody, int64_t aBodySize)
-{
-  MOZ_ASSERT(!BodyUsed());
+void Response::SetBody(nsIInputStream* aBody, int64_t aBodySize) {
+  MOZ_ASSERT(!CheckBodyUsed());
   mInternalResponse->SetBody(aBody, aBodySize);
 }
 
-already_AddRefed<InternalResponse>
-Response::GetInternalResponse() const
-{
+already_AddRefed<InternalResponse> Response::GetInternalResponse() const {
   RefPtr<InternalResponse> ref = mInternalResponse;
   return ref.forget();
 }
 
-Headers*
-Response::Headers_()
-{
+Headers* Response::Headers_() {
   if (!mHeaders) {
     mHeaders = new Headers(mOwner, mInternalResponse->Headers());
   }
@@ -426,5 +453,5 @@ Response::Headers_()
   return mHeaders;
 }
 
-} // namespace dom
-} // namespace mozilla
+}  // namespace dom
+}  // namespace mozilla

@@ -31,7 +31,7 @@ describe("CFRPageActions", () => {
   ];
 
   beforeEach(() => {
-    sandbox = sinon.sandbox.create();
+    sandbox = sinon.createSandbox();
     clock = sandbox.useFakeTimers();
 
     fakeRecommendation = {
@@ -58,10 +58,16 @@ describe("CFRPageActions", () => {
             label: {string_id: "primary_button_id"},
             action: {id: "primary_action"},
           },
-          secondary: {
+          secondary: [{
             label: {string_id: "secondary_button_id"},
             action: {id: "secondary_action"},
-          },
+          }, {
+            label: {string_id: "secondary_button_id_2"},
+            action: {id: "secondary_action"},
+          }, {
+            label: {string_id: "secondary_button_id_3"},
+            action: {id: "secondary_action"},
+          }],
         },
       },
     };
@@ -399,6 +405,10 @@ describe("CFRPageActions", () => {
           .resolves({value: "Primary Button", attributes: {accesskey: "p"}})
           .withArgs({string_id: "secondary_button_id"})
           .resolves({value: "Secondary Button", attributes: {accesskey: "s"}})
+          .withArgs({string_id: "secondary_button_id_2"})
+          .resolves({value: "Secondary Button 2", attributes: {accesskey: "a"}})
+          .withArgs({string_id: "secondary_button_id_3"})
+          .resolves({value: "Secondary Button 3", attributes: {accesskey: "g"}})
           .withArgs(sinon.match({string_id: "cfr-doorhanger-extension-learn-more-link"}))
           .resolves("Learn more")
           .withArgs(sinon.match({string_id: "cfr-doorhanger-extension-total-users"}))
@@ -510,6 +520,54 @@ describe("CFRPageActions", () => {
             message_id: fakeRecommendation.id,
             bucket_id: fakeRecommendation.content.bucket_id,
             event: "DISMISS",
+          },
+        });
+        // Should remove the recommendation
+        assert.isFalse(CFRPageActions.RecommendationMap.has(fakeBrowser));
+      });
+      it("should send right telemetry for BLOCK secondary action", async () => {
+        await pageAction._handleClick();
+        const blockAction = global.PopupNotifications.show.firstCall.args[5][1]; // eslint-disable-line prefer-destructuring
+
+        assert.deepEqual(blockAction.label, {value: "Secondary Button 2", attributes: {accesskey: "a"}});
+        sandbox.spy(pageAction, "hide");
+        sandbox.spy(pageAction, "_blockMessage");
+        CFRPageActions.RecommendationMap.set(fakeBrowser, {});
+        blockAction.callback();
+        assert.calledOnce(pageAction.hide);
+        assert.calledOnce(pageAction._blockMessage);
+        // Should send telemetry
+        assert.calledWith(dispatchStub, {
+          type: "DOORHANGER_TELEMETRY",
+          data: {
+            action: "cfr_user_event",
+            source: "CFR",
+            message_id: fakeRecommendation.id,
+            bucket_id: fakeRecommendation.content.bucket_id,
+            event: "BLOCK",
+          },
+        });
+        // Should remove the recommendation
+        assert.isFalse(CFRPageActions.RecommendationMap.has(fakeBrowser));
+      });
+      it("should send right telemetry for MANAGE secondary action", async () => {
+        await pageAction._handleClick();
+        const blockAction = global.PopupNotifications.show.firstCall.args[5][2]; // eslint-disable-line prefer-destructuring
+
+        assert.deepEqual(blockAction.label, {value: "Secondary Button 3", attributes: {accesskey: "g"}});
+        sandbox.spy(pageAction, "hide");
+        CFRPageActions.RecommendationMap.set(fakeBrowser, {});
+        blockAction.callback();
+        assert.calledOnce(pageAction.hide);
+        // Should send telemetry
+        assert.calledWith(dispatchStub, {
+          type: "DOORHANGER_TELEMETRY",
+          data: {
+            action: "cfr_user_event",
+            source: "CFR",
+            message_id: fakeRecommendation.id,
+            bucket_id: fakeRecommendation.content.bucket_id,
+            event: "MANAGE",
           },
         });
         // Should remove the recommendation

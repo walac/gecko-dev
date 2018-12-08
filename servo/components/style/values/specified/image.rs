@@ -1,34 +1,33 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 //! CSS handling for the specified value of
 //! [`image`][image]s
 //!
 //! [image]: https://drafts.csswg.org/css-images/#image-values
 
-use Atom;
-use cssparser::{Parser, Token};
-use custom_properties::SpecifiedValue;
-use parser::{Parse, ParserContext};
+use crate::custom_properties::SpecifiedValue;
+use crate::parser::{Parse, ParserContext};
+#[cfg(feature = "gecko")]
+use crate::values::computed::{Context, Position as ComputedPosition, ToComputedValue};
+use crate::values::generics::image::PaintWorklet;
+use crate::values::generics::image::{self as generic, Circle, CompatMode, Ellipse, ShapeExtent};
+use crate::values::generics::position::Position as GenericPosition;
+use crate::values::specified::position::{LegacyPosition, Position, PositionComponent, Side, X, Y};
+use crate::values::specified::url::SpecifiedImageUrl;
+use crate::values::specified::{Angle, Color, Length, LengthOrPercentage};
+use crate::values::specified::{Number, NumberOrPercentage, Percentage};
+use crate::values::{Either, None_};
+use crate::Atom;
+use cssparser::{Delimiter, Parser, Token};
 use selectors::parser::SelectorParseErrorKind;
 #[cfg(feature = "servo")]
 use servo_url::ServoUrl;
 use std::cmp::Ordering;
-use std::f32::consts::PI;
 use std::fmt::{self, Write};
 use style_traits::{CssType, CssWriter, KeywordsCollectFn, ParseError};
-use style_traits::{StyleParseErrorKind, SpecifiedValueInfo, ToCss};
-use values::{Either, None_};
-#[cfg(feature = "gecko")]
-use values::computed::{Context, Position as ComputedPosition, ToComputedValue};
-use values::generics::image::{self as generic, Circle, CompatMode, Ellipse, ShapeExtent};
-use values::generics::image::PaintWorklet;
-use values::generics::position::Position as GenericPosition;
-use values::specified::{Angle, Color, Length, LengthOrPercentage};
-use values::specified::{Number, NumberOrPercentage, Percentage};
-use values::specified::position::{LegacyPosition, Position, PositionComponent, Side, X, Y};
-use values::specified::url::SpecifiedImageUrl;
+use style_traits::{SpecifiedValueInfo, StyleParseErrorKind, ToCss};
 
 /// A specified image layer.
 pub type ImageLayer = Either<None_, Image>;
@@ -167,7 +166,7 @@ impl Image {
     /// for insertion in the cascade.
     #[cfg(feature = "servo")]
     pub fn for_cascade(url: ServoUrl) -> Self {
-        use values::CssUrl;
+        use crate::values::CssUrl;
         generic::Image::Url(CssUrl::for_cascade(url))
     }
 
@@ -190,7 +189,9 @@ impl Image {
         context: &ParserContext,
         input: &mut Parser<'i, 't>,
     ) -> Result<Image, ParseError<'i>> {
-        if let Ok(url) = input.try(|input| SpecifiedImageUrl::parse_with_cors_anonymous(context, input)) {
+        if let Ok(url) =
+            input.try(|input| SpecifiedImageUrl::parse_with_cors_anonymous(context, input))
+        {
             return Ok(generic::Image::Url(url));
         }
         Self::parse(context, input)
@@ -267,7 +268,7 @@ impl Parse for Gradient {
 
         #[cfg(feature = "gecko")]
         {
-            use gecko_bindings::structs;
+            use crate::gecko_bindings::structs;
             if compat_mode == CompatMode::Moz &&
                 !unsafe { structs::StaticPrefs_sVarCache_layout_css_prefixes_gradients }
             {
@@ -679,7 +680,7 @@ impl GradientKind {
 impl generic::LineDirection for LineDirection {
     fn points_downwards(&self, compat_mode: CompatMode) -> bool {
         match *self {
-            LineDirection::Angle(ref angle) => angle.radians() == PI,
+            LineDirection::Angle(ref angle) => angle.degrees() == 180.0,
             LineDirection::Vertical(Y::Bottom) if compat_mode == CompatMode::Modern => true,
             LineDirection::Vertical(Y::Top) if compat_mode != CompatMode::Modern => true,
             #[cfg(feature = "gecko")]
@@ -690,8 +691,8 @@ impl generic::LineDirection for LineDirection {
                 }),
                 None,
             ) => {
-                use values::computed::Percentage as ComputedPercentage;
-                use values::specified::transform::OriginComponent;
+                use crate::values::computed::Percentage as ComputedPercentage;
+                use crate::values::specified::transform::OriginComponent;
 
                 // `50% 0%` is the default value for line direction.
                 // These percentage values can also be keywords.
@@ -956,17 +957,43 @@ impl GradientItem {
         context: &ParserContext,
         input: &mut Parser<'i, 't>,
     ) -> Result<Vec<Self>, ParseError<'i>> {
+        let mut items = Vec::new();
         let mut seen_stop = false;
-        let items = input.parse_comma_separated(|input| {
-            if seen_stop {
-                if let Ok(hint) = input.try(|i| LengthOrPercentage::parse(context, i)) {
-                    seen_stop = false;
-                    return Ok(generic::GradientItem::InterpolationHint(hint));
+
+        loop {
+            input.parse_until_before(Delimiter::Comma, |input| {
+                if seen_stop {
+                    if let Ok(hint) = input.try(|i| LengthOrPercentage::parse(context, i)) {
+                        seen_stop = false;
+                        items.push(generic::GradientItem::InterpolationHint(hint));
+                        return Ok(());
+                    }
                 }
+
+                let stop = ColorStop::parse(context, input)?;
+
+                if let Ok(multi_position) = input.try(|i| LengthOrPercentage::parse(context, i)) {
+                    let stop_color = stop.color.clone();
+                    items.push(generic::GradientItem::ColorStop(stop));
+                    items.push(generic::GradientItem::ColorStop(ColorStop {
+                        color: stop_color,
+                        position: Some(multi_position),
+                    }));
+                } else {
+                    items.push(generic::GradientItem::ColorStop(stop));
+                }
+
+                seen_stop = true;
+                Ok(())
+            })?;
+
+            match input.next() {
+                Err(_) => break,
+                Ok(&Token::Comma) => continue,
+                Ok(_) => unreachable!(),
             }
-            seen_stop = true;
-            ColorStop::parse(context, input).map(generic::GradientItem::ColorStop)
-        })?;
+        }
+
         if !seen_stop || items.len() < 2 {
             return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
         }
@@ -998,7 +1025,8 @@ impl Parse for PaintWorklet {
                 .try(|input| {
                     input.expect_comma()?;
                     input.parse_comma_separated(|input| SpecifiedValue::parse(input))
-                }).unwrap_or(vec![]);
+                })
+                .unwrap_or(vec![]);
             Ok(PaintWorklet { name, arguments })
         })
     }

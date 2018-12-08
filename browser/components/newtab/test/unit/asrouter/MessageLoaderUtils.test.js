@@ -232,7 +232,7 @@ describe("MessageLoaderUtils", () => {
     let installAddonStub;
     beforeEach(() => {
       globals = new GlobalOverrider();
-      sandbox = sinon.sandbox.create();
+      sandbox = sinon.createSandbox();
       getInstallStub = sandbox.stub();
       installAddonStub = sandbox.stub();
       globals.set("AddonManager", {
@@ -252,6 +252,11 @@ describe("MessageLoaderUtils", () => {
 
       assert.calledOnce(getInstallStub);
       assert.calledOnce(installAddonStub);
+
+      // Verify that the expected installation source has been passed to the getInstallForURL
+      // method (See Bug 1496167 for a rationale).
+      assert.calledWithExactly(getInstallStub, "foo.com", "application/x-xpinstall", null,
+                               null, null, null, null, {source: "activitystream"});
     });
     it("should not call the Addons API on invalid URLs", async () => {
       sandbox.stub(global.Services.scriptSecurityManager, "getSystemPrincipal").throws();

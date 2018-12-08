@@ -13,6 +13,7 @@ TEST_HARNESS_FILES.xpcshell.devtools.client.shared.test += [
 DIRS += [
     'components',
     'redux',
+    'remote-debugging',
     'source-map',
     'vendor',
     'webpack',
@@ -48,7 +49,6 @@ DevToolsModules(
     'stylesheet-utils.js',
     'suggestion-picker.js',
     'telemetry.js',
-    'TelemetryStopwatch.jsm',
     'theme.js',
     'undo.js',
     'unicode-url.js',

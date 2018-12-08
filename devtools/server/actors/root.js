@@ -14,6 +14,10 @@ const { DebuggerServer } = require("devtools/server/main");
 
 loader.lazyRequireGetter(this, "ChromeWindowTargetActor",
   "devtools/server/actors/targets/chrome-window", true);
+loader.lazyRequireGetter(this, "ContentProcessTargetActor",
+  "devtools/server/actors/targets/content-process", true);
+loader.lazyRequireGetter(this, "ParentProcessTargetActor",
+  "devtools/server/actors/targets/parent-process", true);
 
 /* Root actor for the remote debugging protocol. */
 
@@ -112,9 +116,6 @@ RootActor.prototype = {
 
   traits: {
     sources: true,
-    // Whether the server-side highlighter actor exists and can be used to
-    // remotely highlight nodes (see server/actors/highlighters.js)
-    highlightable: true,
     networkMonitor: true,
     // Whether the storage inspector actor to inspect cookies, etc.
     storageInspector: true,
@@ -128,13 +129,6 @@ RootActor.prototype = {
     // Whether the server can return wasm binary source
     wasmBinarySource: true,
     bulk: true,
-    // Whether the style rule actor implements the modifySelector method
-    // that modifies the rule's selector
-    selectorEditable: true,
-    // Whether the dom node actor implements the getCssPath method. Added in 53.
-    getCssPath: true,
-    // Whether the dom node actor implements the getXPath method. Added in 56.
-    getXPath: true,
     // Whether the director scripts are supported
     directorScripts: true,
     // Whether the debugger server supports
@@ -171,6 +165,12 @@ RootActor.prototype = {
     // Whether or not the webextension addon actor have to be connected
     // to retrieve the extension child process target actors.
     webExtensionAddonConnect: true,
+    // Version of perf actor. Fx65+
+    // Version 1 - Firefox 65: Introduces a duration-based buffer. With that change
+    // Services.profiler.StartProfiler method accepts an additional parameter called
+    // `window-length`. This is an optional parameter but it will throw an error if the
+    // profiled Firefox doesn't accept it.
+    perfActorVersion: 1,
   },
 
   /**
@@ -182,7 +182,7 @@ RootActor.prototype = {
       applicationType: this.applicationType,
       /* This is not in the spec, but it's used by tests. */
       testConnectionPrefix: this.conn.prefix,
-      traits: this.traits
+      traits: this.traits,
     };
   },
 
@@ -277,7 +277,7 @@ RootActor.prototype = {
    * would trigger any lazy tabs to be loaded, greatly increasing resource usage.  Avoid
    * this method whenever possible.
    */
-  onListTabs: async function(request) {
+  onListTabs: async function(options) {
     const tabList = this._parameters.tabList;
     if (!tabList) {
       return { from: this.actorID, error: "noTabs",
@@ -296,7 +296,6 @@ RootActor.prototype = {
     const targetActorList = [];
     let selected;
 
-    const options = request.options || {};
     const targetActors = await tabList.getList(options);
     for (const targetActor of targetActors) {
       if (targetActor.exited) {
@@ -350,7 +349,7 @@ RootActor.prototype = {
       }
       return {
         error: "noTab",
-        message: "Unexpected error while calling getTab(): " + error
+        message: "Unexpected error while calling getTab(): " + error,
       };
     }
 
@@ -365,7 +364,7 @@ RootActor.prototype = {
       return {
         from: this.actorID,
         error: "forbidden",
-        message: "You are not allowed to debug windows."
+        message: "You are not allowed to debug windows.",
       };
     }
     const window = Services.wm.getOuterWindowWithId(outerWindowID);
@@ -420,7 +419,7 @@ RootActor.prototype = {
 
       return {
         "from": this.actorID,
-        "addons": addonTargetActors.map(addonTargetActor => addonTargetActor.form())
+        "addons": addonTargetActors.map(addonTargetActor => addonTargetActor.form()),
       };
     });
   },
@@ -456,7 +455,7 @@ RootActor.prototype = {
 
       return {
         "from": this.actorID,
-        "workers": actors.map(actor => actor.form())
+        "workers": actors.map(actor => actor.form()),
       };
     });
   },
@@ -489,7 +488,7 @@ RootActor.prototype = {
 
       return {
         "from": this.actorID,
-        "registrations": actors.map(actor => actor.form())
+        "registrations": actors.map(actor => actor.form()),
       };
     });
   },
@@ -507,7 +506,7 @@ RootActor.prototype = {
     }
     processList.onListChanged = this._onProcessListChanged;
     return {
-      processes: processList.getList()
+      processes: processList.getList(),
     };
   },
 
@@ -528,16 +527,30 @@ RootActor.prototype = {
     // If the request doesn't contains id parameter or id is 0
     // (id == 0, based on onListProcesses implementation)
     if ((!("id" in request)) || request.id === 0) {
-      if (this._parentProcessTargetActor && (!this._parentProcessTargetActor.docShell ||
-          this._parentProcessTargetActor.docShell.isBeingDestroyed)) {
+      // Check if we are running on xpcshell. hiddenDOMWindow is going to throw on it.
+      // When running on xpcshell, there is no valid browsing context to attach to
+      // and so ParentProcessTargetActor doesn't make sense as it inherits from
+      // BrowsingContextTargetActor. So instead use ContentProcessTargetActor, which
+      // matches xpcshell needs.
+      let isXpcshell = true;
+      try {
+        isXpcshell = !Services.wm.getMostRecentWindow(null) &&
+                     !Services.appShell.hiddenDOMWindow;
+      } catch (e) {}
+
+      if (!isXpcshell && this._parentProcessTargetActor &&
+          (!this._parentProcessTargetActor.docShell ||
+            this._parentProcessTargetActor.docShell.isBeingDestroyed)) {
         this._parentProcessTargetActor.destroy();
         this._parentProcessTargetActor = null;
       }
       if (!this._parentProcessTargetActor) {
-        // Create a ParentProcessTargetActor for the parent process
-        const { ParentProcessTargetActor } =
-          require("devtools/server/actors/targets/parent-process");
-        this._parentProcessTargetActor = new ParentProcessTargetActor(this.conn);
+        // Create the target actor for the parent process
+        if (isXpcshell) {
+          this._parentProcessTargetActor = new ContentProcessTargetActor(this.conn);
+        } else {
+          this._parentProcessTargetActor = new ParentProcessTargetActor(this.conn);
+        }
         this._globalActorPool.manage(this._parentProcessTargetActor);
       }
 
@@ -594,7 +607,7 @@ RootActor.prototype = {
       }
       delete this._extraActors[name];
     }
-  }
+  },
 };
 
 RootActor.prototype.requestTypes = {
@@ -608,7 +621,7 @@ RootActor.prototype.requestTypes = {
   listProcesses: RootActor.prototype.onListProcesses,
   getProcess: RootActor.prototype.onGetProcess,
   echo: RootActor.prototype.onEcho,
-  protocolDescription: RootActor.prototype.onProtocolDescription
+  protocolDescription: RootActor.prototype.onProtocolDescription,
 };
 
 exports.RootActor = RootActor;

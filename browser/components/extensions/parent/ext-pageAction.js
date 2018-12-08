@@ -55,8 +55,9 @@ this.pageAction = class extends ExtensionAPI {
       show = false;
     } else {
       // Might show or hide depending on the URL. Enable pattern matching.
-      showMatches = new MatchPatternSet(show_matches);
-      hideMatches = new MatchPatternSet(hide_matches);
+      const {restrictSchemes} = extension;
+      showMatches = new MatchPatternSet(show_matches, {restrictSchemes});
+      hideMatches = new MatchPatternSet(hide_matches, {restrictSchemes});
     }
 
     this.defaults = {
@@ -65,6 +66,7 @@ this.pageAction = class extends ExtensionAPI {
       hideMatches,
       title: options.default_title || extension.name,
       popup: options.default_popup || "",
+      pinned: options.pinned,
     };
 
     this.browserStyle = options.browser_style;
@@ -87,7 +89,7 @@ this.pageAction = class extends ExtensionAPI {
         extensionID: extension.id,
         title: this.defaults.title,
         iconURL: this.defaults.icon,
-        pinnedToUrlbar: true,
+        pinnedToUrlbar: this.defaults.pinned,
         disabled: !this.defaults.show,
         onCommand: (event, buttonNode) => {
           this.handleClick(event.target.ownerGlobal);

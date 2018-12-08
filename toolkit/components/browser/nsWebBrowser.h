@@ -35,11 +35,10 @@
 
 #include "mozilla/BasePrincipal.h"
 #include "nsTArray.h"
-#include "nsWeakPtr.h"
+#include "nsIWeakReferenceUtils.h"
 
-class nsWebBrowserInitInfo
-{
-public:
+class nsWebBrowserInitInfo {
+ public:
   // nsIBaseWindow Stuff
   int32_t x;
   int32_t y;
@@ -49,22 +48,15 @@ public:
   nsString name;
 };
 
-class nsWebBrowserListenerState
-{
-public:
-  bool Equals(nsIWeakReference* aListener, const nsIID& aID)
-  {
-    return mWeakPtr.get() == aListener && mID.Equals(aID);
+//  {cda5863a-aa9c-411e-be49-ea0d525ab4b5} -
+#define NS_WEBBROWSER_CID                            \
+  {                                                  \
+    0xcda5863a, 0xaa9c, 0x411e, {                    \
+      0xbe, 0x49, 0xea, 0x0d, 0x52, 0x5a, 0xb4, 0xb5 \
+    }                                                \
   }
 
-  nsWeakPtr mWeakPtr;
-  nsIID mID;
-};
-
-//  {cda5863a-aa9c-411e-be49-ea0d525ab4b5} -
-#define NS_WEBBROWSER_CID \
-  { 0xcda5863a, 0xaa9c, 0x411e, { 0xbe, 0x49, 0xea, 0x0d, 0x52, 0x5a, 0xb4, 0xb5 } }
-
+class mozIDOMWindowProxy;
 
 class nsWebBrowser final : public nsIWebBrowser,
                            public nsIWebNavigation,
@@ -74,32 +66,27 @@ class nsWebBrowser final : public nsIWebBrowser,
                            public nsIInterfaceRequestor,
                            public nsIWebBrowserPersist,
                            public nsIWebProgressListener,
-                           public nsSupportsWeakReference
-{
+                           public nsSupportsWeakReference {
   friend class nsDocShellTreeOwner;
 
-public:
-
+ public:
   // The implementation of non-refcounted nsIWidgetListener, which would hold a
   // strong reference on stack before calling nsWebBrowser's
   // MOZ_CAN_RUN_SCRIPT methods.
-  class WidgetListenerDelegate : public nsIWidgetListener
-  {
-  public:
+  class WidgetListenerDelegate : public nsIWidgetListener {
+   public:
     explicit WidgetListenerDelegate(nsWebBrowser* aWebBrowser)
-      : mWebBrowser(aWebBrowser) {}
+        : mWebBrowser(aWebBrowser) {}
     MOZ_CAN_RUN_SCRIPT_BOUNDARY virtual void WindowActivated() override;
     MOZ_CAN_RUN_SCRIPT_BOUNDARY virtual void WindowDeactivated() override;
     MOZ_CAN_RUN_SCRIPT_BOUNDARY virtual bool PaintWindow(
-      nsIWidget* aWidget, mozilla::LayoutDeviceIntRegion aRegion) override;
+        nsIWidget* aWidget, mozilla::LayoutDeviceIntRegion aRegion) override;
 
-  private:
+   private:
     // The lifetime of WidgetListenerDelegate is bound to nsWebBrowser so we
     // just use raw pointer here.
     nsWebBrowser* mWebBrowser;
   };
-
-  nsWebBrowser();
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsWebBrowser, nsIWebBrowser)
@@ -118,7 +105,12 @@ public:
   void FocusActivate();
   void FocusDeactivate();
 
-protected:
+  static already_AddRefed<nsWebBrowser> Create(
+      nsIWebBrowserChrome* aContainerWindow, nsIWidget* aParentWidget,
+      const mozilla::OriginAttributes& aOriginAttributes,
+      mozIDOMWindowProxy* aOpener, int aItemType);
+
+ protected:
   virtual ~nsWebBrowser();
   NS_IMETHOD InternalDestroy();
 
@@ -126,16 +118,19 @@ protected:
   NS_IMETHOD SetDocShell(nsIDocShell* aDocShell);
   NS_IMETHOD EnsureDocShellTreeOwner();
   NS_IMETHOD BindListener(nsISupports* aListener, const nsIID& aIID);
-  NS_IMETHOD UnBindListener(nsISupports* aListener, const nsIID& aIID);
   NS_IMETHOD EnableGlobalHistory(bool aEnable);
+
+  nsIWidget* EnsureWidget();
 
   // nsIWidgetListener methods for WidgetListenerDelegate.
   MOZ_CAN_RUN_SCRIPT void WindowActivated();
   MOZ_CAN_RUN_SCRIPT void WindowDeactivated();
-  MOZ_CAN_RUN_SCRIPT bool PaintWindow(
-    nsIWidget* aWidget, mozilla::LayoutDeviceIntRegion aRegion);
+  MOZ_CAN_RUN_SCRIPT bool PaintWindow(nsIWidget* aWidget,
+                                      mozilla::LayoutDeviceIntRegion aRegion);
 
-protected:
+  explicit nsWebBrowser(int aItemType);
+
+ protected:
   RefPtr<nsDocShellTreeOwner> mDocShellTreeOwner;
   nsCOMPtr<nsIDocShell> mDocShell;
   nsCOMPtr<nsIInterfaceRequestor> mDocShellAsReq;
@@ -146,8 +141,7 @@ protected:
 
   nsCOMPtr<nsIWidget> mInternalWidget;
   nsCOMPtr<nsIWindowWatcher> mWWatch;
-  nsAutoPtr<nsWebBrowserInitInfo> mInitInfo;
-  uint32_t mContentType;
+  const uint32_t mContentType;
   bool mActivating;
   bool mShouldEnableHistory;
   bool mIsActive;
@@ -170,7 +164,6 @@ protected:
 
   // Weak Reference interfaces...
   nsIWidget* mParentWidget;
-  nsAutoPtr<nsTArray<nsWebBrowserListenerState> > mListenerArray;
 };
 
 #endif /* nsWebBrowser_h__ */

@@ -185,10 +185,7 @@ class BackendTupfile(object):
         for srcs, compiler, flags, dash_c, prefix in compilers:
             for src in sorted(srcs):
                 self.export_icecc()
-                # AS can be set to $(CC), so we need to call expand_variables on
-                # the compiler to get the real value.
-                compiler_value = self.variables.get(compiler, self.environment.substs[compiler])
-                cmd = [expand_variables(compiler_value, self.environment.substs)]
+                cmd = [self.variables.get(compiler, self.environment.substs[compiler])]
                 cmd.extend(shell_quote(f) for f in self.local_flags[flags])
                 cmd.extend(shell_quote(f) for f in self.per_source_flags[src])
                 cmd.extend([dash_c, '%f', '-o', '%o'])
@@ -299,6 +296,11 @@ class TupBackend(CommonBackend):
         return env
 
     def build(self, config, output, jobs, verbose, what=None):
+        if len(what) == 1 and what[0] in ('binaries', 'faster'):
+            print("\nNOTE: `binaries` and `faster` targets are subsumed by the "
+                  "top-level build command in the Tup backend. Running `build` "
+                  "with no parameters instead.\n")
+            what = None
         if not what:
             what = ['%s/<default>' % config.topobjdir]
         else:
@@ -766,7 +768,7 @@ class TupBackend(CommonBackend):
             return []
 
         cargo_flags = ['--build-plan', '-Z', 'unstable-options']
-        if not self.environment.substs.get('MOZ_DEBUG_RUST'):
+        if not obj.config.substs.get('MOZ_DEBUG_RUST'):
             cargo_flags += ['--release']
         cargo_flags += [
             '--frozen',
@@ -827,6 +829,12 @@ class TupBackend(CommonBackend):
         invocations = build_plan['invocations']
         processed = set()
 
+        # Enable link-time optimization for release builds.
+        cargo_library_flags = []
+        if (not obj.config.substs.get('DEVELOPER_OPTIONS') and
+            not obj.config.substs.get('MOZ_DEBUG_RUST')):
+            cargo_library_flags += ['-C', 'lto']
+
         rust_build_home = mozpath.join(self.environment.topobjdir,
                                        'toolkit/library/rust')
 
@@ -871,11 +879,19 @@ class TupBackend(CommonBackend):
             command.append(invocation['program'])
             command.extend(cargo_quote(a.replace('dep-info,', ''))
                            for a in invocation['args'])
+
+            # This is equivalent to `cargo_rustc_flags` in the make backend,
+            # which are passed to the top-level crate's rustc invocation, in
+            # our case building the static lib.
+            if (invocation['target_kind'][0] == 'staticlib' and
+                obj.basename == shortname):
+                command += cargo_library_flags
+
             outputs = invocation['outputs']
 
             invocation['full-deps'] = set()
 
-            if os.path.basename(invocation['program']) == 'build-script-build':
+            if os.path.basename(invocation['program']) in ['build-script-build', 'build-script-main']:
                 out_dir = invocation['env']['OUT_DIR']
                 for output in cargo_extra_outputs.get(shortname, []):
                     outputs.append(os.path.join(out_dir, output))
@@ -950,7 +966,7 @@ class TupBackend(CommonBackend):
             invocation['full-deps'].update(inputs)
             invocation['full-deps'].update(invocation['outputs'])
 
-            cmd_key = ' '.join(command)
+            cmd_key = ' '.join(outputs)
             if cmd_key not in self._rust_cmds:
                 self._rust_cmds.add(cmd_key)
                 # We have some custom build scripts that depend on python code
@@ -1100,7 +1116,7 @@ class TupBackend(CommonBackend):
             if not path:
                 raise Exception("Cannot install to " + target)
 
-        js_shell = self.environment.substs.get('JS_SHELL_NAME')
+        js_shell = obj.config.substs.get('JS_SHELL_NAME')
         if js_shell:
             js_shell = '%s%s' % (js_shell,
                                  self.environment.substs['BIN_SUFFIX'])
@@ -1139,7 +1155,12 @@ class TupBackend(CommonBackend):
                                     if '*' not in p:
                                         yield p + '/'
                             prefix = ''.join(_prefix(f.full_path))
-                            self.backend_input_files.add(prefix)
+
+                            # The rest of the build system will not complain if
+                            # there is a wildcard referring to an empty source
+                            # directory, so guard against that here.
+                            if os.path.exists(prefix):
+                                self.backend_input_files.add(prefix)
 
                             output_dir = ''
                             # If we have a RenamedSourcePath here, the common backend

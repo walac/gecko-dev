@@ -10,6 +10,9 @@ const discovery = require("devtools/shared/discovery/discovery");
 const EventEmitter = require("devtools/shared/event-emitter");
 const {RuntimeTypes} = require("devtools/client/webide/modules/runtime-types");
 const promise = require("promise");
+
+loader.lazyRequireGetter(this, "adb", "devtools/shared/adb/adb", true);
+
 loader.lazyRequireGetter(this, "AuthenticationResult",
   "devtools/shared/security/auth", true);
 loader.lazyRequireGetter(this, "DevToolsUtils",
@@ -192,6 +195,30 @@ exports.RuntimeScanners = RuntimeScanners;
 
 /* SCANNERS */
 
+var UsbScanner = {
+  init() {
+    this._emitUpdated = this._emitUpdated.bind(this);
+  },
+  enable() {
+    adb.registerListener(this._emitUpdated);
+  },
+  disable() {
+    adb.unregisterListener(this._emitUpdated);
+  },
+  scan() {
+    return adb.updateRuntimes();
+  },
+  listRuntimes() {
+    return adb.getRuntimes();
+  },
+  _emitUpdated() {
+    this.emit("runtime-list-updated");
+  },
+};
+EventEmitter.decorate(UsbScanner);
+UsbScanner.init();
+RuntimeScanners.add(UsbScanner);
+
 var WiFiScanner = {
 
   _runtimes: [],
@@ -256,7 +283,7 @@ var WiFiScanner = {
       return;
     }
     WiFiScanner.updateRegistration();
-  }
+  },
 
 };
 
@@ -277,7 +304,7 @@ var StaticScanner = {
       runtimes.push(gLocalRuntime);
     }
     return runtimes;
-  }
+  },
 };
 
 EventEmitter.decorate(StaticScanner);
@@ -385,9 +412,9 @@ WiFiRuntime.prototype = {
         }
         promptWindow.close();
         promptWindow = null;
-      }
+      },
     };
-  }
+  },
 };
 
 // For testing use only

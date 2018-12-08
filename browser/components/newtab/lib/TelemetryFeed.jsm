@@ -10,6 +10,7 @@ ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const {actionTypes: at, actionUtils: au} = ChromeUtils.import("resource://activity-stream/common/Actions.jsm", {});
 const {Prefs} = ChromeUtils.import("resource://activity-stream/lib/ActivityStreamPrefs.jsm", {});
+const {classifySite} = ChromeUtils.import("resource://activity-stream/lib/SiteClassifier.jsm", {});
 
 ChromeUtils.defineModuleGetter(this, "ASRouterPreferences",
   "resource://activity-stream/lib/ASRouterPreferences.jsm");
@@ -21,10 +22,15 @@ ChromeUtils.defineModuleGetter(this, "UTEventReporting",
   "resource://activity-stream/lib/UTEventReporting.jsm");
 ChromeUtils.defineModuleGetter(this, "UpdateUtils",
   "resource://gre/modules/UpdateUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "HomePage",
+  "resource:///modules/HomePage.jsm");
+ChromeUtils.defineModuleGetter(this, "ExtensionSettingsStore",
+  "resource://gre/modules/ExtensionSettingsStore.jsm");
 
-XPCOMUtils.defineLazyServiceGetter(this, "gUUIDGenerator",
-  "@mozilla.org/uuid-generator;1",
-  "nsIUUIDGenerator");
+XPCOMUtils.defineLazyServiceGetters(this, {
+  gUUIDGenerator: ["@mozilla.org/uuid-generator;1", "nsIUUIDGenerator"],
+  aboutNewTabService: ["@mozilla.org/browser/aboutnewtab-service;1", "nsIAboutNewTabService"],
+});
 
 const ACTIVITY_STREAM_ID = "activity-stream";
 const ACTIVITY_STREAM_ENDPOINT_PREF = "browser.newtabpage.activity-stream.telemetry.ping.endpoint";
@@ -56,6 +62,7 @@ this.TelemetryFeed = class TelemetryFeed {
     this._prefs.observe(TELEMETRY_PREF, this._onTelemetryPrefChange);
     this._onEventsTelemetryPrefChange = this._onEventsTelemetryPrefChange.bind(this);
     this._prefs.observe(EVENTS_TELEMETRY_PREF, this._onEventsTelemetryPrefChange);
+    this._classifySite = classifySite;
   }
 
   init() {
@@ -382,9 +389,7 @@ this.TelemetryFeed = class TelemetryFeed {
 
   /**
    * Create a ping for AS router event. The client_id is set to "n/a" by default,
-   * AS router components could change that by including a boolean "includeClientID"
-   * to the payload of the action, impression_id would be set to "n/a" at the same time.
-   * Note that "includeClientID" will not be included in the result ping.
+   * different component can override this by its own telemetry collection policy.
    */
   createASRouterEvent(action) {
     const ping = {
@@ -393,21 +398,19 @@ this.TelemetryFeed = class TelemetryFeed {
       locale: Services.locale.appLocaleAsLangTag,
       impression_id: this._impressionId,
     };
-    if (action.data.includeClientID) {
-      // Ping-centre client will fill in the client_id if it's not provided in the ping
-      delete ping.client_id;
-      delete action.data.includeClientID;
-      ping.impression_id = "n/a";
-    }
     const event = Object.assign(ping, action.data);
     if (event.action === "cfr_user_event") {
       return this.applyCFRPolicy(event);
+    } else if (event.action === "snippets_user_event") {
+      return this.applySnippetsPolicy(event);
+    } else if (event.action === "onboarding_user_event") {
+      return this.applyOnboardingPolicy(event);
     }
     return event;
   }
 
   /**
-   * CFR metrics comply with following policies:
+   * Per Bug 1484035, CFR metrics comply with following policies:
    * 1). In release, it collects impression_id, and treats bucket_id as message_id
    * 2). In prerelease, it collects client_id and message_id
    * 3). In shield experiments conducted in release, it collects client_id and message_id
@@ -424,6 +427,28 @@ this.TelemetryFeed = class TelemetryFeed {
     }
     // bucket_id is no longer needed
     delete ping.bucket_id;
+    return ping;
+  }
+
+  /**
+   * Per Bug 1485069, all the metrics for Snippets in AS router use client_id in
+   * all the release channels
+   */
+  applySnippetsPolicy(ping) {
+    // Ping-centre client will fill in the client_id if it's not provided in the ping.
+    delete ping.client_id;
+    ping.impression_id = "n/a";
+    return ping;
+  }
+
+  /**
+   * Per Bug 1482134, all the metrics for Onboarding in AS router use client_id in
+   * all the release channels
+   */
+  applyOnboardingPolicy(ping) {
+    // Ping-centre client will fill in the client_id if it's not provided in the ping.
+    delete ping.client_id;
+    ping.impression_id = "n/a";
     return ping;
   }
 
@@ -466,10 +491,70 @@ this.TelemetryFeed = class TelemetryFeed {
     this.sendEvent(this.createUndesiredEvent(action));
   }
 
+  async sendPageTakeoverData() {
+    if (this.telemetryEnabled) {
+      const value = {};
+      let newtabAffected = false;
+      let homeAffected = false;
+
+      // Check whether or not about:home and about:newtab are set to a custom URL.
+      // If so, classify them.
+      if (Services.prefs.getBoolPref("browser.newtabpage.enabled") &&
+          aboutNewTabService.overridden &&
+          !aboutNewTabService.newTabURL.startsWith("moz-extension://")) {
+        value.newtab_url_category = await this._classifySite(aboutNewTabService.newTabURL);
+        newtabAffected = true;
+      }
+      // Check if the newtab page setting is controlled by an extension.
+      await ExtensionSettingsStore.initialize();
+      const newtabExtensionInfo = ExtensionSettingsStore.getSetting("url_overrides", "newTabURL");
+      if (newtabExtensionInfo && newtabExtensionInfo.id) {
+        value.newtab_extension_id = newtabExtensionInfo.id;
+        newtabAffected = true;
+      }
+
+      const homePageURL = HomePage.get();
+      if (!["about:home", "about:blank"].includes(homePageURL) &&
+          !homePageURL.startsWith("moz-extension://")) {
+        value.home_url_category = await this._classifySite(homePageURL);
+        homeAffected = true;
+      }
+      const homeExtensionInfo = ExtensionSettingsStore.getSetting("prefs", "homepage_override");
+      if (homeExtensionInfo && homeExtensionInfo.id) {
+        value.home_extension_id = homeExtensionInfo.id;
+        homeAffected = true;
+      }
+
+      let page;
+      if (newtabAffected && homeAffected) {
+        page = "both";
+      } else if (newtabAffected) {
+        page = "about:newtab";
+      } else if (homeAffected) {
+        page = "about:home";
+      }
+
+      if (page) {
+        const event = Object.assign(
+          this.createPing(),
+          {
+            action: "activity_stream_user_event",
+            event: "PAGE_TAKEOVER_DATA",
+            value,
+            page,
+            session_id: "n/a",
+          },
+        );
+        this.sendEvent(event);
+      }
+    }
+  }
+
   onAction(action) {
     switch (action.type) {
       case at.INIT:
         this.init();
+        this.sendPageTakeoverData();
         break;
       case at.NEW_TAB_INIT:
         this.handleNewTabInit(action);

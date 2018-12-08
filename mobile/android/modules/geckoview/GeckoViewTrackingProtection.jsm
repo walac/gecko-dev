@@ -20,8 +20,7 @@ class GeckoViewTrackingProtection extends GeckoViewModule {
     this.browser.addProgressListener(this.progressFilter, flags);
   }
 
-  onSecurityChange(aWebProgress, aRequest, aOldState, aState,
-                   aContentBlockingLogJSON) {
+  onSecurityChange(aWebProgress, aRequest, aState) {
     debug `onSecurityChange`;
 
     if (!(aState & Ci.nsIWebProgressListener.STATE_BLOCKED_TRACKING_CONTENT) ||
@@ -40,7 +39,7 @@ class GeckoViewTrackingProtection extends GeckoViewModule {
     let message = {
       type: "GeckoView:TrackingProtectionBlocked",
       src: uri,
-      matchedList: classChannel.matchedList
+      matchedList: classChannel.matchedList,
     };
 
     this.eventDispatcher.sendRequest(message);

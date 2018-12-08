@@ -43,6 +43,8 @@ TEST_SUITES = {
         'aliases': ('c', 'rc'),
         'mach_command': 'crashtest',
         'kwargs': {'test_file': None},
+        'task_regex': ['crashtest($|.*(-1|[^0-9])$)',
+                       'test-verify($|.*(-1|[^0-9])$)'],
     },
     'firefox-ui-functional': {
         'aliases': ('fxfn',),
@@ -69,6 +71,7 @@ TEST_SUITES = {
         'aliases': ('mn',),
         'mach_command': 'marionette-test',
         'kwargs': {'tests': None},
+        'task_regex': ['marionette($|.*(-1|[^0-9])$)'],
     },
     'mochitest-a11y': {
         'aliases': ('a11y', 'ally'),
@@ -213,7 +216,7 @@ _test_flavors = {
     'a11y': 'mochitest-a11y',
     'browser-chrome': 'mochitest-browser',
     'chrome': 'mochitest-chrome',
-    'crashtest': '',
+    'crashtest': 'crashtest',
     'firefox-ui-functional': 'firefox-ui-functional',
     'firefox-ui-update': 'firefox-ui-update',
     'marionette': 'marionette',
@@ -450,24 +453,20 @@ class TestMetadata(object):
             return
 
         wpt_path = os.path.join(self._srcdir, "testing", "web-platform")
-        wptrunner_path = os.path.join(wpt_path, "tests", "tools", "wptrunner")
-        manifest_path = os.path.join(self._objdir, "_tests", "web-platform")
+        sys.path = [wpt_path] + sys.path
 
-        sys.path = [wpt_path, wptrunner_path] + sys.path
+        import manifestupdate
+        # Set up a logger that will drop all the output
+        import logging
+        logger = logging.getLogger("manifestupdate")
+        logger.propogate = False
 
-        import manifestdownload
-        import wptrunner
-        from wptrunner.wptrunner import testloader
-
-        manifestdownload.run(manifest_path, self._srcdir)
-
-        kwargs = {"config": os.path.join(self._objdir, "_tests", "web-platform",
-                                         "wptrunner.local.ini"),
-                  "tests_root": None,
-                  "metadata_root": None}
-
-        wptrunner.wptcommandline.set_from_config(kwargs)
-        manifests = testloader.ManifestLoader(kwargs["test_paths"]).load()
+        manifests = manifestupdate.run(self._srcdir, self._objdir, rebuild=False, download=True,
+                                       config_path=None, rewrite_config=True, update=True,
+                                       logger=logger)
+        if not manifests:
+            print("Loading wpt manifest failed")
+            return
 
         for manifest, data in manifests.iteritems():
             tests_root = data["tests_path"]
@@ -488,6 +487,7 @@ class TestMetadata(object):
                         "support-files": "",
                         "subsuite": test_type,
                         "dir_relpath": os.path.dirname(src_path),
+                        "srcdir_relpath": src_path,
                         })
 
         self._wpt_loaded = True

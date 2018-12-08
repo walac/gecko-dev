@@ -13,7 +13,7 @@ class LSANLeaks(object):
     in allocation stacks
     """
 
-    def __init__(self, logger, scope=None, allowed=None):
+    def __init__(self, logger, scope=None, allowed=None, maxNumRecordedFrames=None):
         self.logger = logger
         self.inReport = False
         self.fatalError = False
@@ -21,7 +21,7 @@ class LSANLeaks(object):
         self.foundFrames = set()
         self.recordMoreFrames = None
         self.currStack = None
-        self.maxNumRecordedFrames = 4
+        self.maxNumRecordedFrames = maxNumRecordedFrames if maxNumRecordedFrames else 4
         self.summaryData = None
         self.scope = scope
         self.allowedMatch = None
@@ -50,6 +50,7 @@ class LSANLeaks(object):
             "    #\d+ 0x[0-9a-f]+ \(([^+]+)\+0x[0-9a-f]+\)")
         self.summaryRegexp = re.compile(
             "SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked in (\d+) allocation\(s\).")
+        self.rustRegexp = re.compile("::h[a-f0-9]{16}$")
         self.setAllowed(allowed)
 
     def setAllowed(self, allowedLines):
@@ -136,6 +137,7 @@ class LSANLeaks(object):
             self.logger.info("LeakSanitizer | To show the "
                              "addresses of leaked objects add report_objects=1 to LSAN_OPTIONS\n"
                              "This can be done in testing/mozbase/mozrunner/mozrunner/utils.py")
+            self.logger.info("Allowed depth was %d" % self.maxNumRecordedFrames)
 
             for frames, allowed in self.foundFrames:
                 self.logger.lsan_leak(frames, scope=self.scope, allowed_match=allowed)
@@ -165,7 +167,14 @@ class LSANLeaks(object):
     def _recordFrame(self, frame):
         if self.allowedMatch is None and self.allowedRegexp is not None:
             self.allowedMatch = frame if self.allowedRegexp.match(frame) else None
+        frame = self._cleanFrame(frame)
         self.currStack.append(frame)
         self.numRecordedFrames += 1
         if self.numRecordedFrames >= self.maxNumRecordedFrames:
             self.recordMoreFrames = False
+
+    def _cleanFrame(self, frame):
+        # Rust frames aren't properly demangled and in particular can contain
+        # some trailing junk of the form ::h[a-f0-9]{16} that changes with
+        # compiler versions; see bug 1507350.
+        return self.rustRegexp.sub("", frame)

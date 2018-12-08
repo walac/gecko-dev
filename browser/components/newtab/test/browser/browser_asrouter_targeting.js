@@ -109,7 +109,7 @@ add_task(async function check_localeLanguageCode() {
 });
 
 add_task(async function checkProfileAgeCreated() {
-  let profileAccessor = new ProfileAge();
+  let profileAccessor = await ProfileAge();
   is(await ASRouterTargeting.Environment.profileAgeCreated, await profileAccessor.created,
     "should return correct profile age creation date");
 
@@ -119,7 +119,7 @@ add_task(async function checkProfileAgeCreated() {
 });
 
 add_task(async function checkProfileAgeReset() {
-  let profileAccessor = new ProfileAge();
+  let profileAccessor = await ProfileAge();
   is(await ASRouterTargeting.Environment.profileAgeReset, await profileAccessor.reset,
     "should return correct profile age reset");
 
@@ -172,6 +172,20 @@ add_task(async function check_totalBookmarksCount() {
   await PlacesUtils.bookmarks.remove(bookmark.guid);
 });
 
+add_task(async function check_needsUpdate() {
+  QueryCache.queries.CheckBrowserNeedsUpdate.setUp(true);
+
+  const message = {id: "foo", targeting: "needsUpdate"};
+
+  is(await ASRouterTargeting.findMatchingMessage({messages: [message]}), message,
+    "Should select message because update count > 0");
+
+  QueryCache.queries.CheckBrowserNeedsUpdate.setUp(false);
+
+  is(await ASRouterTargeting.findMatchingMessage({messages: [message]}), null,
+    "Should not select message because update count == 0");
+});
+
 add_task(async function checksearchEngines() {
   const result = await ASRouterTargeting.Environment.searchEngines;
   const expectedInstalled = Services.search.getVisibleEngines()
@@ -184,10 +198,10 @@ add_task(async function checksearchEngines() {
     "searchEngines.installed should be an array of visible search engines");
   ok(result.current && typeof result.current === "string",
     "searchEngines.current should be a truthy string");
-  is(result.current, Services.search.currentEngine.identifier,
+  is(result.current, Services.search.defaultEngine.identifier,
     "searchEngines.current should be the current engine name");
 
-  const message = {id: "foo", targeting: `searchEngines[.current == ${Services.search.currentEngine.identifier}]`};
+  const message = {id: "foo", targeting: `searchEngines[.current == ${Services.search.defaultEngine.identifier}]`};
   is(await ASRouterTargeting.findMatchingMessage({messages: [message]}), message,
     "should select correct item by searchEngines.current");
 
@@ -326,6 +340,42 @@ add_task(async function checkFrecentSites() {
   await clearHistoryAndBookmarks();
 });
 
+add_task(async function check_pinned_sites() {
+  const originalPin = JSON.stringify(NewTabUtils.pinnedLinks.links);
+  const sitesToPin = [
+    {url: "https://foo.com"},
+    {url: "https://bloo.com"},
+    {url: "https://floogle.com", searchTopSite: true},
+  ];
+  sitesToPin.forEach((site => NewTabUtils.pinnedLinks.pin(site, NewTabUtils.pinnedLinks.links.length)));
+
+  // Unpinning adds null to the list of pinned sites, which we should test that we handle gracefully for our targeting
+  NewTabUtils.pinnedLinks.unpin(sitesToPin[1]);
+  ok(NewTabUtils.pinnedLinks.links.includes(null),
+    "should have set an item in pinned links to null via unpinning for testing");
+
+  let message;
+
+  message = {id: "foo", targeting: "'https://foo.com' in pinnedSites|mapToProperty('url')"};
+  is(await ASRouterTargeting.findMatchingMessage({messages: [message]}), message,
+    "should select correct item by url in pinnedSites");
+
+  message = {id: "foo", targeting: "'foo.com' in pinnedSites|mapToProperty('host')"};
+  is(await ASRouterTargeting.findMatchingMessage({messages: [message]}), message,
+    "should select correct item by host in pinnedSites");
+
+  message = {id: "foo", targeting: "'floogle.com' in pinnedSites[.searchTopSite == true]|mapToProperty('host')"};
+  is(await ASRouterTargeting.findMatchingMessage({messages: [message]}), message,
+    "should select correct item by host and searchTopSite in pinnedSites");
+
+  // Cleanup
+  sitesToPin.forEach(site => NewTabUtils.pinnedLinks.unpin(site));
+
+  await clearHistoryAndBookmarks();
+  is(JSON.stringify(NewTabUtils.pinnedLinks.links), originalPin,
+    "should restore pinned sites to its original state");
+});
+
 add_task(async function check_firefox_version() {
   const message = {id: "foo", targeting: "firefoxVersion > 0"};
   is(await ASRouterTargeting.findMatchingMessage({messages: [message]}), message,
@@ -341,9 +391,6 @@ add_task(async function check_region() {
 });
 
 add_task(async function check_browserSettings() {
-  is(await ASRouterTargeting.Environment.browserSettings.attribution, TelemetryEnvironment.currentEnvironment.settings.attribution,
-    "should return correct attribution info");
-
   is(await JSON.stringify(ASRouterTargeting.Environment.browserSettings.update), JSON.stringify(TelemetryEnvironment.currentEnvironment.settings.update),
       "should return correct update info");
 });
@@ -357,17 +404,22 @@ add_task(async function check_sync() {
     "should return correct mobileDevices info");
 });
 
-add_task(async function check_onboarding_cohort() {
-  await pushPrefs(["browser.newtabpage.activity-stream.asrouter.messageProviders", JSON.stringify([{id: "onboarding", messages: [], enabled: true, cohort: 1}])]);
-  is(await ASRouterTargeting.Environment.isInExperimentCohort, 1);
-  await pushPrefs(["browser.newtabpage.activity-stream.asrouter.messageProviders", JSON.stringify(17)]);
-  is(await ASRouterTargeting.Environment.isInExperimentCohort, 0);
-  await pushPrefs(["browser.newtabpage.activity-stream.asrouter.messageProviders", JSON.stringify([{id: "onboarding", messages: [], enabled: true, cohort: "hello"}])]);
-  is(await ASRouterTargeting.Environment.isInExperimentCohort, 0);
+add_task(async function check_provider_cohorts() {
+  await pushPrefs(["browser.newtabpage.activity-stream.asrouter.providers.onboarding", JSON.stringify({id: "onboarding", messages: [], enabled: true, cohort: "foo"})]);
+  await pushPrefs(["browser.newtabpage.activity-stream.asrouter.providers.cfr", JSON.stringify({id: "cfr", enabled: true, cohort: "bar"})]);
+  is(await ASRouterTargeting.Environment.providerCohorts.onboarding, "foo",
+    "should have cohort foo for onboarding");
+  is(await ASRouterTargeting.Environment.providerCohorts.cfr, "bar",
+    "should have cohort bar for cfr");
 });
 
-add_task(async function check_provider_cohorts() {
-  await pushPrefs(["browser.newtabpage.activity-stream.asrouter.messageProviders", JSON.stringify([{id: "onboarding", messages: [], enabled: true, cohort: "foo"}, {id: "cfr", messages: [], cohort: "bar"}])]);
-  is(await ASRouterTargeting.Environment.providerCohorts.onboarding, "foo");
-  is(await ASRouterTargeting.Environment.providerCohorts.cfr, "bar");
+add_task(async function check_xpinstall_enabled() {
+  // should default to true if pref doesn't exist
+  is(await ASRouterTargeting.Environment.xpinstallEnabled, true);
+  // flip to false, check targeting reflects that
+  await pushPrefs(["xpinstall.enabled", false]);
+  is(await ASRouterTargeting.Environment.xpinstallEnabled, false);
+  // flip to true, check targeting reflects that
+  await pushPrefs(["xpinstall.enabled", true]);
+  is(await ASRouterTargeting.Environment.xpinstallEnabled, true);
 });

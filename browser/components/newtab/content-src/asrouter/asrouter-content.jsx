@@ -1,13 +1,15 @@
-import {LocalizationProvider, Localized} from "fluent-react";
+import {addLocaleData, IntlProvider} from "react-intl";
 import {actionCreators as ac} from "common/Actions.jsm";
 import {OUTGOING_MESSAGE_NAME as AS_GENERAL_OUTGOING_MESSAGE_NAME} from "content-src/lib/init-store";
+import {generateMessages} from "./rich-text-strings";
 import {ImpressionsWrapper} from "./components/ImpressionsWrapper/ImpressionsWrapper";
-import {MessageContext} from "fluent";
+import {LocalizationProvider} from "fluent-react";
 import {OnboardingMessage} from "./templates/OnboardingMessage/OnboardingMessage";
 import React from "react";
 import ReactDOM from "react-dom";
-import {safeURI} from "./template-utils";
-import {SimpleSnippet} from "./templates/SimpleSnippet/SimpleSnippet";
+import {ReturnToAMO} from "./templates/ReturnToAMO/ReturnToAMO";
+import {SnippetsTemplates} from "./templates/template-manifest";
+import {StartupOverlay} from "./templates/StartupOverlay/StartupOverlay";
 
 const INCOMING_MESSAGE_NAME = "ASRouter:parent-to-child";
 const OUTGOING_MESSAGE_NAME = "ASRouter:child-to-parent";
@@ -23,11 +25,14 @@ export const ASRouterUtils = {
   sendMessage(action) {
     global.RPMSendAsyncMessage(OUTGOING_MESSAGE_NAME, action);
   },
-  blockById(id) {
-    ASRouterUtils.sendMessage({type: "BLOCK_MESSAGE_BY_ID", data: {id}});
+  blockById(id, options) {
+    ASRouterUtils.sendMessage({type: "BLOCK_MESSAGE_BY_ID", data: {id, ...options}});
   },
-  blockBundle(bundle) {
-    ASRouterUtils.sendMessage({type: "BLOCK_BUNDLE", data: {bundle}});
+  dismissById(id) {
+    ASRouterUtils.sendMessage({type: "DISMISS_MESSAGE_BY_ID", data: {id}});
+  },
+  dismissBundle(bundle) {
+    ASRouterUtils.sendMessage({type: "DISMISS_BUNDLE", data: {bundle}});
   },
   executeAction(button_action) {
     ASRouterUtils.sendMessage({
@@ -69,48 +74,6 @@ function shouldSendImpressionOnUpdate(nextProps, prevProps) {
   return (nextProps.message.id && (!prevProps.message || prevProps.message.id !== nextProps.message.id));
 }
 
-function generateMessages(content) {
-  const cx = new MessageContext("en-US");
-  cx.addMessages(`RichTextSnippet = ${content}`);
-  return [cx];
-}
-
-// Elements allowed in snippet content
-const ALLOWED_TAGS = {
-  b: <b />,
-  i: <i />,
-  u: <u />,
-  strong: <strong />,
-  em: <em />,
-  br: <br />,
-};
-
-/**
- * Transform an object (tag name: {url}) into (tag name: anchor) where the url
- * is used as href, in order to render links inside a Fluent.Localized component.
- */
-export function convertLinks(links, sendClick) {
-  if (links) {
-    return Object.keys(links).reduce((acc, linkTag) => {
-      acc[linkTag] = <a href={safeURI(links[linkTag].url)} data-metric={links[linkTag].metric} onClick={sendClick} />;
-      return acc;
-    }, {});
-  }
-
-  return null;
-}
-
-/**
- * Message wrapper used to sanitize markup and render HTML.
- */
-function RichText(props) {
-  return (
-    <Localized id="RichTextSnippet" {...ALLOWED_TAGS} {...convertLinks(props.links, props.sendClick)}>
-      <span>{props.text}</span>
-    </Localized>
-  );
-}
-
 export class ASRouterUISurface extends React.PureComponent {
   constructor(props) {
     super(props);
@@ -148,28 +111,41 @@ export class ASRouterUISurface extends React.PureComponent {
   // telemetry field which can have arbitrary values.
   // Used for router messages with links as part of the content.
   sendClick(event) {
-    if (this.state.message.provider === "preview") {
-      return;
-    }
-
     const metric = {
       value: event.target.dataset.metric,
       // Used for the `source` of the event. Needed to differentiate
       // from other snippet or onboarding events that may occur.
       id: "NEWTAB_FOOTER_BAR_CONTENT",
     };
-    this.sendUserActionTelemetry({event: "CLICK_BUTTON", ...metric});
-    if (!this.state.message.content.do_not_autoblock) {
+    const action = {
+      type: event.target.dataset.action,
+      data: {args: event.target.dataset.args},
+    };
+    if (action.type) {
+      ASRouterUtils.executeAction(action);
+    }
+    if (!this.state.message.content.do_not_autoblock && !event.target.dataset.do_not_autoblock) {
       ASRouterUtils.blockById(this.state.message.id);
+    }
+    if (this.state.message.provider !== "preview") {
+      this.sendUserActionTelemetry({event: "CLICK_BUTTON", ...metric});
     }
   }
 
   onBlockById(id) {
-    return () => ASRouterUtils.blockById(id);
+    return options => ASRouterUtils.blockById(id, options);
   }
 
-  clearBundle(bundle) {
-    return () => ASRouterUtils.blockBundle(bundle);
+  onDismissById(id) {
+    return () => ASRouterUtils.dismissById(id);
+  }
+
+  dismissBundle(bundle) {
+    return () => ASRouterUtils.dismissBundle(bundle);
+  }
+
+  triggerOnboarding() {
+    ASRouterUtils.sendMessage({type: "TRIGGER", data: {trigger: {id: "showOnboarding"}}});
   }
 
   onMessageFromParent({data: action}) {
@@ -201,6 +177,9 @@ export class ASRouterUISurface extends React.PureComponent {
   }
 
   componentWillMount() {
+    // Add locale data for StartupOverlay because it uses react-intl
+    addLocaleData(global.document.documentElement.lang);
+
     const endpoint = ASRouterUtils.getPreviewEndpoint();
     ASRouterUtils.addListener(this.onMessageFromParent);
 
@@ -217,6 +196,14 @@ export class ASRouterUISurface extends React.PureComponent {
   }
 
   renderSnippets() {
+    if (this.state.bundle.template === "onboarding" ||
+        this.state.message.template === "fxa_overlay" ||
+        this.state.message.template === "return_to_amo_overlay") {
+      return null;
+    }
+    const SnippetComponent = SnippetsTemplates[this.state.message.template];
+    const {content} = this.state.message;
+
     return (
       <ImpressionsWrapper
         id="NEWTAB_FOOTER_BAR"
@@ -225,28 +212,58 @@ export class ASRouterUISurface extends React.PureComponent {
         shouldSendImpressionOnUpdate={shouldSendImpressionOnUpdate}
         // This helps with testing
         document={this.props.document}>
-          <LocalizationProvider messages={generateMessages(this.state.message.content.text)}>
-            <SimpleSnippet
+          <LocalizationProvider messages={generateMessages(content)}>
+            <SnippetComponent
               {...this.state.message}
-              richText={<RichText text={this.state.message.content.text}
-                                  links={this.state.message.content.links}
-                                  sendClick={this.sendClick} />}
               UISurface="NEWTAB_FOOTER_BAR"
               onBlock={this.onBlockById(this.state.message.id)}
+              onDismiss={this.onDismissById(this.state.message.id)}
               onAction={ASRouterUtils.executeAction}
+              sendClick={this.sendClick}
               sendUserActionTelemetry={this.sendUserActionTelemetry} />
           </LocalizationProvider>
       </ImpressionsWrapper>);
   }
 
   renderOnboarding() {
-    return (
-      <OnboardingMessage
-        {...this.state.bundle}
-        UISurface="NEWTAB_OVERLAY"
-        onAction={ASRouterUtils.executeAction}
-        onDoneButton={this.clearBundle(this.state.bundle.bundle)}
-        sendUserActionTelemetry={this.sendUserActionTelemetry} />);
+    if (this.state.bundle.template === "onboarding") {
+      return (
+        <OnboardingMessage
+          {...this.state.bundle}
+          UISurface="NEWTAB_OVERLAY"
+          onAction={ASRouterUtils.executeAction}
+          onDoneButton={this.dismissBundle(this.state.bundle.bundle)}
+          sendUserActionTelemetry={this.sendUserActionTelemetry} />);
+    }
+    return null;
+  }
+
+  renderFirstRunOverlay() {
+    const {message} = this.state;
+    if (message.template === "fxa_overlay") {
+      global.document.body.classList.add("fxa");
+      return (
+        <IntlProvider locale={global.document.documentElement.lang} messages={global.gActivityStreamStrings}>
+          <StartupOverlay
+            onReady={this.triggerOnboarding}
+            onBlock={this.onDismissById(message.id)}
+            dispatch={this.props.activityStreamStore.dispatch}
+            store={this.props.activityStreamStore} />
+        </IntlProvider>
+      );
+    } else if (message.template === "return_to_amo_overlay") {
+      global.document.body.classList.add("amo");
+      return (
+        <LocalizationProvider messages={generateMessages({"amo_html": message.content.text})}>
+          <ReturnToAMO
+            {...message}
+            onReady={this.triggerOnboarding}
+            onBlock={this.onDismissById(message.id)}
+            onAction={ASRouterUtils.executeAction} />
+        </LocalizationProvider>
+      );
+    }
+    return null;
   }
 
   renderPreviewBanner() {
@@ -268,7 +285,9 @@ export class ASRouterUISurface extends React.PureComponent {
     return (
       <React.Fragment>
         {this.renderPreviewBanner()}
-        {bundle.template === "onboarding" ? this.renderOnboarding() : this.renderSnippets()}
+        {this.renderFirstRunOverlay()}
+        {this.renderOnboarding()}
+        {this.renderSnippets()}
       </React.Fragment>
     );
   }
@@ -291,14 +310,15 @@ export class ASRouterContent {
       global.document.body.appendChild(this.containerElement);
     }
 
-    ReactDOM.render(<ASRouterUISurface />, this.containerElement);
+    ReactDOM.render(<ASRouterUISurface activityStreamStore={this._activityStreamStore} />, this.containerElement);
   }
 
   _unmount() {
     ReactDOM.unmountComponentAtNode(this.containerElement);
   }
 
-  init() {
+  init(store) {
+    this._activityStreamStore = store;
     this._mount();
     this.initialized = true;
   }

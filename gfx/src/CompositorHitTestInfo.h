@@ -18,74 +18,74 @@ namespace gfx {
 // intentionally set up so that if all of them are 0 the item is effectively
 // invisible to hit-testing, and no information for this frame needs to be
 // sent to the compositor.
+// Each enumerator is annotated with the value it contributes to an
+// EnumSet (2 ^ <value of enumerator>), in hexadecimal.
 enum class CompositorHitTestFlags : uint8_t {
   // The frame participates in hit-testing
-  eVisibleToHitTest = 0,
+  eVisibleToHitTest = 0,  // 0x001
   // The frame requires main-thread handling for events
-  eDispatchToContent,
+  eDispatchToContent,  // 0x002
 
   // The touch action flags are set up so that the default of
   // touch-action:auto on an element leaves all the flags as 0.
-  eTouchActionPanXDisabled,
-  eTouchActionPanYDisabled,
-  eTouchActionPinchZoomDisabled,
-  eTouchActionDoubleTapZoomDisabled,
+  eTouchActionPanXDisabled,           // 0x004
+  eTouchActionPanYDisabled,           // 0x008
+  eTouchActionPinchZoomDisabled,      // 0x010
+  eTouchActionDoubleTapZoomDisabled,  // 0x020
 
   // The frame is a scrollbar or a subframe inside a scrollbar (including
   // scroll thumbs)
-  eScrollbar,
+  eScrollbar,  // 0x040
   // The frame is a scrollthumb. If this is set then eScrollbar will also be
   // set, unless gecko somehow generates a scroll thumb without a containing
   // scrollbar.
-  eScrollbarThumb,
+  eScrollbarThumb,  // 0x080
   // If eScrollbar is set, this flag indicates if the scrollbar is a vertical
   // one (if set) or a horizontal one (if not set)
-  eScrollbarVertical,
+  eScrollbarVertical,  // 0x100
 
   // Events targeting this frame should only be processed if a target
   // confirmation is received from the main thread. If no such confirmation
   // is received within a timeout period, the event may be dropped.
   // Only meaningful in combination with eDispatchToContent.
-  eRequiresTargetConfirmation,
+  eRequiresTargetConfirmation,  // 0x200
 };
 
 using CompositorHitTestInfo = EnumSet<CompositorHitTestFlags, uint32_t>;
 
 // A CompositorHitTestInfo with none of the flags set
-const CompositorHitTestInfo CompositorHitTestInvisibleToHit;
+constexpr CompositorHitTestInfo CompositorHitTestInvisibleToHit;
 
 // Mask to check for all the touch-action flags at once
-const CompositorHitTestInfo CompositorHitTestTouchActionMask =
-  CompositorHitTestInfo(CompositorHitTestFlags::eTouchActionPanXDisabled) +
-  CompositorHitTestInfo(CompositorHitTestFlags::eTouchActionPanYDisabled) +
-  CompositorHitTestInfo(CompositorHitTestFlags::eTouchActionPinchZoomDisabled) +
-  CompositorHitTestInfo(CompositorHitTestFlags::eTouchActionDoubleTapZoomDisabled);
+constexpr CompositorHitTestInfo CompositorHitTestTouchActionMask(
+    CompositorHitTestFlags::eTouchActionPanXDisabled,
+    CompositorHitTestFlags::eTouchActionPanYDisabled,
+    CompositorHitTestFlags::eTouchActionPinchZoomDisabled,
+    CompositorHitTestFlags::eTouchActionDoubleTapZoomDisabled);
 
-} // namespace gfx
+}  // namespace gfx
 
-
-// Used for IPDL serialization. The 'value' have to be the biggest enum from CompositorHitTestFlags.
+// Used for IPDL serialization. The 'value' have to be the biggest enum from
+// CompositorHitTestFlags.
 template <>
-struct MaxEnumValue<::mozilla::gfx::CompositorHitTestFlags>
-{
-  static constexpr unsigned int value = static_cast<unsigned int>(gfx::CompositorHitTestFlags::eRequiresTargetConfirmation);
+struct MaxEnumValue<::mozilla::gfx::CompositorHitTestFlags> {
+  static constexpr unsigned int value = static_cast<unsigned int>(
+      gfx::CompositorHitTestFlags::eRequiresTargetConfirmation);
 };
 
 namespace gfx {
 
 // Checks if the CompositorHitTestFlags max enum value is less than N.
 template <int N>
-static constexpr bool DoesCompositorHitTestInfoFitIntoBits()
-{
-    if (MaxEnumValue<CompositorHitTestInfo::valueType>::value < N)
-    {
-        return true;
-    }
+static constexpr bool DoesCompositorHitTestInfoFitIntoBits() {
+  if (MaxEnumValue<CompositorHitTestInfo::valueType>::value < N) {
+    return true;
+  }
 
-    return false;
+  return false;
 }
-} // namespace gfx
+}  // namespace gfx
 
-} // namespace mozilla
+}  // namespace mozilla
 
 #endif /* MOZILLA_GFX_COMPOSITORHITTESTINFO_H_ */

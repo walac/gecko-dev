@@ -26,12 +26,33 @@ from mach_commands_base import WebPlatformTestsRunner, create_parser_wpt
 class WebPlatformTestsRunnerSetup(MozbuildObject):
     default_log_type = "mach"
 
-    def kwargs_common(self, kwargs):
+    def __init__(self, *args, **kwargs):
+        super(WebPlatformTestsRunnerSetup, self).__init__(*args, **kwargs)
+        self._here = os.path.join(self.topsrcdir, 'testing', 'web-platform')
+        kwargs["tests_root"] = os.path.join(self._here, "tests")
+        sys.path.insert(0, kwargs["tests_root"])
         build_path = os.path.join(self.topobjdir, 'build')
-        here = os.path.split(__file__)[0]
-        tests_src_path = os.path.join(here, "tests")
         if build_path not in sys.path:
             sys.path.append(build_path)
+
+    def kwargs_common(self, kwargs):
+        tests_src_path = os.path.join(self._here, "tests")
+        if kwargs["product"] == "fennec":
+            # package_name may be non-fennec in the future
+            package_name = kwargs["package_name"]
+            if not package_name:
+                package_name = self.substs["ANDROID_PACKAGE_NAME"]
+
+            # Note that this import may fail in non-fennec trees
+            from mozrunner.devices.android_device import verify_android_device, grant_runtime_permissions
+            verify_android_device(self, install=True, verbose=False, xre=True, app=package_name)
+
+            grant_runtime_permissions(self, package_name, kwargs["device_serial"])
+            if kwargs["certutil_binary"] is None:
+                kwargs["certutil_binary"] = os.path.join(os.environ.get('MOZ_HOST_BIN'), "certutil")
+
+            if kwargs["install_fonts"] is None:
+                kwargs["install_fonts"] = True
 
         if kwargs["config"] is None:
             kwargs["config"] = os.path.join(self.topobjdir, '_tests', 'web-platform', 'wptrunner.local.ini')
@@ -64,6 +85,7 @@ class WebPlatformTestsRunnerSetup(MozbuildObject):
         return kwargs
 
     def kwargs_firefox(self, kwargs):
+        import mozinfo
         from wptrunner import wptcommandline
         kwargs = self.kwargs_common(kwargs)
 
@@ -76,7 +98,12 @@ class WebPlatformTestsRunnerSetup(MozbuildObject):
         if kwargs["webdriver_binary"] is None:
             kwargs["webdriver_binary"] = self.get_binary_path("geckodriver", validate_exists=False)
 
-        self.setup_fonts_firefox()
+
+        if mozinfo.info["os"] == "win" and mozinfo.info["os_version"] == "6.1":
+            # On Windows 7 --install-fonts fails, so fall back to a Firefox-specific codepath
+            self.setup_fonts_firefox()
+        else:
+            kwargs["install_fonts"] = True
 
         kwargs = wptcommandline.check_args(kwargs)
 
@@ -84,19 +111,14 @@ class WebPlatformTestsRunnerSetup(MozbuildObject):
 
     def kwargs_wptrun(self, kwargs):
         from wptrunner import wptcommandline
-        here = os.path.join(self.topsrcdir, 'testing', 'web-platform')
-
-        kwargs["tests_root"] = os.path.join(here, "tests")
-
-        sys.path.insert(0, kwargs["tests_root"])
 
         if kwargs["metadata_root"] is None:
-            metadir = os.path.join(here, "products", kwargs["product"])
+            metadir = os.path.join(self._here, "products", kwargs["product"])
             if not os.path.exists(metadir):
                 os.makedirs(metadir)
             kwargs["metadata_root"] = metadir
 
-        src_manifest = os.path.join(here, "meta", "MANIFEST.json")
+        src_manifest = os.path.join(self._here, "meta", "MANIFEST.json")
         dest_manifest = os.path.join(kwargs["metadata_root"], "MANIFEST.json")
 
         if not os.path.exists(dest_manifest) and os.path.exists(src_manifest):
@@ -104,6 +126,12 @@ class WebPlatformTestsRunnerSetup(MozbuildObject):
                 dest.write(src.read())
 
         from tools.wpt import run
+
+        # Add additional kwargs consumed by the run frontend. Currently we don't
+        # have a way to set these through mach
+        kwargs["channel"] = None
+        kwargs["prompt"] = True
+        kwargs["install_browser"] = False
 
         try:
             kwargs = run.setup_wptrunner(run.virtualenv.Virtualenv(self.virtualenv_manager.virtualenv_root),
@@ -127,15 +155,25 @@ class WebPlatformTestsRunnerSetup(MozbuildObject):
                 dest.write(src.read())
 
 
+
 class WebPlatformTestsUpdater(MozbuildObject):
     """Update web platform tests."""
     def setup_logging(self, **kwargs):
         import update
         return update.setup_logging(kwargs, {"mach": sys.stdout})
 
+    def update_manifest(self, logger, **kwargs):
+        import manifestupdate
+        return manifestupdate.run(logger=logger,
+                                  src_root=self.topsrcdir,
+                                  obj_root=self.topobjdir,
+                                  **kwargs)
+
     def run_update(self, logger, **kwargs):
         import update
         from update import updatecommandline
+
+        self.update_manifest(logger, **kwargs)
 
         if kwargs["config"] is None:
             kwargs["config"] = os.path.join(self.topobjdir, '_tests', 'web-platform', 'wptrunner.local.ini')
@@ -273,29 +311,6 @@ testing/web-platform/tests for tests that may be shared
             proc.wait()
 
 
-class WPTManifestUpdater(MozbuildObject):
-    def setup_logging(self, **kwargs):
-        from wptrunner import wptlogging
-        logger = wptlogging.setup(kwargs, {"mach": sys.stdout})
-
-    def run_update(self, logger, rebuild=False, **kwargs):
-        import manifestupdate
-        wpt_dir = os.path.abspath(os.path.join(self.topsrcdir, 'testing', 'web-platform'))
-        config_dir = os.path.abspath(os.path.join(self.topobjdir, '_tests', 'web-platform'))
-        manifestupdate.update(logger, wpt_dir, rebuild, config_dir)
-
-
-class WPTManifestDownloader(MozbuildObject):
-    def setup_logging(self, **kwargs):
-        from wptrunner import wptlogging
-        logger = wptlogging.setup(kwargs, {"mach": sys.stdout})
-
-    def run_download(self, logger, manifest_update=True, force=False, **kwargs):
-        import manifestdownload
-        wpt_dir = os.path.abspath(os.path.join(self.topobjdir, '_tests', 'web-platform'))
-        manifestdownload.run(wpt_dir, self.topsrcdir, logger, force, manifest_update)
-
-
 def create_parser_update():
     from update import updatecommandline
     return updatecommandline.create_parser()
@@ -326,10 +341,6 @@ def create_parser_manifest_update():
     import manifestupdate
     return manifestupdate.create_parser()
 
-def create_parser_manifest_download():
-    import manifestdownload
-    return manifestdownload.create_parser()
-
 
 @CommandProvider
 class MachCommands(MachCommandBase):
@@ -357,8 +368,6 @@ class MachCommands(MachCommandBase):
 
         logger = wpt_runner.setup_logging(**params)
 
-        self.wpt_manifest_download(logger, **params)
-        params["manifest_update"] = False
         return wpt_runner.run(logger, **params)
 
     @Command("wpt",
@@ -406,19 +415,7 @@ class MachCommands(MachCommandBase):
              parser=create_parser_manifest_update)
     def wpt_manifest_update(self, **params):
         self.setup()
-        self.wpt_manifest_download(**params)
-        wpt_manifest_updater = self._spawn(WPTManifestUpdater)
-        logger = wpt_manifest_updater.setup_logging(**params)
-        self.wpt_manifest_download(logger, **params)
-        return wpt_manifest_updater.run_update(logger, **params)
-
-    @Command("wpt-manifest-download",
-             category="testing",
-             parser=create_parser_manifest_download)
-    def wpt_manifest_download(self, logger=None, **params):
-        self.setup()
-        if logger is None:
-            from wptrunner import wptlogging
-            logger = wptlogging.setup(params, {"mach": sys.stdout})
-        wpt_manifest_downloader = self._spawn(WPTManifestDownloader)
-        return wpt_manifest_downloader.run_download(logger, **params)
+        wpt_setup = self._spawn(WebPlatformTestsRunnerSetup)
+        wpt_runner = WebPlatformTestsRunner(wpt_setup)
+        logger = wpt_runner.setup_logging(**params)
+        return 0 if wpt_runner.update_manifest(logger, **params) else 1

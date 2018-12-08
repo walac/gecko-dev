@@ -1,11 +1,9 @@
-if (!wasmGcEnabled() || !wasmDebuggingIsSupported()) {
-    quit(0);
-}
+// |jit-test| skip-if: !wasmGcEnabled() || !wasmDebuggingIsSupported()
 
 (function() {
     let g = newGlobal();
     let dbg = new Debugger(g);
-    g.eval(`o = new WebAssembly.Instance(new WebAssembly.Module(wasmTextToBinary('(module (gc_feature_opt_in 1) (func (result anyref) (param anyref) get_local 0) (export "" 0))')));`);
+    g.eval(`o = new WebAssembly.Instance(new WebAssembly.Module(wasmTextToBinary('(module (gc_feature_opt_in 2) (func (result anyref) (param anyref) get_local 0) (export "" 0))')));`);
 })();
 
 (function() {
@@ -14,7 +12,7 @@ if (!wasmGcEnabled() || !wasmDebuggingIsSupported()) {
 
     let src = `
       (module
-        (gc_feature_opt_in 1)
+        (gc_feature_opt_in 2)
         (func (export "func") (result anyref) (param $ref anyref)
             get_local $ref
         )

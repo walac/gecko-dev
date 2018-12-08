@@ -1,5 +1,7 @@
 "use strict";
 
+const PROCESS_COUNT_PREF = "dom.ipc.processCount";
+
 const {
   createAppInfo,
 } = AddonTestUtils;
@@ -14,6 +16,12 @@ server.registerDirectory("/data/", do_get_file("data"));
 const BASE_URL = `http://localhost:${server.identity.primaryPort}/data`;
 
 add_task(async function setup_test_environment() {
+  if (ExtensionTestUtils.remoteContentScripts) {
+    // Start with one content process so that we can increase the number
+    // later and test the behavior of a fresh content process.
+    Services.prefs.setIntPref(PROCESS_COUNT_PREF, 1);
+  }
+
   // Grant the optional permissions requested.
   function permissionObserver(subject, topic, data) {
     if (topic == "webextension-optional-permission-prompt") {
@@ -157,16 +165,17 @@ add_task(async function test_userScripts_matches_denied() {
 });
 
 // Test that userScripts sandboxes:
-// - can be registered/unregistered from an extension page
+// - can be registered/unregistered from an extension page (and they are registered on both new and
+//   existing processes).
 // - have no WebExtensions APIs available
 // - are able to access the target window and document
 add_task(async function test_userScripts_no_webext_apis() {
   async function background() {
-    const matches = ["http://localhost/*/file_sample.html"];
+    const matches = ["http://localhost/*/file_sample.html*"];
 
     const sharedCode = {code: "console.log(\"js code shared by multiple userScripts\");"};
 
-    let script = await browser.userScripts.register({
+    const userScriptOptions = {
       js: [sharedCode, {
         code: `
           window.addEventListener("load", () => {
@@ -183,30 +192,37 @@ add_task(async function test_userScripts_no_webext_apis() {
         objectProperty: {nestedProp: "nestedValue"},
         nullProperty: null,
       },
-    });
+    };
+
+    let script = await browser.userScripts.register(userScriptOptions);
 
     // Unregister and then register the same js code again, to verify that the last registered
     // userScript doesn't get assigned a revoked blob url (otherwise Extensioncontent.jsm
     // ScriptCache raises an error because it fails to compile the revoked blob url and the user
     // script will never be loaded).
     script.unregister();
-    script = await browser.userScripts.register({
-      js: [sharedCode, {
-        code: `
+    script = await browser.userScripts.register(userScriptOptions);
+
+    browser.test.onMessage.addListener(async msg => {
+      if (msg !== "register-new-script") {
+        return;
+      }
+
+      await script.unregister();
+      await browser.userScripts.register({
+        ...userScriptOptions,
+        scriptMetadata: {name: "test-new-script"},
+        js: [sharedCode, {
+          code: `
           window.addEventListener("load", () => {
             const webextAPINamespaces = this.browser ? Object.keys(this.browser) : undefined;
-            document.body.innerHTML = "userScript loaded - " + JSON.stringify(webextAPINamespaces);
+            document.body.innerHTML = "new userScript loaded - " + JSON.stringify(webextAPINamespaces);
           }, {once: true});
         `,
-      }],
-      runAt: "document_start",
-      matches,
-      scriptMetadata: {
-        name: "test-user-script",
-        arrayProperty: ["el1"],
-        objectProperty: {nestedProp: "nestedValue"},
-        nullProperty: null,
-      },
+        }],
+      });
+
+      browser.test.sendMessage("script-registered");
     });
 
     const scriptToRemove = await browser.userScripts.register({
@@ -249,11 +265,9 @@ add_task(async function test_userScripts_no_webext_apis() {
 
   await extension.awaitMessage("background-ready");
 
-  // Test in an existing process (where the registered userScripts has been received from the
-  // Extension:RegisterContentScript message sent to all the processes).
-  info("Test content script loaded in a process created before any registered userScript");
-  let url = `${BASE_URL}/file_sample.html#remote-false`;
-  let contentPage = await ExtensionTestUtils.loadContentPage(url, {remote: false});
+  let url = `${BASE_URL}/file_sample.html?testpage=1`;
+  let contentPage = await ExtensionTestUtils.loadContentPage(
+    url, ExtensionTestUtils.remoteContentScripts ? {remote: true} : undefined);
   let result = await contentPage.spawn(undefined, async () => {
     return {
       textContent: this.content.document.body.textContent,
@@ -266,15 +280,20 @@ add_task(async function test_userScripts_no_webext_apis() {
     url,
     readyState: "complete",
   }, "The userScript executed on the expected url and no access to the WebExtensions APIs");
-  await contentPage.close();
 
-  // Test in a new process (where the registered userScripts has to be retrieved from the extension
-  // representation from the shared memory data).
-  // NOTE: this part is currently skipped on Android, where e10s content is not yet supported and
-  // the xpcshell test crash when we create contentPage2 with `remote = true`.
+  // If the tests is running with "remote content process" mode, test that the userScript
+  // are being correctly registered in newly created processes (received as part of the sharedData).
   if (ExtensionTestUtils.remoteContentScripts) {
-    info("Test content script loaded in a process created after the userScript has been registered");
-    let url2 = `${BASE_URL}/file_sample.html#remote-true`;
+    info("Test content script are correctly created on a newly created process");
+
+    await extension.sendMessage("register-new-script");
+    await extension.awaitMessage("script-registered");
+
+    // Update the process count preference, so that we can test that the newly registered user script
+    // is propagated as expected into the newly created process.
+    Services.prefs.setIntPref(PROCESS_COUNT_PREF, 2);
+
+    const url2 = `${BASE_URL}/file_sample.html?testpage=2`;
     let contentPage2 = await ExtensionTestUtils.loadContentPage(url2, {remote: true});
     let result2 = await contentPage2.spawn(undefined, async () => {
       return {
@@ -284,167 +303,910 @@ add_task(async function test_userScripts_no_webext_apis() {
       };
     });
     Assert.deepEqual(result2, {
-      textContent: "userScript loaded - undefined",
+      textContent: "new userScript loaded - undefined",
       url: url2,
       readyState: "complete",
     }, "The userScript executed on the expected url and no access to the WebExtensions APIs");
+
     await contentPage2.close();
   }
+
+  await contentPage.close();
 
   await extension.unload();
 });
 
-add_task(async function test_userScripts_exported_APIs() {
-  async function background() {
-    const matches = ["http://localhost/*/file_sample.html"];
-
-    await browser.runtime.onMessage.addListener(async (msg, sender) => {
-      return {bgPageReply: true};
-    });
-
-    async function userScript() {
-      // Explicitly retrieve the custom exported API methods
-      // to prevent eslint to raise a no-undef validation
-      // error for them.
-      const {
-        US_sync_api,
-        US_async_api_with_callback,
-        US_send_api_results,
-      } = this;
-      this.userScriptGlobalVar = "global-sandbox-value";
-
-      const syncAPIResult = US_sync_api("param1", "param2");
-      const cb = (cbParam) => {
-        return `callback param: ${JSON.stringify(cbParam)}`;
-      };
-      const cb2 = cb;
-      const asyncAPIResult = await US_async_api_with_callback("param3", cb, cb2);
-
-      let expectedError;
-
-      // This is expect to raise an exception due to the window parameter which can't
-      // be cloned.
-      try {
-        US_sync_api(window);
-      } catch (err) {
-        expectedError = err.message;
-      }
-
-      US_send_api_results({syncAPIResult, asyncAPIResult, expectedError});
-    }
-
+// A small utility function used to test the expected behaviors of the userScripts API method
+// wrapper.
+async function test_userScript_APIMethod({
+  apiScript, userScript, userScriptMetadata, testFn,
+  runtimeMessageListener,
+}) {
+  async function backgroundScript(userScriptFn, scriptMetadata, messageListener) {
     await browser.userScripts.register({
       js: [{
-        code: `(${userScript})();`,
+        code: `(${userScriptFn})();`,
       }],
       runAt: "document_end",
-      matches,
-      scriptMetadata: {
-        name: "test-user-script-exported-apis",
-        arrayProperty: ["el1"],
-        objectProperty: {nestedProp: "nestedValue"},
-        nullProperty: null,
-      },
+      matches: ["http://localhost/*/file_sample.html"],
+      scriptMetadata,
     });
+
+    if (messageListener) {
+      browser.runtime.onMessage.addListener(messageListener);
+    }
 
     browser.test.sendMessage("background-ready");
   }
 
-  function apiScript() {
-    // Redefine Promise and Error globals to verify that it doesn't break the WebExtensions internals
-    // that are going to use them.
-    this.Promise = {};
-    this.Error = {};
-
-    browser.userScripts.setScriptAPIs({
-      US_sync_api([param1, param2], scriptMetadata, scriptGlobal) {
-        browser.test.assertEq("test-user-script-exported-apis", scriptMetadata.name,
-                              "Got the expected value for a string scriptMetadata property");
-        browser.test.assertEq(null, scriptMetadata.nullProperty,
-                              "Got the expected value for a null scriptMetadata property");
-        browser.test.assertTrue(scriptMetadata.arrayProperty &&
-                                scriptMetadata.arrayProperty.length === 1 &&
-                                scriptMetadata.arrayProperty[0] === "el1",
-                                "Got the expected value for an array scriptMetadata property");
-        browser.test.assertTrue(scriptMetadata.objectProperty &&
-                                scriptMetadata.objectProperty.nestedProp === "nestedValue",
-                                "Got the expected value for an object scriptMetadata property");
-
-        browser.test.assertEq("param1", param1, "Got the expected parameter value");
-        browser.test.assertEq("param2", param2, "Got the expected parameter value");
-
-        browser.test.sendMessage("US_sync_api", {param1, param2});
-
-        return "returned_value";
-      },
-      async US_async_api_with_callback([param, cb, cb2], scriptMetadata, scriptGlobal) {
-        browser.test.assertEq("function", typeof cb, "Got a callback function parameter");
-        browser.test.assertTrue(cb === cb2, "Got the same cloned function for the same function parameter");
-
-        browser.runtime.sendMessage({param}).then(bgPageRes => {
-          // eslint-disable-next-line no-undef
-          const cbResult = cb(cloneInto(bgPageRes, scriptGlobal));
-          browser.test.sendMessage("US_async_api_with_callback", cbResult);
-        });
-
-        return "resolved_value";
-      },
-      async US_send_api_results([results], scriptMetadata, scriptGlobal) {
-        browser.test.sendMessage("US_send_api_results", results);
-      },
-    });
+  function notifyFinish(failureReason) {
+    browser.test.assertEq(undefined, failureReason, "should be completed without errors");
+    browser.test.sendMessage("test_userScript_APIMethod:done");
   }
 
-  let extensionData = {
+  function assertTrue(val, message) {
+    browser.test.assertTrue(val, message);
+    if (!val) {
+      browser.test.sendMessage("test_userScript_APIMethod:done");
+      throw message;
+    }
+  }
+
+  let extension = ExtensionTestUtils.loadExtension({
     manifest: {
       permissions: [
         "http://localhost/*/file_sample.html",
       ],
       user_scripts: {
         api_script: "api-script.js",
-        // The following is an unexpected manifest property, that we expect to be ignored and
-        // to not prevent the test extension from being installed and run as expected.
-        unexpected_manifest_key: "test-unexpected-key",
       },
     },
-    background,
+    // Defines a background script that receives all the needed test parameters.
+    background: `
+        const metadata = ${JSON.stringify(userScriptMetadata)};
+        (${backgroundScript})(${userScript}, metadata, ${runtimeMessageListener})
+     `,
     files: {
-      "api-script.js": apiScript,
+      "api-script.js": `(${apiScript})({
+        assertTrue: ${assertTrue},
+        notifyFinish: ${notifyFinish}
+      })`,
     },
-  };
+  });
 
-  let extension = ExtensionTestUtils.loadExtension(extensionData);
-
-  // Ensure that a content page running in a content process and which has been
-  // already loaded when the content scripts has been registered, it has received
-  // and registered the expected content scripts.
+  // Load a page in a content process, register the user script and then load a
+  // new page in the existing content process.
+  let url = `${BASE_URL}/file_sample.html`;
   let contentPage = await ExtensionTestUtils.loadContentPage(`about:blank`);
 
   await extension.startup();
-
   await extension.awaitMessage("background-ready");
+  await contentPage.loadURL(url);
 
-  await contentPage.loadURL(`${BASE_URL}/file_sample.html`);
+  // Run any additional test-specific assertions.
+  if (testFn) {
+    await testFn({extension, contentPage, url});
+  }
 
-  info("Wait the userScript to call the exported US_sync_api method");
-  await extension.awaitMessage("US_sync_api");
-
-  info("Wait the userScript to call the exported US_async_api_with_callback method");
-  const userScriptCallbackResult = await extension.awaitMessage("US_async_api_with_callback");
-  equal(userScriptCallbackResult, `callback param: {"bgPageReply":true}`,
-        "Got the expected results when the userScript callback has been called");
-
-  info("Wait the userScript to call the exported US_send_api_results method");
-  const userScriptsAPIResults = await extension.awaitMessage("US_send_api_results");
-  Assert.deepEqual(userScriptsAPIResults, {
-    syncAPIResult: "returned_value",
-    asyncAPIResult: "resolved_value",
-    expectedError: "Only serializable parameters are supported",
-  }, "Got the expected userScript API results");
+  await extension.awaitMessage("test_userScript_APIMethod:done");
 
   await extension.unload();
-
   await contentPage.close();
+}
+
+add_task(async function test_apiScript_exports_simple_sync_method() {
+  function apiScript(sharedTestAPIMethods) {
+    browser.userScripts.onBeforeScript.addListener(script => {
+      const scriptMetadata = script.metadata;
+
+      script.defineGlobals({
+        ...sharedTestAPIMethods,
+        testAPIMethod(stringParam, numberParam, boolParam, nullParam, undefinedParam, arrayParam) {
+          browser.test.assertEq("test-user-script-exported-apis", scriptMetadata.name,
+                                "Got the expected value for a string scriptMetadata property");
+          browser.test.assertEq(null, scriptMetadata.nullProperty,
+                                "Got the expected value for a null scriptMetadata property");
+          browser.test.assertTrue(scriptMetadata.arrayProperty &&
+                                  scriptMetadata.arrayProperty.length === 1 &&
+                                  scriptMetadata.arrayProperty[0] === "el1",
+                                  "Got the expected value for an array scriptMetadata property");
+          browser.test.assertTrue(scriptMetadata.objectProperty &&
+                                  scriptMetadata.objectProperty.nestedProp === "nestedValue",
+                                  "Got the expected value for an object scriptMetadata property");
+
+          browser.test.assertEq("param1", stringParam, "Got the expected string parameter value");
+          browser.test.assertEq(123, numberParam, "Got the expected number parameter value");
+          browser.test.assertEq(true, boolParam, "Got the expected boolean parameter value");
+          browser.test.assertEq(null, nullParam, "Got the expected null parameter value");
+          browser.test.assertEq(undefined, undefinedParam, "Got the expected undefined parameter value");
+
+          browser.test.assertEq(3, arrayParam.length, "Got the expected length on the array param");
+          browser.test.assertTrue(arrayParam.includes(1),
+                                  "Got the expected result when calling arrayParam.includes");
+
+          return "returned_value";
+        },
+      });
+    });
+  }
+
+  function userScript() {
+    const {assertTrue, notifyFinish, testAPIMethod} = this;
+
+    // Redefine the includes method on the Array prototype, to explicitly verify that the method
+    // redefined in the userScript is not used when accessing arrayParam.includes from the API script.
+    Array.prototype.includes = () => { // eslint-disable-line no-extend-native
+      throw new Error("Unexpected prototype leakage");
+    };
+    const arrayParam = new Array(1, 2, 3); // eslint-disable-line no-array-constructor
+    const result = testAPIMethod("param1", 123, true, null, undefined, arrayParam);
+
+    assertTrue(result === "returned_value", `userScript got an unexpected result value: ${result}`);
+
+    notifyFinish();
+  }
+
+  const userScriptMetadata = {
+    name: "test-user-script-exported-apis",
+    arrayProperty: ["el1"],
+    objectProperty: {nestedProp: "nestedValue"},
+    nullProperty: null,
+  };
+
+  await test_userScript_APIMethod({
+    userScript,
+    apiScript,
+    userScriptMetadata,
+  });
+});
+
+add_task(async function test_apiScript_async_method() {
+  function apiScript(sharedTestAPIMethods) {
+    browser.userScripts.onBeforeScript.addListener(script => {
+      script.defineGlobals({
+        ...sharedTestAPIMethods,
+        testAPIMethod(param, cb, cb2, objWithCb) {
+          browser.test.assertEq("function", typeof cb, "Got a callback function parameter");
+          browser.test.assertTrue(cb === cb2, "Got the same cloned function for the same function parameter");
+
+          browser.runtime.sendMessage(param).then(bgPageRes => {
+            const cbResult = cb(script.export(bgPageRes));
+            browser.test.sendMessage("user-script-callback-return", cbResult);
+          });
+
+          return "resolved_value";
+        },
+      });
+    });
+  }
+
+  async function userScript() {
+    // Redefine Promise to verify that it doesn't break the WebExtensions internals
+    // that are going to use them.
+    const {Promise} = this;
+    Promise.resolve = function() {
+      throw new Error("Promise.resolve poisoning");
+    };
+    this.Promise = function() {
+      throw new Error("Promise constructor poisoning");
+    };
+
+    const {assertTrue, notifyFinish, testAPIMethod} = this;
+
+    const cb = (cbParam) => {
+      return `callback param: ${JSON.stringify(cbParam)}`;
+    };
+    const cb2 = cb;
+    const asyncAPIResult = await testAPIMethod("param3", cb, cb2);
+
+    assertTrue(asyncAPIResult === "resolved_value",
+               `userScript got an unexpected resolved value: ${asyncAPIResult}`);
+
+    notifyFinish();
+  }
+
+  async function runtimeMessageListener(param) {
+    if (param !== "param3") {
+      browser.test.fail(`Got an unexpected message: ${param}`);
+    }
+
+    return {bgPageReply: true};
+  }
+
+  await test_userScript_APIMethod({
+    userScript,
+    apiScript,
+    runtimeMessageListener,
+    async testFn({extension}) {
+      const res = await extension.awaitMessage("user-script-callback-return");
+      equal(res, `callback param: ${JSON.stringify({bgPageReply: true})}`,
+            "Got the expected userScript callback return value");
+    },
+  });
+});
+
+add_task(async function test_apiScript_method_with_webpage_objects_params() {
+  function apiScript(sharedTestAPIMethods) {
+    browser.userScripts.onBeforeScript.addListener(script => {
+      script.defineGlobals({
+        ...sharedTestAPIMethods,
+        testAPIMethod(windowParam, documentParam) {
+          browser.test.assertEq(window, windowParam, "Got a reference to the native window as first param");
+          browser.test.assertEq(window.document, documentParam,
+                                "Got a reference to the native document as second param");
+
+          // Return an uncloneable webpage object, which checks that if the returned object is from a principal
+          // that is subsumed by the userScript sandbox principal, it is returned without being cloned.
+          return windowParam;
+        },
+      });
+    });
+  }
+
+  async function userScript() {
+    const {assertTrue, notifyFinish, testAPIMethod} = this;
+
+    const result = testAPIMethod(window, document);
+
+    // We expect the returned value to be the uncloneable window object.
+    assertTrue(result === window,
+               `userScript got an unexpected returned value: ${result}`);
+    notifyFinish();
+  }
+
+  await test_userScript_APIMethod({
+    userScript,
+    apiScript,
+  });
+});
+
+add_task(async function test_apiScript_method_got_param_with_methods() {
+  function apiScript(sharedTestAPIMethods) {
+    browser.userScripts.onBeforeScript.addListener(script => {
+      const scriptGlobal = script.global;
+      const ScriptFunction = scriptGlobal.Function;
+
+      script.defineGlobals({
+        ...sharedTestAPIMethods,
+        testAPIMethod(objWithMethods) {
+          browser.test.assertEq("objPropertyValue", objWithMethods && objWithMethods.objProperty,
+                                "Got the expected property on the object passed as a parameter");
+          browser.test.assertEq(undefined, typeof objWithMethods && objWithMethods.objMethod,
+                                "XrayWrapper should deny access to a callable property");
+
+          browser.test.assertTrue(
+            objWithMethods && objWithMethods.wrappedJSObject &&
+            objWithMethods.wrappedJSObject.objMethod instanceof ScriptFunction.wrappedJSObject,
+            "The callable property is accessible on the wrappedJSObject");
+
+          browser.test.assertEq("objMethodResult: p1", objWithMethods && objWithMethods.wrappedJSObject &&
+                                objWithMethods.wrappedJSObject.objMethod("p1"),
+                                "Got the expected result when calling the method on the wrappedJSObject");
+          return true;
+        },
+      });
+    });
+  }
+
+  async function userScript() {
+    const {assertTrue, notifyFinish, testAPIMethod} = this;
+
+    let result = testAPIMethod({
+      objProperty: "objPropertyValue",
+      objMethod(param) {
+        return `objMethodResult: ${param}`;
+      },
+    });
+
+    assertTrue(result === true, `userScript got an unexpected returned value: ${result}`);
+    notifyFinish();
+  }
+
+  await test_userScript_APIMethod({
+    userScript,
+    apiScript,
+  });
+});
+
+add_task(async function test_apiScript_method_throws_errors() {
+  function apiScript({notifyFinish}) {
+    let proxyTrapsCount = 0;
+
+    browser.userScripts.onBeforeScript.addListener(script => {
+      const scriptGlobals = {
+        Error: script.global.Error,
+        TypeError: script.global.TypeError,
+        Proxy: script.global.Proxy,
+      };
+
+      script.defineGlobals({
+        notifyFinish,
+        testAPIMethod(errorTestName, returnRejectedPromise) {
+          let err;
+
+          switch (errorTestName) {
+            case "apiScriptError":
+              err = new Error(`${errorTestName} message`);
+              break;
+            case "apiScriptThrowsPlainString":
+              err = `${errorTestName} message`;
+              break;
+            case "apiScriptThrowsNull":
+              err = null;
+              break;
+            case "userScriptError":
+              err = new scriptGlobals.Error(`${errorTestName} message`);
+              break;
+            case "userScriptTypeError":
+              err = new scriptGlobals.TypeError(`${errorTestName} message`);
+              break;
+            case "userScriptProxyObject":
+              let proxyTarget = script.export({
+                name: "ProxyObject", message: "ProxyObject message",
+              });
+              let proxyHandlers = script.export({
+                get(target, prop) {
+                  proxyTrapsCount++;
+                  switch (prop) {
+                    case "name":
+                      return "ProxyObjectGetName";
+                    case "message":
+                      return "ProxyObjectGetMessage";
+                  }
+                  return undefined;
+                },
+                getPrototypeOf() {
+                  proxyTrapsCount++;
+                  return scriptGlobals.TypeError;
+                },
+              });
+              err = new scriptGlobals.Proxy(proxyTarget, proxyHandlers);
+              break;
+            default:
+              browser.test.fail(`Unknown ${errorTestName} error testname`);
+              return undefined;
+          }
+
+          if (returnRejectedPromise) {
+            return Promise.reject(err);
+          }
+
+          throw err;
+        },
+        assertNoProxyTrapTriggered() {
+          browser.test.assertEq(0, proxyTrapsCount, "Proxy traps should not be triggered");
+        },
+        resetProxyTrapCounter() {
+          proxyTrapsCount = 0;
+        },
+        sendResults(results) {
+          browser.test.sendMessage("test-results", results);
+        },
+      });
+    });
+  }
+
+  async function userScript() {
+    const {
+      assertNoProxyTrapTriggered,
+      notifyFinish,
+      resetProxyTrapCounter,
+      sendResults,
+      testAPIMethod,
+    } = this;
+
+    let apiThrowResults = {};
+    let apiThrowTestCases = [
+      "apiScriptError",
+      "apiScriptThrowsPlainString",
+      "apiScriptThrowsNull",
+      "userScriptError",
+      "userScriptTypeError",
+      "userScriptProxyObject",
+    ];
+    for (let errorTestName of apiThrowTestCases) {
+      try {
+        testAPIMethod(errorTestName);
+      } catch (err) {
+        // We expect that no proxy traps have been triggered by the WebExtensions internals.
+        if (errorTestName === "userScriptProxyObject") {
+          assertNoProxyTrapTriggered();
+        }
+
+        if (err instanceof Error) {
+          apiThrowResults[errorTestName] = {name: err.name, message: err.message};
+        } else {
+          apiThrowResults[errorTestName] = {
+            name: err && err.name,
+            message: err && err.message,
+            typeOf: typeof err,
+            value: err,
+          };
+        }
+      }
+    }
+
+    sendResults(apiThrowResults);
+
+    resetProxyTrapCounter();
+
+    let apiRejectsResults = {};
+    for (let errorTestName of apiThrowTestCases) {
+      try {
+        await testAPIMethod(errorTestName, true);
+      } catch (err) {
+        // We expect that no proxy traps have been triggered by the WebExtensions internals.
+        if (errorTestName === "userScriptProxyObject") {
+          assertNoProxyTrapTriggered();
+        }
+
+        if (err instanceof Error) {
+          apiRejectsResults[errorTestName] = {name: err.name, message: err.message};
+        } else {
+          apiRejectsResults[errorTestName] = {
+            name: err && err.name,
+            message: err && err.message,
+            typeOf: typeof err,
+            value: err,
+          };
+        }
+      }
+    }
+
+    sendResults(apiRejectsResults);
+
+    notifyFinish();
+  }
+
+  await test_userScript_APIMethod({
+    userScript,
+    apiScript,
+    async testFn({extension}) {
+      const expectedResults = {
+        // Any error not explicitly raised as a userScript objects or error instance is
+        // expected to be turned into a generic error message.
+        "apiScriptError": {name: "Error", message: "An unexpected apiScript error occurred"},
+
+        // When the api script throws a primitive value, we expect to receive it unmodified on
+        // the userScript side.
+        "apiScriptThrowsPlainString": {
+          typeOf: "string", value: "apiScriptThrowsPlainString message",
+          name: undefined, message: undefined,
+        },
+        "apiScriptThrowsNull": {
+          typeOf: "object", value: null,
+          name: undefined, message: undefined,
+        },
+
+        // Error messages that the apiScript has explicitly created as userScript's Error
+        // global instances are expected to be passing through unmodified.
+        "userScriptError": {name: "Error", message: "userScriptError message"},
+        "userScriptTypeError": {name: "TypeError", message: "userScriptTypeError message"},
+
+        // Error raised from the apiScript as userScript proxy objects are expected to
+        // be passing through unmodified.
+        "userScriptProxyObject": {
+          typeOf: "object",  name: "ProxyObjectGetName", message: "ProxyObjectGetMessage",
+        },
+      };
+
+      info("Checking results from errors raised from an apiScript exported function");
+
+      const apiThrowResults = await extension.awaitMessage("test-results");
+
+      for (let [key, expected] of Object.entries(expectedResults)) {
+        Assert.deepEqual(apiThrowResults[key], expected,
+                         `Got the expected error object for test case "${key}"`);
+      }
+
+      Assert.deepEqual(Object.keys(expectedResults).sort(),
+                       Object.keys(apiThrowResults).sort(),
+                       "the expected and actual test case names matches");
+
+      info("Checking expected results from errors raised from an apiScript exported function");
+
+      // Verify expected results from rejected promises returned from an apiScript exported function.
+      const apiThrowRejections = await extension.awaitMessage("test-results");
+
+      for (let [key, expected] of Object.entries(expectedResults)) {
+        Assert.deepEqual(apiThrowRejections[key], expected,
+                         `Got the expected rejected object for test case "${key}"`);
+      }
+
+      Assert.deepEqual(Object.keys(expectedResults).sort(),
+                       Object.keys(apiThrowRejections).sort(),
+                       "the expected and actual test case names matches");
+    },
+  });
+});
+
+add_task(async function test_apiScript_method_ensure_xraywrapped_proxy_in_params() {
+  function apiScript(sharedTestAPIMethods) {
+    browser.userScripts.onBeforeScript.addListener(script => {
+      script.defineGlobals({
+        ...sharedTestAPIMethods,
+        testAPIMethod(...args) {
+          // Proxies are opaque when wrapped in Xrays, and the proto of an opaque object
+          // is supposed to be Object.prototype.
+          browser.test.assertEq(
+            script.global.Object.prototype,
+            Object.getPrototypeOf(args[0]),
+            "Calling getPrototypeOf on the XrayWrapped proxy object doesn't run the proxy trap");
+
+          browser.test.assertTrue(Array.isArray(args[0]),
+                                  "Got an array object for the XrayWrapped proxy object param");
+          browser.test.assertEq(undefined, args[0].length,
+                                "XrayWrappers deny access to the length property");
+          browser.test.assertEq(undefined, args[0][0],
+                                "Got the expected item in the array object");
+          return true;
+        },
+      });
+    });
+  }
+
+  async function userScript() {
+    const {
+      assertTrue,
+      notifyFinish,
+      testAPIMethod,
+    } = this;
+
+    let proxy = new Proxy(["expectedArrayValue"], {
+      getPrototypeOf() {
+        throw new Error("Proxy's getPrototypeOf trap");
+      },
+      get(target, prop, receiver) {
+        throw new Error("Proxy's get trap");
+      },
+    });
+
+    let result = testAPIMethod(proxy);
+
+    assertTrue(result, `userScript got an unexpected returned value: ${result}`);
+    notifyFinish();
+  }
+
+  await test_userScript_APIMethod({
+    userScript,
+    apiScript,
+  });
+});
+
+add_task(async function test_apiScript_method_return_proxy_object() {
+  function apiScript(sharedTestAPIMethods) {
+    let proxyTrapsCount = 0;
+    let scriptTrapsCount = 0;
+
+    browser.userScripts.onBeforeScript.addListener(script => {
+      script.defineGlobals({
+        ...sharedTestAPIMethods,
+        testAPIMethodError() {
+          return new Proxy(["expectedArrayValue"], {
+            getPrototypeOf(target) {
+              proxyTrapsCount++;
+              return Object.getPrototypeOf(target);
+            },
+          });
+        },
+        testAPIMethodOk() {
+          return new script.global.Proxy(
+            script.export(["expectedArrayValue"]),
+            script.export({
+              getPrototypeOf(target) {
+                scriptTrapsCount++;
+                return script.global.Object.getPrototypeOf(target);
+              },
+            }));
+        },
+        assertNoProxyTrapTriggered() {
+          browser.test.assertEq(0, proxyTrapsCount, "Proxy traps should not be triggered");
+        },
+        assertScriptProxyTrapsCount(expected) {
+          browser.test.assertEq(expected, scriptTrapsCount, "Script Proxy traps should have been triggered");
+        },
+      });
+    });
+  }
+
+  async function userScript() {
+    const {
+      assertTrue,
+      assertNoProxyTrapTriggered,
+      assertScriptProxyTrapsCount,
+      notifyFinish,
+      testAPIMethodError,
+      testAPIMethodOk,
+    } = this;
+
+    let error;
+    try {
+      let result = testAPIMethodError();
+      notifyFinish(`Unexpected returned value while expecting error: ${result}`);
+      return;
+    } catch (err) {
+      error = err;
+    }
+
+    assertTrue(error && error.message.includes("Return value not accessible to the userScript"),
+               `Got an unexpected error message: ${error}`);
+
+    error = undefined;
+    try {
+      let result = testAPIMethodOk();
+      assertScriptProxyTrapsCount(0);
+      if (!(result instanceof Array)) {
+        notifyFinish(`Got an unexpected result: ${result}`);
+        return;
+      }
+      assertScriptProxyTrapsCount(1);
+    } catch (err) {
+      error = err;
+    }
+
+    assertTrue(!error, `Got an unexpected error: ${error}`);
+
+    assertNoProxyTrapTriggered();
+
+    notifyFinish();
+  }
+
+  await test_userScript_APIMethod({
+    userScript,
+    apiScript,
+  });
+});
+
+add_task(async function test_apiScript_returns_functions() {
+  function apiScript(sharedTestAPIMethods) {
+    browser.userScripts.onBeforeScript.addListener(script => {
+      script.defineGlobals({
+        ...sharedTestAPIMethods,
+        testAPIReturnsFunction() {
+          // Return a function with provides the same kind of behavior
+          // of the API methods exported as globals.
+          return script.export(() => window);
+        },
+        testAPIReturnsObjWithMethod() {
+          return script.export({
+            getWindow() {
+              return window;
+            },
+          });
+        },
+      });
+    });
+  }
+
+  async function userScript() {
+    const {
+      assertTrue,
+      notifyFinish,
+      testAPIReturnsFunction,
+      testAPIReturnsObjWithMethod,
+    } = this;
+
+    let resultFn = testAPIReturnsFunction();
+    assertTrue(typeof resultFn === "function",
+               `userScript got an unexpected returned value: ${typeof resultFn}`);
+
+    let fnRes = resultFn();
+    assertTrue(fnRes === window,
+               `Got an unexpected value from the returned function: ${fnRes}`);
+
+    let resultObj = testAPIReturnsObjWithMethod();
+    let actualTypeof = resultObj && typeof resultObj.getWindow;
+    assertTrue(actualTypeof === "function",
+               `Returned object does not have the expected getWindow method: ${actualTypeof}`);
+
+    let methodRes = resultObj.getWindow();
+    assertTrue(methodRes === window,
+               `Got an unexpected value from the returned method: ${methodRes}`);
+
+    notifyFinish();
+  }
+
+  await test_userScript_APIMethod({
+    userScript,
+    apiScript,
+  });
+});
+
+add_task(async function test_apiScript_method_clone_non_subsumed_returned_values() {
+  function apiScript(sharedTestAPIMethods) {
+    browser.userScripts.onBeforeScript.addListener(script => {
+      script.defineGlobals({
+        ...sharedTestAPIMethods,
+        testAPIMethodReturnOk() {
+          return script.export({
+            objKey1: {
+              nestedProp: "nestedvalue",
+            },
+            window,
+          });
+        },
+        testAPIMethodExplicitlyClonedError() {
+          let result = script.export({apiScopeObject: undefined});
+
+          browser.test.assertThrows(
+            () => {
+              result.apiScopeObject = {disallowedProp: "disallowedValue"};
+            },
+            /Not allowed to define cross-origin object as property on .* XrayWrapper/,
+            "Assigning a property to a xRayWrapper is expected to throw");
+
+          // Let the exception to be raised, so that we check that the actual underlying
+          // error message is not leaking in the userScript (replaced by the generic
+          // "An unexpected apiScript error occurred" error message).
+          result.apiScopeObject = {disallowedProp: "disallowedValue"};
+        },
+      });
+    });
+  }
+
+  async function userScript() {
+    const {
+      assertTrue,
+      notifyFinish,
+      testAPIMethodReturnOk,
+      testAPIMethodExplicitlyClonedError,
+    } = this;
+
+    let result = testAPIMethodReturnOk();
+
+    assertTrue(result && ("objKey1" in result) && result.objKey1.nestedProp === "nestedvalue",
+               `userScript got an unexpected returned value: ${result}`);
+
+    assertTrue(result.window === window,
+               `userScript should have access to the window property: ${result.window}`);
+
+    let error;
+    try {
+      result = testAPIMethodExplicitlyClonedError();
+      notifyFinish(`Unexpected returned value while expecting error: ${result}`);
+      return;
+    } catch (err) {
+      error = err;
+    }
+
+    // We expect the generic "unexpected apiScript error occurred" to be raised to the
+    // userScript code.
+    assertTrue(error && error.message.includes("An unexpected apiScript error occurred"),
+               `Got an unexpected error message: ${error}`);
+
+    notifyFinish();
+  }
+
+  await test_userScript_APIMethod({
+    userScript,
+    apiScript,
+  });
+});
+
+add_task(async function test_apiScript_method_export_primitive_types() {
+  function apiScript(sharedTestAPIMethods) {
+    browser.userScripts.onBeforeScript.addListener(script => {
+      script.defineGlobals({
+        ...sharedTestAPIMethods,
+        testAPIMethod(typeToExport) {
+          switch (typeToExport) {
+            case "boolean": return script.export(true);
+            case "number": return script.export(123);
+            case "string": return script.export("a string");
+            case "symbol": return script.export(Symbol("a symbol"));
+          }
+          return undefined;
+        },
+      });
+    });
+  }
+
+  async function userScript() {
+    const {assertTrue, notifyFinish, testAPIMethod} = this;
+
+    let v = testAPIMethod("boolean");
+    assertTrue(v === true, `Should export a boolean`);
+
+    v = testAPIMethod("number");
+    assertTrue(v === 123, `Should export a number`);
+
+    v = testAPIMethod("string");
+    assertTrue(v === "a string", `Should export a string`);
+
+    v = testAPIMethod("symbol");
+    assertTrue(typeof v === "symbol", `Should export a symbol`);
+
+    notifyFinish();
+  }
+
+  await test_userScript_APIMethod({
+    userScript,
+    apiScript,
+  });
+});
+
+add_task(async function test_apiScript_method_avoid_unnecessary_params_cloning() {
+  function apiScript(sharedTestAPIMethods) {
+    browser.userScripts.onBeforeScript.addListener(script => {
+      script.defineGlobals({
+        ...sharedTestAPIMethods,
+        testAPIMethodReturnsParam(param) {
+          return param;
+        },
+        testAPIMethodReturnsUnwrappedParam(param) {
+          return param.wrappedJSObject;
+        },
+      });
+    });
+  }
+
+  async function userScript() {
+    const {
+      assertTrue,
+      notifyFinish,
+      testAPIMethodReturnsParam,
+      testAPIMethodReturnsUnwrappedParam,
+    } = this;
+
+    let obj = {};
+
+    let result = testAPIMethodReturnsParam(obj);
+
+    assertTrue(result === obj,
+               `Expect returned value to be strictly equal to the API method parameter`);
+
+    result = testAPIMethodReturnsUnwrappedParam(obj);
+
+    assertTrue(result === obj,
+               `Expect returned value to be strictly equal to the unwrapped API method parameter`);
+
+    notifyFinish();
+  }
+
+  await test_userScript_APIMethod({
+    userScript,
+    apiScript,
+  });
+});
+
+add_task(async function test_apiScript_method_export_sparse_arrays() {
+  function apiScript(sharedTestAPIMethods) {
+    browser.userScripts.onBeforeScript.addListener(script => {
+      script.defineGlobals({
+        ...sharedTestAPIMethods,
+        testAPIMethod() {
+          const sparseArray = [];
+          sparseArray[3] = "third-element";
+          sparseArray[5] = "fifth-element";
+          return script.export(sparseArray);
+        },
+      });
+    });
+  }
+
+  async function userScript() {
+    const {assertTrue, notifyFinish, testAPIMethod} = this;
+
+    const result = testAPIMethod(window, document);
+
+    // We expect the returned value to be the uncloneable window object.
+    assertTrue(result && result.length === 6,
+               `the returned value should be an array of the expected length: ${result}`);
+    assertTrue(result[3] === "third-element",
+               `the third array element should have the expected value: ${result[3]}`);
+    assertTrue(result[5] === "fifth-element",
+               `the fifth array element should have the expected value: ${result[5]}`);
+    assertTrue(result[0] === undefined,
+               `the first array element should have the expected value: ${result[0]}`);
+    assertTrue(!("0" in result), "Holey array should still be holey");
+
+    notifyFinish();
+  }
+
+  await test_userScript_APIMethod({
+    userScript,
+    apiScript,
+  });
 });
 
 // This test verify that a cached script is still able to catch the document
@@ -452,10 +1214,12 @@ add_task(async function test_userScripts_exported_APIs() {
 // we do for a non cached script).
 add_task(async function test_cached_userScript_on_document_start() {
   function apiScript() {
-    browser.userScripts.setScriptAPIs({
-      sendTestMessage([name, params]) {
-        return browser.test.sendMessage(name, params);
-      },
+    browser.userScripts.onBeforeScript.addListener(script => {
+      script.defineGlobals({
+        sendTestMessage(name, params) {
+          return browser.test.sendMessage(name, params);
+        },
+      });
     });
   }
 
@@ -487,6 +1251,9 @@ add_task(async function test_cached_userScript_on_document_start() {
       ],
       user_scripts: {
         api_script: "api-script.js",
+        // The following is an unexpected manifest property, that we expect to be ignored and
+        // to not prevent the test extension from being installed and run as expected.
+        unexpected_manifest_key: "test-unexpected-key",
       },
     },
     background,
@@ -544,14 +1311,12 @@ add_task(async function test_userScripts_pref_disabled() {
 
     async function contentScript() {
       let promise = (async () => {
-        browser.userScripts.setScriptAPIs({
-          GM_apiMethod() {},
-        });
+        browser.userScripts.onBeforeScript.addListener(() => {});
       })();
       await browser.test.assertRejects(
         promise,
         /userScripts APIs are currently experimental/,
-        "Got the expected error from userScripts.setScriptAPIs when the userScripts API is disabled");
+        "Got the expected error from userScripts.onBeforeScript when the userScripts API is disabled");
 
       browser.test.sendMessage("content-script:done");
     }
@@ -560,7 +1325,7 @@ add_task(async function test_userScripts_pref_disabled() {
       background,
       manifest: {
         permissions: ["http://*/*/file_sample.html"],
-        user_scripts: {},
+        user_scripts: {api_script: ""},
         content_scripts: [
           {
             matches:  ["http://*/*/file_sample.html"],
@@ -589,4 +1354,127 @@ add_task(async function test_userScripts_pref_disabled() {
 
   await runWithPrefs([["extensions.webextensions.userScripts.enabled", false]],
                      run_userScript_on_pref_disabled_test);
+});
+
+// This test verify that userScripts.onBeforeScript API Event is not available without
+// a "user_scripts.api_script" property in the manifest.
+add_task(async function test_user_script_api_script_required() {
+  let extension = ExtensionTestUtils.loadExtension({
+    manifest: {
+      content_scripts: [
+        {
+          matches: ["http://localhost/*/file_sample.html"],
+          js: ["content_script.js"],
+          run_at: "document_start",
+        },
+      ],
+      user_scripts: {},
+    },
+    files: {
+      "content_script.js": function() {
+        browser.test.assertEq(undefined, browser.userScripts && browser.userScripts.onBeforeScript,
+                              "Got an undefined onBeforeScript property as expected");
+        browser.test.sendMessage("no-onBeforeScript:done");
+      },
+    },
+  });
+
+  await extension.startup();
+
+  let url = `${BASE_URL}/file_sample.html`;
+  let contentPage = await ExtensionTestUtils.loadContentPage(url);
+
+  await extension.awaitMessage("no-onBeforeScript:done");
+
+  await extension.unload();
+  await contentPage.close();
+});
+
+add_task(async function test_scriptMetaData() {
+  function getTestCases(isUserScriptsRegister) {
+    return [
+      // When scriptMetadata is not set (or undefined), it is treated as if it were null.
+      // In the API script, the metadata is then expected to be null.
+      isUserScriptsRegister ? undefined : null,
+
+      // Falsey
+      null,
+      "",
+      false,
+      0,
+
+      // Truthy
+      true,
+      1,
+      "non-empty string",
+
+      // Objects
+      ["some array with value"],
+      {"some object": "with value"},
+    ];
+  }
+
+  async function background(pageUrl) {
+    for (let scriptMetadata of getTestCases(true)) {
+      await browser.userScripts.register({
+        js: [{file: "userscript.js"}],
+        runAt: "document_end",
+        allFrames: true,
+        matches: ["http://localhost/*/file_sample.html"],
+        scriptMetadata,
+      });
+    }
+
+    let f = document.createElement("iframe");
+    f.src = pageUrl;
+    document.body.append(f);
+    browser.test.sendMessage("background-page:done");
+  }
+
+  function apiScript() {
+    let testCases = getTestCases(false);
+    let i = 0;
+
+    browser.userScripts.onBeforeScript.addListener(script => {
+      script.defineGlobals({
+        checkMetadata() {
+          let expectation = testCases[i];
+          let metadata = script.metadata;
+          if (typeof expectation === "object" && expectation !== null) {
+            // Non-primitive values cannot be compared with assertEq,
+            // so serialize both and just verify that they are equal.
+            expectation = JSON.stringify(expectation);
+            metadata = JSON.stringify(script.metadata);
+          }
+
+          browser.test.assertEq(expectation, metadata,
+                                `Expected metadata at call ${i}`);
+          if (++i === testCases.length) {
+            browser.test.sendMessage("apiscript:done");
+          }
+        },
+      });
+    });
+  }
+
+  let extension = ExtensionTestUtils.loadExtension({
+    background: `${getTestCases};(${background})("${BASE_URL}/file_sample.html")`,
+    manifest: {
+      permissions: ["http://*/*/file_sample.html"],
+      user_scripts: {
+        api_script: "apiscript.js",
+      },
+    },
+    files: {
+      "apiscript.js": `${getTestCases};(${apiScript})()`,
+      "userscript.js": "checkMetadata();",
+    },
+  });
+
+  await extension.startup();
+
+  await extension.awaitMessage("background-page:done");
+  await extension.awaitMessage("apiscript:done");
+
+  await extension.unload();
 });

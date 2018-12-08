@@ -20,16 +20,14 @@ namespace recordreplay {
 static ValueIndex* gCallbackData;
 static StaticMutexNotRecorded gCallbackMutex;
 
-void
-RegisterCallbackData(void* aData)
-{
+void RegisterCallbackData(void* aData) {
   MOZ_RELEASE_ASSERT(IsRecordingOrReplaying());
   MOZ_RELEASE_ASSERT(!AreThreadEventsPassedThrough());
   if (!aData) {
     return;
   }
 
-  AutoOrderedAtomicAccess at;
+  AutoOrderedAtomicAccess at(&gCallbackData);
   StaticMutexAutoLock lock(gCallbackMutex);
   if (!gCallbackData) {
     gCallbackData = new ValueIndex();
@@ -37,9 +35,7 @@ RegisterCallbackData(void* aData)
   gCallbackData->Insert(aData);
 }
 
-void
-BeginCallback(size_t aCallbackId)
-{
+void BeginCallback(size_t aCallbackId) {
   MOZ_RELEASE_ASSERT(IsRecording());
   MOZ_RELEASE_ASSERT(!AreThreadEventsDisallowed());
 
@@ -49,13 +45,14 @@ BeginCallback(size_t aCallbackId)
   }
   thread->SetPassThrough(false);
 
+  RecordingEventSection res(thread);
+  MOZ_RELEASE_ASSERT(res.CanAccessEvents());
+
   thread->Events().RecordOrReplayThreadEvent(ThreadEvent::ExecuteCallback);
   thread->Events().WriteScalar(aCallbackId);
 }
 
-void
-EndCallback()
-{
+void EndCallback() {
   MOZ_RELEASE_ASSERT(IsRecording());
   MOZ_RELEASE_ASSERT(!AreThreadEventsPassedThrough());
   MOZ_RELEASE_ASSERT(!AreThreadEventsDisallowed());
@@ -67,13 +64,12 @@ EndCallback()
   thread->SetPassThrough(true);
 }
 
-void
-SaveOrRestoreCallbackData(void** aData)
-{
+void SaveOrRestoreCallbackData(void** aData) {
   MOZ_RELEASE_ASSERT(gCallbackData);
 
   Thread* thread = Thread::Current();
-  MOZ_RELEASE_ASSERT(thread->CanAccessRecording());
+  RecordingEventSection res(thread);
+  MOZ_RELEASE_ASSERT(res.CanAccessEvents());
 
   thread->Events().RecordOrReplayThreadEvent(ThreadEvent::RestoreCallbackData);
 
@@ -89,20 +85,17 @@ SaveOrRestoreCallbackData(void** aData)
   }
 }
 
-void
-RemoveCallbackData(void* aData)
-{
+void RemoveCallbackData(void* aData) {
   MOZ_RELEASE_ASSERT(IsRecordingOrReplaying());
 
   StaticMutexAutoLock lock(gCallbackMutex);
   gCallbackData->Remove(aData);
 }
 
-void
-PassThroughThreadEventsAllowCallbacks(const std::function<void()>& aFn)
-{
+void PassThroughThreadEventsAllowCallbacks(const std::function<void()>& aFn) {
   Thread* thread = Thread::Current();
-  MOZ_RELEASE_ASSERT(thread->CanAccessRecording());
+  RecordingEventSection res(thread);
+  MOZ_RELEASE_ASSERT(res.CanAccessEvents());
 
   if (IsRecording()) {
     if (thread->IsMainThread()) {
@@ -117,7 +110,7 @@ PassThroughThreadEventsAllowCallbacks(const std::function<void()>& aFn)
     thread->Events().RecordOrReplayThreadEvent(ThreadEvent::CallbacksFinished);
   } else {
     while (true) {
-      ThreadEvent ev = (ThreadEvent) thread->Events().ReadScalar();
+      ThreadEvent ev = (ThreadEvent)thread->Events().ReadScalar();
       if (ev != ThreadEvent::ExecuteCallback) {
         MOZ_RELEASE_ASSERT(ev == ThreadEvent::CallbacksFinished);
         break;
@@ -128,5 +121,5 @@ PassThroughThreadEventsAllowCallbacks(const std::function<void()>& aFn)
   }
 }
 
-} // namespace recordreplay
-} // namespace mozilla
+}  // namespace recordreplay
+}  // namespace mozilla

@@ -19,13 +19,13 @@ function run_test() {
   gClient.connect().then(function() {
     attachTestTabAndResume(
       gClient, "test-black-box",
-      function(response, tabClient, threadClient) {
+      function(response, targetFront, threadClient) {
         gThreadClient = threadClient;
         // XXX: We have to do an executeSoon so that the error isn't caught and
         // reported by DebuggerClient.requester (because we are using the local
         // transport and share a stack) which causes the test to fail.
         Services.tm.dispatchToMainThread({
-          run: test_black_box
+          run: test_black_box,
         });
       });
   });
@@ -41,7 +41,7 @@ function test_black_box() {
   /* eslint-disable no-multi-spaces, no-unreachable, no-undef */
   Cu.evalInSandbox(
     "" + function doStuff(k) {                                   // line 1
-      throw new Error("wu tang clan ain't nuthin' ta fuck wit"); // line 2
+      throw new Error("error msg");                              // line 2
       k(100);                                                    // line 3
     },                                                           // line 4
     gDebuggee,

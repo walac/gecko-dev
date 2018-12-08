@@ -9,9 +9,14 @@
 const { PerformanceStats } = ChromeUtils.import("resource://gre/modules/PerformanceStats.jsm", {});
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm", {});
 const { ObjectUtils } = ChromeUtils.import("resource://gre/modules/ObjectUtils.jsm", {});
+const { AddonManager } = ChromeUtils.import("resource://gre/modules/AddonManager.jsm", {});
 const { ExtensionParent } = ChromeUtils.import("resource://gre/modules/ExtensionParent.jsm", {});
 
 const {WebExtensionPolicy} = Cu.getGlobalForObject(Services);
+
+// Time in ms before we start changing the sort order again after receiving a
+// mousemove event.
+const TIME_BEFORE_SORTING_AGAIN = 5000;
 
 // about:performance observes notifications on this topic.
 // if a notification is sent, this causes the page to be updated immediately,
@@ -76,6 +81,13 @@ function performanceCountersEnabled() {
 function extensionCountersEnabled() {
   return Services.prefs.getBoolPref("extensions.webextensions.enablePerformanceCounters", false);
 }
+
+// The ids of system add-ons, so that we can hide them when the
+// toolkit.aboutPerformance.showInternals pref is false.
+// The API to access addons is async, so we cache the list during init.
+// The list is unlikely to change while the about:performance
+// tab is open, so not updating seems fine.
+var gSystemAddonIds = new Set();
 
 let tabFinder = {
   update() {
@@ -414,7 +426,7 @@ var State = {
     let tabs = {};
     for (let counter of counters) {
       let {items, host, pid, counterId, windowId, duration, isWorker,
-           isTopLevel} = counter;
+           memoryInfo, isTopLevel} = counter;
       // If a worker has a windowId of 0 or max uint64, attach it to the
       // browser UI (doc group with id 1).
       if (isWorker && (windowId == 18446744073709552000 || !windowId))
@@ -422,6 +434,17 @@ var State = {
       let dispatchCount = 0;
       for (let {count} of items) {
         dispatchCount += count;
+      }
+
+      let memory = 0;
+      for (let field in memoryInfo) {
+        if (field == "media") {
+          for (let mediaField of ["audioSize", "videoSize", "resourcesSize"]) {
+            memory += memoryInfo.media[mediaField];
+          }
+          continue;
+        }
+        memory += memoryInfo[field];
       }
 
       let tab;
@@ -432,13 +455,14 @@ var State = {
       if (id in tabs) {
         tab = tabs[id];
       } else {
-        tab = {windowId, host, dispatchCount: 0, duration: 0, children: []};
+        tab = {windowId, host, dispatchCount: 0, duration: 0, memory: 0, children: []};
         tabs[id] = tab;
       }
       tab.dispatchCount += dispatchCount;
       tab.duration += duration;
+      tab.memory += memory;
       if (!isTopLevel || isWorker) {
-        tab.children.push({host, isWorker, dispatchCount, duration,
+        tab.children.push({host, isWorker, dispatchCount, duration, memory,
                            counterId: pid + ":" + counterId});
       }
     }
@@ -456,7 +480,7 @@ var State = {
         if (id in tabs) {
           tab = tabs[id];
         } else {
-          tab = {windowId: 0, host: id, dispatchCount: 0, duration: 0, children: []};
+          tab = {windowId: 0, host: id, dispatchCount: 0, duration: 0, memory: 0, children: []};
           tabs[id] = tab;
         }
         tab.dispatchCount += dispatchCount;
@@ -602,7 +626,8 @@ var State = {
 
     let previous = this._buffer[Math.max(this._buffer.length - 2, 0)].tabs;
     let current = this._latest.tabs;
-    return Object.keys(current).map(id => {
+    let counters = [];
+    for (let id of Object.keys(current)) {
       let tab = current[id];
       let oldest;
       for (let index = 0; index <= this._buffer.length - 2; ++index) {
@@ -614,6 +639,7 @@ var State = {
       let prev = previous[id];
       let host = tab.host;
 
+      let type = "other";
       let name = `${host} (${id})`;
       let image = "chrome://mozapps/skin/places/defaultFavicon.svg";
       let found = tabFinder.get(parseInt(id));
@@ -621,18 +647,27 @@ var State = {
         if (found.tabbrowser) {
           name = found.tab.getAttribute("label");
           image = found.tab.getAttribute("image");
+          type = "tab";
         } else {
-          name = "Preloaded: " + found.tab.linkedBrowser.contentTitle;
+          name = {id: "preloaded-tab",
+                  title: found.tab.linkedBrowser.contentTitle};
         }
       } else if (id == 1) {
         name = BRAND_NAME;
         image = "chrome://branding/content/icon32.png";
+        type = "browser";
       } else if (/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(host)) {
         let addon = WebExtensionPolicy.getByHostname(host);
         name = `${addon.name} (${addon.id})`;
         image = "chrome://mozapps/skin/extensions/extensionGeneric-16.svg";
+        type = gSystemAddonIds.has(addon.id) ? "system-addon" : "addon";
       } else if (id == 0 && !tab.isWorker) {
-        name = "Ghost windows";
+        name = {id: "ghost-windows"};
+      }
+
+      if (type != "tab" && type != "addon" &&
+          !Services.prefs.getBoolPref("toolkit.aboutPerformance.showInternals", false)) {
+        continue;
       }
 
       // Create a map of all the child items from the previous time we read the
@@ -646,8 +681,7 @@ var State = {
       }
       // For each subitem, create a new object including the deltas since the previous time.
       let children = tab.children.map(child => {
-        let {host, dispatchCount, duration, isWorker, counterId} = child;
-
+        let {host, dispatchCount, duration, memory, isWorker, counterId} = child;
         let dispatchesSincePrevious = dispatchCount;
         let durationSincePrevious = duration;
         if (prevChildren.has(counterId)) {
@@ -657,7 +691,7 @@ var State = {
           prevChildren.delete(counterId);
         }
 
-        return {host, dispatchCount, duration, isWorker,
+        return {host, dispatchCount, duration, isWorker, memory,
                 dispatchesSincePrevious, durationSincePrevious};
       });
 
@@ -691,12 +725,13 @@ var State = {
         durationSinceStartOfBuffer =
           duration - oldest.duration - (oldest.durationFromFormerChildren || 0);
       }
-      return ({id, name, image,
-               totalDispatches: dispatches, totalDuration: duration,
-               durationSincePrevious, dispatchesSincePrevious,
-               durationSinceStartOfBuffer, dispatchesSinceStartOfBuffer,
-               children});
-    });
+      counters.push({id, name, image, type, memory: tab.memory,
+                     totalDispatches: dispatches, totalDuration: duration,
+                     durationSincePrevious, dispatchesSincePrevious,
+                     durationSinceStartOfBuffer, dispatchesSinceStartOfBuffer,
+                     children});
+    }
+    return counters;
   },
 };
 
@@ -996,23 +1031,89 @@ var View = {
     tbody.appendChild(this._fragment);
     this._fragment = document.createDocumentFragment();
   },
-  appendRow(name, value, tooltip, classes, image = "") {
+  insertAfterRow(row) {
+    row.parentNode.insertBefore(this._fragment, row.nextSibling);
+    this._fragment = document.createDocumentFragment();
+  },
+  displayEnergyImpact(elt, energyImpact) {
+    if (!energyImpact)
+      elt.textContent = "–";
+    else {
+      let impact = "high";
+      if (energyImpact < 1)
+        impact = "low";
+      else if (energyImpact < 25)
+        impact = "medium";
+      document.l10n.setAttributes(elt, "energy-impact-" + impact,
+                                  {value: energyImpact});
+    }
+  },
+  appendRow(name, energyImpact, memory, tooltip, type, image = "") {
     let row = document.createElement("tr");
 
     let elt = document.createElement("td");
-    elt.textContent = name;
+    if (typeof name == "string") {
+      elt.textContent = name;
+    } else if (name.title) {
+      document.l10n.setAttributes(elt, name.id, {title: name.title});
+    } else {
+      document.l10n.setAttributes(elt, name.id);
+    }
     if (image)
       elt.style.backgroundImage = `url('${image}')`;
-    if (classes)
-      elt.classList.add(...classes);
+
+    if (["subframe", "tracker", "worker"].includes(type))
+      elt.classList.add("indent");
+    else
+      elt.classList.add("root");
+    if (["tracker", "worker"].includes(type))
+      elt.classList.add(type);
     row.appendChild(elt);
 
     elt = document.createElement("td");
-    elt.textContent = value;
+    if (type == "system-addon")
+      type = "addon";
+    document.l10n.setAttributes(elt, "type-" + type);
+    row.appendChild(elt);
+
+    elt = document.createElement("td");
+    this.displayEnergyImpact(elt, energyImpact);
+    row.appendChild(elt);
+
+    elt = document.createElement("td");
+    if (!memory) {
+      elt.textContent = "–";
+    } else {
+      let unit = "KB";
+      memory = Math.ceil(memory / 1024);
+      if (memory > 1024) {
+        memory = Math.ceil(memory / 1024 * 10) / 10;
+        unit = "MB";
+        if (memory > 1024) {
+          memory = Math.ceil(memory / 1024 * 100) / 100;
+          unit = "GB";
+        }
+      }
+      document.l10n.setAttributes(elt, "size-" + unit, {value: memory});
+    }
     row.appendChild(elt);
 
     if (tooltip)
-      row.title = tooltip;
+      document.l10n.setAttributes(row, "item", tooltip);
+
+    elt = document.createElement("td");
+    if (type == "tab") {
+      let img = document.createElement("span");
+      img.className = "action-icon close-icon";
+      document.l10n.setAttributes(img, "close-tab");
+      elt.appendChild(img);
+    } else if (type == "addon") {
+      let img = document.createElement("span");
+      img.className = "action-icon addon-icon";
+      document.l10n.setAttributes(img, "show-addon");
+      elt.appendChild(img);
+    }
+    row.appendChild(elt);
 
     this._fragment.appendChild(row);
     return row;
@@ -1020,12 +1121,60 @@ var View = {
 };
 
 var Control = {
+  _openItems: new Set(),
+  _removeSubtree(row) {
+    while (row.nextSibling &&
+           row.nextSibling.firstChild.classList.contains("indent")) {
+      row.nextSibling.remove();
+    }
+  },
   init() {
     this._initAutorefresh();
     this._initDisplayMode();
     let tbody = document.getElementById("dispatch-tbody");
-    tbody.addEventListener("click", () => {
-      let row = event.target.parentNode;
+    tbody.addEventListener("click", event => {
+      this._updateLastMouseEvent();
+
+      // Handle showing or hiding subitems of a row.
+      let target = event.target;
+      if (target.classList.contains("twisty")) {
+        let row = target.parentNode.parentNode;
+        let id = row.windowId;
+        if (target.classList.toggle("open")) {
+          this._openItems.add(id);
+          this._showChildren(row);
+          View.insertAfterRow(row);
+        } else {
+          this._openItems.delete(id);
+          this._removeSubtree(row);
+        }
+        return;
+      }
+
+      // Handle closing a tab.
+      if (target.classList.contains("close-icon")) {
+        let row = target.parentNode.parentNode;
+        let id = parseInt(row.windowId);
+        let found = tabFinder.get(id);
+        if (!found || !found.tabbrowser)
+          return;
+        let {tabbrowser, tab} = found;
+        tabbrowser.removeTab(tab);
+        this._removeSubtree(row);
+        row.remove();
+        return;
+      }
+
+      if (target.classList.contains("addon-icon")) {
+        let row = target.parentNode.parentNode;
+        let id = row.windowId;
+        let parentWin = window.docShell.rootTreeItem.domWindow;
+        parentWin.BrowserOpenAddonsMgr("addons://detail/" + encodeURIComponent(id));
+        return;
+      }
+
+      // Handle selection changes
+      let row = target.parentNode;
       if (this.selectedRow) {
         this.selectedRow.removeAttribute("selected");
       }
@@ -1036,7 +1185,9 @@ var Control = {
         this.selectedRow = null;
       }
     });
-    tbody.addEventListener("dblclick", () => {
+
+    // Select the tab of double clicked items.
+    tbody.addEventListener("dblclick", event => {
       let id = parseInt(event.target.parentNode.windowId);
       if (isNaN(id))
         return;
@@ -1047,6 +1198,14 @@ var Control = {
       tabbrowser.selectedTab = tab;
       tabbrowser.ownerGlobal.focus();
     });
+
+    tbody.addEventListener("mousemove", () => {
+      this._updateLastMouseEvent();
+    });
+  },
+  _lastMouseEvent: 0,
+  _updateLastMouseEvent() {
+    this._lastMouseEvent = Date.now();
   },
   async update() {
     let mode = this._displayMode;
@@ -1071,76 +1230,92 @@ var Control = {
       // Make sure that we do not keep obsolete stuff around.
       View.DOMCache.trimTo(state.deltas);
     } else {
+      // If the mouse has been moved recently, update the data displayed
+      // without moving any item to avoid the risk of users clicking an action
+      // button for the wrong item.
+      // Memory use is unlikely to change dramatically within a few seconds, so
+      // it's probably fine to not update the Memory column in this case.
+      if (Date.now() - this._lastMouseEvent < TIME_BEFORE_SORTING_AGAIN) {
+        let energyImpactPerId = new Map();
+        for (let {id, dispatchesSincePrevious,
+                  durationSincePrevious} of State.getCounters()) {
+          let energyImpact = this._computeEnergyImpact(dispatchesSincePrevious,
+                                                       durationSincePrevious);
+          energyImpactPerId.set(id, energyImpact);
+        }
+
+        let row = document.getElementById("dispatch-tbody").firstChild;
+        while (row) {
+          if (row.windowId && energyImpactPerId.has(row.windowId)) {
+            // We update the value in the Energy Impact column, but don't
+            // update the children, as if the child count changes there's a
+            // risk of making other rows move up or down.
+            const kEnergyImpactColumn = 2;
+            let elt = row.childNodes[kEnergyImpactColumn];
+            View.displayEnergyImpact(elt, energyImpactPerId.get(row.windowId));
+          }
+          row = row.nextSibling;
+        }
+        return;
+      }
 
       let selectedId = -1;
+      // Reset the selectedRow field and the _openItems set each time we redraw
+      // to avoid keeping forever references to closed window ids.
       if (this.selectedRow) {
         selectedId = this.selectedRow.windowId;
         this.selectedRow = null;
       }
+      let openItems = this._openItems;
+      this._openItems = new Set();
 
       let counters = this._sortCounters(State.getCounters());
-      for (let {id, name, image, totalDispatches, dispatchesSincePrevious,
-                totalDuration, durationSincePrevious, children} of counters) {
-
-        function dispatchesAndDuration(dispatches, duration) {
-          let result = dispatches;
-          if (duration) {
-            duration /= 1000;
-            duration = Math.round(duration);
-            if (duration)
-              result += duration >= 1000 ? ` (${duration / 1000}s)` : ` (${duration}ms)`;
-            else
-              result += " (< 1ms)";
-          }
-          return result;
-        }
-
-        function formatTooltip(totalDispatches, totalDuration,
-                               dispatchesSincePrevious, durationSincePrevious) {
-          return `${dispatchesAndDuration(totalDispatches, totalDuration)} dispatches since load\n` +
-            `${dispatchesAndDuration(dispatchesSincePrevious, durationSincePrevious)} in the last seconds`;
-        }
-
-        let formatEnergyImpact = (dispatches, duration) => {
-          let energyImpact = this._computeEnergyImpact(dispatches, duration);
-          if (!energyImpact)
-            return "None";
-          energyImpact = Math.ceil(energyImpact * 100) / 100;
-          if (energyImpact < 1)
-            return `Low (${energyImpact})`;
-          if (energyImpact < 25)
-            return `Medium (${energyImpact})`;
-          return `High (${energyImpact})`;
-        };
-
+      for (let {id, name, image, type, totalDispatches, dispatchesSincePrevious,
+                memory, totalDuration, durationSincePrevious, children} of counters) {
         let row =
           View.appendRow(name,
-                         formatEnergyImpact(dispatchesSincePrevious, durationSincePrevious),
-                         formatTooltip(totalDispatches, totalDuration,
-                                       dispatchesSincePrevious, durationSincePrevious),
-                         null, image);
+                         this._computeEnergyImpact(dispatchesSincePrevious,
+                                                   durationSincePrevious),
+                         memory,
+                         {totalDispatches, totalDuration: Math.ceil(totalDuration / 1000),
+                          dispatchesSincePrevious,
+                          durationSincePrevious: Math.ceil(durationSincePrevious / 1000)},
+                         type, image);
         row.windowId = id;
         if (id == selectedId) {
           row.setAttribute("selected", "true");
           this.selectedRow = row;
         }
 
-        children.sort((a, b) => b.dispatchesSincePrevious - a.dispatchesSincePrevious);
-        for (let row of children) {
-          let host = row.host.replace(/^blob:https?:\/\//, "");
-          let classes = ["indent"];
-          if (State.isTracker(host))
-            classes.push("tracking");
-          if (row.isWorker)
-            classes.push("worker");
-          View.appendRow(row.host,
-                         formatEnergyImpact(row.dispatchesSincePrevious,
-                                            row.durationSincePrevious),
-                         formatTooltip(row.dispatchCount, row.duration,
-                                       row.dispatchesSincePrevious,
-                                       row.durationSincePrevious),
-                         classes);
+        if (!children.length)
+          continue;
+
+        // Show the twisty image.
+        let elt = row.firstChild;
+        let img = document.createElement("span");
+        img.className = "twisty";
+        let open = openItems.has(id);
+        if (open) {
+          img.classList.add("open");
+          this._openItems.add(id);
         }
+
+        // If there's an l10n id on our <td> node, any image we add will be
+        // removed during localization, so move the l10n id to a <span>
+        let l10nAttrs = document.l10n.getAttributes(elt);
+        if (l10nAttrs.id) {
+          let span = document.createElement("span");
+          document.l10n.setAttributes(span, l10nAttrs.id, l10nAttrs.args);
+          elt.removeAttribute("data-l10n-id");
+          elt.removeAttribute("data-l10n-args");
+          elt.insertBefore(span, elt.firstChild);
+        }
+
+        elt.insertBefore(img, elt.firstChild);
+
+        row._children = children;
+        if (open)
+          this._showChildren(row);
       }
 
       View.commit();
@@ -1151,6 +1326,27 @@ var Control = {
     // Inform watchers
     Services.obs.notifyObservers(null, UPDATE_COMPLETE_TOPIC, mode);
   },
+  _showChildren(row) {
+    let children = row._children;
+    children.sort((a, b) => b.dispatchesSincePrevious - a.dispatchesSincePrevious);
+    for (let row of children) {
+      let host = row.host.replace(/^blob:https?:\/\//, "");
+      let type = "subframe";
+      if (State.isTracker(host))
+        type = "tracker";
+      if (row.isWorker)
+        type = "worker";
+      View.appendRow(row.host,
+                     this._computeEnergyImpact(row.dispatchesSincePrevious,
+                                               row.durationSincePrevious),
+                     row.memory,
+                     {totalDispatches: row.dispatchCount,
+                      totalDuration: Math.ceil(row.duration / 1000),
+                      dispatchesSincePrevious: row.dispatchesSincePrevious,
+                      durationSincePrevious: Math.ceil(row.durationSincePrevious / 1000)},
+                     type);
+    }
+  },
   _computeEnergyImpact(dispatches, duration) {
     // 'Dispatches' doesn't make sense to users, and it's difficult to present
     // two numbers in a meaningful way, so we need to somehow aggregate the
@@ -1160,10 +1356,18 @@ var Control = {
     // Dividing the result by the sampling interval and by 10 gives a number that
     // looks like a familiar percentage to users, as fullying using one core will
     // result in a number close to 100.
-    return Math.max(duration || 0, dispatches * 1000) / UPDATE_INTERVAL_MS / 10;
+    let energyImpact =
+      Math.max(duration || 0, dispatches * 1000) / UPDATE_INTERVAL_MS / 10;
+    // Keep only 2 digits after the decimal point.
+    return Math.ceil(energyImpact * 100) / 100;
   },
   _sortCounters(counters) {
     return counters.sort((a, b) => {
+      // Force 'Recently Closed Tabs' to be always at the bottom, because it'll
+      // never be actionable.
+      if (a.name.id && a.name.id == "ghost-windows")
+        return 1;
+
       // Note: _computeEnergyImpact uses UPDATE_INTERVAL_MS which doesn't match
       // the time between the most recent sample and the start of the buffer,
       // BUFFER_DURATION_MS would be better, but the values is never displayed
@@ -1174,7 +1378,9 @@ var Control = {
                                           b.durationSinceStartOfBuffer);
       if (aEI != bEI)
         return bEI - aEI;
-      return a.name.localeCompare(b.name);
+
+      // a.name is sometimes an object, so we can't use a.name.localeCompare.
+      return String.prototype.localeCompare.call(a.name, b.name);
     });
   },
   _setOptions(options) {
@@ -1242,6 +1448,13 @@ var go = async function() {
     let opt = document.querySelector(".options");
     opt.style.display = "none";
     opt.nextElementSibling.style.display = "none";
+
+    let addons = await AddonManager.getAddonsByTypes(["extension"]);
+    for (let addon of addons) {
+      if (addon.isSystem) {
+        gSystemAddonIds.add(addon.id);
+      }
+    }
   } else {
     document.getElementById("dispatch-table").parentNode.style.display = "none";
   }

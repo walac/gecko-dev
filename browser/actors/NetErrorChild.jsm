@@ -14,6 +14,10 @@ ChromeUtils.defineModuleGetter(this, "BrowserUtils",
 ChromeUtils.defineModuleGetter(this, "WebNavigationFrames",
                                "resource://gre/modules/WebNavigationFrames.jsm");
 
+XPCOMUtils.defineLazyGlobalGetters(this, ["URL"]);
+
+XPCOMUtils.defineLazyGlobalGetters(this, ["URL"]);
+
 XPCOMUtils.defineLazyGetter(this, "gPipNSSBundle", function() {
   return Services.strings.createBundle("chrome://pipnss/locale/pipnss.properties");
 });
@@ -22,6 +26,8 @@ XPCOMUtils.defineLazyGetter(this, "gBrandBundle", function() {
 });
 XPCOMUtils.defineLazyPreferenceGetter(this, "newErrorPagesEnabled",
   "browser.security.newcerterrorpage.enabled");
+XPCOMUtils.defineLazyPreferenceGetter(this, "mitmErrorPageEnabled",
+  "browser.security.newcerterrorpage.mitm.enabled");
 XPCOMUtils.defineLazyGetter(this, "gNSSErrorsBundle", function() {
   return Services.strings.createBundle("chrome://pipnss/locale/nsserrors.properties");
 });
@@ -35,8 +41,6 @@ const SEC_ERROR_UNKNOWN_ISSUER                     = SEC_ERROR_BASE + 13;
 const SEC_ERROR_UNTRUSTED_ISSUER                   = SEC_ERROR_BASE + 20;
 const SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE         = SEC_ERROR_BASE + 30;
 const SEC_ERROR_CA_CERT_INVALID                    = SEC_ERROR_BASE + 36;
-const SEC_ERROR_OCSP_FUTURE_RESPONSE               = SEC_ERROR_BASE + 131;
-const SEC_ERROR_OCSP_OLD_RESPONSE                  = SEC_ERROR_BASE + 132;
 const SEC_ERROR_REUSED_ISSUER_AND_SERIAL           = SEC_ERROR_BASE + 138;
 const SEC_ERROR_OCSP_INVALID_SIGNING_CERT          = SEC_ERROR_BASE + 144;
 const SEC_ERROR_CERT_SIGNATURE_ALGORITHM_DISABLED  = SEC_ERROR_BASE + 176;
@@ -81,6 +85,14 @@ class NetErrorChild extends ActorChild {
     return doc.documentURI.startsWith("about:certerror");
   }
 
+  getParams(doc) {
+    let searchParams = new URL(doc.documentURI).searchParams;
+    return {
+      cssClass: searchParams.get("s"),
+      error: searchParams.get("e"),
+    };
+  }
+
   _getCertValidityRange(docShell) {
     let {securityInfo} = docShell.failedChannel;
     securityInfo.QueryInterface(Ci.nsITransportSecurityInfo);
@@ -98,9 +110,7 @@ class NetErrorChild extends ActorChild {
 
   _setTechDetails(input, doc) {
     // CSS class and error code are set from nsDocShell.
-    let searchParams = new URLSearchParams(doc.documentURI.split("?")[1]);
-    let cssClass = searchParams.get("s");
-    let error = searchParams.get("e");
+    let {cssClass, error} = this.getParams(doc);
     let technicalInfo = doc.getElementById("badCertTechnicalInfo");
     technicalInfo.textContent = "";
 
@@ -116,15 +126,25 @@ class NetErrorChild extends ActorChild {
 
     if (input.data.certIsUntrusted) {
       switch (input.data.code) {
-        // We only want to measure MitM rates for now. Treat it as unkown issuer.
         case MOZILLA_PKIX_ERROR_MITM_DETECTED:
+          if (newErrorPagesEnabled && mitmErrorPageEnabled) {
+            let brandName = gBrandBundle.GetStringFromName("brandShortName");
+            msg1 = gPipNSSBundle.GetStringFromName("certErrorMitM");
+            msg1 += "\n\n";
+            msg1 += gPipNSSBundle.formatStringFromName("certErrorMitM2", [brandName], 1);
+            msg1 += "\n\n";
+            msg1 += gPipNSSBundle.formatStringFromName("certErrorMitM3", [brandName], 1);
+            msg1 += "\n";
+            break;
+          }
+          // If the condition is false, fall through...
         case SEC_ERROR_UNKNOWN_ISSUER:
           let brandName = gBrandBundle.GetStringFromName("brandShortName");
           if (newErrorPagesEnabled) {
             msg1 = "";
             msg1 += gPipNSSBundle.formatStringFromName("certErrorTrust_UnknownIssuer4", [hostString], 1);
             msg1 += "\n\n";
-            msg1 += gPipNSSBundle.formatStringFromName("certErrorTrust_UnknownIssuer5", [brandName, hostString], 2);
+            msg1 += gPipNSSBundle.formatStringFromName("certErrorTrust_UnknownIssuer6", [brandName, hostString], 2);
             msg1 += "\n\n";
           } else {
             msg1 += gPipNSSBundle.GetStringFromName("certErrorTrust_UnknownIssuer") + "\n";
@@ -150,7 +170,7 @@ class NetErrorChild extends ActorChild {
         // This error code currently only exists for the Symantec distrust, we may need to adjust
         // it to fit other distrusts later.
         case MOZILLA_PKIX_ERROR_ADDITIONAL_POLICY_CONSTRAINT_FAILED:
-          msg1 += gPipNSSBundle.formatStringFromName("certErrorTrust_Symantec", [hostString], 1) + "\n";
+          msg1 += gPipNSSBundle.GetStringFromName("certErrorTrust_Symantec1") + "\n";
           break;
         default:
           msg1 += gPipNSSBundle.GetStringFromName("certErrorTrust_Untrusted") + "\n";
@@ -168,7 +188,7 @@ class NetErrorChild extends ActorChild {
           if (newErrorPagesEnabled) {
             technicalInfo.textContent = "";
             let brandName = gBrandBundle.GetStringFromName("brandShortName");
-            msgPrefix = gPipNSSBundle.formatStringFromName("certErrorMismatchSinglePrefix1", [brandName, hostString], 2) + " ";
+            msgPrefix = gPipNSSBundle.formatStringFromName("certErrorMismatchSinglePrefix3", [brandName, hostString], 2) + " ";
             msgPrefix += gPipNSSBundle.GetStringFromName("certErrorMismatchSinglePrefix");
           } else {
             msgPrefix = gPipNSSBundle.GetStringFromName("certErrorMismatchSinglePrefix");
@@ -242,7 +262,7 @@ class NetErrorChild extends ActorChild {
           if (newErrorPagesEnabled) {
             technicalInfo.textContent = "";
             let brandName = gBrandBundle.GetStringFromName("brandShortName");
-            msg = gPipNSSBundle.formatStringFromName("certErrorMismatchMultiple1", [brandName, hostString], 2) + " ";
+            msg = gPipNSSBundle.formatStringFromName("certErrorMismatchMultiple3", [brandName, hostString], 2) + " ";
           } else {
             msg = gPipNSSBundle.GetStringFromName("certErrorMismatchMultiple") + "\n";
           }
@@ -259,7 +279,7 @@ class NetErrorChild extends ActorChild {
         if (newErrorPagesEnabled) {
           technicalInfo.textContent = "";
           let brandName = gBrandBundle.GetStringFromName("brandShortName");
-          msg = gPipNSSBundle.formatStringFromName("certErrorMismatch1", [brandName, hostString], 2) + " ";
+          msg = gPipNSSBundle.formatStringFromName("certErrorMismatch3", [brandName, hostString], 2) + " ";
         } else {
           msg = gPipNSSBundle.formatStringFromName("certErrorMismatch",
                                                      [hostString], 1);
@@ -277,7 +297,7 @@ class NetErrorChild extends ActorChild {
         if (nowTime > input.data.validity.notAfter) {
           if (newErrorPagesEnabled) {
             technicalInfo.textContent = "";
-            msg += gPipNSSBundle.formatStringFromName("certErrorExpiredNow1",
+            msg += gPipNSSBundle.formatStringFromName("certErrorExpiredNow2",
                                                     [hostString], 1);
             msg += "\n";
           } else {
@@ -289,7 +309,7 @@ class NetErrorChild extends ActorChild {
           // eslint-disable-next-line no-lonely-if
           if (newErrorPagesEnabled) {
             technicalInfo.textContent = "";
-            msg += gPipNSSBundle.formatStringFromName("certErrorNotYetValidNow1",
+            msg += gPipNSSBundle.formatStringFromName("certErrorNotYetValidNow2",
                                                       [hostString], 1);
             msg += "\n";
           } else {
@@ -303,7 +323,7 @@ class NetErrorChild extends ActorChild {
         // eslint-disable-next-line no-lonely-if
           if (newErrorPagesEnabled) {
             technicalInfo.textContent = "";
-            msg += gPipNSSBundle.formatStringFromName("certErrorExpiredNow1",
+            msg += gPipNSSBundle.formatStringFromName("certErrorExpiredNow2",
                                                       [hostString], 1);
             msg += "\n";
           } else {
@@ -322,6 +342,7 @@ class NetErrorChild extends ActorChild {
     detailLink.append(input.data.codeString);
     detailLink.title = input.data.codeString;
     detailLink.id = "errorCode";
+    detailLink.dataset.telemetryId = "error_code_link";
     let fragment = BrowserUtils.getLocalizedFragment(doc, linkPrefix, detailLink);
     technicalInfo.appendChild(fragment);
     var errorCode = doc.getElementById("errorCode");
@@ -353,6 +374,15 @@ class NetErrorChild extends ActorChild {
     let errWhatToDoTitle = doc.getElementById("edd_nssBadCert");
     let est = doc.getElementById("errorWhatToDoTitleText");
 
+    // This is set to true later if the user's system clock is at fault for this error.
+    let clockSkew = false;
+
+    doc.body.setAttribute("code", msg.data.codeString);
+
+    // Need to do this here (which is not exactly at load but a few ticks later),
+    // because this is the first time we have access to the error code.
+    this.recordLoadEvent(doc);
+
     switch (msg.data.code) {
       case SSL_ERROR_BAD_CERT_DOMAIN:
       case SEC_ERROR_OCSP_INVALID_SIGNING_CERT:
@@ -378,7 +408,7 @@ class NetErrorChild extends ActorChild {
       // without replicating the complex logic from certverifier code.
       case MOZILLA_PKIX_ERROR_ADDITIONAL_POLICY_CONSTRAINT_FAILED:
         let description = gPipNSSBundle.formatStringFromName(
-          "certErrorSymantecDistrustDescription", [doc.location.hostname], 1);
+          "certErrorSymantecDistrustDescription1", [doc.location.hostname], 1);
         let descriptionContainer = doc.getElementById("errorShortDescText2");
         descriptionContainer.textContent = description;
 
@@ -392,6 +422,39 @@ class NetErrorChild extends ActorChild {
         updateContainerPosition();
         break;
       case MOZILLA_PKIX_ERROR_MITM_DETECTED:
+        if (newErrorPagesEnabled && mitmErrorPageEnabled) {
+          // We don't actually know what the MitM is called (since we don't
+          // maintain a list), so we'll try and display the common name of the
+          // root issuer to the user. In the worst case they are as clueless as
+          // before, in the best case this gives them an actionable hint.
+          // This may be revised in the future.
+          let {securityInfo} = docShell.failedChannel;
+          securityInfo.QueryInterface(Ci.nsITransportSecurityInfo);
+          let mitmName = null;
+          for (let cert of securityInfo.failedCertChain.getEnumerator()) {
+            mitmName = cert.issuerCommonName;
+          }
+          for (let span of doc.querySelectorAll(".mitm-name")) {
+            span.textContent = mitmName;
+          }
+
+          learnMoreLink.href = baseURL + "security-error";
+
+          let title = doc.getElementById("et_mitm");
+          let desc = doc.getElementById("ed_mitm");
+          doc.querySelector(".title-text").textContent = title.textContent;
+          // eslint-disable-next-line no-unsanitized/property
+          doc.getElementById("errorShortDescText").innerHTML = desc.innerHTML;
+
+          // eslint-disable-next-line no-unsanitized/property
+          es.innerHTML = errWhatToDo.innerHTML;
+          // eslint-disable-next-line no-unsanitized/property
+          est.innerHTML = errWhatToDoTitle.innerHTML;
+
+          updateContainerPosition();
+          break;
+        }
+        // If the condition is false, fall through...
       case MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT:
         learnMoreLink.href = baseURL + "security-error";
         break;
@@ -401,13 +464,10 @@ class NetErrorChild extends ActorChild {
       // and is not before the build date.
       case SEC_ERROR_EXPIRED_CERTIFICATE:
       case SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE:
-      case SEC_ERROR_OCSP_FUTURE_RESPONSE:
-      case SEC_ERROR_OCSP_OLD_RESPONSE:
       case MOZILLA_PKIX_ERROR_NOT_YET_VALID_CERTIFICATE:
       case MOZILLA_PKIX_ERROR_NOT_YET_VALID_ISSUER_CERTIFICATE:
 
         learnMoreLink.href = baseURL + "time-errors";
-        let clockSkew = false;
         // We check against the remote-settings server time first if available, because that allows us
         // to give the user an approximation of what the correct time is.
         let difference = Services.prefs.getIntPref(PREF_SERVICES_SETTINGS_CLOCK_SKEW_SECONDS, 0);
@@ -488,25 +548,57 @@ class NetErrorChild extends ActorChild {
           let textContainer = doc.getElementById("text-container");
           errorPageContainer.style.backgroundPosition = `left top calc(50vh - ${textContainer.clientHeight / 2}px)`;
         } else {
-            doc.getElementById("wrongSystemTime_systemDate2").textContent = systemDate;
-            let errDesc = doc.getElementById("ed2_nssBadCert_SEC_ERROR_EXPIRED_CERTIFICATE");
-            let sd = doc.getElementById("errorShortDescText2");
-            if (sd) {
-              // eslint-disable-next-line no-unsanitized/property
-              sd.innerHTML = errDesc.innerHTML;
-            }
-            if (es) {
-              // eslint-disable-next-line no-unsanitized/property
-              es.innerHTML = errWhatToDo.innerHTML;
-            }
-            if (est) {
-              // eslint-disable-next-line no-unsanitized/property
-              est.textContent = errWhatToDoTitle.textContent;
-              est.style.fontWeight = "bold";
-            }
-            updateContainerPosition();
+          doc.getElementById("wrongSystemTime_systemDate2").textContent = systemDate;
+
+          let errDesc = doc.getElementById("ed_nssBadCert_SEC_ERROR_EXPIRED_CERTIFICATE");
+          let sd = doc.getElementById("errorShortDescText");
+          // eslint-disable-next-line no-unsanitized/property
+          sd.innerHTML = errDesc.innerHTML;
+
+          let span = sd.querySelector(".hostname");
+          span.textContent = doc.location.hostname;
+
+          // The secondary description mentions expired certificates explicitly
+          // and should only be shown if the certificate has actually expired
+          // instead of being not yet valid.
+          if (msg.data.code == SEC_ERROR_EXPIRED_CERTIFICATE) {
+            let {cssClass} = this.getParams(doc);
+            let stsSuffix = cssClass == "badStsCert" ? "_sts" : "";
+            let errDesc2 = doc.getElementById(
+              `ed2_nssBadCert_SEC_ERROR_EXPIRED_CERTIFICATE${stsSuffix}`);
+            let sd2 = doc.getElementById("errorShortDescText2");
+            // eslint-disable-next-line no-unsanitized/property
+            sd2.innerHTML = errDesc2.innerHTML;
+          }
+
+          if (es) {
+            // eslint-disable-next-line no-unsanitized/property
+            es.innerHTML = errWhatToDo.innerHTML;
+          }
+          if (est) {
+            // eslint-disable-next-line no-unsanitized/property
+            est.textContent = errWhatToDoTitle.textContent;
+            est.style.fontWeight = "bold";
+          }
+          updateContainerPosition();
         }
         break;
+    }
+
+    // Add slightly more alarming UI unless there are indicators that
+    // show that the error is harmless or can not be skipped anyway.
+    if (newErrorPagesEnabled) {
+      let {cssClass} = this.getParams(doc);
+      // Don't alarm users when they can't continue to the website anyway...
+      if (cssClass != "badStsCert" &&
+          // Errors in iframes can't be skipped either...
+          doc.ownerGlobal.parent == doc.ownerGlobal &&
+          // Also don't bother if it's just the user's clock being off...
+          !clockSkew &&
+          // Symantec distrust is likely harmless as well.
+          msg.data.code != MOZILLA_PKIX_ERROR_ADDITIONAL_POLICY_CONSTRAINT_FAILED) {
+        doc.body.classList.add("caution");
+      }
     }
   }
 
@@ -530,11 +622,13 @@ class NetErrorChild extends ActorChild {
     case "click":
       if (aEvent.button == 0) {
         if (this.isAboutCertError(doc)) {
+          this.recordClick(aEvent.originalTarget);
           this.onCertError(aEvent.originalTarget, doc.defaultView);
         } else {
           this.onClick(aEvent);
         }
       }
+      break;
     }
   }
 
@@ -693,6 +787,38 @@ class NetErrorChild extends ActorChild {
       elementId: target.getAttribute("id"),
       isTopFrame: (win.parent === win),
       securityInfoAsString: getSerializedSecurityInfo(win.docShell),
+    });
+  }
+
+  getCSSClass(doc) {
+    let searchParams = new URL(doc.documentURI).searchParams;
+    return searchParams.get("s");
+  }
+
+  recordLoadEvent(doc) {
+    let cssClass = this.getCSSClass(doc);
+    // Telemetry values for events are max. 80 bytes.
+    let errorCode = doc.body.getAttribute("code").substring(0, 40);
+    Services.telemetry.recordEvent("security.ui.certerror", "load", "aboutcerterror", errorCode, {
+      "has_sts": (cssClass == "badStsCert").toString(),
+      "is_frame": (doc.ownerGlobal.parent != doc.ownerGlobal).toString(),
+    });
+  }
+
+  recordClick(element) {
+    let telemetryId = element.dataset.telemetryId;
+    if (!telemetryId) {
+      return;
+    }
+    let doc = element.ownerDocument;
+    let cssClass = this.getCSSClass(doc);
+    // Telemetry values for events are max. 80 bytes.
+    let errorCode = doc.body.getAttribute("code").substring(0, 40);
+    let panel = doc.getElementById("badCertAdvancedPanel");
+    Services.telemetry.recordEvent("security.ui.certerror", "click", telemetryId, errorCode, {
+      "panel_open": (panel.style.display == "none").toString(),
+      "has_sts": (cssClass == "badStsCert").toString(),
+      "is_frame": (doc.ownerGlobal.parent != doc.ownerGlobal).toString(),
     });
   }
 

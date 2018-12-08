@@ -18,6 +18,14 @@ let gWhitelist = [{
     type: "single-quote",
   }, {
     file: "netError.dtd",
+    key: "certerror.sts.introPara",
+    type: "single-quote",
+  }, {
+    file: "netError.dtd",
+    key: "certerror.expiredCert.introPara",
+    type: "single-quote",
+  }, {
+    file: "netError.dtd",
     key: "certerror.expiredCert.whatCanYouDoAboutIt2",
     type: "single-quote",
   }, {
@@ -39,6 +47,18 @@ let gWhitelist = [{
   }, {
     file: "netError.dtd",
     key: "clockSkewError.longDesc",
+    type: "single-quote",
+  }, {
+    file: "netError.dtd",
+    key: "certerror.mitm.longDesc",
+    type: "single-quote",
+  }, {
+    file: "netError.dtd",
+    key: "certerror.mitm.whatCanYouDoAboutIt3",
+    type: "single-quote",
+  }, {
+    file: "netError.dtd",
+    key: "certerror.mitm.sts.whatCanYouDoAboutIt3",
     type: "single-quote",
   }, {
     file: "phishing-afterload-warning-message.dtd",
@@ -144,14 +164,6 @@ let gWhitelist = [{
     file: "pocket.properties",
     key: "tos",
     type: "double-quote",
-  }, {
-    file: "aboutNetworking.dtd",
-    key: "aboutNetworking.logTutorial",
-    type: "single-quote",
-  }, {
-    file: "aboutdevtools.dtd",
-    key: "aboutDevtools.newsletter.privacy.label",
-    type: "single-quote",
   }, {
     file: "browser.dtd",
     key: "addonPostInstallMessage.label",

@@ -15,6 +15,8 @@ ChromeUtils.defineModuleGetter(this, "TelemetryEnvironment",
   "resource://gre/modules/TelemetryEnvironment.jsm");
 ChromeUtils.defineModuleGetter(this, "AppConstants",
   "resource://gre/modules/AppConstants.jsm");
+ChromeUtils.defineModuleGetter(this, "AttributionCode",
+  "resource:///modules/AttributionCode.jsm");
 
 const FXA_USERNAME_PREF = "services.sync.username";
 const SEARCH_REGION_PREF = "browser.search.region";
@@ -60,6 +62,49 @@ function CachedTargetingGetter(property, options = null, updateInterval = FRECEN
   };
 }
 
+function CheckBrowserNeedsUpdate(updateInterval = FRECENT_SITES_UPDATE_INTERVAL) {
+  const UpdateChecker = Cc["@mozilla.org/updates/update-checker;1"];
+  const checker = {
+    _lastUpdated: 0,
+    _value: null,
+    // For testing. Avoid update check network call.
+    setUp(value) {
+      this._lastUpdated = Date.now();
+      this._value = value;
+    },
+    expire() {
+      this._lastUpdated = 0;
+      this._value = null;
+    },
+    get() {
+      return new Promise((resolve, reject) => {
+        const now = Date.now();
+        const updateServiceListener = {
+          onCheckComplete(request, updates, updateCount) {
+            checker._value = updateCount > 0;
+            resolve(checker._value);
+          },
+          onError(request, update) {
+            reject(request);
+          },
+
+          QueryInterface: ChromeUtils.generateQI(["nsIUpdateCheckListener"]),
+        };
+
+        if (UpdateChecker && (now - this._lastUpdated >= updateInterval)) {
+          const checkerInstance = UpdateChecker.createInstance(Ci.nsIUpdateChecker);
+          checkerInstance.checkForUpdates(updateServiceListener, true);
+          this._lastUpdated = now;
+        } else {
+          resolve(this._value);
+        }
+      });
+    },
+  };
+
+  return checker;
+}
+
 const QueryCache = {
   expireAll() {
     Object.keys(this.queries).forEach(query => {
@@ -78,6 +123,7 @@ const QueryCache = {
       }
     ),
     TotalBookmarksCount: new CachedTargetingGetter("getTotalBookmarksCount"),
+    CheckBrowserNeedsUpdate: new CheckBrowserNeedsUpdate(),
   },
 };
 
@@ -117,18 +163,23 @@ const TargetingGetters = {
   get browserSettings() {
     const {settings} = TelemetryEnvironment.currentEnvironment;
     return {
+      // This way of getting attribution is deprecated - use atttributionData instead
       attribution: settings.attribution,
       update: settings.update,
     };
+  },
+  get attributionData() {
+    // Attribution is determined at startup - so we can use the cached attribution at this point
+    return AttributionCode.getCachedAttributionData();
   },
   get currentDate() {
     return new Date();
   },
   get profileAgeCreated() {
-    return new ProfileAge(null, null).created;
+    return ProfileAge().then(times => times.created);
   },
   get profileAgeReset() {
-    return new ProfileAge(null, null).reset;
+    return ProfileAge().then(times => times.reset);
   },
   get usesFirefoxSync() {
     return Services.prefs.prefHasUserValue(FXA_USERNAME_PREF);
@@ -139,6 +190,10 @@ const TargetingGetters = {
       mobileDevices: Services.prefs.getIntPref("services.sync.clients.devices.mobile", 0),
       totalDevices: Services.prefs.getIntPref("services.sync.numClients", 0),
     };
+  },
+  get xpinstallEnabled() {
+    // This is needed for all add-on recommendations, to know if we allow xpi installs in the first place
+    return Services.prefs.getBoolPref("xpinstall.enabled", true);
   },
   get addonsInfo() {
     return AddonManager.getActiveAddons(["extension", "service"])
@@ -199,10 +254,12 @@ const TargetingGetters = {
       }
     )));
   },
-  // Temporary targeting function for the purposes of running the simplified onboarding experience
-  get isInExperimentCohort() {
-    const {cohort} = ASRouterPreferences.providers.find(i => i.id === "onboarding") || {};
-    return (typeof cohort === "number" ? cohort : 0);
+  get pinnedSites() {
+    return NewTabUtils.pinnedLinks.links.map(site => (site ? {
+      url: site.url,
+      host: (new URL(site.url)).hostname,
+      searchTopSite: site.searchTopSite,
+    } : {}));
   },
   get providerCohorts() {
     return ASRouterPreferences.providers.reduce((prev, current) => {
@@ -218,6 +275,9 @@ const TargetingGetters = {
   },
   get region() {
     return Services.prefs.getStringPref(SEARCH_REGION_PREF, "");
+  },
+  get needsUpdate() {
+    return QueryCache.queries.CheckBrowserNeedsUpdate.get();
   },
 };
 

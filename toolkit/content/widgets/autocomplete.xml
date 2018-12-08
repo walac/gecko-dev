@@ -192,15 +192,9 @@
             val = this.onBeforeTextValueSet(val);
           }
 
-          this.value = val;
-
-          // Completing a result should simulate the user typing the result, so
-          // fire an input event.
-          let evt = document.createEvent("UIEvents");
-          evt.initUIEvent("input", true, false, window, 0);
-          this.mIgnoreInput = true;
-          this.dispatchEvent(evt);
-          this.mIgnoreInput = false;
+          // "input" event is automatically dispatched by the editor if
+          // necessary.
+          this._setValueInternal(val, true);
 
           return this.value;
         ]]></setter>
@@ -282,7 +276,8 @@
 
       <field name="valueIsTyped">false</field>
       <field name="_textValueSetByCompleteDefault">false</field>
-      <property name="value">
+      <property name="value"
+                onset="return this._setValueInternal(val, false);">
         <getter><![CDATA[
           if (typeof this.onBeforeValueGet == "function") {
             var result = this.onBeforeValueGet();
@@ -291,28 +286,6 @@
           }
           return this.inputField.value;
         ]]></getter>
-        <setter><![CDATA[
-          this.mIgnoreInput = true;
-
-          if (typeof this.onBeforeValueSet == "function")
-            val = this.onBeforeValueSet(val);
-
-          if (typeof this.trimValue == "function" &&
-              !this._textValueSetByCompleteDefault)
-            val = this.trimValue(val);
-
-          this.valueIsTyped = false;
-          this.inputField.value = val;
-
-          if (typeof this.formatValue == "function")
-            this.formatValue();
-
-          this.mIgnoreInput = false;
-          var event = document.createEvent("Events");
-          event.initEvent("ValueChange", true, true);
-          this.inputField.dispatchEvent(event);
-          return val;
-        ]]></setter>
       </property>
 
       <property name="focused" readonly="true"
@@ -439,12 +412,13 @@
             return false;
           }
 
+          const isMac = /Mac/.test(navigator.platform);
           var cancel = false;
 
           // Catch any keys that could potentially move the caret. Ctrl can be
           // used in combination with these keys on Windows and Linux; and Alt
           // can be used on OS X, so make sure the unused one isn't used.
-          let metaKey = /Mac/.test(navigator.platform) ? aEvent.ctrlKey : aEvent.altKey;
+          let metaKey = isMac ? aEvent.ctrlKey : aEvent.altKey;
           if (!this.disableKeyNavigation && !metaKey) {
             switch (aEvent.keyCode) {
               case KeyEvent.DOM_VK_LEFT:
@@ -475,6 +449,19 @@
             }
           }
 
+          // Handle readline/emacs-style navigation bindings on Mac.
+          if (isMac &&
+              !this.disableKeyNavigation &&
+              this.popup.popupOpen &&
+              aEvent.ctrlKey &&
+              (aEvent.key === "n" || aEvent.key === "p")) {
+
+            const effectiveKey = (aEvent.key === "p") ?
+                                 KeyEvent.DOM_VK_UP :
+                                 KeyEvent.DOM_VK_DOWN;
+            cancel = this.mController.handleKeyNavigation(effectiveKey);
+          }
+
           // Handle keys we know aren't part of a shortcut, even with Alt or
           // Ctrl.
           switch (aEvent.keyCode) {
@@ -482,7 +469,7 @@
               cancel = this.mController.handleEscape();
               break;
             case KeyEvent.DOM_VK_RETURN:
-              if (/Mac/.test(navigator.platform)) {
+              if (isMac) {
                 // Prevent the default action, since it will beep on Mac
                 if (aEvent.metaKey)
                   aEvent.preventDefault();
@@ -496,13 +483,13 @@
               cancel = this.handleEnter(aEvent);
               break;
             case KeyEvent.DOM_VK_DELETE:
-              if (/Mac/.test(navigator.platform) && !aEvent.shiftKey) {
+              if (isMac && !aEvent.shiftKey) {
                 break;
               }
               cancel = this.handleDelete();
               break;
             case KeyEvent.DOM_VK_BACK_SPACE:
-              if (/Mac/.test(navigator.platform) && aEvent.shiftKey) {
+              if (isMac && aEvent.shiftKey) {
                 cancel = this.handleDelete();
               }
               break;
@@ -512,7 +499,7 @@
                 this.toggleHistoryPopup();
               break;
             case KeyEvent.DOM_VK_F4:
-              if (!/Mac/.test(navigator.platform)) {
+              if (!isMac) {
                 this.toggleHistoryPopup();
               }
               break;
@@ -589,6 +576,37 @@
           onEvent() {},
         })
       ]]></field>
+
+      <method name="_setValueInternal">
+        <parameter name="aValue"/>
+        <parameter name="aIsUserInput"/>
+        <body><![CDATA[
+          this.mIgnoreInput = true;
+
+          if (typeof this.onBeforeValueSet == "function")
+            aValue = this.onBeforeValueSet(aValue);
+
+          if (typeof this.trimValue == "function" &&
+              !this._textValueSetByCompleteDefault)
+            aValue = this.trimValue(aValue);
+
+          this.valueIsTyped = false;
+          if (aIsUserInput) {
+            this.inputField.setUserInput(aValue);
+          } else {
+            this.inputField.value = aValue;
+          }
+
+          if (typeof this.formatValue == "function")
+            this.formatValue();
+
+          this.mIgnoreInput = false;
+          var event = document.createEvent("Events");
+          event.initEvent("ValueChange", true, true);
+          this.inputField.dispatchEvent(event);
+          return aValue;
+        ]]></body>
+      </method>
 
       <method name="onInput">
         <parameter name="aEvent"/>
@@ -950,9 +968,7 @@
             let originalValue, originalText, originalType;
             let style = controller.getStyleAt(this._currentIndex);
             let value =
-              style &&
-                style.includes("autofill") &&
-                style.includes("heuristic") ?
+              style && style.includes("autofill") ?
               controller.getFinalCompleteValueAt(this._currentIndex) :
               controller.getValueAt(this._currentIndex);
             let label = controller.getLabelAt(this._currentIndex);
@@ -1210,7 +1226,7 @@
 
     <handlers>
       <handler event="click" button="0"><![CDATA[
-        let baseURL = Services.urlFormatter.formatURLPref("app.support.baseURL");
+        let baseURL = this.Services.urlFormatter.formatURLPref("app.support.baseURL");
         window.openTrustedLinkIn(baseURL + "insecure-password", "tab", {
           relatedToCurrent: true,
         });
@@ -1229,7 +1245,7 @@
         <getter><![CDATA[
           if (!this.__learnMoreString) {
             this.__learnMoreString =
-              Services.strings.createBundle("chrome://passwordmgr/locale/passwordmgr.properties").
+              this.Services.strings.createBundle("chrome://passwordmgr/locale/passwordmgr.properties").
               GetStringFromName("insecureFieldWarningLearnMore");
           }
           return this.__learnMoreString;
@@ -1336,6 +1352,24 @@
         ]]>
       </constructor>
 
+      <property name="Services" readonly="true">
+        <getter><![CDATA[
+          let module = {};
+          if (window.Services) {
+            module.Services = window.Services;
+          } else {
+            ChromeUtils.import("resource://gre/modules/Services.jsm", module);
+          }
+          Object.defineProperty(this, "Services", {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: module.Services,
+          });
+          return module.Services;
+        ]]></getter>
+      </property>
+
       <method name="_cleanup">
         <body>
         <![CDATA[
@@ -1375,7 +1409,7 @@
       <property name="_stringBundle">
         <getter><![CDATA[
           if (!this.__stringBundle) {
-            this.__stringBundle = Services.strings.createBundle("chrome://global/locale/autocomplete.properties");
+            this.__stringBundle = this.Services.strings.createBundle("chrome://global/locale/autocomplete.properties");
           }
           return this.__stringBundle;
         ]]></getter>
@@ -1723,7 +1757,7 @@
         <parameter name="url"/>
         <body>
           <![CDATA[
-          return Services.textToSubURI.unEscapeURIForUI("UTF-8", url);
+          return this.Services.textToSubURI.unEscapeURIForUI("UTF-8", url);
           ]]>
         </body>
       </method>
@@ -1789,8 +1823,9 @@
 
           let action;
 
-          if (initialTypes.has("autofill")) {
-            // Treat autofills as visiturl actions.
+          if (initialTypes.has("autofill") && !initialTypes.has("action")) {
+            // Treat autofills as visiturl actions, unless they are already also
+            // actions.
             action = {
               type: "visiturl",
               params: { url: title },
@@ -1798,7 +1833,11 @@
           }
 
           this.removeAttribute("actiontype");
-          this.classList.remove("overridable-action", "emptySearchQuery");
+          this.classList.remove(
+            "overridable-action",
+            "emptySearchQuery",
+            "aliasOffer"
+          );
 
           // If the type includes an action, set up the item appropriately.
           if (initialTypes.has("action") || action) {
@@ -1827,7 +1866,12 @@
               // properly generate emphasis pairs. That said, no localization
               // changed the order while it was possible, so doesn't look like
               // there's a strong need for that.
-              let {engineName, searchSuggestion, searchQuery} = action.params;
+              let {
+                engineName,
+                searchSuggestion,
+                searchQuery,
+                alias,
+              } = action.params;
 
               // Override the engine name if the popup defines an override.
               let override = popup.overrideSearchEngineName;
@@ -1864,6 +1908,19 @@
                     [searchSuggestion, ""],
                   ];
                 }
+              } else if (alias &&
+                         !searchQuery.trim() &&
+                         !initialTypes.has("heuristic")) {
+                // For non-heuristic alias results that have an empty query, we
+                // want to show "@engine -- Search with Engine" to make it clear
+                // that the user can search by selecting the result and using
+                // the alias.  Normally we hide the "Search with Engine" part
+                // until the result is selected or moused over, but not here.
+                // Add the aliasOffer class so we can detect this in the CSS.
+                this.classList.add("aliasOffer");
+                pairs = [
+                  [alias, ""],
+                ];
               } else {
                 // Add the emptySearchQuery class if the search query is the
                 // empty string.  We use it to hide .ac-separator in CSS.
@@ -1922,7 +1979,7 @@
           if (!title) {
             titleLooksLikeUrl = true;
             try {
-              let uri = Services.io.newURI(originalUrl);
+              let uri = this.Services.io.newURI(originalUrl);
               // Not all valid URLs have a domain.
               if (uri.host)
                 title = uri.host;

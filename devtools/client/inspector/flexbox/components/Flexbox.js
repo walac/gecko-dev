@@ -4,16 +4,21 @@
 
 "use strict";
 
-const { createFactory, PureComponent } = require("devtools/client/shared/vendor/react");
+const {
+  createElement,
+  createFactory,
+  Fragment,
+  PureComponent,
+} = require("devtools/client/shared/vendor/react");
 const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const { getStr } = require("devtools/client/inspector/layout/utils/l10n");
 
-loader.lazyGetter(this, "FlexContainerProperties", function() {
-  return createFactory(require("./FlexContainerProperties"));
-});
 loader.lazyGetter(this, "FlexItemList", function() {
   return createFactory(require("./FlexItemList"));
+});
+loader.lazyGetter(this, "FlexItemSizingOutline", function() {
+  return createFactory(require("./FlexItemSizingOutline"));
 });
 loader.lazyGetter(this, "FlexItemSizingProperties", function() {
   return createFactory(require("./FlexItemSizingProperties"));
@@ -28,66 +33,71 @@ class Flexbox extends PureComponent {
   static get propTypes() {
     return {
       flexbox: PropTypes.shape(Types.flexbox).isRequired,
+      flexContainer: PropTypes.shape(Types.flexContainer).isRequired,
       getSwatchColorPickerTooltip: PropTypes.func.isRequired,
       onHideBoxModelHighlighter: PropTypes.func.isRequired,
       onSetFlexboxOverlayColor: PropTypes.func.isRequired,
       onShowBoxModelHighlighterForNode: PropTypes.func.isRequired,
       onToggleFlexboxHighlighter: PropTypes.func.isRequired,
-      onToggleFlexItemShown: PropTypes.func.isRequired,
+      scrollToTop: PropTypes.func.isRequired,
       setSelectedNode: PropTypes.func.isRequired,
     };
   }
 
   renderFlexItemList() {
     const {
-      flexbox,
-      onToggleFlexItemShown,
+      onHideBoxModelHighlighter,
+      onShowBoxModelHighlighterForNode,
+      scrollToTop,
+      setSelectedNode,
     } = this.props;
-    const {
-      flexItems,
-      flexItemShown,
-    } = flexbox;
-
-    if (flexItemShown || !flexItems.length) {
-      return null;
-    }
+    const { flexItems } = this.props.flexContainer;
 
     return FlexItemList({
       flexItems,
-      onToggleFlexItemShown,
+      onHideBoxModelHighlighter,
+      onShowBoxModelHighlighterForNode,
+      scrollToTop,
+      setSelectedNode,
     });
   }
 
-  renderFlexItemSizingProperties() {
-    const { flexbox } = this.props;
+  renderFlexItemSizing() {
     const {
       flexItems,
       flexItemShown,
-    } = flexbox;
+      properties,
+    } = this.props.flexContainer;
 
-    if (!flexItemShown) {
+    const flexItem = flexItems.find(item => item.nodeFront.actorID === flexItemShown);
+    if (!flexItem) {
       return null;
     }
 
-    return FlexItemSizingProperties({
-      flexDirection: flexbox.properties["flex-direction"],
-      flexItem: flexItems.find(item => item.nodeFront.actorID === flexItemShown),
-    });
+    return createElement(Fragment, null,
+      FlexItemSizingOutline({
+        flexDirection: properties["flex-direction"],
+        flexItem,
+      }),
+      FlexItemSizingProperties({
+        flexDirection: properties["flex-direction"],
+        flexItem,
+      })
+    );
   }
 
   render() {
     const {
-      flexbox,
+      flexContainer,
       getSwatchColorPickerTooltip,
       onHideBoxModelHighlighter,
       onSetFlexboxOverlayColor,
       onShowBoxModelHighlighterForNode,
       onToggleFlexboxHighlighter,
-      onToggleFlexItemShown,
       setSelectedNode,
     } = this.props;
 
-    if (!flexbox.actorID) {
+    if (!flexContainer.actorID) {
       return (
         dom.div({ className: "devtools-sidepanel-no-result" },
           getStr("flexbox.noFlexboxeOnThisPage")
@@ -95,23 +105,23 @@ class Flexbox extends PureComponent {
       );
     }
 
+    const {
+      flexItemShown,
+    } = flexContainer;
+
     return (
-      dom.div({ id: "layout-flexbox-container" },
+      dom.div({ className: "layout-flexbox-wrapper" },
         Header({
-          flexbox,
+          flexContainer,
           getSwatchColorPickerTooltip,
           onHideBoxModelHighlighter,
           onSetFlexboxOverlayColor,
           onShowBoxModelHighlighterForNode,
           onToggleFlexboxHighlighter,
-          onToggleFlexItemShown,
           setSelectedNode,
         }),
-        this.renderFlexItemList(),
-        this.renderFlexItemSizingProperties(),
-        FlexContainerProperties({
-          properties: flexbox.properties,
-        })
+        !flexItemShown ? this.renderFlexItemList() : null,
+        flexItemShown ? this.renderFlexItemSizing() : null,
       )
     );
   }

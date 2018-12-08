@@ -34,6 +34,7 @@ function makeBillingAddress() {
     "USA", // country
     addressLine, // address line
     "CA", // region
+    "CA", // regionCode
     "San Bruno", // city
     "", // dependent locality
     "94066", // postal code
@@ -98,7 +99,7 @@ const TestingUIService = {
   updatePayment(requestId) {
     // Let's echo what was sent in by the error...
     const request = paymentSrv.getPaymentRequestById(requestId);
-    this.showPayment(requestId, request.paymentDetails.paymentMethod);
+    this.showPayment(requestId, request.paymentDetails.paymentMethodErrors);
   },
   // Handles response.complete()
   completePayment(requestId) {

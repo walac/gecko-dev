@@ -13,13 +13,8 @@ const {Prefs} = ChromeUtils.import("resource://activity-stream/lib/ActivityStrea
 const {shortURL} = ChromeUtils.import("resource://activity-stream/lib/ShortURL.jsm", {});
 const {SectionsManager} = ChromeUtils.import("resource://activity-stream/lib/SectionsManager.jsm", {});
 const {UserDomainAffinityProvider} = ChromeUtils.import("resource://activity-stream/lib/UserDomainAffinityProvider.jsm", {});
+const {PersonalityProvider} = ChromeUtils.import("resource://activity-stream/lib/PersonalityProvider.jsm", {});
 const {PersistentCache} = ChromeUtils.import("resource://activity-stream/lib/PersistentCache.jsm", {});
-
-/* Not yet using personalization v2 taggers
-const {NaiveBayesTextTagger} = ChromeUtils.import("resource://activity-stream/lib/NaiveBayesTextTagger.jsm", {});
-const {NmfTextTagger} = ChromeUtils.import("resource://activity-stream/lib/NmfTextTagger.jsm", {});
-const {RecipeExecutor} = ChromeUtils.import("resource://activity-stream/lib/RecipeExecutor.jsm", {});
-*/
 
 ChromeUtils.defineModuleGetter(this, "perfService", "resource://activity-stream/common/PerfService.jsm");
 ChromeUtils.defineModuleGetter(this, "pktApi", "chrome://pocket/content/pktApi.jsm");
@@ -32,6 +27,7 @@ const DEFAULT_RECS_EXPIRE_TIME = 60 * 60 * 1000; // 1 hour
 const SECTION_ID = "topstories";
 const SPOC_IMPRESSION_TRACKING_PREF = "feeds.section.topstories.spoc.impressions";
 const REC_IMPRESSION_TRACKING_PREF = "feeds.section.topstories.rec.impressions";
+const OPTIONS_PREF = "feeds.section.topstories.options";
 const MAX_LIFETIME_CAP = 500; // Guard against misconfiguration on the server
 
 this.TopStoriesFeed = class TopStoriesFeed {
@@ -58,6 +54,7 @@ this.TopStoriesFeed = class TopStoriesFeed {
       this.topicsLastUpdated = 0;
       this.storiesLoaded = false;
       this.domainAffinitiesLastUpdated = 0;
+      this.processAffinityProividerVersion(options);
       this.dispatchPocketCta(this._prefs.get("pocketCta"), false);
       Services.obs.addObserver(this, "idle-daily");
 
@@ -128,6 +125,44 @@ this.TopStoriesFeed = class TopStoriesFeed {
     this.dispatchUpdateEvent(shouldBroadcast, updateProps);
   }
 
+  async onPersonalityProviderInit() {
+    const data = await this.cache.get();
+    let stories = data.stories && data.stories.recommendations;
+    this.stories = this.rotate(this.transform(stories));
+    this.doContentUpdate(false);
+
+    const affinities = this.affinityProvider.getAffinities();
+    this.domainAffinitiesLastUpdated = Date.now();
+    affinities._timestamp = this.domainAffinitiesLastUpdated;
+    this.cache.set("domainAffinities", affinities);
+  }
+
+  affinityProividerSwitcher(...args) {
+    const {affinityProviderV2} = this;
+    if (affinityProviderV2 && affinityProviderV2.use_v2) {
+      const provider = this.PersonalityProvider(...args, {modelKeys: affinityProviderV2.model_keys, dispatch: this.store.dispatch});
+      provider.init(this.onPersonalityProviderInit.bind(this));
+      return provider;
+    }
+
+    const start = perfService.absNow();
+    const v1Provider = this.UserDomainAffinityProvider(...args);
+    this.store.dispatch(ac.PerfEvent({
+      event: "topstories.domain.affinity.calculation.ms",
+      value: Math.round(perfService.absNow() - start),
+    }));
+
+    return v1Provider;
+  }
+
+  PersonalityProvider(...args) {
+    return new PersonalityProvider(...args);
+  }
+
+  UserDomainAffinityProvider(...args) {
+    return new UserDomainAffinityProvider(...args);
+  }
+
   async fetchStories() {
     if (!this.stories_endpoint) {
       return;
@@ -163,7 +198,7 @@ this.TopStoriesFeed = class TopStoriesFeed {
 
     let affinities = data.domainAffinities;
     if (this.personalized && affinities && affinities.scores) {
-      this.affinityProvider = new UserDomainAffinityProvider(affinities.timeSegments,
+      this.affinityProvider = this.affinityProividerSwitcher(affinities.timeSegments,
         affinities.parameterSets, affinities.maxHistoryQueryResults, affinities.version, affinities.scores);
       this.domainAffinitiesLastUpdated = affinities._timestamp;
     }
@@ -183,29 +218,69 @@ this.TopStoriesFeed = class TopStoriesFeed {
     }
   }
 
+  dispatchRelevanceScore(start) {
+    let event = "PERSONALIZATION_V1_ITEM_RELEVANCE_SCORE_DURATION";
+    let initialized = true;
+    if (!this.personalized) {
+      return;
+    }
+    const {affinityProviderV2} = this;
+    if (affinityProviderV2 && affinityProviderV2.use_v2) {
+      if (this.affinityProvider) {
+        initialized = this.affinityProvider.initialized;
+        event = "PERSONALIZATION_V2_ITEM_RELEVANCE_SCORE_DURATION";
+      }
+    }
+
+    // If v2 is not yet initialized we don't bother tracking yet.
+    // Before it is initialized it doesn't do any ranking.
+    // Once it's initialized it ensures ranking is done.
+    // v1 doesn't have any initialized issues around ranking,
+    // and should be ready right away.
+    if (initialized) {
+      this.store.dispatch(ac.PerfEvent({
+        event,
+        value: Math.round(perfService.absNow() - start),
+      }));
+    }
+  }
+
   transform(items) {
     if (!items) {
       return [];
     }
 
-    return items
+    const scoreStart = perfService.absNow();
+    const calcResult = items
       .filter(s => !NewTabUtils.blockedLinks.isBlocked({"url": s.url}))
-      .map(s => ({
-        "guid": s.id,
-        "hostname": s.domain || shortURL(Object.assign({}, s, {url: s.url})),
-        "type": (Date.now() - (s.published_timestamp * 1000)) <= STORIES_NOW_THRESHOLD ? "now" : "trending",
-        "context": s.context,
-        "icon": s.icon,
-        "title": s.title,
-        "description": s.excerpt,
-        "image": this.normalizeUrl(s.image_src),
-        "referrer": this.stories_referrer,
-        "url": s.url,
-        "min_score": s.min_score || 0,
-        "score": this.personalized && this.affinityProvider ? this.affinityProvider.calculateItemRelevanceScore(s) : s.item_score || 1,
-        "spoc_meta": this.show_spocs ? {campaign_id: s.campaign_id, caps: s.caps} : {},
-      }))
+      .map(s => {
+        let mapped = {
+          "guid": s.id,
+          "hostname": s.domain || shortURL(Object.assign({}, s, {url: s.url})),
+          "type": (Date.now() - (s.published_timestamp * 1000)) <= STORIES_NOW_THRESHOLD ? "now" : "trending",
+          "context": s.context,
+          "icon": s.icon,
+          "title": s.title,
+          "description": s.excerpt,
+          "image": this.normalizeUrl(s.image_src),
+          "referrer": this.stories_referrer,
+          "url": s.url,
+          "min_score": s.min_score || 0,
+          "score": this.personalized && this.affinityProvider ? this.affinityProvider.calculateItemRelevanceScore(s) : s.item_score || 1,
+          "spoc_meta": this.show_spocs ? {campaign_id: s.campaign_id, caps: s.caps} : {},
+        };
+
+        // Very old cached spocs may not contain an `expiration_timestamp` property
+        if (s.expiration_timestamp) {
+          mapped.expiration_timestamp = s.expiration_timestamp;
+        }
+
+        return mapped;
+      })
       .sort(this.personalized ? this.compareScore : (a, b) => 0);
+
+    this.dispatchRelevanceScore(scoreStart);
+    return calcResult;
   }
 
   async fetchTopics() {
@@ -260,18 +335,11 @@ this.TopStoriesFeed = class TopStoriesFeed {
       return;
     }
 
-    const start = perfService.absNow();
-
-    this.affinityProvider = new UserDomainAffinityProvider(
+    this.affinityProvider = this.affinityProividerSwitcher(
       this.timeSegments,
       this.domainAffinityParameterSets,
       this.maxHistoryQueryResults,
-      this.version);
-
-    this.store.dispatch(ac.PerfEvent({
-      event: "topstories.domain.affinity.calculation.ms",
-      value: Math.round(perfService.absNow() - start),
-    }));
+      this.version, undefined);
 
     const affinities = this.affinityProvider.getAffinities();
     this.domainAffinitiesLastUpdated = Date.now();
@@ -342,29 +410,43 @@ this.TopStoriesFeed = class TopStoriesFeed {
     this.store.dispatch(ac.OnlyToOneContent(action, target));
   }
 
+  filterSpocs() {
+    if (!this.shouldShowSpocs()) {
+      return [];
+    }
+
+    if (Math.random() > this.spocsPerNewTabs) {
+      return [];
+    }
+
+    if (!this.spocs || !this.spocs.length) {
+      // We have stories but no spocs so there's nothing to do and this update can be
+      // removed from the queue.
+      return [];
+    }
+
+    // Filter spocs based on frequency caps
+    const impressions = this.readImpressionsPref(SPOC_IMPRESSION_TRACKING_PREF);
+    let spocs = this.spocs.filter(s => this.isBelowFrequencyCap(impressions, s));
+
+    // Filter out expired spocs based on `expiration_timestamp`
+    spocs = spocs.filter(spoc => {
+      // If cached data is so old it doesn't contain this property, assume the spoc is ok to show
+      if (!(`expiration_timestamp` in spoc)) {
+        return true;
+      }
+      // `expiration_timestamp` is the number of seconds elapsed since January 1, 1970 00:00:00 UTC
+      return spoc.expiration_timestamp * 1000 > Date.now();
+    });
+
+    return spocs;
+  }
+
   maybeAddSpoc(target) {
     const updateContent = () => {
-      if (!this.shouldShowSpocs()) {
-        this.dispatchSpocDone(target);
-        return false;
-      }
-      if (Math.random() > this.spocsPerNewTabs) {
-        this.dispatchSpocDone(target);
-        return false;
-      }
-      if (!this.spocs || !this.spocs.length) {
-        // We have stories but no spocs so there's nothing to do and this update can be
-        // removed from the queue.
-        this.dispatchSpocDone(target);
-        return false;
-      }
-
-      // Filter spocs based on frequency caps
-      const impressions = this.readImpressionsPref(SPOC_IMPRESSION_TRACKING_PREF);
-      const spocs = this.spocs.filter(s => this.isBelowFrequencyCap(impressions, s));
+      let spocs = this.filterSpocs();
 
       if (!spocs.length) {
-        // There's currently no spoc left to display
         this.dispatchSpocDone(target);
         return false;
       }
@@ -510,6 +592,30 @@ this.TopStoriesFeed = class TopStoriesFeed {
     this.init();
   }
 
+  /**
+   * Decides if we need to change the personality provider version or not.
+   * Changes the version if it determines we need to.
+   *
+   * @param data {object} The top stories pref, we need version and model_keys
+   * @return {boolean} Returns true only if the version was changed.
+   */
+  processAffinityProividerVersion(data) {
+    const version2 = data.version === 2 && !this.affinityProviderV2;
+    const version1 = data.version === 1 && this.affinityProviderV2;
+    if (version2 || version1) {
+      if (version1) {
+        this.affinityProviderV2 = null;
+      } else {
+        this.affinityProviderV2 = {
+          use_v2: true,
+          model_keys: data.model_keys,
+        };
+      }
+      return true;
+    }
+    return false;
+  }
+
   async onAction(action) {
     switch (action.type) {
       case at.INIT:
@@ -576,6 +682,18 @@ this.TopStoriesFeed = class TopStoriesFeed {
         }
         if (action.data.name === "pocketCta") {
           this.dispatchPocketCta(action.data.value, true);
+        }
+        if (action.data.name === OPTIONS_PREF) {
+          try {
+            const options = JSON.parse(action.data.value);
+            if (this.processAffinityProividerVersion(options)) {
+              await this.clearCache();
+              this.uninit();
+              this.init();
+            }
+          } catch (e) {
+            Cu.reportError(`Problem initializing affinity provider v2: ${e.message}`);
+          }
         }
         break;
     }

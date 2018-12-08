@@ -8,8 +8,8 @@
 
 // Import helpers for the new debugger
 Services.scriptloader.loadSubScript(
-  "chrome://mochitests/content/browser/devtools/client/debugger/new/test/mochitest/helpers/context.js",
-  this);
+"chrome://mochitests/content/browser/devtools/client/debugger/new/test/mochitest/helpers/context.js",
+this);
 
 var { Toolbox } = require("devtools/client/framework/toolbox");
 var { Task } = require("devtools/shared/task");
@@ -340,9 +340,12 @@ function assertDebugLine(dbg, line) {
 
   const markedSpans = lineInfo.handle.markedSpans;
   if (markedSpans && markedSpans.length > 0) {
-    const marker = markedSpans[0].marker;
+    const classMatch = markedSpans.filter(
+      span => span.marker.className && span.marker.className.includes("debug-expression")
+    ).length > 0;
+
     ok(
-      marker.className.includes("debug-expression"),
+      classMatch,
       "expression is highlighted as paused"
     );
   }
@@ -493,10 +496,12 @@ function clearDebuggerPreferences() {
  * @return {Promise} dbg
  * @static
  */
-async function initDebugger(url) {
+async function initDebugger(url, ...sources) {
   clearDebuggerPreferences();
   const toolbox = await openNewTabAndToolbox(EXAMPLE_URL + url, "jsdebugger");
-  return createDebuggerContext(toolbox);
+  const dbg = createDebuggerContext(toolbox);
+  await waitForSources(dbg, ...sources)
+  return dbg;
 }
 
 async function initPane(url, pane) {
@@ -593,8 +598,7 @@ async function selectSource(dbg, url, line) {
 
 
 async function closeTab(dbg, url) {
-  const source = findSource(dbg, url);
-  await dbg.actions.closeTab(source.url);
+  await dbg.actions.closeTab(findSource(dbg, url));
 }
 
 /**
@@ -722,7 +726,7 @@ function disableBreakpoint(dbg, source, line, column) {
 
 async function loadAndAddBreakpoint(dbg, filename, line, column) {
   const {
-    selectors: { getBreakpoint, getBreakpoints },
+    selectors: { getBreakpoint, getBreakpointCount, getBreakpointsMap },
     getState
   } = dbg;
 
@@ -736,9 +740,9 @@ async function loadAndAddBreakpoint(dbg, filename, line, column) {
   // Test that breakpoint is not off by a line.
   await addBreakpoint(dbg, source, line);
 
-  is(getBreakpoints(getState()).size, 1, "One breakpoint exists");
+  is(getBreakpointCount(getState()), 1, "One breakpoint exists");
   if (!getBreakpoint(getState(), { sourceId: source.id, line, column })) {
-    const breakpoints = getBreakpoints(getState()).toJS();
+    const breakpoints = getBreakpointsMap(getState());
     const id = Object.keys(breakpoints).pop();
     const loc = breakpoints[id].location;
     ok(
@@ -758,7 +762,7 @@ async function invokeWithBreakpoint(
   handler
 ) {
   const {
-    selectors: { getBreakpoints },
+    selectors: { getBreakpointCount },
     getState
   } = dbg;
 
@@ -779,7 +783,7 @@ async function invokeWithBreakpoint(
 
   await removeBreakpoint(dbg, source.id, line, column);
 
-  is(getBreakpoints(getState()).size, 0, "Breakpoint reverted");
+  is(getBreakpointCount(getState()), 0, "Breakpoint reverted");
 
   await handler(source);
 
@@ -1026,6 +1030,16 @@ const selectors = {
   scopesHeader: ".scopes-pane ._header",
   breakpointItem: i => `.breakpoints-list div:nth-of-type(${i})`,
   breakpointItems: `.breakpoints-list .breakpoint`,
+  breakpointContextMenu: {
+    disableSelf: "#node-menu-disable-self",
+    disableAll: "#node-menu-disable-all",
+    disableOthers: "#node-menu-disable-others",
+    enableSelf: "#node-menu-enable-self",
+    enableOthers: "#node-menu-enable-others",
+    remove: "#node-menu-delete-self",
+    removeOthers: "#node-menu-delete-other",
+    removeCondition: "#node-menu-remove-condition"
+  },
   scopes: ".scopes-list",
   scopeNode: i => `.scopes-list .tree-node:nth-child(${i}) .object-label`,
   scopeValue: i =>
@@ -1033,6 +1047,10 @@ const selectors = {
   frame: i => `.frames ul li:nth-child(${i})`,
   frames: ".frames ul li",
   gutter: i => `.CodeMirror-code *:nth-child(${i}) .CodeMirror-linenumber`,
+  gutterContextMenu: {
+    addConditionalBreakpoint: "#node-menu-add-conditional-breakpoint",
+    editBreakpoint: "#node-menu-edit-conditional-breakpoint"
+  },
   menuitem: i => `menupopup menuitem:nth-child(${i})`,
   pauseOnExceptions: ".pause-exceptions",
   breakpoint: ".CodeMirror-code > .new-breakpoint",
@@ -1143,14 +1161,14 @@ function rightClickElement(dbg, elementName, ...args) {
   );
 }
 
-function selectMenuItem(dbg, index) {
+function selectContextMenuItem(dbg, selector) {
   // the context menu is in the toolbox window
   const doc = dbg.toolbox.win.document;
 
   // there are several context menus, we want the one with the menu-api
   const popup = doc.querySelector('menupopup[menu-api="true"]');
 
-  const item = popup.querySelector(`menuitem:nth-child(${index})`);
+  const item = popup.querySelector(selector);
   return EventUtils.synthesizeMouseAtCenter(item, {}, dbg.toolbox.win);
 }
 
@@ -1340,4 +1358,22 @@ async function waitForSourceCount(dbg, i) {
 async function assertSourceCount(dbg, count) {
   await waitForSourceCount(dbg, count);
   is(findAllElements(dbg, "sourceNodes").length, count, `${count} sources`);
+}
+
+async function waitForNodeToGainFocus(dbg, index) {
+  await waitUntil(() => {
+    const element = findElement(dbg, "sourceNode", index);
+
+    if (element) {
+      return element.classList.contains("focused");
+    }
+
+    return false;
+  }, `waiting for source node ${index} to be focused`);
+}
+
+async function assertNodeIsFocused(dbg, index) {
+  await waitForNodeToGainFocus(dbg, index);
+  const node = findElement(dbg, "sourceNode", index);
+  ok(node.classList.contains("focused"), `node ${index} is focused`);
 }

@@ -6,7 +6,7 @@
 /* import-globals-from project-panel.js */
 /* import-globals-from runtime-panel.js */
 
-const {require} = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
+const {loader, require} = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 const {gDevTools} = require("devtools/client/framework/devtools");
 const {gDevToolsBrowser} = require("devtools/client/framework/devtools-browser");
 const {Toolbox} = require("devtools/client/framework/toolbox");
@@ -16,11 +16,12 @@ const {Connection} = require("devtools/shared/client/connection-manager");
 const {AppManager} = require("devtools/client/webide/modules/app-manager");
 const EventEmitter = require("devtools/shared/event-emitter");
 const promise = require("promise");
-const {GetAvailableAddons} = require("devtools/client/webide/modules/addons");
 const {getJSON} = require("devtools/client/shared/getjson");
 const Telemetry = require("devtools/client/shared/telemetry");
 const {RuntimeScanners} = require("devtools/client/webide/modules/runtimes");
 const {openContentLink} = require("devtools/client/shared/link");
+
+loader.lazyRequireGetter(this, "adbAddon", "devtools/shared/adb/adb-addon", true);
 
 const Strings =
   Services.strings.createBundle("chrome://devtools/locale/webide.properties");
@@ -38,7 +39,7 @@ const MIN_ZOOM = 0.6;
    Object.defineProperty(this, key, {
      value: value,
      enumerable: true,
-     writable: false
+     writable: false,
    });
  });
 
@@ -62,6 +63,10 @@ var UI = {
     // toolbox session id.
     this._telemetry.toolOpened("webide", -1, this);
 
+    this.notificationBox = new window.MozElements.NotificationBox(element => {
+      document.getElementById("containerbox")
+              .insertAdjacentElement("afterbegin", element);
+    });
     AppManager.init();
 
     this.appManagerUpdate = this.appManagerUpdate.bind(this);
@@ -86,9 +91,11 @@ var UI = {
     // If the user decides to uninstall any of this addon, we won't install it again.
     const autoinstallADBExtension = Services.prefs.getBoolPref("devtools.webide.autoinstallADBExtension");
     if (autoinstallADBExtension) {
-      const addons = GetAvailableAddons();
-      addons.adb.install();
+      adbAddon.install("webide");
     }
+
+    // Remove deprecated remote debugging extensions.
+    adbAddon.uninstallUnsupportedExtensions();
 
     Services.prefs.setBoolPref("devtools.webide.autoinstallADBExtension", false);
 
@@ -232,8 +239,6 @@ var UI = {
   busyWithProgressUntil: function(promise, operationDescription) {
     const busy = this.busyUntil(promise, operationDescription);
     const win = document.querySelector("window");
-    const progress = document.querySelector("#action-busy-determined");
-    progress.mode = "undetermined";
     win.classList.add("busy-determined");
     win.classList.remove("busy-undetermined");
     return busy;
@@ -287,18 +292,17 @@ var UI = {
       accessKey: Strings.GetStringFromName("notification_showTroubleShooting_accesskey"),
       callback: function() {
         Cmds.showTroubleShooting();
-      }
+      },
     }];
 
-    const nbox = document.querySelector("#notificationbox");
+    const nbox = this.notificationBox;
     nbox.removeAllNotifications(true);
     nbox.appendNotification(text, "webide:errornotification", null,
                             nbox.PRIORITY_WARNING_LOW, buttons);
   },
 
   dismissErrorNotification: function() {
-    const nbox = document.querySelector("#notificationbox");
-    nbox.removeAllNotifications(true);
+    this.notificationBox.removeAllNotifications(true);
   },
 
   /** ******** COMMANDS **********/
@@ -680,7 +684,7 @@ var UI = {
       AppManager.selectedProject = {
         type: "mainProcess",
         name: Strings.GetStringFromName("mainProcess_label"),
-        icon: AppManager.DEFAULT_PROJECT_ICON
+        icon: AppManager.DEFAULT_PROJECT_ICON,
       };
     } else if (type == "runtimeApp") {
       const app = AppManager.apps.get(project);
@@ -689,7 +693,7 @@ var UI = {
           type: "runtimeApp",
           app: app.manifest,
           icon: app.iconURL,
-          name: app.manifest.name
+          name: app.manifest.name,
         };
       }
     }
@@ -821,7 +825,7 @@ var UI = {
     const splitter = document.querySelector(".devtools-horizontal-splitter");
     splitter.removeAttribute("hidden");
 
-    document.querySelector("notificationbox").insertBefore(iframe, splitter.nextSibling);
+    document.getElementById("containerbox").insertBefore(iframe, splitter.nextSibling);
     const host = Toolbox.HostType.CUSTOM;
     const options = { customIframe: iframe, zoom: false, uid: iframe.uid };
 
@@ -879,7 +883,10 @@ var Cmds = {
     const iframe = document.getElementById("deck-panel-performance");
 
     iframe.addEventListener("DOMContentLoaded", () => {
-      iframe.contentWindow.gInit(AppManager.perfFront, AppManager.preferenceFront);
+      const actorVersion = AppManager.connection.client.mainRoot.traits.perfActorVersion;
+      iframe.contentWindow.gInit(AppManager.perfFront,
+                                 AppManager.preferenceFront,
+                                 actorVersion);
     }, { once: true });
   },
 
@@ -954,5 +961,5 @@ var Cmds = {
   resetZoom: function() {
     UI.contentViewer.fullZoom = 1;
     Services.prefs.setCharPref("devtools.webide.zoom", 1);
-  }
+  },
 };

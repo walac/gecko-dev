@@ -615,6 +615,43 @@ impl Gl for GlFns {
         }
     }
 
+    fn tex_storage_2d(&self,
+                      target: GLenum,
+                      levels: GLint,
+                      internal_format: GLenum,
+                      width: GLsizei,
+                      height: GLsizei) {
+        if self.ffi_gl_.TexStorage2D.is_loaded() {
+            unsafe {
+                self.ffi_gl_.TexStorage2D(target,
+                                          levels,
+                                          internal_format,
+                                          width,
+                                          height);
+            }
+        }
+    }
+
+    fn tex_storage_3d(&self,
+                      target: GLenum,
+                      levels: GLint,
+                      internal_format: GLenum,
+                      width: GLsizei,
+                      height: GLsizei,
+                      depth: GLsizei) {
+        if self.ffi_gl_.TexStorage3D.is_loaded() {
+            unsafe {
+                self.ffi_gl_.TexStorage3D(target,
+                                          levels,
+                                          internal_format,
+                                          width,
+                                          height,
+                                          depth);
+            }
+        }
+    }
+
+
     fn get_tex_image_into_buffer(&self,
                                  target: GLenum,
                                  level: GLint,
@@ -627,6 +664,77 @@ impl Gl for GlFns {
                                      format,
                                      ty,
                                      output.as_mut_ptr() as *mut _);
+        }
+    }
+
+    unsafe fn copy_image_sub_data(&self,
+                                  src_name: GLuint,
+                                  src_target: GLenum,
+                                  src_level: GLint,
+                                  src_x: GLint,
+                                  src_y: GLint,
+                                  src_z: GLint,
+                                  dst_name: GLuint,
+                                  dst_target: GLenum,
+                                  dst_level: GLint,
+                                  dst_x: GLint,
+                                  dst_y: GLint,
+                                  dst_z: GLint,
+                                  src_width: GLsizei,
+                                  src_height: GLsizei,
+                                  src_depth: GLsizei) {
+        self.ffi_gl_.CopyImageSubData(
+            src_name,
+            src_target,
+            src_level,
+            src_x,
+            src_y,
+            src_z,
+            dst_name,
+            dst_target,
+            dst_level,
+            dst_x,
+            dst_y,
+            dst_z,
+            src_width,
+            src_height,
+            src_depth,
+        );
+    }
+
+    fn invalidate_framebuffer(&self,
+                              target: GLenum,
+                              attachments: &[GLenum]) {
+        if self.ffi_gl_.InvalidateFramebuffer.is_loaded() {
+            unsafe {
+                self.ffi_gl_.InvalidateFramebuffer(
+                    target,
+                    attachments.len() as GLsizei,
+                    attachments.as_ptr(),
+                );
+            }
+        }
+    }
+
+    fn invalidate_sub_framebuffer(&self,
+                                  target: GLenum,
+                                  attachments: &[GLenum],
+                                  xoffset: GLint,
+                                  yoffset: GLint,
+                                  width: GLsizei,
+                                  height: GLsizei) {
+        if self.ffi_gl_.InvalidateSubFramebuffer.is_loaded() {
+            unsafe {
+                self.ffi_gl_.InvalidateSubFramebuffer(
+                    target,
+                    attachments.len() as GLsizei,
+                    attachments.as_ptr(),
+                    xoffset,
+                    yoffset,
+                    width,
+                    height,
+                );
+            }
         }
     }
 

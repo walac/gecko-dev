@@ -179,6 +179,38 @@ VARCACHE_PREF(
 )
 #undef PREF_VALUE
 
+// Whehter Mozilla specific "text" event should be dispatched only in the
+// system group or not in content.
+VARCACHE_PREF(
+  "dom.compositionevent.text.dispatch_only_system_group_in_content",
+   dom_compositionevent_text_dispatch_only_system_group_in_content,
+   bool, true
+)
+
+// How long a content process can take before closing its IPC channel
+// after shutdown is initiated.  If the process exceeds the timeout,
+// we fear the worst and kill it.
+#if !defined(DEBUG) && !defined(MOZ_ASAN) && !defined(MOZ_VALGRIND) && \
+    !defined(MOZ_TSAN)
+# define PREF_VALUE 5
+#else
+# define PREF_VALUE 0
+#endif
+VARCACHE_PREF(
+  "dom.ipc.tabs.shutdownTimeoutSecs",
+   dom_ipc_tabs_shutdownTimeoutSecs,
+  RelaxedAtomicUint32, PREF_VALUE
+)
+#undef PREF_VALUE
+
+// If this is true, "keypress" event's keyCode value and charCode value always
+// become same if the event is not created/initialized by JS.
+VARCACHE_PREF(
+  "dom.keyboardevent.keypress.set_keycode_and_charcode_to_same_value",
+   dom_keyboardevent_keypress_set_keycode_and_charcode_to_same_value,
+  bool, true
+)
+
 // NOTE: This preference is used in unit tests. If it is removed or its default
 // value changes, please update test_sharedMap_var_caches.js accordingly.
 VARCACHE_PREF(
@@ -200,13 +232,32 @@ VARCACHE_PREF(
 VARCACHE_PREF(
   "dom.performance.enable_scheduler_timing",
   dom_performance_enable_scheduler_timing,
-  RelaxedAtomicBool, false
+  RelaxedAtomicBool, true
+)
+
+VARCACHE_PREF(
+  "dom.performance.children_results_ipc_timeout",
+  dom_performance_children_results_ipc_timeout,
+  uint32_t, 1000
 )
 
 // If true. then the service worker interception and the ServiceWorkerManager
 // will live in the parent process.  This only takes effect on browser start.
 // Note, this is not currently safe to use for normal browsing yet.
 PREF("dom.serviceWorkers.parent_intercept", bool, false)
+
+// Enable PaymentRequest API
+#if defined(NIGHTLY_BUILD) && (defined(XP_WIN) || defined(XP_MACOSX))
+# define PREF_VALUE  true
+#else
+# define PREF_VALUE  false
+#endif
+VARCACHE_PREF(
+  "dom.payments.request.enabled",
+   dom_payments_request_enabled,
+  bool, PREF_VALUE
+)
+#undef PREF_VALUE
 
 // Whether a user gesture is required to call PaymentRequest.prototype.show().
 VARCACHE_PREF(
@@ -221,13 +272,6 @@ VARCACHE_PREF(
   "dom.payments.response.timeout",
    dom_payments_response_timeout,
   uint32_t, 5000
-)
-
-// Disable the ImageBitmap-extensions for now.
-VARCACHE_PREF(
-  "canvas.imagebitmap_extensions.enabled",
-   canvas_imagebitmap_extensions_enabled,
-  RelaxedAtomicBool, false
 )
 
 // SW Cache API
@@ -283,6 +327,12 @@ VARCACHE_PREF(
 VARCACHE_PREF(
   "dom.serviceWorkers.testing.enabled",
    dom_serviceWorkers_testing_enabled,
+  RelaxedAtomicBool, false
+)
+
+VARCACHE_PREF(
+  "dom.testing.structuredclonetester.enabled",
+  dom_testing_structuredclonetester_enabled,
   RelaxedAtomicBool, false
 )
 
@@ -390,11 +440,33 @@ VARCACHE_PREF(
 )
 
 // Enable content type normalization of XHR uploads via MIME Sniffing standard
+// Disabled for now in bz1499136
 VARCACHE_PREF(
   "dom.xhr.standard_content_type_normalization",
    dom_xhr_standard_content_type_normalization,
-  RelaxedAtomicBool, true
+  RelaxedAtomicBool, false
 )
+
+// Block multiple window.open() per single event.
+VARCACHE_PREF(
+  "dom.block_multiple_popups",
+   dom_block_multiple_popups,
+  bool, true
+)
+
+// For area and anchor elements with target=_blank and no rel set to
+// opener/noopener, this pref sets noopener by default.
+#ifdef EARLY_BETA_OR_EARLIER
+#define PREF_VALUE true
+#else
+#define PREF_VALUE false
+#endif
+VARCACHE_PREF(
+  "dom.targetBlankNoOpener.enabled",
+   dom_targetBlankNoOpener_enabled,
+  bool, PREF_VALUE
+)
+#undef PREF_VALUE
 
 //---------------------------------------------------------------------------
 // Clear-Site-Data prefs
@@ -431,6 +503,24 @@ VARCACHE_PREF(
    gfx_offscreencanvas_enabled,
   RelaxedAtomicBool, false
 )
+
+VARCACHE_PREF(
+  "gfx.font_ahem_antialias_none",
+   gfx_font_ahem_antialias_none,
+  RelaxedAtomicBool, false
+)
+
+#ifdef RELEASE_OR_BETA
+# define PREF_VALUE false
+#else
+# define PREF_VALUE true
+#endif
+VARCACHE_PREF(
+  "gfx.omta.background-color",
+   gfx_omta_background_color,
+  bool, PREF_VALUE
+)
+#undef PREF_VALUE
 
 //---------------------------------------------------------------------------
 // HTML5 parser prefs
@@ -618,12 +708,18 @@ VARCACHE_PREF(
   bool, true
 )
 
-// Is -moz-prefixed gradient functions enabled?
+// Are -moz-prefixed gradient functions enabled?
+#ifdef NIGHTLY_BUILD
+# define PREF_VALUE false
+#else
+# define PREF_VALUE true
+#endif
 VARCACHE_PREF(
   "layout.css.prefixes.gradients",
    layout_css_prefixes_gradients,
-  bool, true
+  bool, PREF_VALUE
 )
+#undef PREF_VALUE
 
 // Whether the offset-* logical property aliases are enabled.
 VARCACHE_PREF(
@@ -641,19 +737,6 @@ VARCACHE_PREF(
 VARCACHE_PREF(
   "layout.css.control-characters.visible",
    layout_css_control_characters_visible,
-  bool, PREF_VALUE
-)
-#undef PREF_VALUE
-
-// Is support for the frames() timing function enabled?
-#ifdef RELEASE_OR_BETA
-# define PREF_VALUE false
-#else
-# define PREF_VALUE true
-#endif
-VARCACHE_PREF(
-  "layout.css.frames-timing.enabled",
-   layout_css_frames_timing_enabled,
   bool, PREF_VALUE
 )
 #undef PREF_VALUE
@@ -679,6 +762,18 @@ VARCACHE_PREF(
   bool, false
 )
 
+#ifdef NIGHTLY_BUILD
+# define PREF_VALUE true
+#else
+# define PREF_VALUE false
+#endif
+VARCACHE_PREF(
+  "layout.css.supports-selector.enabled",
+   layout_css_supports_selector_enabled,
+  bool, PREF_VALUE
+)
+#undef PREF_VALUE
+
 // Pref to control whether @-moz-document url-prefix() is parsed in content
 // pages. Only effective when layout.css.moz-document.content.enabled is false.
 #ifdef EARLY_BETA_OR_EARLIER
@@ -701,31 +796,19 @@ VARCACHE_PREF(
 
 // Pref to control whether display: -moz-box and display: -moz-inline-box are
 // parsed in content pages.
-#ifdef EARLY_BETA_OR_EARLIER
-#define PREF_VALUE false
-#else
-#define PREF_VALUE true
-#endif
 VARCACHE_PREF(
   "layout.css.xul-box-display-values.content.enabled",
    layout_css_xul_box_display_values_content_enabled,
-  bool, PREF_VALUE
+  bool, false
 )
-#undef PREF_VALUE
 
 // Pref to control whether ::xul-tree-* pseudo-elements are parsed in content
 // pages.
-#ifdef EARLY_BETA_OR_EARLIER
-#define PREF_VALUE false
-#else
-#define PREF_VALUE true
-#endif
 VARCACHE_PREF(
   "layout.css.xul-tree-pseudos.content.enabled",
    layout_css_xul_tree_pseudos_content_enabled,
-  bool, PREF_VALUE
+  bool, false
 )
-#undef PREF_VALUE
 
 // Is support for CSS "grid-template-{columns,rows}: subgrid X" enabled?
 VARCACHE_PREF(
@@ -755,13 +838,6 @@ VARCACHE_PREF(
   bool, false
 )
 
-// Does overflow-break: break-word affect intrinsic size?
-VARCACHE_PREF(
-  "layout.css.overflow-break.intrinsic-size",
-   layout_css_overflow_break_intrinsic_size,
-  bool, false
-)
-
 // Does arbitrary ::-webkit-* pseudo-element parsed?
 VARCACHE_PREF(
   "layout.css.unknown-webkit-pseudo-element",
@@ -781,6 +857,13 @@ VARCACHE_PREF(
   "layout.css.column-span.enabled",
    layout_css_column_span_enabled,
   bool, false
+)
+
+// Is steps(jump-*) supported in easing functions?
+VARCACHE_PREF(
+  "layout.css.step-position-jump.enabled",
+   layout_css_step_position_jump_enabled,
+  bool, true
 )
 
 //---------------------------------------------------------------------------
@@ -844,6 +927,15 @@ VARCACHE_PREF(
    javascript_options_streams,
   RelaxedAtomicBool, false
 )
+
+#ifdef ENABLE_BIGINT
+// BigInt API
+VARCACHE_PREF(
+  "javascript.options.bigint",
+   javascript_options_bigint,
+  RelaxedAtomicBool, false
+)
+#endif
 
 
 //---------------------------------------------------------------------------
@@ -1011,6 +1103,18 @@ VARCACHE_PREF(
 )
 #undef PREF_VALUE
 
+VARCACHE_PREF(
+  "media.rdd-process.enabled",
+   MediaRddProcessEnabled,
+  RelaxedAtomicBool, false
+)
+
+VARCACHE_PREF(
+  "media.rdd-process.startup_timeout_ms",
+   MediaRddProcessStartupTimeoutMs,
+  RelaxedAtomicInt32, 5000
+)
+
 #ifdef ANDROID
 
 // Enable the MediaCodec PlatformDecoderModule by default.
@@ -1044,13 +1148,36 @@ PREF("media.navigator.hardware.vp8_decode.acceleration_enabled", bool, false)
 
 #endif // ANDROID
 
-// Use MediaDataDecoder API for WebRTC. This includes hardware acceleration for
-// decoding.
+// Use MediaDataDecoder API for VP8/VP9 in WebRTC. This includes hardware
+// acceleration for decoding.
+// disable on android bug 1509316
+#if defined(NIGHTLY_BUILD) && !defined(ANDROID)
+# define PREF_VALUE true
+#else
+# define PREF_VALUE false
+#endif
 VARCACHE_PREF(
-  "media.navigator.mediadatadecoder_enabled",
-   MediaNavigatorMediadatadecoderEnabled,
-  bool, false
+  "media.navigator.mediadatadecoder_vpx_enabled",
+   MediaNavigatorMediadatadecoderVPXEnabled,
+  RelaxedAtomicBool, PREF_VALUE
 )
+#undef PREF_VALUE
+
+// Use MediaDataDecoder API for H264 in WebRTC. This includes hardware
+// acceleration for decoding.
+# if defined(ANDROID)
+#  define PREF_VALUE false // Bug 1509316
+# else
+#  define PREF_VALUE true
+# endif
+
+VARCACHE_PREF(
+  "media.navigator.mediadatadecoder_h264_enabled",
+   MediaNavigatorMediadatadecoderH264Enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
 #endif // MOZ_WEBRTC
 
 #ifdef MOZ_OMX
@@ -1095,7 +1222,7 @@ VARCACHE_PREF(
 VARCACHE_PREF(
   "media.ffmpeg.low-latency.enabled",
    MediaFfmpegLowLatencyEnabled,
-  bool, false
+  RelaxedAtomicBool, false
 )
 #endif
 
@@ -1294,6 +1421,11 @@ VARCACHE_PREF(
 VARCACHE_PREF(
   "media.av1.enabled",
    MediaAv1Enabled,
+  RelaxedAtomicBool, false
+)
+VARCACHE_PREF(
+  "media.av1.use-dav1d",
+   MediaAv1UseDav1d,
   RelaxedAtomicBool, false
 )
 
@@ -1589,26 +1721,6 @@ PREF("preferences.allow.omt-write", bool, true)
 // Privacy prefs
 //---------------------------------------------------------------------------
 
-// Whether Content Blocking has been enabled.
-VARCACHE_PREF(
-  "browser.contentblocking.enabled",
-   browser_contentblocking_enabled,
-  bool, true
-)
-
-#ifdef NIGHTLY_BUILD
-# define PREF_VALUE true
-#else
-# define PREF_VALUE false
-#endif
-// Whether Content Blocking UI has been enabled.
-VARCACHE_PREF(
-  "browser.contentblocking.ui.enabled",
-   browser_contentblocking_ui_enabled,
-  bool, PREF_VALUE
-)
-#undef PREF_VALUE
-
 // Whether Content Blocking Third-Party Cookies UI has been enabled.
 VARCACHE_PREF(
   "browser.contentblocking.allowlist.storage.enabled",
@@ -1628,13 +1740,6 @@ VARCACHE_PREF(
   "browser.contentblocking.originlog.length",
    browser_contentblocking_originlog_length,
   uint32_t, 32
-)
-
-// Whether FastBlock has been enabled.
-VARCACHE_PREF(
-  "browser.fastblock.enabled",
-  browser_fastblock_enabled,
-  bool, false
 )
 
 // Anti-tracking permission expiration
@@ -1719,14 +1824,122 @@ VARCACHE_PREF(
   RelaxedAtomicBool, false
 )
 
+#ifdef MOZILLA_OFFICIAL
+# define PREF_VALUE false
+#else
+# define PREF_VALUE true
+#endif
+VARCACHE_PREF(
+  "devtools.console.stdout.chrome",
+   devtools_console_stdout_chrome,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+VARCACHE_PREF(
+  "devtools.console.stdout.content",
+   devtools_console_stdout_content,
+  RelaxedAtomicBool, false
+)
+
 //---------------------------------------------------------------------------
 // Feature-Policy prefs
 //---------------------------------------------------------------------------
 
+#ifdef NIGHTLY_BUILD
+# define PREF_VALUE true
+#else
+# define PREF_VALUE false
+#endif
+// This pref enables FeaturePolicy logic and the parsing of 'allow' attribute in
+// HTMLIFrameElement objects.
 VARCACHE_PREF(
   "dom.security.featurePolicy.enabled",
    dom_security_featurePolicy_enabled,
-  bool, false
+  bool, PREF_VALUE
+)
+
+// This pref enables the featurePolicy header support.
+VARCACHE_PREF(
+  "dom.security.featurePolicy.header.enabled",
+   dom_security_featurePolicy_header_enabled,
+  bool, PREF_VALUE
+)
+
+// Expose the 'policy' attribute in document and HTMLIFrameElement
+VARCACHE_PREF(
+  "dom.security.featurePolicy.webidl.enabled",
+   dom_security_featurePolicy_webidl_enabled,
+  bool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+//---------------------------------------------------------------------------
+// Reporting API
+//---------------------------------------------------------------------------
+
+#ifdef NIGHTLY_BUILD
+# define PREF_VALUE true
+#else
+# define PREF_VALUE false
+#endif
+VARCACHE_PREF(
+  "dom.reporting.enabled",
+   dom_reporting_enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+VARCACHE_PREF(
+  "dom.reporting.testing.enabled",
+   dom_reporting_testing_enabled,
+  RelaxedAtomicBool, false
+)
+
+#ifdef NIGHTLY_BUILD
+# define PREF_VALUE true
+#else
+# define PREF_VALUE false
+#endif
+VARCACHE_PREF(
+  "dom.reporting.featurePolicy.enabled",
+   dom_reporting_featurePolicy_enabled,
+  RelaxedAtomicBool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+VARCACHE_PREF(
+  "dom.reporting.header.enabled",
+   dom_reporting_header_enabled,
+  RelaxedAtomicBool, false
+)
+
+// In seconds. The timeout to remove not-active report-to endpoints.
+VARCACHE_PREF(
+  "dom.reporting.cleanup.timeout",
+   dom_reporting_cleanup_timeout,
+  uint32_t, 3600
+)
+
+// Any X seconds the reports are dispatched to endpoints.
+VARCACHE_PREF(
+  "dom.reporting.delivering.timeout",
+   dom_reporting_delivering_timeout,
+  uint32_t, 5
+)
+
+// How many times the delivering of a report should be tried.
+VARCACHE_PREF(
+  "dom.reporting.delivering.maxFailures",
+   dom_reporting_delivering_maxFailures,
+  uint32_t, 3
+)
+
+// How many reports should be stored in the report queue before being delivered.
+VARCACHE_PREF(
+  "dom.reporting.delivering.maxReports",
+   dom_reporting_delivering_maxReports,
+  uint32_t, 100
 )
 
 //---------------------------------------------------------------------------

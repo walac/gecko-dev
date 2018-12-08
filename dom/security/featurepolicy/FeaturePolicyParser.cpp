@@ -13,63 +13,48 @@
 #include "nsIURI.h"
 #include "nsNetUtil.h"
 
-using namespace mozilla;
-using namespace mozilla::dom;
+namespace mozilla {
+namespace dom {
 
 namespace {
 
-void
-ReportToConsoleUnsupportedFeature(nsIDocument* aDocument,
-                                  const nsString& aFeatureName)
-{
-  const char16_t* params[] = { aFeatureName.get() };
+void ReportToConsoleUnsupportedFeature(nsIDocument* aDocument,
+                                       const nsString& aFeatureName) {
+  const char16_t* params[] = {aFeatureName.get()};
 
-  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
-                                  NS_LITERAL_CSTRING("Feature Policy"),
-                                  aDocument,
-                                  nsContentUtils::eSECURITY_PROPERTIES,
-                                  "FeaturePolicyUnsupportedFeatureName",
-                                  params, ArrayLength(params));
+  nsContentUtils::ReportToConsole(
+      nsIScriptError::warningFlag, NS_LITERAL_CSTRING("Feature Policy"),
+      aDocument, nsContentUtils::eSECURITY_PROPERTIES,
+      "FeaturePolicyUnsupportedFeatureName", params, ArrayLength(params));
 }
 
-void
-ReportToConsoleInvalidEmptyAllowValue(nsIDocument* aDocument,
-                                      const nsString& aFeatureName)
-{
-  const char16_t* params[] = { aFeatureName.get() };
+void ReportToConsoleInvalidEmptyAllowValue(nsIDocument* aDocument,
+                                           const nsString& aFeatureName) {
+  const char16_t* params[] = {aFeatureName.get()};
 
-  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
-                                  NS_LITERAL_CSTRING("Feature Policy"),
-                                  aDocument,
-                                  nsContentUtils::eSECURITY_PROPERTIES,
-                                  "FeaturePolicyInvalidEmptyAllowValue",
-                                  params, ArrayLength(params));
+  nsContentUtils::ReportToConsole(
+      nsIScriptError::warningFlag, NS_LITERAL_CSTRING("Feature Policy"),
+      aDocument, nsContentUtils::eSECURITY_PROPERTIES,
+      "FeaturePolicyInvalidEmptyAllowValue", params, ArrayLength(params));
 }
 
-void
-ReportToConsoleInvalidAllowValue(nsIDocument* aDocument,
-                                 const nsString& aValue)
-{
-  const char16_t* params[] = { aValue.get() };
+void ReportToConsoleInvalidAllowValue(nsIDocument* aDocument,
+                                      const nsString& aValue) {
+  const char16_t* params[] = {aValue.get()};
 
-  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
-                                  NS_LITERAL_CSTRING("Feature Policy"),
-                                  aDocument,
-                                  nsContentUtils::eSECURITY_PROPERTIES,
-                                  "FeaturePolicyInvalidAllowValue",
-                                  params, ArrayLength(params));
+  nsContentUtils::ReportToConsole(
+      nsIScriptError::warningFlag, NS_LITERAL_CSTRING("Feature Policy"),
+      aDocument, nsContentUtils::eSECURITY_PROPERTIES,
+      "FeaturePolicyInvalidAllowValue", params, ArrayLength(params));
 }
 
-} // anonymous
+}  // namespace
 
-/* static */ bool
-FeaturePolicyParser::ParseString(const nsAString& aPolicy,
-                                 nsIDocument* aDocument,
-                                 const nsAString& aSelfOrigin,
-                                 const nsAString& aSrcOrigin,
-                                 bool aSrcEnabled,
-                                 nsTArray<Feature>& aParsedFeatures)
-{
+/* static */ bool FeaturePolicyParser::ParseString(
+    const nsAString& aPolicy, nsIDocument* aDocument, nsIPrincipal* aSelfOrigin,
+    nsIPrincipal* aSrcOrigin, nsTArray<Feature>& aParsedFeatures) {
+  MOZ_ASSERT(aSelfOrigin);
+
   nsTArray<nsTArray<nsString>> tokens;
   PolicyTokenizer::tokenizePolicy(aPolicy, tokens);
 
@@ -88,9 +73,8 @@ FeaturePolicyParser::ParseString(const nsAString& aPolicy,
     Feature feature(featureTokens[0]);
 
     if (featureTokens.Length() == 1) {
-      if (aSrcEnabled) {
-        // Note that this src origin can be empty if opaque.
-        feature.AppendOriginToWhiteList(aSrcOrigin);
+      if (aSrcOrigin) {
+        feature.AppendToAllowList(aSrcOrigin);
       } else {
         ReportToConsoleInvalidEmptyAllowValue(aDocument, featureTokens[0]);
         continue;
@@ -110,18 +94,12 @@ FeaturePolicyParser::ParseString(const nsAString& aPolicy,
         }
 
         if (curVal.LowerCaseEqualsASCII("'self'")) {
-          // Opaque origins are passed as empty string.
-          if (!aSelfOrigin.IsEmpty()) {
-            feature.AppendOriginToWhiteList(aSelfOrigin);
-          }
+          feature.AppendToAllowList(aSelfOrigin);
           continue;
         }
 
-        if (aSrcEnabled && curVal.LowerCaseEqualsASCII("'src'")) {
-          // Opaque origins are passed as empty string.
-          if (!aSrcOrigin.IsEmpty()) {
-            feature.AppendOriginToWhiteList(aSrcOrigin);
-          }
+        if (aSrcOrigin && curVal.LowerCaseEqualsASCII("'src'")) {
+          feature.AppendToAllowList(aSrcOrigin);
           continue;
         }
 
@@ -132,14 +110,14 @@ FeaturePolicyParser::ParseString(const nsAString& aPolicy,
           continue;
         }
 
-        nsAutoString origin;
-        rv = nsContentUtils::GetUTFOrigin(uri, origin);
-        if (NS_WARN_IF(NS_FAILED(rv))) {
+        nsCOMPtr<nsIPrincipal> origin = BasePrincipal::CreateCodebasePrincipal(
+            uri, BasePrincipal::Cast(aSelfOrigin)->OriginAttributesRef());
+        if (NS_WARN_IF(!origin)) {
           ReportToConsoleInvalidAllowValue(aDocument, curVal);
           continue;
         }
 
-        feature.AppendOriginToWhiteList(origin);
+        feature.AppendToAllowList(origin);
       }
     }
 
@@ -160,3 +138,6 @@ FeaturePolicyParser::ParseString(const nsAString& aPolicy,
   aParsedFeatures.SwapElements(parsedFeatures);
   return true;
 }
+
+}  // namespace dom
+}  // namespace mozilla

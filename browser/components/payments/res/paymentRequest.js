@@ -109,7 +109,6 @@ var paymentRequest = {
   onPaymentRequestLoad() {
     log.debug("onPaymentRequestLoad");
     window.addEventListener("unload", this, {once: true});
-    this.sendMessageToChrome("paymentDialogReady");
 
     // Automatically show the debugging console if loaded with a truthy `debug` query parameter.
     if (new URLSearchParams(location.search).get("debug")) {
@@ -126,50 +125,55 @@ var paymentRequest = {
     log.debug("onShowPaymentRequest, isPrivate?", detail.isPrivate);
 
     let paymentDialog = document.querySelector("payment-dialog");
-    let hasSavedAddresses = Object.keys(detail.savedAddresses).length != 0;
-    let hasSavedCards = Object.keys(detail.savedBasicCards).length != 0;
-    let shippingRequested = detail.request.paymentOptions.requestShipping;
     let state = {
       request: detail.request,
       savedAddresses: detail.savedAddresses,
       savedBasicCards: detail.savedBasicCards,
+      // Temp records can exist upon a reload during development.
+      tempAddresses: detail.tempAddresses,
+      tempBasicCards: detail.tempBasicCards,
       isPrivate: detail.isPrivate,
       page: {
         id: "payment-summary",
       },
     };
 
+    let hasSavedAddresses = Object.keys(this.getAddresses(state)).length != 0;
+    let hasSavedCards = Object.keys(this.getBasicCards(state)).length != 0;
+    let shippingRequested = state.request.paymentOptions.requestShipping;
+
     // Onboarding wizard flow.
-    if (!hasSavedAddresses && (shippingRequested || !hasSavedCards)) {
+    if (!hasSavedAddresses && shippingRequested) {
       state.page = {
-        id: "address-page",
+        id: "shipping-address-page",
         onboardingWizard: true,
       };
 
-      state["address-page"] = {
-        addressFields: null,
+      state["shipping-address-page"] = {
         guid: null,
       };
+    } else if (!hasSavedAddresses && !hasSavedCards) {
+      state.page = {
+        id: "billing-address-page",
+        onboardingWizard: true,
+      };
 
-      if (shippingRequested) {
-        Object.assign(state["address-page"], {
-          selectedStateKey: ["selectedShippingAddress"],
-          title: paymentDialog.dataset.shippingAddressTitleAdd,
-        });
-      } else {
-        Object.assign(state["address-page"], {
-          selectedStateKey: ["basic-card-page", "billingAddressGUID"],
-          title: paymentDialog.dataset.billingAddressTitleAdd,
-        });
-      }
+      state["billing-address-page"] = {
+        guid: null,
+      };
     } else if (!hasSavedCards) {
       state.page = {
         id: "basic-card-page",
         onboardingWizard: true,
       };
+      state["basic-card-page"] = {
+        selectedStateKey: "selectedPaymentCard",
+      };
     }
 
-    paymentDialog.setStateFromParent(state);
+    await paymentDialog.setStateFromParent(state);
+
+    this.sendMessageToChrome("paymentDialogReady");
   },
 
   openPreferences() {
@@ -246,7 +250,7 @@ var paymentRequest = {
     }
     let modifier = modifiers.find(m => {
       // take the first matching modifier
-      // TODO (bug 1429198): match on supportedTypes and supportedNetworks
+      // TODO (bug 1429198): match on supportedNetworks
       return m.supportedMethods == "basic-card";
     });
     return modifier || null;
@@ -273,14 +277,37 @@ var paymentRequest = {
     window.removeEventListener("paymentChromeToContent", this);
   },
 
+  _sortObjectsByTimeLastUsed(objects) {
+    let sortedValues = Object.values(objects).sort((a, b) => {
+      let aLastUsed = a.timeLastUsed || a.timeLastModified;
+      let bLastUsed = b.timeLastUsed || b.timeLastModified;
+      return bLastUsed - aLastUsed;
+    });
+    let sortedObjects = {};
+    for (let obj of sortedValues) {
+      sortedObjects[obj.guid] = obj;
+    }
+    return sortedObjects;
+  },
+
   getAddresses(state) {
     let addresses = Object.assign({}, state.savedAddresses, state.tempAddresses);
-    return addresses;
+    return this._sortObjectsByTimeLastUsed(addresses);
   },
 
   getBasicCards(state) {
     let cards = Object.assign({}, state.savedBasicCards, state.tempBasicCards);
-    return cards;
+    return this._sortObjectsByTimeLastUsed(cards);
+  },
+
+  maybeCreateFieldErrorElement(container) {
+    let span = container.querySelector(".error-text");
+    if (!span) {
+      span = document.createElement("span");
+      span.className = "error-text";
+      container.appendChild(span);
+    }
+    return span;
   },
 };
 

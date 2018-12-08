@@ -29,7 +29,7 @@ describe("SimpleSnippet", () => {
   }
 
   beforeEach(() => {
-    sandbox = sinon.sandbox.create();
+    sandbox = sinon.createSandbox();
     onBlockStub = sandbox.stub();
     sendUserActionTelemetryStub = sandbox.stub();
   });
@@ -48,7 +48,7 @@ describe("SimpleSnippet", () => {
   });
   it("should render .title", () => {
     const wrapper = mountAndCheckProps({title: "Foo"});
-    assert.equal(wrapper.find(".title").text(), "Foo");
+    assert.equal(wrapper.find(".title").text().trim(), "Foo");
   });
   it("should render .icon", () => {
     const wrapper = mountAndCheckProps({icon: "data:image/gif;base64,R0lGODl"});
@@ -57,12 +57,29 @@ describe("SimpleSnippet", () => {
   it("should render .button_label and default className", () => {
     const wrapper = mountAndCheckProps({
       button_label: "Click here",
-      button_action: {type: "OPEN_APPLICATIONS_MENU", data: {target: "appMenu"}},
+      button_action: "OPEN_APPLICATIONS_MENU",
+      button_action_args: "appMenu",
     });
 
     const button = wrapper.find("button.ASRouterButton");
+    button.simulate("click");
+
     assert.equal(button.text(), "Click here");
-    assert.equal(button.prop("className"), "ASRouterButton");
+    assert.equal(button.prop("className"), "ASRouterButton secondary");
+    assert.calledOnce(wrapper.props().onAction);
+    assert.calledWithExactly(wrapper.props().onAction, {type: "OPEN_APPLICATIONS_MENU", data: {args: "appMenu"}});
+  });
+  it("should send an OPEN_URL action when button_url is defined and button is clicked", () => {
+    const wrapper = mountAndCheckProps({
+      button_label: "Button",
+      button_url: "https://mozilla.org",
+    });
+
+    const button = wrapper.find("button.ASRouterButton");
+    button.simulate("click");
+
+    assert.calledOnce(wrapper.props().onAction);
+    assert.calledWithExactly(wrapper.props().onAction, {type: "OPEN_URL", data: {args: "https://mozilla.org"}});
   });
   it("should call props.onBlock and sendUserActionTelemetry when CTA button is clicked", () => {
     const wrapper = mountAndCheckProps({text: "bar"});

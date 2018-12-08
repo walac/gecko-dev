@@ -5,19 +5,17 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "Feature.h"
+#include "mozilla/BasePrincipal.h"
 
-using namespace mozilla::dom;
+namespace mozilla {
+namespace dom {
 
-void
-Feature::GetWhiteListedOrigins(nsTArray<nsString>& aList) const
-{
-  MOZ_ASSERT(mPolicy == eWhiteList);
-  aList.AppendElements(mWhiteListedOrigins);
+void Feature::GetAllowList(nsTArray<nsCOMPtr<nsIPrincipal>>& aList) const {
+  MOZ_ASSERT(mPolicy == eAllowList);
+  aList.AppendElements(mAllowList);
 }
 
-bool
-Feature::Allows(const nsAString& aOrigin) const
-{
+bool Feature::Allows(nsIPrincipal* aPrincipal) const {
   if (mPolicy == eNone) {
     return false;
   }
@@ -26,8 +24,47 @@ Feature::Allows(const nsAString& aOrigin) const
     return true;
   }
 
-  for (const nsString& whiteListedOrigin : mWhiteListedOrigins) {
-    if (whiteListedOrigin.Equals(aOrigin)) {
+  return AllowListContains(aPrincipal);
+}
+
+Feature::Feature(const nsAString& aFeatureName)
+    : mFeatureName(aFeatureName), mPolicy(eAllowList) {}
+
+Feature::~Feature() = default;
+
+const nsAString& Feature::Name() const { return mFeatureName; }
+
+void Feature::SetAllowsNone() {
+  mPolicy = eNone;
+  mAllowList.Clear();
+}
+
+bool Feature::AllowsNone() const { return mPolicy == eNone; }
+
+void Feature::SetAllowsAll() {
+  mPolicy = eAll;
+  mAllowList.Clear();
+}
+
+bool Feature::AllowsAll() const { return mPolicy == eAll; }
+
+void Feature::AppendToAllowList(nsIPrincipal* aPrincipal) {
+  MOZ_ASSERT(aPrincipal);
+
+  mPolicy = eAllowList;
+  mAllowList.AppendElement(aPrincipal);
+}
+
+bool Feature::AllowListContains(nsIPrincipal* aPrincipal) const {
+  MOZ_ASSERT(aPrincipal);
+
+  if (!HasAllowList()) {
+    return false;
+  }
+
+  for (nsIPrincipal* principal : mAllowList) {
+    if (BasePrincipal::Cast(principal)->Subsumes(
+            aPrincipal, BasePrincipal::ConsiderDocumentDomain)) {
       return true;
     }
   }
@@ -35,64 +72,7 @@ Feature::Allows(const nsAString& aOrigin) const
   return false;
 }
 
-Feature::Feature(const nsAString& aFeatureName)
-  : mFeatureName(aFeatureName)
-  , mPolicy(eWhiteList)
-{}
+bool Feature::HasAllowList() const { return mPolicy == eAllowList; }
 
-Feature::~Feature() = default;
-
-const nsAString&
-Feature::Name() const
-{
-  return mFeatureName;
-}
-
-void
-Feature::SetAllowsNone()
-{
-  mPolicy = eNone;
-  mWhiteListedOrigins.Clear();
-}
-
-bool
-Feature::AllowsNone() const
-{
-  return mPolicy == eNone;
-}
-
-void
-Feature::SetAllowsAll()
-{
-  mPolicy = eAll;
-  mWhiteListedOrigins.Clear();
-}
-
-bool
-Feature::AllowsAll() const
-{
-  return mPolicy == eAll;
-}
-
-void
-Feature::AppendOriginToWhiteList(const nsAString& aOrigin)
-{
-  mPolicy = eWhiteList;
-  mWhiteListedOrigins.AppendElement(aOrigin);
-}
-
-bool
-Feature::WhiteListContains(const nsAString& aOrigin) const
-{
-  if (!IsWhiteList()) {
-    return false;
-  }
-
-  return mWhiteListedOrigins.Contains(aOrigin);
-}
-
-bool
-Feature::IsWhiteList() const
-{
-  return mPolicy == eWhiteList;
-}
+}  // namespace dom
+}  // namespace mozilla

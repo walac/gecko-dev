@@ -14,10 +14,10 @@
  * C++ callers use a fast path, and never call the JSAPI or WebIDL methods of
  * this object.
  */
-[ChromeOnly, Exposed=(Window,System)]
+[ChromeOnly, Exposed=Window]
 interface MozQueryInterface {
   [Throws]
-  legacycaller any (IID aIID);
+  legacycaller any (any aIID);
 };
 
 /**
@@ -25,7 +25,7 @@ interface MozQueryInterface {
  * This is exposed in all the system globals where we can expose stuff by
  * default, so should only include methods that are **thread-safe**.
  */
-[ChromeOnly, Exposed=(Window,System,Worker)]
+[ChromeOnly, Exposed=(Window,Worker)]
 namespace ChromeUtils {
   /**
    * Serialize a snapshot of the heap graph, as seen by |JS::ubi::Node| and
@@ -36,7 +36,7 @@ namespace ChromeUtils {
    * @returns                 The path to the file the heap snapshot was written
    *                          to. This is guaranteed to be within the temp
    *                          directory and its file name will match the regexp
-   *                          `\d+(\-\d+)?\.fxsnapshot.gz`.
+   *                          `\d+(\-\d+)?\.fxsnapshot`.
    */
   [Throws]
   DOMString saveHeapSnapshot(optional HeapSnapshotBoundaries boundaries);
@@ -46,7 +46,7 @@ namespace ChromeUtils {
    *
    * @returns                 The snapshot ID of the file. This is the file name
    *                          without the temp directory or the trailing
-   *                          `.fxsnapshot.gz`.
+   *                          `.fxsnapshot`.
    */
   [Throws]
   DOMString saveHeapSnapshotGetId(optional HeapSnapshotBoundaries boundaries);
@@ -148,7 +148,7 @@ namespace ChromeUtils {
  * Additional ChromeUtils methods that are _not_ thread-safe, and hence not
  * exposed in workers.
  */
-[Exposed=(Window,System)]
+[Exposed=Window]
 partial namespace ChromeUtils {
   /**
    * A helper that converts OriginAttributesDictionary to a opaque suffix string.
@@ -215,17 +215,14 @@ partial namespace ChromeUtils {
    * JavaScript, acts as an ordinary QueryInterface function call, and when
    * called from XPConnect, circumvents JSAPI entirely.
    *
-   * The list of interfaces may include a mix of nsIJSID objects and interface
-   * name strings. Strings for nonexistent interface names are silently
-   * ignored, as long as they don't refer to any non-IID property of the Ci
-   * global. Any non-IID value is implicitly coerced to a string, and treated
-   * as an interface name.
+   * The list of interfaces may include a mix of JS ID objects and interface
+   * name strings.
    *
    * nsISupports is implicitly supported, and must not be included in the
    * interface list.
    */
   [Affects=Nothing, NewObject, Throws]
-  MozQueryInterface generateQI(sequence<(DOMString or IID)> interfaces);
+  MozQueryInterface generateQI(sequence<any> interfaces);
 
   /**
    * Waive Xray on a given value. Identity op for primitives.
@@ -356,14 +353,41 @@ partial namespace ChromeUtils {
   [Throws]
   Promise<sequence<IOActivityDataDictionary>> requestIOActivity();
 
+  /**
+   * Returns the BrowsingContext referred by the given id.
+   */
+  [ChromeOnly]
+  BrowsingContext? getBrowsingContext(unsigned long long id);
+
+  /**
+   * Returns all the root BrowsingContexts.
+   */
   [ChromeOnly]
   sequence<BrowsingContext> getRootBrowsingContexts();
+
+  [ChromeOnly, Throws]
+  boolean hasReportingHeaderForOrigin(DOMString aOrigin);
 };
 
 /**
  * Dictionaries duplicating IPDL types in dom/ipc/DOMTypes.ipdlh
  * Used by requestPerformanceMetrics
  */
+
+dictionary MediaMemoryInfoDictionary {
+  unsigned long long audioSize = 0;
+  unsigned long long videoSize = 0;
+  unsigned long long resourcesSize = 0;
+};
+
+dictionary MemoryInfoDictionary {
+  unsigned long long domDom = 0;
+  unsigned long long domStyle = 0;
+  unsigned long long domOther = 0;
+  unsigned long long GCHeapUsage = 0;
+  required MediaMemoryInfoDictionary media;
+};
+
 dictionary CategoryDispatchDictionary
 {
   unsigned short category = 0;
@@ -378,6 +402,7 @@ dictionary PerformanceInfoDictionary {
   unsigned long long counterId = 0;
   boolean isWorker = false;
   boolean isTopLevel = false;
+  required MemoryInfoDictionary memoryInfo;
   sequence<CategoryDispatchDictionary> items = [];
 };
 

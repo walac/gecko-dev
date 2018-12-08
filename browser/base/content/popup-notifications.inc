@@ -63,7 +63,7 @@
 
     <popupnotification id="addon-progress-notification" hidden="true">
       <popupnotificationcontent orient="vertical">
-        <progressmeter id="addon-progress-notification-progressmeter"/>
+        <html:progress id="addon-progress-notification-progressmeter" max="100"/>
         <label id="addon-progress-notification-progresstext" crop="end"/>
       </popupnotificationcontent>
     </popupnotification>
@@ -77,12 +77,6 @@
         <description id="addon-webext-perm-text" class="addon-webext-perm-text"/>
         <label id="addon-webext-perm-intro" class="addon-webext-perm-text"/>
         <html:ul id="addon-webext-perm-list" class="addon-webext-perm-list"/>
-      </popupnotificationcontent>
-    </popupnotification>
-
-    <popupnotification id="addon-installed-notification" hidden="true">
-      <popupnotificationcontent class="addon-installed-notification-content" orient="vertical">
-        <description>&addonPostInstallMessage.label;</description>
       </popupnotificationcontent>
     </popupnotification>
 
@@ -108,4 +102,19 @@
           <label id="cfr-notification-footer-learn-more-link" class="text-link"/>
         </hbox>
       </popupnotificationfooter>
+    </popupnotification>
+
+    <popupnotification id="storage-access-notification" hidden="true">
+      <popupnotificationcontent class="storage-access-notification-content">
+        <xul:vbox flex="1">
+          <!-- These need to be on the same line to avoid creating
+               whitespace between them (whitespace is added in the
+               localization file, if necessary). -->
+          <xul:description class="storage-access-perm-text"><html:span
+            id="storage-access-perm-label"/><html:a id="storage-access-perm-learnmore"
+            onclick="openTrustedLinkIn(this.href, 'tab'); return false;"
+            class="text-link popup-notification-learnmore-link"/><html:span
+            id="storage-access-perm-endlabel"/></xul:description>
+        </xul:vbox>
+      </popupnotificationcontent>
     </popupnotification>

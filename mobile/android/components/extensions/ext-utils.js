@@ -299,9 +299,12 @@ class TabTracker extends TabTrackerBase {
 
     this.init();
 
+    let {browser, id} = win.BrowserApp.selectedTab;
+    let isPrivate = PrivateBrowsingUtils.isBrowserPrivate(browser);
     this._extensionPopupTabWeak = Cu.getWeakReference(win.BrowserApp.addTab(popup, {
       selected: true,
-      parentId: win.BrowserApp.selectedTab.id,
+      parentId: id,
+      isPrivate,
     }));
   }
 
@@ -545,6 +548,10 @@ class Tab extends TabBase {
       return "loading";
     }
     return "complete";
+  }
+
+  get successorTabId() {
+    return -1;
   }
 
   get width() {

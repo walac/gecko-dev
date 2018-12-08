@@ -45,8 +45,6 @@ const GEO_PREF = "browser.search.region";
 const SPOCS_GEOS = ["US"];
 const IS_NIGHTLY_OR_UNBRANDED_BUILD = ["nightly", "default"].includes(UpdateUtils.getUpdateChannel(true));
 
-const ONE_HOUR_IN_MS = 60 * 60 * 1000;
-
 // Determine if spocs should be shown for a geo/locale
 function showSpocs({geo}) {
   return SPOCS_GEOS.includes(geo);
@@ -72,8 +70,10 @@ const PREFS_CONFIG = new Map([
       stories_endpoint: `https://getpocket.cdn.mozilla.net/v3/firefox/global-recs?version=3&consumer_key=$apiKey&locale_lang=${args.locale}&feed_variant=${showSpocs(args) ? "default_spocs_on" : "default_spocs_off"}`,
       stories_referrer: "https://getpocket.com/recommendations",
       topics_endpoint: `https://getpocket.cdn.mozilla.net/v3/firefox/trending-topics?version=2&consumer_key=$apiKey&locale_lang=${args.locale}`,
+      model_keys: ["nmf_model_animals", "nmf_model_business", "nmf_model_career", "nmf_model_datascience", "nmf_model_design", "nmf_model_education", "nmf_model_entertainment", "nmf_model_environment", "nmf_model_fashion", "nmf_model_finance", "nmf_model_food", "nmf_model_health", "nmf_model_home", "nmf_model_life", "nmf_model_marketing", "nmf_model_politics", "nmf_model_programming", "nmf_model_science", "nmf_model_shopping", "nmf_model_sports", "nmf_model_tech", "nmf_model_travel", "nb_model_animals", "nb_model_books", "nb_model_business", "nb_model_career", "nb_model_datascience", "nb_model_design", "nb_model_economics", "nb_model_education", "nb_model_entertainment", "nb_model_environment", "nb_model_fashion", "nb_model_finance", "nb_model_food", "nb_model_game", "nb_model_health", "nb_model_history", "nb_model_home", "nb_model_life", "nb_model_marketing", "nb_model_military", "nb_model_philosophy", "nb_model_photography", "nb_model_politics", "nb_model_productivity", "nb_model_programming", "nb_model_psychology", "nb_model_science", "nb_model_shopping", "nb_model_society", "nb_model_space", "nb_model_sports", "nb_model_tech", "nb_model_travel", "nb_model_writing"],
       show_spocs: showSpocs(args),
       personalized: true,
+      version: IS_NIGHTLY_OR_UNBRANDED_BUILD ? 2 : 1,
     }),
   }],
   ["showSponsored", {
@@ -167,10 +167,6 @@ const PREFS_CONFIG = new Map([
     title: "Experiment to remove tiles that are the same as the default search",
     value: true,
   }],
-  ["improvesearch.topSiteSearchShortcuts", {
-    title: "Experiment to show special top sites that perform keyword searches",
-    value: UpdateUtils.getUpdateChannel(true) !== "release",
-  }],
   ["improvesearch.topSiteSearchShortcuts.searchEngines", {
     title: "An ordered, comma-delimited list of search shortcuts that we should try and pin",
     // This pref is dynamic as the shortcuts vary depending on the region
@@ -186,7 +182,7 @@ const PREFS_CONFIG = new Map([
       } else {
         searchShortcuts.push("google");
       }
-      if (["DE", "FR", "GB", "IT", "JP", "US"].includes(geo)) {
+      if (["AT", "DE", "FR", "GB", "IT", "JP", "US"].includes(geo)) {
         searchShortcuts.push("amazon");
       }
       return searchShortcuts.join(",");
@@ -200,35 +196,20 @@ const PREFS_CONFIG = new Map([
     title: "Are the asrouter devtools enabled?",
     value: false,
   }],
-  ["asrouter.messageProviders", {
-    title: "Configuration for ASRouter message providers",
-
-    /**
-     * Each provider must have a unique id and a type of "local" or "remote".
-     * Local providers must specify the name of an ASRouter message provider.
-     * Remote providers must specify a `url` and an `updateCycleInMs`.
-     * Each provider must also have an `enabled` boolean.
-     */
-    value: JSON.stringify([{
+  ["asrouter.userprefs.cfr", {
+    title: "Does the user allow CFR recommendations?",
+    value: true,
+  }],
+  ["asrouter.providers.onboarding", {
+    title: "Configuration for onboarding provider",
+    value: JSON.stringify({
       id: "onboarding",
       type: "local",
       localProvider: "OnboardingMessageProvider",
-      enabled: false,
-      cohort: 0,
-    }, {
-      id: "snippets",
-      type: "remote",
-      url: "https://snippets.cdn.mozilla.net/%STARTPAGE_VERSION%/%NAME%/%VERSION%/%APPBUILDID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/",
-      updateCycleInMs: ONE_HOUR_IN_MS * 4,
-      enabled: false,
-    }, {
-      id: "cfr",
-      type: "local",
-      localProvider: "CFRMessageProvider",
-      enabled: IS_NIGHTLY_OR_UNBRANDED_BUILD,
-      cohort: IS_NIGHTLY_OR_UNBRANDED_BUILD ? "nightly" : "",
-    }]),
+      enabled: true,
+    }),
   }],
+  // See browser/app/profile/firefox.js for other ASR preferences. They must be defined there to enable roll-outs.
 ]);
 
 // Array of each feed's FEEDS_CONFIG factory and values to add to PREFS_CONFIG
@@ -460,7 +441,7 @@ this.ActivityStream = class ActivityStream {
       // If there's an existing value and it has changed, that means we need to
       // overwrite the default with the new value.
       if (prefConfig.value !== undefined && prefConfig.value !== newValue) {
-        this._defaultPrefs.setDefaultPref(pref, newValue);
+        this._defaultPrefs.set(pref, newValue);
       }
 
       prefConfig.value = newValue;

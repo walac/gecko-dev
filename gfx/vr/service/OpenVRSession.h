@@ -10,14 +10,11 @@
 #include "VRSession.h"
 
 #include "openvr.h"
-#include "mozilla/gfx/2D.h"
 #include "mozilla/TimeStamp.h"
 #include "moz_external_vr.h"
 
 #if defined(XP_WIN)
 #include <d3d11_1.h>
-#elif defined(XP_MACOSX)
-class MacIOSurface;
 #endif
 class nsITimer;
 
@@ -27,9 +24,8 @@ class VRThread;
 
 static const int kNumOpenVRHaptics = 1;
 
-class OpenVRSession : public VRSession
-{
-public:
+class OpenVRSession : public VRSession {
+ public:
   OpenVRSession();
   virtual ~OpenVRSession();
 
@@ -37,16 +33,23 @@ public:
   void Shutdown() override;
   void ProcessEvents(mozilla::gfx::VRSystemState& aSystemState) override;
   void StartFrame(mozilla::gfx::VRSystemState& aSystemState) override;
-  bool ShouldQuit() const override;
   bool StartPresentation() override;
   void StopPresentation() override;
-  bool SubmitFrame(const mozilla::gfx::VRLayer_Stereo_Immersive& aLayer) override;
   void VibrateHaptic(uint32_t aControllerIdx, uint32_t aHapticIndex,
-                    float aIntensity, float aDuration) override;
+                     float aIntensity, float aDuration) override;
   void StopVibrateHaptic(uint32_t aControllerIdx) override;
   void StopAllHaptics() override;
 
-private:
+ protected:
+#if defined(XP_WIN)
+  bool SubmitFrame(const mozilla::gfx::VRLayer_Stereo_Immersive& aLayer,
+                   ID3D11Texture2D* aTexture) override;
+#elif defined(XP_MACOSX)
+  bool SubmitFrame(const mozilla::gfx::VRLayer_Stereo_Immersive& aLayer,
+                   const VRLayerTextureHandle& aTexture) override;
+#endif
+
+ private:
   // OpenVR State
   ::vr::IVRSystem* mVRSystem = nullptr;
   ::vr::IVRChaperone* mVRChaperone = nullptr;
@@ -54,7 +57,6 @@ private:
   ::vr::TrackedDeviceIndex_t mControllerDeviceIndex[kVRControllerMaxCount];
   float mHapticPulseRemaining[kVRControllerMaxCount][kNumOpenVRHaptics];
   float mHapticPulseIntensity[kVRControllerMaxCount][kNumOpenVRHaptics];
-  bool mShouldQuit;
   bool mIsWindowsMR;
   TimeStamp mLastHapticUpdate;
 
@@ -67,7 +69,7 @@ private:
   void UpdateControllerButtons(VRSystemState& aState);
   void UpdateTelemetry(VRSystemState& aSystemState);
 
-  bool SubmitFrame(void* aTextureHandle,
+  bool SubmitFrame(const VRLayerTextureHandle& aTextureHandle,
                    ::vr::ETextureType aTextureType,
                    const VRLayerEyeRect& aLeftEyeRect,
                    const VRLayerEyeRect& aRightEyeRect);
@@ -88,7 +90,7 @@ private:
   mozilla::Mutex mControllerHapticStateMutex;
 };
 
-} // namespace mozilla
-} // namespace gfx
+}  // namespace gfx
+}  // namespace mozilla
 
-#endif // GFX_VR_SERVICE_OPENVRSESSION_H
+#endif  // GFX_VR_SERVICE_OPENVRSESSION_H

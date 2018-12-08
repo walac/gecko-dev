@@ -30,7 +30,7 @@ const APP_MAP = {
   "{3550f703-e582-4d05-9a08-453d09bdfdc6}": "thunderbird",
   "{92650c4d-4b8e-4d2a-b7eb-24ecf4f6b63a}": "seamonkey",
   "{718e30fb-e89b-41dd-9da7-e25a45638b28}": "sunbird",
-  "{aa3c5121-dab2-40e2-81ca-7ea25febc110}": "mobile/android"
+  "{aa3c5121-dab2-40e2-81ca-7ea25febc110}": "mobile/android",
 };
 
 var CACHED_INFO = null;
@@ -135,6 +135,10 @@ async function getSystemInfo() {
     // and `deviceinfo.os`.
     hardware,
 
+    // Device name. This property is only available on Android.
+    // e.g. "Pixel 2"
+    deviceName: getDeviceName(),
+
     // Type of process architecture running:
     // "arm", "ia32", "x86", "x64"
     // Alias to both `arch` and `processor` for node/deviceactor compat
@@ -162,6 +166,15 @@ async function getSystemInfo() {
 
   CACHED_INFO = info;
   return info;
+}
+
+function getDeviceName() {
+  try {
+    // Will throw on other platforms than Firefox for Android.
+    return Services.sysinfo.getProperty("device");
+  } catch (e) {
+    return null;
+  }
 }
 
 function getProfileLocation() {

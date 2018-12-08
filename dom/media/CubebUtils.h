@@ -32,10 +32,7 @@ uint32_t MaxNumberOfChannels();
 // Get the sample rate the hardware/mixer runs at. Thread safe.
 uint32_t PreferredSampleRate();
 
-enum Side {
-  Input,
-  Output
-};
+enum Side { Input, Output };
 
 double GetVolumeScale();
 bool GetFirstStream();
@@ -43,14 +40,13 @@ cubeb* GetCubebContext();
 void ReportCubebStreamInitFailure(bool aIsFirstStream);
 void ReportCubebBackendUsed();
 uint32_t GetCubebPlaybackLatencyInMilliseconds();
-uint32_t GetCubebMSGLatencyInFrames(cubeb_stream_params * params);
+uint32_t GetCubebMSGLatencyInFrames(cubeb_stream_params* params);
 bool CubebLatencyPrefSet();
 void GetCurrentBackend(nsAString& aBackend);
 void GetDeviceCollection(nsTArray<RefPtr<AudioDeviceInfo>>& aDeviceInfos,
                          Side aSide);
 cubeb_stream_prefs GetDefaultStreamPrefs();
 char* GetForcedOutputDevice();
-uint32_t GetMaxInputStreams();
 
 #ifdef MOZ_WIDGET_ANDROID
 uint32_t AndroidGetAudioOutputSampleRate();
@@ -58,10 +54,9 @@ uint32_t AndroidGetAudioOutputFramesPerBuffer();
 #endif
 
 #ifdef ENABLE_SET_CUBEB_BACKEND
-void
-ForceSetCubebContext(cubeb* aCubebContext);
+void ForceSetCubebContext(cubeb* aCubebContext);
 #endif
-} // namespace CubebUtils
-} // namespace mozilla
+}  // namespace CubebUtils
+}  // namespace mozilla
 
-#endif // CubebUtils_h_
+#endif  // CubebUtils_h_

@@ -11,7 +11,6 @@ const ServerSocket = CC(
     "nsIServerSocket",
     "initSpecialConnection");
 
-ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 ChromeUtils.import("chrome://marionette/content/assert.js");
@@ -74,7 +73,7 @@ class TCPListener {
    */
   driverFactory() {
     MarionettePrefs.contentListener = false;
-    return new GeckoDriver(Services.appinfo.ID, this);
+    return new GeckoDriver(this);
   }
 
   set acceptConnections(value) {
@@ -184,9 +183,6 @@ class TCPConnection {
 
     this.driver = driverFactory();
     this.driver.init();
-
-    // lookup of commands sent by server to client by message ID
-    this.commands_ = new Map();
   }
 
   /**
@@ -234,17 +230,13 @@ class TCPConnection {
       return;
     }
 
-    // look up previous command we received a response for
-    if (msg instanceof Response) {
-      let cmd = this.commands_.get(msg.id);
-      this.commands_.delete(msg.id);
-      cmd.onresponse(msg);
-
     // execute new command
-    } else if (msg instanceof Command) {
+    if (msg instanceof Command) {
       (async () => {
         await this.execute(msg);
       })();
+    } else {
+      logger.fatal("Cannot process messages other than Command");
     }
   }
 
@@ -357,11 +349,10 @@ class TCPConnection {
    */
   send(msg) {
     msg.origin = Message.Origin.Server;
-    if (msg instanceof Command) {
-      this.commands_.set(msg.id, msg);
-      this.sendToEmulator(msg);
-    } else if (msg instanceof Response) {
+    if (msg instanceof Response) {
       this.sendToClient(msg);
+    } else {
+      logger.fatal("Cannot send messages other than Response");
     }
   }
 
@@ -403,7 +394,7 @@ class TCPConnection {
 
   log_(msg) {
     let dir = (msg.origin == Message.Origin.Client ? "->" : "<-");
-    logger.trace(`${this.id} ${dir} ${msg}`);
+    logger.debug(`${this.id} ${dir} ${msg}`);
   }
 
   toString() {

@@ -68,23 +68,28 @@ var gMenuBuilder = {
     if (!webExtContextData || !webExtContextData.overrideContext) {
       return contextData;
     }
+    let contextDataBase = {
+      menu: contextData.menu,
+      // eslint-disable-next-line no-use-before-define
+      originalViewType: getContextViewType(contextData),
+      originalViewUrl: contextData.inFrame ? contextData.frameUrl : contextData.pageUrl,
+      webExtContextData,
+    };
     if (webExtContextData.overrideContext === "bookmark") {
       return {
-        menu: contextData.menu,
+        ...contextDataBase,
         bookmarkId: webExtContextData.bookmarkId,
         onBookmark: true,
-        webExtContextData,
       };
     }
     if (webExtContextData.overrideContext === "tab") {
       // TODO: Handle invalid tabs more gracefully (instead of throwing).
       let tab = tabTracker.getTab(webExtContextData.tabId);
       return {
-        menu: contextData.menu,
+        ...contextDataBase,
         tab,
         pageUrl: tab.linkedBrowser.currentURI.spec,
         onTab: true,
-        webExtContextData,
       };
     }
     throw new Error(`Unexpected overrideContext: ${webExtContextData.overrideContext}`);
@@ -382,7 +387,11 @@ var gMenuBuilder = {
     }, {once: true});
 
     element.addEventListener("click", event => { // eslint-disable-line mozilla/balanced-listeners
-      if (event.target !== event.currentTarget) {
+      if (event.target !== event.currentTarget ||
+          // Ignore menu items that are usually not clickeable,
+          // such as separators and parents of submenus and disabled items.
+          element.localName !== "menuitem" ||
+          element.disabled) {
         return;
       }
 
@@ -550,7 +559,22 @@ const getMenuContexts = contextData => {
   return contexts;
 };
 
+function getContextViewType(contextData) {
+  if ("originalViewType" in contextData) {
+    return contextData.originalViewType;
+  }
+  if (contextData.webExtBrowserType === "popup" ||
+      contextData.webExtBrowserType === "sidebar") {
+    return contextData.webExtBrowserType;
+  }
+  if (contextData.tab && contextData.menu.id === "contentAreaContextMenu") {
+    return "tab";
+  }
+  return undefined;
+}
+
 function addMenuEventInfo(info, contextData, extension, includeSensitiveData) {
+  info.viewType = getContextViewType(contextData);
   if (contextData.onVideo) {
     info.mediaType = "video";
   } else if (contextData.onAudio) {
@@ -589,6 +613,12 @@ function addMenuEventInfo(info, contextData, extension, includeSensitiveData) {
       info.selectionText = contextData.selectionText;
     }
   }
+  // If the context was overridden, then frameUrl should be the URL of the
+  // document in which the menu was opened (instead of undefined, even if that
+  // document is not in a frame).
+  if (contextData.originalViewUrl) {
+    info.frameUrl = contextData.originalViewUrl;
+  }
 }
 
 function MenuItem(extension, createProperties, isRoot = false) {
@@ -625,11 +655,17 @@ MenuItem.prototype = {
     }
 
     if (createProperties.documentUrlPatterns != null) {
-      this.documentUrlMatchPattern = new MatchPatternSet(this.documentUrlPatterns);
+      this.documentUrlMatchPattern = new MatchPatternSet(this.documentUrlPatterns, {
+        restrictSchemes: this.extension.restrictSchemes,
+      });
     }
 
     if (createProperties.targetUrlPatterns != null) {
-      this.targetUrlMatchPattern = new MatchPatternSet(this.targetUrlPatterns, {restrictSchemes: false});
+      this.targetUrlMatchPattern = new MatchPatternSet(this.targetUrlPatterns, {
+        // restrictSchemes default to false when matching links instead of pages
+        // (see Bug 1280370 for a rationale).
+        restrictSchemes: false,
+      });
     }
 
     // If a child MenuItem does not specify any contexts, then it should
@@ -782,11 +818,27 @@ MenuItem.prototype = {
       return false;
     }
 
+    if (this.viewTypes && !this.viewTypes.includes(getContextViewType(contextData))) {
+      return false;
+    }
+
+    let docPattern = this.documentUrlMatchPattern;
+    // When viewTypes is specified, the menu item is expected to be restricted
+    // to documents. So let documentUrlPatterns always apply to the URL of the
+    // document in which the menu was opened. When maybeOverrideContextData
+    // changes the context, contextData.pageUrl does not reflect that URL any
+    // more, so use contextData.originalViewUrl instead.
+    if (docPattern && this.viewTypes && contextData.originalViewUrl) {
+      if (!docPattern.matches(Services.io.newURI(contextData.originalViewUrl))) {
+        return false;
+      }
+      docPattern = null; // Null it so that it won't be used with pageURI below.
+    }
+
     if (contextData.onBookmark) {
       return this.extension.hasPermission("bookmarks");
     }
 
-    let docPattern = this.documentUrlMatchPattern;
     let pageURI = Services.io.newURI(contextData[contextData.inFrame ? "frameUrl" : "pageUrl"]);
     if (docPattern && !docPattern.matches(pageURI)) {
       return false;

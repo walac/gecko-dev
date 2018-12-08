@@ -254,8 +254,11 @@ scheme host and port.""")
     gecko_group.add_argument("--setpref", dest="extra_prefs", action='append',
                              default=[], metavar="PREF=VALUE",
                              help="Defines an extra user preference (overrides those in prefs_root)")
-    gecko_group.add_argument("--leak-check", dest="leak_check", action="store_true",
-                             help="Enable leak checking")
+    gecko_group.add_argument("--leak-check", dest="leak_check", action="store_true", default=None,
+                             help="Enable leak checking (enabled by default for debug builds, "
+                             "silently ignored for opt)")
+    gecko_group.add_argument("--no-leak-check", dest="leak_check", action="store_false", default=None,
+                             help="Disable leak checking")
     gecko_group.add_argument("--stylo-threads", action="store", type=int, default=1,
                              help="Number of parallel threads to use for stylo")
     gecko_group.add_argument("--reftest-internal", dest="reftest_internal", action="store_true",
@@ -502,6 +505,9 @@ def check_args(kwargs):
         kwargs["certutil_binary"] = path
 
     if kwargs['extra_prefs']:
+        # If a single pref is passed in as a string, make it a list
+        if type(kwargs['extra_prefs']) in (str, unicode):
+            kwargs['extra_prefs'] = [kwargs['extra_prefs']]
         missing = any('=' not in prefarg for prefarg in kwargs['extra_prefs'])
         if missing:
             print >> sys.stderr, "Preferences via --setpref must be in key=value format"
@@ -510,8 +516,7 @@ def check_args(kwargs):
                                  kwargs['extra_prefs']]
 
     if kwargs["reftest_internal"] is None:
-        # Default to the internal reftest implementation on Linux and OSX
-        kwargs["reftest_internal"] = sys.platform.startswith("linux") or sys.platform.startswith("darwin")
+        kwargs["reftest_internal"] = True
 
     return kwargs
 

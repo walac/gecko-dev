@@ -10,74 +10,43 @@
 module.exports = {
   "env": {
     "browser": true,
-    "es6": true
+    "es6": true,
+    "mozilla/privileged": true,
   },
 
   "extends": [
-    "eslint:recommended"
+    "eslint:recommended",
   ],
 
   "globals": {
-    "AddonManagerPermissions": false,
-    "BroadcastChannel": false,
-    "BrowserFeedWriter": false,
-    "CSSAnimation": false,
-    "CSSPrimitiveValue": false,
-    "CSSValueList": false,
     "Cc": false,
-    "CheckerboardReportService": false,
     // Specific to Firefox (Chrome code only).
     "ChromeUtils": false,
-    "ChromeWorker": false,
     "Ci": false,
     "Components": false,
     "Cr": false,
     "Cu": false,
-    "DOMRequest": false,
     "Debugger": false,
-    "DedicatedWorkerGlobalScope": false,
-    "DominatorTree": false,
-    "HeapSnapshot": false,
-    "IDBFileRequest": false,
-    "IDBLocaleAwareKeyRange": false,
-    "IDBMutableFile": false,
-    "ImageDocument": false,
     "InstallTrigger": false,
     // Specific to Firefox
     // eslint-disable-next-line max-len
     // https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/InternalError
     "InternalError": true,
-    "KeyEvent": false,
-    "MatchGlob": false,
-    "MatchPattern": false,
-    "MatchPatternSet": false,
-    "MenuBoxObject": false,
-    // Specific to Firefox (Chrome code only).
-    "PlacesObservers": false,
-    "PlacesWeakCallbackWrapper": false,
-    "PrioEncoder": false,
-    // Specific to Firefox (Chrome code only).
+    "Intl": false,
     "SharedArrayBuffer": false,
-    "SimpleGestureEvent": false,
-    // Note: StopIteration will likely be removed as part of removing legacy
-    // generators, see bug 968038.
     "StopIteration": false,
-    "StructuredCloneHolder": false,
-    "WebAssembly": false,
-    "WebExtensionContentScript": false,
-    "WebExtensionPolicy": false,
-    "WebrtcGlobalInformation": false,
-    // Non-standard, specific to Firefox.
-    "XULElement": false,
-    "console": true,
     "dump": true,
+    // Override the "browser" env definition of "location" to allow writing as it
+    // is a writeable property.
+    // See https://bugzilla.mozilla.org/show_bug.cgi?id=1509270#c1 for more information.
+    "location": true,
     "openDialog": false,
     "saveStack": false,
     "sizeToContent": false,
     // Specific to Firefox
     // eslint-disable-next-line max-len
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/uneval
-    "uneval": false
+    "uneval": false,
   },
 
   "overrides": [{
@@ -85,32 +54,35 @@ module.exports = {
     // working out the valid globals for those is difficult.
     "files": "**/*.xml",
     "rules": {
-      "mozilla/use-services": "off"
-    }
+      "mozilla/use-services": "off",
+    },
   }, {
-    // Turn off browser env for all *.jsm files, and turn on the jsm environment.
+    // We don't have the general browser environment for jsm files, but we do
+    // have our own special environments for them.
     "env": {
       "browser": false,
-      "mozilla/jsm": true
+      "mozilla/jsm": true,
     },
     "files": "**/*.jsm",
     "rules": {
       "mozilla/mark-exported-symbols-as-used": "error",
+      // JSM modules are far easier to check for no-unused-vars on a global scope,
+      // than our content files. Hence we turn that on here.
       "no-unused-vars": ["error", {
         "args": "none",
-        "vars": "all"
-      }]
-    }
+        "vars": "all",
+      }],
+    },
   }],
 
   "parserOptions": {
-    "ecmaVersion": 9
+    "ecmaVersion": 9,
   },
 
   // When adding items to this file please check for effects on sub-directories.
   "plugins": [
     "mozilla",
-    "no-unsanitized"
+    "no-unsanitized",
   ],
 
   // When adding items to this file please check for effects on all of toolkit
@@ -179,7 +151,7 @@ module.exports = {
     "key-spacing": ["error", {
       "afterColon": true,
       "beforeColon": false,
-      "mode": "minimum"
+      "mode": "minimum",
     }],
 
     // Require spaces before and after keywords
@@ -279,7 +251,7 @@ module.exports = {
       "ArrayExpression": true,
       "AssignmentExpression": true,
       "ObjectExpression": true,
-      "VariableDeclarator": true
+      "VariableDeclarator": true,
     } }],
 
     // Nested ternary statements are confusing
@@ -290,6 +262,9 @@ module.exports = {
 
     // Dissallow use of new wrappers
     "no-new-wrappers": "error",
+
+    // Disallow use of event global.
+    "no-restricted-globals": ["error", "event"],
 
     // Disallows unnecessary `return await ...`.
     "no-return-await": "error",
@@ -323,7 +298,7 @@ module.exports = {
     // No declaring variables that are never used
     "no-unused-vars": ["error", {
       "args": "none",
-      "vars": "local"
+      "vars": "local",
     }],
 
     // No using variables before defined
@@ -356,7 +331,7 @@ module.exports = {
     // or template literals are used.
     "quotes": ["error", "double", {
       "allowTemplateLiterals": true,
-      "avoidEscape": true
+      "avoidEscape": true,
     }],
 
     // XXX Bug 1487642 - decide if we want to enable this or not.
@@ -376,7 +351,7 @@ module.exports = {
     "space-before-function-paren": ["error", {
       "anonymous": "never",
       "asyncArrow": "always",
-      "named": "never"
+      "named": "never",
     }],
 
     // No space padding in parentheses
@@ -389,12 +364,12 @@ module.exports = {
     "space-unary-ops": ["error", {
       "nonwords": false,
       "overrides": {
-        "typeof": false // We tend to use typeof as a function call
+        "typeof": false, // We tend to use typeof as a function call
       },
-      "words": true
+      "words": true,
     }],
 
     // Requires or disallows a whitespace (space or tab) beginning a comment
     "spaced-comment": "error",
-  }
+  },
 };

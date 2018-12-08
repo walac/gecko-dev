@@ -9,7 +9,6 @@ import {PrerenderData} from "common/PrerenderData.jsm";
 import React from "react";
 import {Search} from "content-src/components/Search/Search";
 import {Sections} from "content-src/components/Sections/Sections";
-import {StartupOverlay} from "content-src/components/StartupOverlay/StartupOverlay";
 
 const PrefsButton = injectIntl(props => (
   <div className="prefs-button">
@@ -82,8 +81,11 @@ export class _Base extends React.PureComponent {
     const {initialized} = App;
 
     const prefs = props.Prefs.values;
-    if (prefs["asrouter.devtoolsEnabled"] && window.location.hash === "#asrouter") {
-      return (<ASRouterAdmin />);
+    if (prefs["asrouter.devtoolsEnabled"]) {
+      if (window.location.hash === "#asrouter") {
+        return (<ASRouterAdmin />);
+      }
+      console.log("ASRouter devtools enabled. To access visit %cabout:newtab#asrouter", "font-weight: bold"); // eslint-disable-line no-console
     }
 
     if (!props.isPrerendered && !initialized) {
@@ -167,7 +169,6 @@ export class BaseContent extends React.PureComponent {
             <ConfirmDialog />
           </main>
         </div>
-        {this.props.isFirstrun && <StartupOverlay />}
       </div>);
   }
 }

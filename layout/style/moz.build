@@ -75,6 +75,7 @@ EXPORTS.mozilla += [
     '!ServoCSSPropList.h',
     'AnimationCollection.h',
     'BindingStyleRule.h',
+    'BorrowedTypeList.h',
     'CachedInheritingStyles.h',
     'ComputedStyle.h',
     'ComputedStyleInlines.h',
@@ -82,15 +83,17 @@ EXPORTS.mozilla += [
     'CSSPropFlags.h',
     'DeclarationBlock.h',
     'DocumentStyleRootIterator.h',
+    'GeckoBindings.h',
     'LayerAnimationInfo.h',
     'MappedDeclarations.h',
     'MediaFeatureChange.h',
     'PostTraversalTask.h',
     'PreloadedStyleSheet.h',
+    'RustCell.h',
     'ServoArcTypeList.h',
-    'ServoBindingList.h',
     'ServoBindings.h',
     'ServoBindingTypes.h',
+    'ServoBoxedTypeList.h',
     'ServoComputedData.h',
     'ServoComputedDataInlines.h',
     'ServoCSSParser.h',
@@ -109,6 +112,7 @@ EXPORTS.mozilla += [
     'StyleSheetInfo.h',
     'StyleSheetInlines.h',
     'URLExtraData.h',
+    'UserAgentStyleSheetList.h',
 ]
 
 EXPORTS.mozilla.dom += [
@@ -132,6 +136,7 @@ EXPORTS.mozilla.dom += [
     'FontFaceSetIterator.h',
     'MediaList.h',
     'MediaQueryList.h',
+    'PaintWorkletGlobalScope.h',
 ]
 
 EXPORTS.mozilla.css += [
@@ -172,6 +177,7 @@ UNIFIED_SOURCES += [
     'FontFace.cpp',
     'FontFaceSet.cpp',
     'FontFaceSetIterator.cpp',
+    'GeckoBindings.cpp',
     'GroupRule.cpp',
     'ImageLoader.cpp',
     'LayerAnimationInfo.cpp',
@@ -199,11 +205,11 @@ UNIFIED_SOURCES += [
     'nsStyleTransformMatrix.cpp',
     'nsStyleUtil.cpp',
     'nsTransitionManager.cpp',
+    'PaintWorkletGlobalScope.cpp',
     'PaintWorkletImpl.cpp',
     'PostTraversalTask.cpp',
     'PreloadedStyleSheet.cpp',
     'Rule.cpp',
-    'ServoBindings.cpp',
     'ServoCSSParser.cpp',
     'ServoCSSRuleList.cpp',
     'ServoElementSnapshot.cpp',
@@ -286,13 +292,21 @@ servo_props.inputs = [
 
 if CONFIG['COMPILE_ENVIRONMENT']:
     GENERATED_FILES += [
+        'CompositorAnimatableProperties.h',
         'nsComputedDOMStyleGenerated.cpp',
         'nsCSSPropsGenerated.inc',
         'ServoStyleConsts.h',
     ]
 
     EXPORTS.mozilla += [
+        '!CompositorAnimatableProperties.h',
         '!ServoStyleConsts.h',
+    ]
+
+    compositor = GENERATED_FILES['CompositorAnimatableProperties.h']
+    compositor.script = 'GenerateCompositorAnimatableProperties.py:generate'
+    compositor.inputs = [
+        '!ServoCSSPropList.py',
     ]
 
     computed = GENERATED_FILES['nsComputedDOMStyleGenerated.cpp']

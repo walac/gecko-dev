@@ -60,6 +60,10 @@ def lint(paths, config, binary=None, fix=None, setup=None, **lintargs):
         return 1
 
     extra_args = lintargs.get('extra_args') or []
+    exclude_args = []
+    for path in config.get('exclude', []):
+        exclude_args.extend(['--ignore-pattern', os.path.relpath(path, lintargs['root'])])
+
     cmd_args = [binary,
                 os.path.join(module_path, "node_modules", "eslint", "bin", "eslint.js"),
                 # Enable the HTML plugin.
@@ -70,11 +74,11 @@ def lint(paths, config, binary=None, fix=None, setup=None, **lintargs):
                 # This keeps ext as a single argument.
                 '--ext', '[{}]'.format(','.join(config['extensions'])),
                 '--format', 'json',
-                ] + extra_args + paths
+                ] + extra_args + exclude_args + paths
 
     # eslint requires that --fix be set before the --ext argument.
     if fix:
-        cmd_args.insert(1, '--fix')
+        cmd_args.insert(2, '--fix')
 
     shell = False
     if os.environ.get('MSYSTEM') in ('MINGW32', 'MINGW64'):
@@ -109,7 +113,7 @@ def lint(paths, config, binary=None, fix=None, setup=None, **lintargs):
             err.update({
                 'hint': err.get('fix'),
                 'level': 'error' if err['severity'] == 2 else 'warning',
-                'lineno': err.get('line'),
+                'lineno': err.get('line') or 0,
                 'path': obj['filePath'],
                 'rule': err.get('ruleId'),
             })

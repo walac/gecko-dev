@@ -64,6 +64,9 @@ with Files("ExtensionsUI.jsm"):
 with Files("LaterRun.jsm"):
     BUG_COMPONENT = ("Firefox", "Tours")
 
+with Files("LiveBookmarkMigrator.jsm"):
+    BUG_COMPONENT = ("Firefox", "RSS Discovery and Preview")
+
 with Files("OpenInTabsUtils.jsm"):
     BUG_COMPONENT = ("Firefox", "Tabbed Browser")
 
@@ -77,6 +80,9 @@ with Files("ReaderParent.jsm"):
     BUG_COMPONENT = ("Toolkit", "Reader Mode")
 
 with Files("Sanitizer.jsm"):
+    BUG_COMPONENT = ("Firefox", "Preferences")
+
+with Files("SelectionChangedMenulist.jsm"):
     BUG_COMPONENT = ("Firefox", "Preferences")
 
 with Files("SiteDataManager.jsm"):
@@ -127,12 +133,14 @@ EXTRA_JS_MODULES += [
     'ContentMetaHandler.jsm',
     'ContentObservers.js',
     'ContentSearch.jsm',
+    'Discovery.jsm',
     'ExtensionsUI.jsm',
     'FaviconLoader.jsm',
     'Feeds.jsm',
     'FormValidationHandler.jsm',
     'HomePage.jsm',
     'LaterRun.jsm',
+    'LiveBookmarkMigrator.jsm',
     'OpenInTabsUtils.jsm',
     'PageActions.jsm',
     'PermissionUI.jsm',
@@ -141,7 +149,7 @@ EXTRA_JS_MODULES += [
     'ReaderParent.jsm',
     'RemotePrompt.jsm',
     'Sanitizer.jsm',
-    'SchedulePressure.jsm',
+    'SelectionChangedMenulist.jsm',
     'SiteDataManager.jsm',
     'SitePermissions.jsm',
     'TabsList.jsm',

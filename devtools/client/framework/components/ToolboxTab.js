@@ -26,14 +26,15 @@ class ToolboxTab extends Component {
     this.renderIcon = this.renderIcon.bind(this);
   }
 
-  renderIcon(definition, isHighlighted) {
+  renderIcon(definition) {
     const {icon} = definition;
     if (!icon) {
       return [];
     }
     return [
       img({
-        src: icon
+        alt: "",
+        src: icon,
       }),
     ];
   }
@@ -48,7 +49,7 @@ class ToolboxTab extends Component {
       "devtools-tab",
       currentToolId === id ? "selected" : "",
       highlightedTools.has(id) ? "highlighted" : "",
-      iconOnly ? "devtools-tab-icon-only" : ""
+      iconOnly ? "devtools-tab-icon-only" : "",
     ].join(" ");
 
     return button(
@@ -71,21 +72,21 @@ class ToolboxTab extends Component {
       },
       span(
         {
-          className: "devtools-tab-line"
+          className: "devtools-tab-line",
         }
       ),
-      ...this.renderIcon(panelDefinition, isHighlighted),
+      ...this.renderIcon(panelDefinition),
       iconOnly ?
         null :
         span(
           {
-            className: "devtools-tab-label"
+            className: "devtools-tab-label",
           },
           label,
           badge && !isHighlighted ?
             span(
               {
-                className: "devtools-tab-badge"
+                className: "devtools-tab-badge",
               },
               badge
             ) :

@@ -34,9 +34,9 @@ function getParentProcessActors(callback) {
 
   const client = new DebuggerClient(DebuggerServer.connectPipe());
   client.connect()
-    .then(() => client.getProcess())
-    .then(response => {
-      callback(client, response.form);
+    .then(() => client.mainRoot.getMainProcess())
+    .then(front => {
+      callback(client, front);
     });
 
   SimpleTest.registerCleanupFunction(() => {
@@ -65,7 +65,7 @@ async function openScratchpadWindow() {
       onReady: function() {
         win.Scratchpad.removeObserver(this);
         resolve(win);
-      }
+      },
     });
   });
 }

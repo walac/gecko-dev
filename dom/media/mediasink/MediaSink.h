@@ -7,10 +7,11 @@
 #ifndef MediaSink_h_
 #define MediaSink_h_
 
+#include "AudioDeviceInfo.h"
+#include "MediaInfo.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/MozPromise.h"
 #include "nsISupportsImpl.h"
-#include "MediaInfo.h"
 
 namespace mozilla {
 
@@ -34,16 +35,17 @@ namespace media {
  * machine thread only.
  */
 class MediaSink {
-public:
+ public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaSink);
   typedef mozilla::TrackInfo::TrackType TrackType;
 
   struct PlaybackParams {
     PlaybackParams()
-      : mVolume(1.0) , mPlaybackRate(1.0) , mPreservesPitch(true) {}
+        : mVolume(1.0), mPlaybackRate(1.0), mPreservesPitch(true) {}
     double mVolume;
     double mPlaybackRate;
     bool mPreservesPitch;
+    RefPtr<AudioDeviceInfo> mSink;
   };
 
   // Return the playback parameters of this sink.
@@ -96,11 +98,12 @@ public:
   // Single frame rendering operation may need to be done before playback
   // started (1st frame) or right after seek completed or playback stopped.
   // Do nothing if this sink has no video track. Can be called in any state.
-  virtual void Redraw(const VideoInfo& aInfo) {};
+  virtual void Redraw(const VideoInfo& aInfo){};
 
   // Begin a playback session with the provided start time and media info.
   // Must be called when playback is stopped.
-  virtual void Start(const TimeUnit& aStartTime, const MediaInfo& aInfo) = 0;
+  virtual nsresult Start(const TimeUnit& aStartTime,
+                         const MediaInfo& aInfo) = 0;
 
   // Finish a playback session.
   // Must be called after playback starts.
@@ -123,11 +126,11 @@ public:
   // Can be called in any phase.
   virtual nsCString GetDebugInfo() { return nsCString(); }
 
-protected:
+ protected:
   virtual ~MediaSink() {}
 };
 
-} // namespace media
-} // namespace mozilla
+}  // namespace media
+}  // namespace mozilla
 
-#endif //MediaSink_h_
+#endif  // MediaSink_h_

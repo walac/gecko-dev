@@ -5,9 +5,7 @@
 browser.jar:
 %   content payments %content/payments/
     content/payments/paymentDialogFrameScript.js      (content/paymentDialogFrameScript.js)
-    content/payments/paymentDialogWrapper.css         (content/paymentDialogWrapper.css)
     content/payments/paymentDialogWrapper.js          (content/paymentDialogWrapper.js)
-    content/payments/paymentDialogWrapper.xul         (content/paymentDialogWrapper.xul)
 
 %   resource payments %res/payments/
     res/payments                                      (res/paymentRequest.*)
@@ -26,4 +24,3 @@ browser.jar:
     res/payments/unprivileged-fallbacks.js            (res/unprivileged-fallbacks.js)
     res/payments/mixins/                              (res/mixins/*.js)
     res/payments/PaymentsStore.js                     (res/PaymentsStore.js)
-    res/payments/vendor/                              (res/vendor/*)

@@ -30,12 +30,12 @@ var WCUL10n = require("devtools/client/webconsole/webconsole-l10n");
 const DOCS_GA_PARAMS = `?${new URLSearchParams({
   "utm_source": "mozilla",
   "utm_medium": "firefox-console-errors",
-  "utm_campaign": "default"
+  "utm_campaign": "default",
 })}`;
 const STATUS_CODES_GA_PARAMS = `?${new URLSearchParams({
   "utm_source": "mozilla",
   "utm_medium": "devtools-webconsole",
-  "utm_campaign": "default"
+  "utm_campaign": "default",
 })}`;
 
 const wcActions = require("devtools/client/webconsole/actions/index");
@@ -560,7 +560,7 @@ async function openDebugger(options = {}) {
     return {
       target,
       toolbox,
-      panel: toolbox.getCurrentPanel()
+      panel: toolbox.getCurrentPanel(),
     };
   }
 
@@ -951,4 +951,33 @@ function isReverseSearchInputFocused(hud) {
   const reverseSearchInput = outputNode.querySelector(".reverse-search-input");
 
   return document.activeElement == reverseSearchInput && documentIsFocused;
+}
+
+/**
+ * Selects a node in the inspector.
+ *
+ * @param {Object} toolbox
+ * @param {Object} testActor: A test actor registered on the target. Needed to click on
+ *                            the content element.
+ * @param {String} selector: The selector for the node we want to select.
+ */
+async function selectNodeWithPicker(toolbox, testActor, selector) {
+  const inspector = toolbox.getPanel("inspector");
+
+  const onPickerStarted = inspector.toolbox.once("picker-started");
+  inspector.toolbox.highlighterUtils.startPicker();
+  await onPickerStarted;
+
+  info(`Picker mode started, now clicking on "${selector}" to select that node`);
+  const onPickerStopped = toolbox.once("picker-stopped");
+  const onInspectorUpdated = inspector.once("inspector-updated");
+
+  testActor.synthesizeMouse({
+    selector,
+    center: true,
+    options: {},
+  });
+
+  await onPickerStopped;
+  await onInspectorUpdated;
 }

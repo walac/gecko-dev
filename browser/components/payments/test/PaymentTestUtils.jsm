@@ -112,6 +112,7 @@ var PaymentTestUtils = {
      * @param {PaymentMethodData[]} methodData
      * @param {PaymentDetailsInit} details
      * @param {PaymentOptions} options
+     * @returns {Object}
      */
     createAndShowRequest: ({methodData, details, options}) => {
       const rq = new content.PaymentRequest(Cu.cloneInto(methodData, content), details, options);
@@ -121,19 +122,9 @@ var PaymentTestUtils = {
       content.showPromise = rq.show();
 
       handle.destruct();
-    },
-
-    /**
-     * Add a rejection handler for the `showPromise` created by createAndShowRequest
-     * and stash details of any eventual exception or response in `rqResult`
-     */
-    catchShowPromiseRejection: () => {
-      content.rqResult = {};
-      content.showPromise.then(res => content.rqResult.response = res)
-                         .catch(ex => content.rqResult.showException = {
-                           name: ex.name,
-                           message: ex.message,
-                         });
+      return {
+        requestId: rq.id,
+      };
     },
   },
 
@@ -293,7 +284,7 @@ var PaymentTestUtils = {
       let picker = Cu.waiveXrays(content.document.querySelector("payment-method-picker"));
       // Unwaive to access the ChromeOnly `setUserInput` API.
       // setUserInput dispatches changes events.
-      Cu.unwaiveXrays(picker.securityCodeInput).setUserInput(securityCode);
+      Cu.unwaiveXrays(picker.securityCodeInput).querySelector("input").setUserInput(securityCode);
     },
   },
 
@@ -430,9 +421,7 @@ var PaymentTestUtils = {
             label: "Total due",
             amount: { currency: "USD", value: "2.50" },
           },
-          data: {
-            supportedTypes: "credit",
-          },
+          data: {},
         },
         {
           additionalDisplayItems: [
@@ -478,11 +467,13 @@ var PaymentTestUtils = {
         addressLine: "Can only ship to ROADS, not DRIVES, BOULEVARDS, or STREETS",
         city: "Can only ship to CITIES, not TOWNSHIPS or VILLAGES",
         country: "Can only ship to USA, not CA",
+        dependentLocality: "Can only be SUBURBS, not NEIGHBORHOODS",
         organization: "Can only ship to CORPORATIONS, not CONSORTIUMS",
         phone: "Only allowed to ship to area codes that start with 9",
         postalCode: "Only allowed to ship to postalCodes that start with 0",
         recipient: "Can only ship to names that start with J",
         region: "Can only ship to regions that start with M",
+        regionCode: "Regions must be 1 to 3 characters in length (sometimes ;) )",
       },
     },
   },
@@ -503,6 +494,20 @@ var PaymentTestUtils = {
   },
 
   Addresses: {
+    TimBR: {
+      "given-name": "Timothy",
+      "additional-name": "João",
+      "family-name": "Berners-Lee",
+      organization: "World Wide Web Consortium",
+      "street-address": "Rua Adalberto Pajuaba, 404",
+      "address-level3": "Campos Elísios",
+      "address-level2": "Ribeirão Preto",
+      "address-level1": "SP",
+      "postal-code": "14055-220",
+      country: "BR",
+      tel: "+0318522222222",
+      email: "timbr@example.org",
+    },
     TimBL: {
       "given-name": "Timothy",
       "additional-name": "John",

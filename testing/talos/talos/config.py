@@ -137,7 +137,7 @@ def set_webserver(config):
     port = sock.getsockname()[1]
     sock.close()
 
-    config['webserver'] = 'localhost:%d' % port
+    config['webserver'] = '127.0.0.1:%d' % port
 
 
 @validator
@@ -293,7 +293,6 @@ def get_browser_config(config):
     required = ('extensions', 'browser_path', 'browser_wait',
                 'extra_args', 'buildid', 'env', 'init_url', 'webserver')
     optional = {'bcontroller_config': '${talos}/bcontroller.json',
-                'branch_name': '',
                 'child_process': 'plugin-container',
                 'debug': False,
                 'debugger': None,

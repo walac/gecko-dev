@@ -13,10 +13,9 @@ class OnboardingCard extends React.PureComponent {
       event: "CLICK_BUTTON",
       message_id: props.id,
       id: props.UISurface,
-      includeClientID: true,
     };
     props.sendUserActionTelemetry(ping);
-    props.onAction(props.content.button_action);
+    props.onAction(props.content.primary_button.action);
   }
 
   render() {
@@ -30,7 +29,7 @@ class OnboardingCard extends React.PureComponent {
             <p> {content.text} </p>
           </span>
           <span>
-            <button tabIndex="1" className="button onboardingButton" onClick={this.onClick}> {content.button_label} </button>
+            <button tabIndex="1" className="button onboardingButton" onClick={this.onClick}> {content.primary_button.label} </button>
           </span>
         </div>
       </div>

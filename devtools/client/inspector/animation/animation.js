@@ -4,7 +4,6 @@
 
 "use strict";
 
-const { AnimationsFront } = require("devtools/shared/fronts/animation");
 const { createElement, createFactory } = require("devtools/client/shared/vendor/react");
 const { Provider } = require("devtools/client/shared/vendor/react-redux");
 
@@ -20,7 +19,7 @@ const {
   updateHighlightedNode,
   updatePlaybackRates,
   updateSelectedAnimation,
-  updateSidebarSize
+  updateSidebarSize,
 } = require("./actions/animations");
 const {
   hasAnimationIterationCountInfinite,
@@ -100,10 +99,8 @@ class AnimationInspector {
       toggleElementPicker,
     } = this;
 
-    const target = this.inspector.target;
     const direction = this.win.document.dir;
-    this.animationsFront = new AnimationsFront(target.client, target.form);
-    this.animationsFront.setWalkerActor(this.inspector.walker);
+    this._getAnimationsFront();
 
     this.animationsCurrentTimeListeners = [];
     this.isCurrentTimeSet = false;
@@ -112,7 +109,7 @@ class AnimationInspector {
       {
         id: "animationinspector",
         key: "animationinspector",
-        store: this.inspector.store
+        store: this.inspector.store,
       },
       App(
         {
@@ -149,6 +146,19 @@ class AnimationInspector {
     this.inspector.toolbox.on("select", this.onSidebarSelectionChanged);
   }
 
+  _getAnimationsFront() {
+    if (this.animationsFrontPromise) {
+      return this.animationsFrontPromise;
+    }
+    this.animationsFrontPromise = new Promise(async resolve => {
+      const target = this.inspector.target;
+      const front = await target.getFront("animations");
+      front.setWalkerActor(this.inspector.walker);
+      resolve(front);
+    });
+    return this.animationsFrontPromise;
+  }
+
   destroy() {
     this.setAnimationStateChangedListenerEnabled(false);
     this.inspector.off("new-root", this.onNavigate);
@@ -159,7 +169,9 @@ class AnimationInspector {
     this.inspector.toolbox.off("picker-stopped", this.onElementPickerStopped);
     this.inspector.toolbox.off("select", this.onSidebarSelectionChanged);
 
-    this.animationsFront.off("mutations", this.onAnimationsMutation);
+    this.animationsFrontPromise.then(front => {
+      front.off("mutations", this.onAnimationsMutation);
+    });
 
     if (this.simulatedAnimation) {
       this.simulatedAnimation.cancel();
@@ -191,19 +203,15 @@ class AnimationInspector {
   }
 
   /**
-   * This function calls AnimationsFront.setCurrentTimes with considering the createdTime
-   * which was introduced bug 1454392.
+   * This function calls AnimationsFront.setCurrentTimes with considering the createdTime.
    *
    * @param {Number} currentTime
    */
   async doSetCurrentTimes(currentTime) {
     const { animations, timeScale } = this.state;
-
-    // If currentTime is not defined in timeScale (which happens when connected
-    // to server older than FF62), set currentTime as it is. See bug 1454392.
-    currentTime = typeof timeScale.currentTime === "undefined"
-                    ? currentTime : currentTime + timeScale.minStartTime;
-    await this.animationsFront.setCurrentTimes(animations, currentTime, true,
+    currentTime = currentTime + timeScale.minStartTime;
+    const animationsFront = await this.animationsFrontPromise;
+    await animationsFront.setCurrentTimes(animations, currentTime, true,
                                                { relativeToCreatedTime: true });
   }
 
@@ -318,10 +326,21 @@ class AnimationInspector {
 
     for (const {type, player: animation} of changes) {
       if (type === "added") {
+        if (!animation.state.type) {
+          // This animation was added but removed immediately.
+          continue;
+        }
+
         addedAnimations.push(animation);
         animation.on("changed", this.onAnimationStateChanged);
       } else if (type === "removed") {
         const index = animations.indexOf(animation);
+
+        if (index < 0) {
+          // This animation was added but removed immediately.
+          continue;
+        }
+
         animations.splice(index, 1);
         animation.off("changed", this.onAnimationStateChanged);
       }
@@ -331,7 +350,12 @@ class AnimationInspector {
     // sice the scrubber position is related the currentTime.
     // Also, don't update the state of removed animations since React components
     // may refer to the same instance still.
-    animations = await this.updateAnimations(animations);
+    try {
+      animations = await this.updateAnimations(animations);
+    } catch (_) {
+      console.error(`Updating Animations failed`);
+      return;
+    }
 
     this.updateState(animations.concat(addedAnimations));
   }
@@ -359,16 +383,17 @@ class AnimationInspector {
 
     this.wasPanelVisibled = isPanelVisibled;
 
+    const animationsFront = await this.animationsFrontPromise;
     if (this.isPanelVisible()) {
       await this.update();
       this.onSidebarResized(null, this.inspector.getSidebarSize());
-      this.animationsFront.on("mutations", this.onAnimationsMutation);
+      animationsFront.on("mutations", this.onAnimationsMutation);
       this.inspector.on("new-root", this.onNavigate);
       this.inspector.selection.on("new-node-front", this.update);
       this.inspector.toolbox.on("inspector-sidebar-resized", this.onSidebarResized);
     } else {
       this.stopAnimationsCurrentTimeTimer();
-      this.animationsFront.off("mutations", this.onAnimationsMutation);
+      animationsFront.off("mutations", this.onAnimationsMutation);
       this.inspector.off("new-root", this.onNavigate);
       this.inspector.selection.off("new-node-front", this.update);
       this.inspector.toolbox.off("inspector-sidebar-resized", this.onSidebarResized);
@@ -439,7 +464,8 @@ class AnimationInspector {
     this.setAnimationStateChangedListenerEnabled(false);
 
     try {
-      await this.animationsFront.setPlaybackRates(animations, playbackRate);
+      const animationsFront = await this.animationsFrontPromise;
+      await animationsFront.setPlaybackRates(animations, playbackRate);
       animations = await this.updateAnimations(animations);
     } catch (e) {
       // Expected if we've already been destroyed or other node have been selected
@@ -470,16 +496,17 @@ class AnimationInspector {
       // If the server does not support pauseSome/playSome function, (which happens
       // when connected to server older than FF62), use pauseAll/playAll instead.
       // See bug 1456857.
+      const animationsFront = await this.animationsFrontPromise;
       if (this.hasPausePlaySome) {
         if (doPlay) {
-          await this.animationsFront.playSome(animations);
+          await animationsFront.playSome(animations);
         } else {
-          await this.animationsFront.pauseSome(animations);
+          await animationsFront.pauseSome(animations);
         }
       } else if (doPlay) {
-        await this.animationsFront.playAll();
+        await animationsFront.playAll();
       } else {
-        await this.animationsFront.pauseAll();
+        await animationsFront.pauseAll();
       }
 
       animations = await this.updateAnimations(animations);
@@ -628,9 +655,10 @@ class AnimationInspector {
     const done = this.inspector.updating("animationinspector");
 
     const selection = this.inspector.selection;
+    const animationsFront = await this.animationsFrontPromise;
     const animations =
       selection.isConnected() && selection.isElementNode()
-      ? await this.animationsFront.getAnimationPlayersForNode(selection.nodeFront)
+      ? await animationsFront.getAnimationPlayersForNode(selection.nodeFront)
       : [];
     this.updateState(animations);
     this.setAnimationStateChangedListenerEnabled(true);

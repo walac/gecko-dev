@@ -10,21 +10,21 @@ const Rule = require("devtools/client/inspector/rules/models/rule");
 const {
   InplaceEditor,
   editableField,
-  editableItem
+  editableItem,
 } = require("devtools/client/shared/inplace-editor");
 const TextPropertyEditor =
   require("devtools/client/inspector/rules/views/text-property-editor");
 const {
   createChild,
   blurOnMultipleProperties,
-  promiseWarn
+  promiseWarn,
 } = require("devtools/client/inspector/shared/utils");
 const {
   parseNamedDeclarations,
   parsePseudoClassesAndAttributes,
   SELECTOR_ATTRIBUTE,
   SELECTOR_ELEMENT,
-  SELECTOR_PSEUDO_CLASS
+  SELECTOR_PSEUDO_CLASS,
 } = require("devtools/shared/css/parsing-utils");
 const promise = require("promise");
 const Services = require("Services");
@@ -113,7 +113,6 @@ RuleEditor.prototype = {
 
   get isSelectorEditable() {
     const trait = this.isEditable &&
-      this.ruleView.inspector.target.client.traits.selectorEditable &&
       this.rule.domRule.type !== ELEMENT_STYLE &&
       this.rule.domRule.type !== CSSRule.KEYFRAME_RULE;
 
@@ -135,7 +134,7 @@ RuleEditor.prototype = {
 
     // Add the source link.
     this.source = createChild(this.element, "div", {
-      class: "ruleview-rule-source theme-link"
+      class: "ruleview-rule-source theme-link",
     });
     this.source.addEventListener("click", this._onSourceClick);
 
@@ -146,7 +145,7 @@ RuleEditor.prototype = {
     this.updateSourceLink();
 
     const code = createChild(this.element, "div", {
-      class: "ruleview-code"
+      class: "ruleview-code",
     });
 
     const header = createChild(code, "div", {});
@@ -190,7 +189,7 @@ RuleEditor.prototype = {
         const selectorHighlighter = createChild(header, "span", {
           class: "ruleview-selectorhighlighter" +
                  (isHighlighted ? " highlighted" : ""),
-          title: l10n("rule.selectorHighlighter.tooltip")
+          title: l10n("rule.selectorHighlighter.tooltip"),
         });
         selectorHighlighter.addEventListener("click", () => {
           this.ruleView.toggleSelectorHighlighter(selectorHighlighter, selector);
@@ -205,11 +204,11 @@ RuleEditor.prototype = {
 
     this.openBrace = createChild(header, "span", {
       class: "ruleview-ruleopen",
-      textContent: " {"
+      textContent: " {",
     });
 
     this.propertyList = createChild(code, "ul", {
-      class: "ruleview-propertylist"
+      class: "ruleview-propertylist",
     });
 
     this.populate();
@@ -217,7 +216,7 @@ RuleEditor.prototype = {
     this.closeBrace = createChild(code, "div", {
       class: "ruleview-ruleclose",
       tabindex: this.isEditable ? "0" : "-1",
-      textContent: "}"
+      textContent: "}",
     });
 
     if (this.isEditable) {
@@ -284,7 +283,12 @@ RuleEditor.prototype = {
     if (Tools.styleEditor.isTargetSupported(target)) {
       gDevTools.showToolbox(target, "styleeditor").then(toolbox => {
         const {url, line, column} = this._currentLocation;
-        toolbox.getCurrentPanel().selectStyleSheet(url, line, column);
+
+        if (!this.rule.sheet.href && this.rule.sheet.nodeHref) {
+          toolbox.getCurrentPanel().selectStyleSheet(this.rule.sheet, line, column);
+        } else {
+          toolbox.getCurrentPanel().selectStyleSheet(url, line, column);
+        }
       });
     }
   },
@@ -322,7 +326,7 @@ RuleEditor.prototype = {
     this._currentLocation = {
       url,
       line,
-      column
+      column,
     };
 
     let sourceTextContent = CssLogic.shortSource({href: displayURL});
@@ -412,7 +416,7 @@ RuleEditor.prototype = {
         if (i !== 0) {
           createChild(this.selectorText, "span", {
             class: "ruleview-selector-separator",
-            textContent: ", "
+            textContent: ", ",
           });
         }
 
@@ -420,7 +424,7 @@ RuleEditor.prototype = {
           (this.rule.matchedSelectors.indexOf(selector) > -1) ?
           "ruleview-selector-matched" : "ruleview-selector-unmatched";
         const selectorContainer = createChild(this.selectorText, "span", {
-          class: containerClass
+          class: containerClass,
         });
 
         const parsedSelector = parsePseudoClassesAndAttributes(selector);
@@ -436,7 +440,7 @@ RuleEditor.prototype = {
               selectorClass = "ruleview-selector";
               break;
             case SELECTOR_PSEUDO_CLASS:
-              selectorClass = [":active", ":focus", ":hover"].some(
+              selectorClass = [":active", ":focus", ":focus-within", ":hover"].some(
                   pseudo => selectorText.value === pseudo) ?
                 "ruleview-selector-pseudo-class-lock" :
                 "ruleview-selector-pseudo-class";
@@ -447,7 +451,7 @@ RuleEditor.prototype = {
 
           createChild(selectorContainer, "span", {
             textContent: selectorText.value,
-            class: selectorClass
+            class: selectorClass,
           });
         }
       });
@@ -562,7 +566,7 @@ RuleEditor.prototype = {
 
     this.newPropSpan = createChild(this.newPropItem, "span", {
       class: "ruleview-propertyname",
-      tabindex: "0"
+      tabindex: "0",
     });
 
     this.multipleAddedProperties = null;
@@ -606,7 +610,7 @@ RuleEditor.prototype = {
     this.editor.input.blur();
 
     this.telemetry.recordEvent("edit_rule", "ruleview", null, {
-      "session_id": this.toolbox.sessionId
+      "session_id": this.toolbox.sessionId,
     });
   },
 
@@ -653,29 +657,18 @@ RuleEditor.prototype = {
     const ruleView = this.ruleView;
     const elementStyle = ruleView._elementStyle;
     const element = elementStyle.element;
-    const supportsUnmatchedRules =
-      this.rule.domRule.supportsModifySelectorUnmatched;
 
     this.isEditing = true;
 
     try {
       const response = await this.rule.domRule.modifySelector(element, value);
 
-      if (!supportsUnmatchedRules) {
-        this.isEditing = false;
-
-        if (response) {
-          this.ruleView.refreshPanel();
-        }
-        return;
-      }
-
       // We recompute the list of applied styles, because editing a
       // selector might cause this rule's position to change.
       const applied = await elementStyle.pageStyle.getApplied(element, {
         inherited: true,
         matchedSelectors: true,
-        filter: elementStyle.showUserAgentStyles ? "ua" : undefined
+        filter: elementStyle.showUserAgentStyles ? "ua" : undefined,
       });
 
       this.isEditing = false;
@@ -744,7 +737,7 @@ RuleEditor.prototype = {
     } else {
       this.propertyList.click();
     }
-  }
+  },
 };
 
 module.exports = RuleEditor;

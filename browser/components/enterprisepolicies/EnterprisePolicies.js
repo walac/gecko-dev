@@ -137,7 +137,7 @@ EnterprisePoliciesManager.prototype = {
   },
 
   _callbacks: {
-    // The earlist that a policy callback can run. This will
+    // The earliest that a policy callback can run. This will
     // happen right after the Policy Engine itself has started,
     // and before the Add-ons Manager has started.
     onBeforeAddons: [],
@@ -407,7 +407,9 @@ class WindowsGPOPoliciesProvider {
 
     // Machine policies override user policies, so we read
     // user policies first and then replace them if necessary.
+    log.debug("root = HKEY_CURRENT_USER");
     this._readData(wrk, wrk.ROOT_KEY_CURRENT_USER);
+    log.debug("root = HKEY_LOCAL_MACHINE");
     this._readData(wrk, wrk.ROOT_KEY_LOCAL_MACHINE);
   }
 
@@ -426,8 +428,7 @@ class WindowsGPOPoliciesProvider {
   _readData(wrk, root) {
     wrk.open(root, "SOFTWARE\\Policies", wrk.ACCESS_READ);
     if (wrk.hasChild("Mozilla\\Firefox")) {
-      let isMachineRoot = (root == wrk.ROOT_KEY_LOCAL_MACHINE);
-      this._policies = WindowsGPOParser.readPolicies(wrk, this._policies, isMachineRoot);
+      this._policies = WindowsGPOParser.readPolicies(wrk, this._policies);
     }
     wrk.close();
   }
@@ -442,18 +443,6 @@ class macOSPoliciesProvider {
       return;
     }
     this._policies = macOSPoliciesParser.readPolicies(prefReader);
-    this._removeUnknownPolicies();
-  }
-
-  _removeUnknownPolicies() {
-    let { schema } = ChromeUtils.import("resource:///modules/policies/schema.jsm", {});
-
-    for (let policyName of Object.keys(this._policies)) {
-      if (!schema.properties.hasOwnProperty(policyName)) {
-        log.debug(`Removing unknown policy: ${policyName}`);
-        delete this._policies[policyName];
-      }
-    }
   }
 
   get hasPolicies() {

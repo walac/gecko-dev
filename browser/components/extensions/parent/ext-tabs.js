@@ -31,6 +31,8 @@ XPCOMUtils.defineLazyPreferenceGetter(this, "gMultiSelectEnabled", MULTISELECT_P
 
 const TAB_HIDE_CONFIRMED_TYPE = "tabHideNotification";
 
+const TAB_ID_NONE = -1;
+
 
 XPCOMUtils.defineLazyGetter(this, "tabHidePopup", () => {
   return new ExtensionControlledPopup({
@@ -403,7 +405,7 @@ this.tabs = class extends ExtensionAPI {
           name: "tabs.onCreated",
           register: fire => {
             let listener = (eventName, event) => {
-              fire.async(tabManager.convert(event.nativeTab, event.currentTab));
+              fire.async(tabManager.convert(event.nativeTab, event.currentTabSize));
             };
 
             tabTracker.on("tab-created", listener);
@@ -564,7 +566,12 @@ this.tabs = class extends ExtensionAPI {
             }
 
             tabListener.initTabReady();
-            let currentTab = window.gBrowser.selectedTab;
+            const currentTab = window.gBrowser.selectedTab;
+            const {frameLoader} = currentTab.linkedBrowser;
+            const currentTabSize = {
+              width: frameLoader.lazyWidth,
+              height: frameLoader.lazyHeight,
+            };
 
             if (createProperties.openerTabId !== null) {
               options.ownerTab = tabTracker.getTab(createProperties.openerTabId);
@@ -631,7 +638,7 @@ this.tabs = class extends ExtensionAPI {
               tabListener.initializingTabs.add(nativeTab);
             }
 
-            return tabManager.convert(nativeTab, currentTab);
+            return tabManager.convert(nativeTab, currentTabSize);
           });
         },
 
@@ -721,6 +728,19 @@ this.tabs = class extends ExtensionAPI {
               return Promise.reject({message: "Opener tab must be in the same window as the tab being updated"});
             }
             tabTracker.setOpener(nativeTab, opener);
+          }
+          if (updateProperties.successorTabId !== null) {
+            let successor = null;
+            if (updateProperties.successorTabId !== TAB_ID_NONE) {
+              successor = tabTracker.getTab(updateProperties.successorTabId, null);
+              if (!successor) {
+                throw new ExtensionError("Invalid successorTabId");
+              }
+              if (successor.ownerDocument !== nativeTab.ownerDocument) {
+                throw new ExtensionError("Successor tab must be in the same window as the tab being updated");
+              }
+            }
+            tabbrowser.setSuccessor(nativeTab, successor);
           }
 
           return tabManager.convert(nativeTab);
@@ -1201,8 +1221,7 @@ this.tabs = class extends ExtensionAPI {
                 let printProgressListener = {
                   onLocationChange(webProgress, request, location, flags) { },
                   onProgressChange(webProgress, request, curSelfProgress, maxSelfProgress, curTotalProgress, maxTotalProgress) { },
-                  onSecurityChange(webProgress, request, oldState, state,
-                                   contentBlockingLogJSON) { },
+                  onSecurityChange(webProgress, request, state) { },
                   onStateChange(webProgress, request, flags, status) {
                     if ((flags & Ci.nsIWebProgressListener.STATE_STOP) && (flags & Ci.nsIWebProgressListener.STATE_IS_DOCUMENT)) {
                       resolve(retval == 0 ? "saved" : "replaced");
@@ -1233,6 +1252,57 @@ this.tabs = class extends ExtensionAPI {
           tab = getTabOrActive(tabId);
 
           tab.linkedBrowser.messageManager.sendAsyncMessage("Reader:ToggleReaderMode");
+        },
+
+        moveInSuccession(tabIds, tabId, options) {
+          const {insert, append} = options || {};
+          const tabIdSet = new Set(tabIds);
+          if (tabIdSet.size !== tabIds.length) {
+            throw new ExtensionError("IDs must not occur more than once in tabIds");
+          }
+          if ((append || insert) && tabIdSet.has(tabId)) {
+            throw new ExtensionError("Value of tabId must not occur in tabIds if append or insert is true");
+          }
+
+          const referenceTab = tabTracker.getTab(tabId, null);
+          let referenceWindow = referenceTab && referenceTab.ownerGlobal;
+          let previousTab, lastSuccessor;
+          if (append) {
+            previousTab = referenceTab;
+            lastSuccessor = (insert && referenceTab && referenceTab.successor) || null;
+          } else {
+            lastSuccessor = referenceTab;
+          }
+
+          let firstTab;
+          for (const tabId of tabIds) {
+            const tab = tabTracker.getTab(tabId, null);
+            if (tab === null) {
+              continue;
+            }
+            if (referenceWindow === null) {
+              referenceWindow = tab.ownerGlobal;
+            } else if (tab.ownerGlobal !== referenceWindow) {
+              continue;
+            }
+            referenceWindow.gBrowser.replaceInSuccession(tab, tab.successor);
+            if (append && tab === lastSuccessor) {
+              lastSuccessor = tab.successor;
+            }
+            if (previousTab) {
+              referenceWindow.gBrowser.setSuccessor(previousTab, tab);
+            } else {
+              firstTab = tab;
+            }
+            previousTab = tab;
+          }
+
+          if (previousTab) {
+            if (!append && insert && lastSuccessor !== null) {
+              referenceWindow.gBrowser.replaceInSuccession(lastSuccessor, firstTab);
+            }
+            referenceWindow.gBrowser.setSuccessor(previousTab, lastSuccessor);
+          }
         },
 
         show(tabIds) {
@@ -1282,7 +1352,7 @@ this.tabs = class extends ExtensionAPI {
           if (!gMultiSelectEnabled) {
             throw new ExtensionError(`tabs.highlight is currently experimental and must be enabled with the ${MULTISELECT_PREFNAME} preference.`);
           }
-          let {windowId, tabs} = highlightInfo;
+          let {windowId, tabs, populate} = highlightInfo;
           if (windowId == null) {
             windowId = Window.WINDOW_ID_CURRENT;
           }
@@ -1299,7 +1369,7 @@ this.tabs = class extends ExtensionAPI {
             }
             return tab;
           });
-          return windowManager.convert(window, {populate: true});
+          return windowManager.convert(window, {populate});
         },
       },
     };

@@ -218,7 +218,7 @@ SpecialPowersObserverAPI.prototype = {
 
     var channel = NetUtil.newChannel({
       uri: aUrl,
-      loadUsingSystemPrincipal: true
+      loadUsingSystemPrincipal: true,
     });
     var input = channel.open2();
     scriptableStream.init(input);
@@ -499,7 +499,7 @@ SpecialPowersObserverAPI.prototype = {
             delete sb.assert;
             return sb.assert = assert;
           },
-          configurable: true
+          configurable: true,
         });
 
         // Evaluate the chrome script
@@ -556,6 +556,12 @@ SpecialPowersObserverAPI.prototype = {
           this._sendReply(aMessage, "SPRequestResetCoverageCounters", {})
         );
         return undefined; // See comment at the beginning of this function.
+      }
+
+      case "SPCheckServiceWorkers": {
+        let swm = Cc["@mozilla.org/serviceworkers/manager;1"]
+                    .getService(Ci.nsIServiceWorkerManager);
+        return { hasWorkers: swm.getAllRegistrations().length != 0 };
       }
 
       case "SPLoadExtension": {
@@ -640,12 +646,12 @@ SpecialPowersObserverAPI.prototype = {
       }
 
       default:
-        throw new SpecialPowersError("Unrecognized Special Powers API");
+        throw new SpecialPowersError(`Unrecognized Special Powers API: ${aMessage.name}`);
     }
 
     // We throw an exception before reaching this explicit return because
     // we should never be arriving here anyway.
     throw new SpecialPowersError("Unreached code"); // eslint-disable-line no-unreachable
     return undefined;
-  }
+  },
 };

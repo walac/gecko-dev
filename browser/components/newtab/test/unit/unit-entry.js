@@ -69,10 +69,29 @@ const TEST_GLOBAL = {
       markPageAsTyped() {},
       removeObserver() {},
     },
+    "@mozilla.org/io/string-input-stream;1": {
+      createInstance() {
+        return {};
+      },
+    },
+    "@mozilla.org/security/hash;1": {
+      createInstance() {
+        return {
+          init() {},
+          updateFromStream() {},
+          finish() {
+            return "0";
+          },
+        };
+      },
+    },
+    "@mozilla.org/updates/update-checker;1": {createInstance() {}},
   },
   Ci: {
+    nsICryptoHash: {},
     nsIHttpChannel: {REFERRER_POLICY_UNSAFE_URL: 5},
     nsITimer: {TYPE_ONE_SHOT: 1},
+    nsIWebProgressListener: {LOCATION_CHANGE_SAME_DOCUMENT: 1},
   },
   Cu: {
     importGlobalProperties() {},
@@ -83,13 +102,42 @@ const TEST_GLOBAL = {
   fetch() {},
   // eslint-disable-next-line object-shorthand
   Image: function() {}, // NB: This is a function/constructor
-  NewTabUtils: {activityStreamProvider: {getTopFrecentSites: () => []}},
+  NewTabUtils: {
+    activityStreamProvider: {
+      getTopFrecentSites: () => [],
+      executePlacesQuery: async (sql, options) => ({sql, options}),
+    },
+  },
+  OS: {
+    File: {
+      writeAtomic() {},
+      makeDir() {},
+      stat() {},
+      exists() {},
+      remove() {},
+      removeEmptyDir() {},
+    },
+    Path: {
+      join() {
+        return "/";
+      },
+    },
+    Constants: {
+      Path: {
+        localProfileDir: "/",
+      },
+    },
+  },
   PlacesUtils: {
     get bookmarks() {
       return TEST_GLOBAL.Cc["@mozilla.org/browser/nav-bookmarks-service;1"];
     },
     get history() {
       return TEST_GLOBAL.Cc["@mozilla.org/browser/nav-history-service;1"];
+    },
+    observers: {
+      addListener() {},
+      removeListener() {},
     },
   },
   PluralForm: {get() {}},
@@ -104,6 +152,9 @@ const TEST_GLOBAL = {
     File: function() {}, // NB: This is a function/constructor
   },
   Services: {
+    dirsvc: {
+      get: () => ({parent: {parent: {path: "appPath"}}}),
+    },
     locale: {
       get appLocaleAsLangTag() { return "en-US"; },
       negotiateLanguages() {},
@@ -129,9 +180,12 @@ const TEST_GLOBAL = {
       removeObserver() {},
       getPrefType() {},
       clearUserPref() {},
+      getChildList() { return []; },
       getStringPref() {},
+      setStringPref() {},
       getIntPref() {},
       getBoolPref() {},
+      getCharPref() {},
       setBoolPref() {},
       setIntPref() {},
       getBranch() {},
@@ -171,7 +225,7 @@ const TEST_GLOBAL = {
     search: {
       init(cb) { cb(); },
       getVisibleEngines: () => [{identifier: "google"}, {identifier: "bing"}],
-      defaultEngine: {identifier: "google"},
+      defaultEngine: {identifier: "google", searchForm: "https://www.google.com/search?q=&ie=utf-8&oe=utf-8&client=firefox-b"},
       currentEngine: {identifier: "google", searchForm: "https://www.google.com/search?q=&ie=utf-8&oe=utf-8&client=firefox-b"},
     },
     scriptSecurityManager: {
@@ -194,12 +248,23 @@ const TEST_GLOBAL = {
     defineLazyModuleGetter() {},
     defineLazyModuleGetters() {},
     defineLazyServiceGetter() {},
+    defineLazyServiceGetters() {},
     generateQI() { return {}; },
   },
   EventEmitter,
   ShellService: {isDefaultBrowser: () => true},
   FilterExpressions: {eval() { return Promise.resolve(false); }},
-  RemoteSettings() { return {get() { return Promise.resolve([]); }}; },
+  RemoteSettings(name) {
+    return {
+      get() {
+        if (name === "attachment") {
+          return Promise.resolve([{attachment: {}}]);
+        }
+        return Promise.resolve([]);
+      },
+      on() {},
+    };
+  },
   Localization: class {},
 };
 overrider.set(TEST_GLOBAL);

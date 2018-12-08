@@ -34,7 +34,7 @@ class AddonsPanel extends Component {
     return {
       client: PropTypes.instanceOf(DebuggerClient).isRequired,
       connect: PropTypes.object,
-      id: PropTypes.string.isRequired
+      id: PropTypes.string.isRequired,
     };
   }
 
@@ -100,14 +100,12 @@ class AddonsPanel extends Component {
   }
 
   updateAddonsList() {
-    this.props.client.listAddons()
-      .then(({addons}) => {
+    this.props.client.mainRoot.listAddons()
+      .then(addons => {
         const extensions = addons.filter(addon => addon.debuggable).map(addon => {
           return {
-            addonTargetActor: addon.actor,
+            addonTargetFront: addon,
             addonID: addon.id,
-            // Forward the whole addon actor form for potential remote debugging.
-            form: addon,
             icon: addon.iconURL || ExtensionIcon,
             isSystem: addon.isSystem,
             manifestURL: addon.manifestURL,
@@ -119,6 +117,9 @@ class AddonsPanel extends Component {
         });
 
         this.setState({ extensions });
+
+        const { AboutDebugging } = window;
+        AboutDebugging.emit("addons-updated");
       }, error => {
         throw new Error("Client error while listing addons: " + error);
       });
@@ -169,11 +170,11 @@ class AddonsPanel extends Component {
       id: id + "-panel",
       className: "panel",
       role: "tabpanel",
-      "aria-labelledby": id + "-header"
+      "aria-labelledby": id + "-header",
     },
     PanelHeader({
       id: id + "-header",
-      name: Strings.GetStringFromName("addons")
+      name: Strings.GetStringFromName("addons"),
     }),
     AddonsControls({ debugDisabled }),
     dom.div({ id: "temporary-addons" },
@@ -185,7 +186,7 @@ class AddonsPanel extends Component {
         connect,
         debugDisabled,
         targetClass,
-        sort: true
+        sort: true,
       }),
       dom.div({ className: "addons-tip"},
         dom.div({ className: "addons-tip-icon"}),
@@ -206,7 +207,7 @@ class AddonsPanel extends Component {
         connect,
         debugDisabled,
         targetClass,
-        sort: true
+        sort: true,
       })
     ),
     showSystemAddons ?
@@ -219,7 +220,7 @@ class AddonsPanel extends Component {
           connect,
           debugDisabled,
           targetClass,
-          sort: true
+          sort: true,
         })
       ) : null,
     );

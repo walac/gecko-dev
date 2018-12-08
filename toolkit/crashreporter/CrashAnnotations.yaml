@@ -148,6 +148,12 @@ BreakpadReserveSize:
     Size of the buffer reserved by Breakpad.
   type: string
 
+Bug_1086977:
+  description: >
+    Mac-only annotation which should be present only if Firefox crashed when
+    loading a facebook plugin.
+  type: string
+
 BuildID:
   description: >
     Application build ID, the format is YYYYMMDDHHMMSS.
@@ -483,6 +489,7 @@ MemoryErrorCorrection:
     documentation for MemoryErrorCorrection property of
     Win32_PhysicalMemoryArray WMI class.
   type: string
+  ping: true
 
 MozCrashReason:
   description: >
@@ -547,8 +554,8 @@ PluginVersion:
 
 ProcessType:
   description: >
-    Type of the process that crashed, can hold the values "content", "plugin" or
-    "gpu" currently.
+    Type of the process that crashed, can hold the values "content", "plugin",
+    "gpu" or "rdd" currently.
   type: string
 
 ProductName:
@@ -583,6 +590,11 @@ ProxyStreamUnmarshalStatus:
 ProxyStreamValid:
   description: >
     Set to "false" when encountering an invalid IPC proxy stream.
+  type: string
+
+RDDProcessStatus:
+  description: >
+    Status of the RDD process, can be set to "Running" or "Destroyed"
   type: string
 
 RecordReplay:
