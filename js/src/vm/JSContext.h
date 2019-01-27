@@ -13,6 +13,7 @@
 
 #include "ds/TraceableFifo.h"
 #include "js/CharacterEncoding.h"
+#include "js/ContextOptions.h"  // JS::ContextOptions
 #include "js/GCVector.h"
 #include "js/Promise.h"
 #include "js/Result.h"
@@ -164,8 +165,8 @@ struct JSContext : public JS::RootingContext,
     return thing->compartment() == compartment();
   }
 
-  void* onOutOfMemory(js::AllocFunction allocFunc, size_t nbytes,
-                      arena_id_t arena, void* reallocPtr = nullptr) {
+  void* onOutOfMemory(js::AllocFunction allocFunc, arena_id_t arena,
+                      size_t nbytes, void* reallocPtr = nullptr) {
     if (helperThread()) {
       addPendingOutOfMemory();
       return nullptr;
@@ -740,7 +741,7 @@ struct JSContext : public JS::RootingContext,
       AllowCrossRealm allowCrossRealm = AllowCrossRealm::DontAllow) const;
 
   inline js::Nursery& nursery();
-  inline void minorGC(JS::gcreason::Reason reason);
+  inline void minorGC(JS::GCReason reason);
 
  public:
   bool isExceptionPending() const { return throwing; }
@@ -843,6 +844,7 @@ struct JSContext : public JS::RootingContext,
   void* addressOfJitStackLimitNoInterrupt() {
     return &jitStackLimitNoInterrupt;
   }
+  void* addressOfZone() { return &zone_; }
 
   // Futex state, used by Atomics.wait() and Atomics.wake() on the Atomics
   // object.

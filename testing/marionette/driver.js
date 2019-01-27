@@ -29,6 +29,9 @@ const {
 } = ChromeUtils.import("chrome://marionette/content/cert.js", {});
 ChromeUtils.import("chrome://marionette/content/cookie.js");
 const {
+  WebElementEventTarget,
+} = ChromeUtils.import("chrome://marionette/content/dom.js", {});
+const {
   ChromeWebElement,
   element,
   WebElement,
@@ -62,6 +65,8 @@ const {
   IdlePromise,
   PollPromise,
   TimedPromise,
+  waitForEvent,
+  waitForObserverTopic,
 } = ChromeUtils.import("chrome://marionette/content/sync.js", {});
 
 XPCOMUtils.defineLazyGetter(this, "logger", Log.get);
@@ -85,6 +90,10 @@ const SUPPORTED_STRATEGIES = new Set([
   element.Strategy.AnonAttribute,
 ]);
 
+// Timeout used to abort fullscreen, maximize, and minimize
+// commands if no window manager is present.
+const TIMEOUT_NO_WINDOW_MANAGER = 5000;
+
 const globalMessageManager = Services.mm;
 
 /**
@@ -106,13 +115,12 @@ const globalMessageManager = Services.mm;
  *
  * @class GeckoDriver
  *
- * @param {string} appId
- *     Unique identifier of the application.
  * @param {MarionetteServer} server
  *     The instance of Marionette server.
  */
-this.GeckoDriver = function(appId, server) {
-  this.appId = appId;
+this.GeckoDriver = function(server) {
+  this.appId = Services.appinfo.ID;
+  this.appName = Services.appinfo.name.toLowerCase();
   this._server = server;
 
   this.sessionID = null;
@@ -1292,6 +1300,7 @@ GeckoDriver.prototype.getIdForBrowser = function(browser) {
   if (browser === null) {
     return null;
   }
+
   let permKey = browser.permanentKey;
   if (this._browserIds.has(permKey)) {
     return this._browserIds.get(permKey);
@@ -1450,27 +1459,14 @@ GeckoDriver.prototype.setWindowRect = async function(cmd) {
       break;
   }
 
-  if (height != null && width != null) {
+  if (width != null && height != null) {
     assert.positiveInteger(height);
     assert.positiveInteger(width);
 
-    let debounce = new DebounceCallback(() => {
-      win.dispatchEvent(new win.CustomEvent("resizeEnd"));
-    });
-
-    await new TimedPromise(async resolve => {
-      if (win.outerWidth == width && win.outerHeight == height) {
-        resolve();
-        return;
-      }
-
-      win.addEventListener("resize", debounce);
-      win.addEventListener("resizeEnd", resolve, {once: true});
+    if (win.outerWidth != width || win.outerHeight != height) {
       win.resizeTo(width, height);
       await new IdlePromise(win);
-    }, {timeout: 5000});
-
-    win.removeEventListener("resize", debounce);
+    }
   }
 
   if (x != null && y != null) {
@@ -2708,6 +2704,66 @@ GeckoDriver.prototype.deleteCookie = async function(cmd) {
 };
 
 /**
+ * Open a new top-level browsing context.
+ *
+ * @param {string=} type
+ *     Optional type of the new top-level browsing context. Can be one of
+ *     `tab` or `window`. Defaults to `tab`.
+ * @param {boolean=} focus
+ *     Optional flag if the new top-level browsing context should be opened
+ *     in foreground (focused) or background (not focused). Defaults to false.
+ *
+ * @return {Object.<string, string>}
+ *     Handle and type of the new browsing context.
+ */
+GeckoDriver.prototype.newWindow = async function(cmd) {
+  assert.open(this.getCurrentWindow(Context.Content));
+  await this._handleUserPrompts();
+
+  let focus = false;
+  if (typeof cmd.parameters.focus != "undefined") {
+    focus = assert.boolean(cmd.parameters.focus,
+        pprint`Expected "focus" to be a boolean, got ${cmd.parameters.focus}`);
+  }
+
+  let type;
+  if (typeof cmd.parameters.type != "undefined") {
+    type = assert.string(cmd.parameters.type,
+        pprint`Expected "type" to be a string, got ${cmd.parameters.type}`);
+  }
+
+  // If an invalid or no type has been specified default to a tab.
+  if (typeof type == "undefined" || !["tab", "window"].includes(type)) {
+    type = "tab";
+  }
+
+  let contentBrowser;
+
+  switch (type) {
+    case "window":
+      let win = await this.curBrowser.openBrowserWindow(focus);
+      contentBrowser = browser.getTabBrowser(win).selectedBrowser;
+      break;
+
+    default:
+      // To not fail if a new type gets added in the future, make opening
+      // a new tab the default action.
+      let tab = await this.curBrowser.openTab(focus);
+      contentBrowser = browser.getBrowserForTab(tab);
+  }
+
+  // Even with the framescript registered, the browser might not be known to
+  // the parent process yet. Wait until it is available.
+  // TODO: Fix by using `Browser:Init` or equivalent on bug 1311041
+  let windowId = await new PollPromise((resolve, reject) => {
+    let id = this.getIdForBrowser(contentBrowser);
+    this.windowHandles.includes(id) ? resolve(id) : reject();
+  });
+
+  return {handle: windowId.toString(), type};
+};
+
+/**
  * Close the currently selected tab/window.
  *
  * With multiple open tabs present the currently selected tab will
@@ -2975,15 +3031,26 @@ GeckoDriver.prototype.minimizeWindow = async function() {
   const win = assert.open(this.getCurrentWindow());
   await this._handleUserPrompts();
 
-  if (WindowState.from(win.windowState) != WindowState.Minimized) {
-    if (WindowState.from(win.windowState) == WindowState.Fullscreen) {
+  switch (WindowState.from(win.windowState)) {
+    case WindowState.Fullscreen:
       await exitFullscreen(win);
-    }
+      break;
 
+    case WindowState.Maximized:
+      await restoreWindow(win);
+      break;
+  }
+
+  if (WindowState.from(win.windowState) != WindowState.Minimized) {
+    let cb;
+    let observer = new WebElementEventTarget(this.curBrowser.messageManager);
+    // Use a timed promise to abort if no window manager is present
     await new TimedPromise(resolve => {
-      win.addEventListener("visibilitychange", resolve, {once: true});
+      cb = new DebounceCallback(resolve);
+      observer.addEventListener("visibilitychange", cb);
       win.minimize();
-    }, {throws: null});
+    }, {throws: null, timeout: TIMEOUT_NO_WINDOW_MANAGER});
+    observer.removeEventListener("visibilitychange", cb);
     await new IdlePromise(win);
   }
 
@@ -3025,11 +3092,12 @@ GeckoDriver.prototype.maximizeWindow = async function() {
 
   if (WindowState.from(win.windowState) != WindowState.Maximized) {
     let cb;
+    // Use a timed promise to abort if no window manager is present
     await new TimedPromise(resolve => {
       cb = new DebounceCallback(resolve);
       win.addEventListener("sizemodechange", cb);
       win.maximize();
-    }, {throws: null});
+    }, {throws: null, timeout: TIMEOUT_NO_WINDOW_MANAGER});
     win.removeEventListener("sizemodechange", cb);
     await new IdlePromise(win);
   }
@@ -3060,17 +3128,21 @@ GeckoDriver.prototype.fullscreenWindow = async function() {
   const win = assert.open(this.getCurrentWindow());
   await this._handleUserPrompts();
 
-  if (WindowState.from(win.windowState) == WindowState.Minimized) {
-    await restoreWindow(win);
+  switch (WindowState.from(win.windowState)) {
+    case WindowState.Maximized:
+    case WindowState.Minimized:
+      await restoreWindow(win);
+      break;
   }
 
   if (WindowState.from(win.windowState) != WindowState.Fullscreen) {
     let cb;
+    // Use a timed promise to abort if no window manager is present
     await new TimedPromise(resolve => {
       cb = new DebounceCallback(resolve);
       win.addEventListener("sizemodechange", cb);
       win.fullScreen = true;
-    }, {throws: null});
+    }, {throws: null, timeout: TIMEOUT_NO_WINDOW_MANAGER});
     win.removeEventListener("sizemodechange", cb);
   }
   await new IdlePromise(win);
@@ -3086,16 +3158,14 @@ GeckoDriver.prototype.dismissDialog = async function() {
   let win = assert.open(this.getCurrentWindow());
   this._checkIfAlertIsPresent();
 
-  await new Promise(resolve => {
-    win.addEventListener("DOMModalDialogClosed", async () => {
-      await new IdlePromise(win);
-      this.dialog = null;
-      resolve();
-    }, {once: true});
+  let dialogClosed = waitForEvent(win, "DOMModalDialogClosed");
 
-    let {button0, button1} = this.dialog.ui;
-    (button1 ? button1 : button0).click();
-  });
+  let {button0, button1} = this.dialog.ui;
+  (button1 ? button1 : button0).click();
+
+  await dialogClosed;
+
+  this.dialog = null;
 };
 
 /**
@@ -3106,16 +3176,14 @@ GeckoDriver.prototype.acceptDialog = async function() {
   let win = assert.open(this.getCurrentWindow());
   this._checkIfAlertIsPresent();
 
-  await new Promise(resolve => {
-    win.addEventListener("DOMModalDialogClosed", async () => {
-      await new IdlePromise(win);
-      this.dialog = null;
-      resolve();
-    }, {once: true});
+  let dialogClosed = waitForEvent(win, "DOMModalDialogClosed");
 
-    let {button0} = this.dialog.ui;
-    button0.click();
-  });
+  let {button0} = this.dialog.ui;
+  button0.click();
+
+  await dialogClosed;
+
+  this.dialog = null;
 };
 
 /**
@@ -3286,15 +3354,10 @@ GeckoDriver.prototype.quit = async function(cmd) {
   this.deleteSession();
 
   // delay response until the application is about to quit
-  let quitApplication = new Promise(resolve => {
-    Services.obs.addObserver(
-        (subject, topic, data) => resolve(data),
-        "quit-application");
-  });
-
+  let quitApplication = waitForObserverTopic("quit-application");
   Services.startup.quit(mode);
 
-  return {cause: await quitApplication};
+  return {cause: (await quitApplication).data};
 };
 
 GeckoDriver.prototype.installAddon = function(cmd) {
@@ -3445,13 +3508,13 @@ GeckoDriver.prototype.setupReftest = async function(cmd) {
   }
 
   this._reftest = new reftest.Runner(this);
-  await this._reftest.setup(urlCount, screenshot);
+  this._reftest.setup(urlCount, screenshot);
 };
 
 
 /** Run a reftest. */
 GeckoDriver.prototype.runReftest = async function(cmd) {
-  let {test, references, expected, timeout} = cmd.parameters;
+  let {test, references, expected, timeout, width, height} = cmd.parameters;
 
   if (!this._reftest) {
     throw new UnsupportedOperationError(
@@ -3463,7 +3526,7 @@ GeckoDriver.prototype.runReftest = async function(cmd) {
   assert.array(references);
 
   return {value: await this._reftest.run(
-      test, references, expected, timeout)};
+      test, references, expected, timeout, width, height)};
 };
 
 /**
@@ -3556,6 +3619,7 @@ GeckoDriver.prototype.commands = {
   "WebDriver:MaximizeWindow": GeckoDriver.prototype.maximizeWindow,
   "WebDriver:Navigate": GeckoDriver.prototype.get,
   "WebDriver:NewSession": GeckoDriver.prototype.newSession,
+  "WebDriver:NewWindow": GeckoDriver.prototype.newWindow,
   "WebDriver:PerformActions": GeckoDriver.prototype.performActions,
   "WebDriver:Refresh":  GeckoDriver.prototype.refresh,
   "WebDriver:ReleaseActions": GeckoDriver.prototype.releaseActions,
@@ -3573,23 +3637,25 @@ function getOuterWindowId(win) {
   return win.windowUtils.outerWindowID;
 }
 
-async function exitFullscreen(window) {
+async function exitFullscreen(win) {
   let cb;
+  // Use a timed promise to abort if no window manager is present
   await new TimedPromise(resolve => {
     cb = new DebounceCallback(resolve);
-    window.addEventListener("sizemodechange", cb);
-    window.fullScreen = false;
-  });
-  window.removeEventListener("sizemodechange", cb);
+    win.addEventListener("sizemodechange", cb);
+    win.fullScreen = false;
+  }, {throws: null, timeout: TIMEOUT_NO_WINDOW_MANAGER});
+  win.removeEventListener("sizemodechange", cb);
 }
 
-function restoreWindow(window) {
-  window.restore();
-  return new PollPromise((resolve, reject) => {
-    if (WindowState.from(window.windowState) != WindowState.Minimized) {
+async function restoreWindow(win) {
+  win.restore();
+  // Use a poll promise to abort if no window manager is present
+  await new PollPromise((resolve, reject) => {
+    if (WindowState.from(win.windowState) == WindowState.Normal) {
       resolve();
     } else {
       reject();
     }
-  });
+  }, {timeout: TIMEOUT_NO_WINDOW_MANAGER});
 }

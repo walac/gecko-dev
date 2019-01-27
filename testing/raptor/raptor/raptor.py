@@ -180,6 +180,14 @@ class Raptor(object):
         if test.get('type') == "benchmark":
             self.benchmark = Benchmark(self.config, test)
             benchmark_port = int(self.benchmark.port)
+
+            # for android we must make the benchmarks server available to the device
+            if self.config['app'] in ['geckoview', 'fennec'] and \
+                    self.config['host'] in ('localhost', '127.0.0.1'):
+                self.log.info("making the raptor benchmarks server port available to device")
+                _tcp_port = "tcp:%s" % benchmark_port
+                self.device.create_socket_connection('reverse', _tcp_port, _tcp_port)
+
         else:
             benchmark_port = 0
 
@@ -190,13 +198,6 @@ class Raptor(object):
                         host=self.config['host'],
                         b_port=benchmark_port,
                         debug_mode=1 if self.debug_mode else 0)
-
-        # for android we must make the benchmarks server available to the device
-        if self.config['app'] in ['geckoview', 'fennec'] and \
-                self.config['host'] in ('localhost', '127.0.0.1'):
-            self.log.info("making the raptor benchmarks server port available to device")
-            _tcp_port = "tcp:%s" % benchmark_port
-            self.device.create_socket_connection('reverse', _tcp_port, _tcp_port)
 
         # must intall raptor addon each time because we dynamically update some content
         # note: for chrome the addon is just a list of paths that ultimately are added
@@ -212,6 +213,11 @@ class Raptor(object):
             else:
                 self.log.info("preferences were configured for the test, \
                               but we do not install them on non Firefox browsers.")
+
+        # if 'alert_on' was provided in the test INI, we must add that to our config
+        # for use in our results.py and output.py
+        # test['alert_on'] has already been converted to a list and stripped of spaces
+        self.config['subtest_alert_on'] = test.get('alert_on', None)
 
         # on firefox we can get an addon id; chrome addon actually is just cmd line arg
         if self.config['app'] in ['firefox', 'geckoview', 'fennec']:
@@ -231,8 +237,8 @@ class Raptor(object):
 
         # some tests require tools to playback the test pages
         if test.get('playback', None) is not None:
-            self.get_playback_config(test)
             # startup the playback tool
+            self.get_playback_config(test)
             self.playback = get_playback(self.config, self.device)
 
             # for android we must make the playback server available to the device
@@ -358,7 +364,9 @@ class Raptor(object):
                 chrome_args = [
                     '--proxy-server="http=127.0.0.1:8080;' +
                     'https=127.0.0.1:8080;ssl=127.0.0.1:8080"',
-                    '--ignore-certificate-errors'
+                    '--ignore-certificate-errors',
+                    '--no-default-browser-check',
+                    'disable-sync'
                 ]
                 if self.config['host'] not in ('localhost', '127.0.0.1'):
                     chrome_args[0] = chrome_args[0].replace('127.0.0.1', self.config['host'])

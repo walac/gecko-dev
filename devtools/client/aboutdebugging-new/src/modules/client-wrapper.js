@@ -33,6 +33,7 @@ class ClientWrapper {
     this.client = client;
     // Array of contentProcessTarget fronts on which we will listen for worker events.
     this.contentProcessFronts = [];
+    this.serviceWorkerRegistrationFronts = [];
   }
 
   addOneTimeListener(evt, listener) {
@@ -59,18 +60,23 @@ class ClientWrapper {
     }
   }
 
+  async getFront(typeName) {
+    return this.client.mainRoot.getFront(typeName);
+  }
+
   onFront(typeName, listener) {
     this.client.mainRoot.onFront(typeName, listener);
   }
 
   async getDeviceDescription() {
-    const deviceFront = await this.client.mainRoot.getFront("device");
-    const { brandName, channel, deviceName, version } =
+    const deviceFront = await this.getFront("device");
+    const { brandName, channel, deviceName, isMultiE10s, version } =
       await deviceFront.getDescription();
     // Only expose a specific set of properties.
     return {
       channel,
       deviceName,
+      isMultiE10s,
       name: brandName,
       version,
     };
@@ -126,12 +132,12 @@ class ClientWrapper {
     };
   }
 
-  async request(options) {
-    return this.client.request(options);
-  }
-
   async close() {
     return this.client.close();
+  }
+
+  isClosed() {
+    return this.client._closed;
   }
 }
 

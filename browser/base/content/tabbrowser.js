@@ -113,7 +113,7 @@ window._gBrowser = {
 
   /**
    * `_createLazyBrowser` will define properties on the unbound lazy browser
-   * which correspond to properties defined in XBL which will be bound to
+   * which correspond to properties defined in MozBrowser which will be bound to
    * the browser when it is inserted into the document.  If any of these
    * properties are accessed by consumers, `_insertBrowser` is called and
    * the browser is inserted to ensure that things don't break.  This list
@@ -360,6 +360,10 @@ window._gBrowser = {
 
     this._appendStatusPanel();
 
+    // This is the initial browser, so it's usually active; the default is false
+    // so we have to update it:
+    browser.docShellIsActive = this.shouldActivateDocShell(browser);
+
     // Only necessary because of pageloader talos tests which access this.
     // Bug 1508171 covers removing this.
     this.initialBrowser = browser;
@@ -492,7 +496,7 @@ window._gBrowser = {
   },
 
   set userTypedValue(val) {
-    return this.selectedBrowser.userTypedValue = val;
+    this.selectedBrowser.userTypedValue = val;
   },
 
   get userTypedValue() {
@@ -964,10 +968,13 @@ window._gBrowser = {
 
     let securityUI = newBrowser.securityUI;
     if (securityUI) {
+      this._callProgressListeners(null, "onSecurityChange",
+                                  [webProgress, null, securityUI.state],
+                                  true, false);
       // Include the true final argument to indicate that this event is
       // simulated (instead of being observed by the webProgressListener).
-      this._callProgressListeners(null, "onSecurityChange",
-                                  [webProgress, null, securityUI.state, true],
+      this._callProgressListeners(null, "onContentBlockingEvent",
+                                  [webProgress, null, securityUI.contentBlockingEvent, true],
                                   true, false);
     }
 
@@ -1714,10 +1721,14 @@ window._gBrowser = {
     let securityUI = aBrowser.securityUI;
     let state = securityUI ? securityUI.state :
       Ci.nsIWebProgressListener.STATE_IS_INSECURE;
+    this._callProgressListeners(aBrowser, "onSecurityChange",
+                                [aBrowser.webProgress, null, state],
+                                true, false);
+    let event = securityUI ? securityUI.contentBlockingEvent : 0;
     // Include the true final argument to indicate that this event is
     // simulated (instead of being observed by the webProgressListener).
-    this._callProgressListeners(aBrowser, "onSecurityChange",
-                                [aBrowser.webProgress, null, state, true],
+    this._callProgressListeners(aBrowser, "onContentBlockingEvent",
+                                [aBrowser.webProgress, null, event, true],
                                 true, false);
 
     if (aShouldBeRemote) {
@@ -3093,14 +3104,14 @@ window._gBrowser = {
     if (aTab.linkedPanel) {
       this._outerWindowIDBrowserMap.delete(browser.outerWindowID);
 
-      // Because of the way XBL works (fields just set JS
-      // properties on the element) and the code we have in place
+      // Because of the fact that we are setting JS properties on
+      // the browser elements, and we have code in place
       // to preserve the JS objects for any elements that have
       // JS properties set on them, the browser element won't be
       // destroyed until the document goes away.  So we force a
       // cleanup ourselves.
-      // This has to happen before we remove the child so that the
-      // XBL implementation of nsIObserver still works.
+      // This has to happen before we remove the child since functions
+      // like `getBrowserContainer` expect the browser to be parented.
       browser.destroy();
     }
 
@@ -5089,8 +5100,8 @@ class TabProgressListener {
     // and the subframes.
     let topLevel = aWebProgress.isTopLevel;
 
+    let isSameDocument = !!(aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT);
     if (topLevel) {
-      let isSameDocument = !!(aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT);
       let isReload = !!(aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_RELOAD);
       let isErrorPage = !!(aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE);
 
@@ -5185,9 +5196,15 @@ class TabProgressListener {
       }
     }
 
-    if (!this.mBlank) {
+    if (!this.mBlank || this.mBrowser.hasContentOpener) {
       this._callProgressListeners("onLocationChange",
                                   [aWebProgress, aRequest, aLocation, aFlags]);
+      if (topLevel && !isSameDocument) {
+        // Include the true final argument to indicate that this event is
+        // simulated (instead of being observed by the webProgressListener).
+        this._callProgressListeners("onContentBlockingEvent",
+                                    [aWebProgress, null, 0, true]);
+      }
     }
 
     if (topLevel) {
@@ -5209,6 +5226,11 @@ class TabProgressListener {
   onSecurityChange(aWebProgress, aRequest, aState) {
     this._callProgressListeners("onSecurityChange",
                                 [aWebProgress, aRequest, aState]);
+  }
+
+  onContentBlockingEvent(aWebProgress, aRequest, aEvent) {
+    this._callProgressListeners("onContentBlockingEvent",
+                                [aWebProgress, aRequest, aEvent]);
   }
 
   onRefreshAttempted(aWebProgress, aURI, aDelay, aSameURI) {

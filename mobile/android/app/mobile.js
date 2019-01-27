@@ -4,7 +4,7 @@
 
 #filter substitution
 
-// For browser.xml binding
+// For browser.js element
 //
 // cacheRatio* is a ratio that determines the amount of pixels to cache. The
 // ratio is multiplied by the viewport width or height to get the displayport's
@@ -581,15 +581,10 @@ pref("media.mediasource.enabled", true);
 
 pref("media.mediadrm-widevinecdm.visible", true);
 
-#ifdef NIGHTLY_BUILD
 // Switch block autoplay logic to v2.
 pref("media.autoplay.enabled.user-gestures-needed", true);
 // Set Fennec to block autoplay by default.
 pref("media.autoplay.default", 1); // 0=Allowed, 1=Blocked
-#else
-pref("media.autoplay.default", 0); // 0=Allowed, 1=Blocked
-pref("media.autoplay.enabled.user-gestures-needed", false);
-#endif
 
 // Enable WebSpeech speech synthesis
 pref("media.webspeech.synth.enabled", true);

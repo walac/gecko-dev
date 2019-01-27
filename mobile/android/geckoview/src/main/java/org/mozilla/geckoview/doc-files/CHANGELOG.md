@@ -1,19 +1,33 @@
 ---
 layout: geckoview
+title: API Changelog
+description: GeckoView API Changelog.
 ---
 
 <h1> GeckoView API Changelog. </h1>
 
 ## v66
+- Removed redundant field `GeckoSession.ProgressDelegate.SecurityInformation.trackingMode`.
+  Use `GeckoSession.TrackingProtectionDelegate.onTrackerBlocked` for
+  notification of blocked elements during page load.
+
 - Added [`@NonNull`][66.1] or [`@Nullable`][66.2] to all APIs.
 
 [66.1]: https://developer.android.com/reference/android/support/annotation/NonNull
 [66.2]: https://developer.android.com/reference/android/support/annotation/Nullable
 
+- Added methods for each setting in [`GeckoSessionSettings`][66.3]
+
+[66.3]: ../GeckoSessionSettings.html
+
 - Added GeckoRuntimeSetting for enabling desktop viewport. Desktop viewport is
   no longer set by `USER_AGENT_MODE_DESKTOP` and must be set separately.
 
+- Added `@UiThread` to `GeckoSession.releaseSession` and `GeckoSession.setSession`
+
 ## v65
+- Added experimental ad-blocking category to `GeckoSession.TrackingProtectionDelegate`.
+
 - Moved [`CompositorController`][65.1], [`DynamicToolbarAnimator`][65.2],
   [`OverscrollEdgeEffect`][65.3], [`PanZoomController`][65.4] from
   `org.mozilla.gecko.gfx` to [`org.mozilla.geckoview`][65.5]
@@ -101,4 +115,4 @@ layout: geckoview
 [65.24]: ../CrashReporter.html#sendCrashReport-android.content.Context-android.os.Bundle-java.lang.String-
 [65.25]: ../GeckoResult.html
 
-[api-version]: a0f14e2c654491c9f12b3e1ce46e5e59705ef917
+[api-version]: 45d1d8774e913a3077d7c489274184fd301f14fc

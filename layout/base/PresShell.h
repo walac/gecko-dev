@@ -60,9 +60,9 @@ typedef nsTHashtable<nsPtrHashKey<nsIFrame>> VisibleFrames;
 // This is actually pref-controlled, but we use this value if we fail
 // to get the pref for any reason.
 #ifdef MOZ_WIDGET_ANDROID
-#define PAINTLOCK_EVENT_DELAY 250
+#  define PAINTLOCK_EVENT_DELAY 250
 #else
-#define PAINTLOCK_EVENT_DELAY 5
+#  define PAINTLOCK_EVENT_DELAY 5
 #endif
 
 class PresShell final : public nsIPresShell,
@@ -112,6 +112,13 @@ class PresShell final : public nsIPresShell,
       ResizeReflowOptions aOptions = ResizeReflowOptions::eBSizeExact) override;
   nsIPageSequenceFrame* GetPageSequenceFrame() const override;
   nsCanvasFrame* GetCanvasFrame() const override;
+
+  void PostPendingScrollAnchorSelection(
+      mozilla::layout::ScrollAnchorContainer* aContainer) override;
+  void FlushPendingScrollAnchorSelections() override;
+  void PostPendingScrollAnchorAdjustment(
+      mozilla::layout::ScrollAnchorContainer* aContainer) override;
+  void FlushPendingScrollAnchorAdjustments();
 
   void FrameNeedsReflow(
       nsIFrame* aFrame, IntrinsicDirty aIntrinsicDirty, nsFrameState aBitToAdd,
@@ -744,6 +751,8 @@ class PresShell final : public nsIPresShell,
   // Set of frames that we should mark with NS_FRAME_HAS_DIRTY_CHILDREN after
   // we finish reflowing mCurrentReflowRoot.
   nsTHashtable<nsPtrHashKey<nsIFrame>> mFramesToDirty;
+  nsTHashtable<nsPtrHashKey<nsIScrollableFrame>> mPendingScrollAnchorSelection;
+  nsTHashtable<nsPtrHashKey<nsIScrollableFrame>> mPendingScrollAnchorAdjustment;
 
   nsTArray<UniquePtr<DelayedEvent>> mDelayedEvents;
 

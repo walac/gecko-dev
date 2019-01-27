@@ -675,6 +675,13 @@ class nsDisplayListBuilder {
   void SetPaintingToWindow(bool aToWindow) { mIsPaintingToWindow = aToWindow; }
   bool IsPaintingToWindow() const { return mIsPaintingToWindow; }
   /**
+   * Call this if we're doing painting for WebRender
+   */
+  void SetPaintingForWebRender(bool aForWebRender) {
+    mIsPaintingForWebRender = true;
+  }
+  bool IsPaintingForWebRender() const { return mIsPaintingForWebRender; }
+  /**
    * Call this to prevent descending into subdocuments.
    */
   void SetDescendIntoSubdocuments(bool aDescend) {
@@ -1970,6 +1977,7 @@ class nsDisplayListBuilder {
   bool mIsInChromePresContext;
   bool mSyncDecodeImages;
   bool mIsPaintingToWindow;
+  bool mIsPaintingForWebRender;
   bool mIsCompositingCheap;
   bool mContainsPluginItem;
   bool mAncestorHasApzAwareEventHandler;
@@ -3779,9 +3787,9 @@ class nsDisplayReflowCount : public nsDisplayItem {
     MOZ_COUNT_CTOR(nsDisplayReflowCount);
   }
 
-#ifdef NS_BUILD_REFCNT_LOGGING
+#  ifdef NS_BUILD_REFCNT_LOGGING
   ~nsDisplayReflowCount() override { MOZ_COUNT_DTOR(nsDisplayReflowCount); }
-#endif
+#  endif
 
   NS_DISPLAY_DECL_NAME("nsDisplayReflowCount", TYPE_REFLOW_COUNT)
 
@@ -3795,40 +3803,40 @@ class nsDisplayReflowCount : public nsDisplayItem {
   nscolor mColor;
 };
 
-#define DO_GLOBAL_REFLOW_COUNT_DSP(_name)                                 \
-  PR_BEGIN_MACRO                                                          \
-  if (!aBuilder->IsBackgroundOnly() && !aBuilder->IsForEventDelivery() && \
-      PresShell()->IsPaintingFrameCounts()) {                             \
-    aLists.Outlines()->AppendToTop(                                       \
-        MakeDisplayItem<nsDisplayReflowCount>(aBuilder, this, _name));    \
-  }                                                                       \
-  PR_END_MACRO
+#  define DO_GLOBAL_REFLOW_COUNT_DSP(_name)                                 \
+    PR_BEGIN_MACRO                                                          \
+    if (!aBuilder->IsBackgroundOnly() && !aBuilder->IsForEventDelivery() && \
+        PresShell()->IsPaintingFrameCounts()) {                             \
+      aLists.Outlines()->AppendToTop(                                       \
+          MakeDisplayItem<nsDisplayReflowCount>(aBuilder, this, _name));    \
+    }                                                                       \
+    PR_END_MACRO
 
-#define DO_GLOBAL_REFLOW_COUNT_DSP_COLOR(_name, _color)                        \
-  PR_BEGIN_MACRO                                                               \
-  if (!aBuilder->IsBackgroundOnly() && !aBuilder->IsForEventDelivery() &&      \
-      PresShell()->IsPaintingFrameCounts()) {                                  \
-    aLists.Outlines()->AppendToTop(                                            \
-        MakeDisplayItem<nsDisplayReflowCount>(aBuilder, this, _name, _color)); \
-  }                                                                            \
-  PR_END_MACRO
+#  define DO_GLOBAL_REFLOW_COUNT_DSP_COLOR(_name, _color)                   \
+    PR_BEGIN_MACRO                                                          \
+    if (!aBuilder->IsBackgroundOnly() && !aBuilder->IsForEventDelivery() && \
+        PresShell()->IsPaintingFrameCounts()) {                             \
+      aLists.Outlines()->AppendToTop(MakeDisplayItem<nsDisplayReflowCount>( \
+          aBuilder, this, _name, _color));                                  \
+    }                                                                       \
+    PR_END_MACRO
 
 /*
   Macro to be used for classes that don't actually implement BuildDisplayList
  */
-#define DECL_DO_GLOBAL_REFLOW_COUNT_DSP(_class, _super)     \
-  void BuildDisplayList(nsDisplayListBuilder* aBuilder,     \
-                        const nsRect& aDirtyRect,           \
-                        const nsDisplayListSet& aLists) {   \
-    DO_GLOBAL_REFLOW_COUNT_DSP(#_class);                    \
-    _super::BuildDisplayList(aBuilder, aDirtyRect, aLists); \
-  }
+#  define DECL_DO_GLOBAL_REFLOW_COUNT_DSP(_class, _super)     \
+    void BuildDisplayList(nsDisplayListBuilder* aBuilder,     \
+                          const nsRect& aDirtyRect,           \
+                          const nsDisplayListSet& aLists) {   \
+      DO_GLOBAL_REFLOW_COUNT_DSP(#_class);                    \
+      _super::BuildDisplayList(aBuilder, aDirtyRect, aLists); \
+    }
 
 #else  // MOZ_REFLOW_PERF_DSP && MOZ_REFLOW_PERF
 
-#define DO_GLOBAL_REFLOW_COUNT_DSP(_name)
-#define DO_GLOBAL_REFLOW_COUNT_DSP_COLOR(_name, _color)
-#define DECL_DO_GLOBAL_REFLOW_COUNT_DSP(_class, _super)
+#  define DO_GLOBAL_REFLOW_COUNT_DSP(_name)
+#  define DO_GLOBAL_REFLOW_COUNT_DSP_COLOR(_name, _color)
+#  define DECL_DO_GLOBAL_REFLOW_COUNT_DSP(_class, _super)
 
 #endif  // MOZ_REFLOW_PERF_DSP && MOZ_REFLOW_PERF
 
@@ -5334,8 +5342,8 @@ class nsDisplayOpacity : public nsDisplayWrapList {
     return mChildOpacityState == ChildOpacityState::Applied;
   }
 
-  static bool NeedsActiveLayer(nsDisplayListBuilder* aBuilder,
-                               nsIFrame* aFrame);
+  static bool NeedsActiveLayer(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+                               bool aEnforceMinimumSize = true);
   void WriteDebugInfo(std::stringstream& aStream) override;
   bool CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder) override;
   bool CreateWebRenderCommands(
@@ -6351,8 +6359,9 @@ class nsDisplayFilters : public nsDisplayEffectsBase {
       const StackingContextHelper& aSc,
       mozilla::layers::RenderRootStateManager* aManager,
       nsDisplayListBuilder* aDisplayListBuilder) override;
+  bool CanCreateWebRenderCommands(nsDisplayListBuilder* aBuilder);
 
-  bool CreateWebRenderCSSFilters(nsTArray<mozilla::wr::WrFilterOp>& wrFilters);
+  bool CreateWebRenderCSSFilters(nsTArray<mozilla::wr::FilterOp>& wrFilters);
 
  private:
   // relative to mFrame
@@ -6705,13 +6714,10 @@ class nsDisplayTransform : public nsDisplayHitTestInfoItem {
       nsDisplayListBuilder* aBuilder, nsIFrame* aFrame, nsRect* aDirtyRect);
   bool CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder) override;
 
-  bool MayBeAnimated(nsDisplayListBuilder* aBuilder) const;
+  bool MayBeAnimated(nsDisplayListBuilder* aBuilder,
+                     bool aEnforceMinimumSize = true) const;
 
   void WriteDebugInfo(std::stringstream& aStream) override;
-
-  // Force the layer created for this item not to extend 3D context.
-  // See nsIFrame::BuildDisplayListForStackingContext()
-  void SetNoExtendContext() { mNoExtendContext = true; }
 
   void DoUpdateBoundsPreserves3D(nsDisplayListBuilder* aBuilder) override {
     MOZ_ASSERT(mFrame->Combines3DTransformWithAncestors() ||
@@ -6793,15 +6799,13 @@ class nsDisplayTransform : public nsDisplayHitTestInfoItem {
   mutable nsRect mBounds;
   // True for mBounds is valid.
   mutable bool mHasBounds;
-  // Be forced not to extend 3D context.  Since we don't create a
-  // transform item, a container layer, for every frames in a
-  // preserves3d context, the transform items of a child preserves3d
-  // context may extend the parent context not intented if the root of
-  // the child preserves3d context doesn't create a transform item.
-  // With this flags, we force the item not extending 3D context.
-  bool mNoExtendContext;
   // This item is a separator between 3D rendering contexts, and
   // mTransform have been presetted by the constructor.
+  // This also forces us not to extend the 3D context.  Since we don't create a
+  // transform item, a container layer, for every frame in a preserves3d
+  // context, the transform items of a child preserves3d context may extend the
+  // parent context unintendedly if the root of the child preserves3d context
+  // doesn't create a transform item.
   bool mIsTransformSeparator;
   // True if mTransformPreserves3D have been initialized.
   bool mTransformPreserves3DInited;

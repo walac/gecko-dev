@@ -459,9 +459,9 @@ pref("browser.tabs.loadBookmarksInBackground", false);
 pref("browser.tabs.loadBookmarksInTabs", false);
 pref("browser.tabs.tabClipWidth", 140);
 pref("browser.tabs.tabMinWidth", 76);
-#ifdef UNIX_BUT_NOT_MAC
-pref("browser.tabs.drawInTitlebar", false);
-#else
+// Initial titlebar state is managed by -moz-gtk-csd-hide-titlebar-by-default
+// on Linux.
+#ifndef UNIX_BUT_NOT_MAC
 pref("browser.tabs.drawInTitlebar", true);
 #endif
 
@@ -962,16 +962,23 @@ pref("security.alternate_certificate_error_page", "certerror");
 // Enable the new certificate error pages.
 #ifdef EARLY_BETA_OR_EARLIER
 pref("browser.security.newcerterrorpage.enabled", true);
-pref("browser.security.newcerterrorpage.mitm.enabled", true);
 #else
 pref("browser.security.newcerterrorpage.enabled", false);
-pref("browser.security.newcerterrorpage.mitm.enabled", false);
 #endif
 
+pref("browser.security.newcerterrorpage.mitm.enabled", true);
 pref("security.certerrors.recordEventTelemetry", true);
+pref("security.certerrors.permanentOverride", true);
 
 // Whether to start the private browsing mode at application startup
 pref("browser.privatebrowsing.autostart", false);
+
+// Whether to show the new private browsing UI with in-content search box.
+#ifdef EARLY_BETA_OR_EARLIER
+pref("browser.privatebrowsing.searchUI", true);
+#else
+pref("browser.privatebrowsing.searchUI", false);
+#endif
 
 // Whether the bookmark panel should be shown when bookmarking a page.
 pref("browser.bookmarks.editDialog.showForNewBookmarks", true);
@@ -1170,10 +1177,23 @@ pref("services.sync.prefs.sync.addons.ignoreUserEnabledChanges", true);
 // uncompromised Sync-connected devices.
 pref("services.sync.prefs.sync.browser.contentblocking.category", true);
 pref("services.sync.prefs.sync.browser.contentblocking.introCount", true);
+pref("services.sync.prefs.sync.browser.crashReports.unsubmittedCheck.autoSubmit2", true);
 pref("services.sync.prefs.sync.browser.ctrlTab.recentlyUsedOrder", true);
 pref("services.sync.prefs.sync.browser.download.useDownloadDir", true);
 pref("services.sync.prefs.sync.browser.formfill.enable", true);
 pref("services.sync.prefs.sync.browser.link.open_newwindow", true);
+pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.showSearch", true);
+pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.feeds.topsites", true);
+pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.topSitesRows", true);
+pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.feeds.snippets", true);
+pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.feeds.section.topstories", true);
+pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.section.topstories.rows", true);
+pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.feeds.section.highlights", true);
+pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.section.highlights.includeVisited", true);
+pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.section.highlights.includeBookmarks", true);
+pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.section.highlights.includeDownloads", true);
+pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.section.highlights.includePocket", true);
+pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.section.highlights.rows", true);
 pref("services.sync.prefs.sync.browser.newtabpage.enabled", true);
 pref("services.sync.prefs.sync.browser.newtabpage.pinned", true);
 pref("services.sync.prefs.sync.browser.offline-apps.notify", true);
@@ -1188,6 +1208,7 @@ pref("services.sync.prefs.sync.browser.startup.page", true);
 pref("services.sync.prefs.sync.browser.tabs.loadInBackground", true);
 pref("services.sync.prefs.sync.browser.tabs.warnOnClose", true);
 pref("services.sync.prefs.sync.browser.tabs.warnOnOpen", true);
+pref("services.sync.prefs.sync.browser.taskbar.previews.enable", true);
 pref("services.sync.prefs.sync.browser.urlbar.matchBuckets", true);
 pref("services.sync.prefs.sync.browser.urlbar.maxRichResults", true);
 pref("services.sync.prefs.sync.browser.urlbar.suggest.bookmark", true);
@@ -1204,6 +1225,7 @@ pref("services.sync.prefs.sync.intl.accept_languages", true);
 pref("services.sync.prefs.sync.layout.spellcheckDefault", true);
 pref("services.sync.prefs.sync.lightweightThemes.selectedThemeID", true);
 pref("services.sync.prefs.sync.lightweightThemes.usedThemes", true);
+pref("services.sync.prefs.sync.media.eme.enabled", true);
 pref("services.sync.prefs.sync.network.cookie.cookieBehavior", true);
 pref("services.sync.prefs.sync.network.cookie.lifetimePolicy", true);
 pref("services.sync.prefs.sync.network.cookie.thirdparty.sessionOnly", true);
@@ -1282,19 +1304,15 @@ pref("browser.newtabpage.activity-stream.fxaccounts.endpoint", "https://accounts
 pref("browser.newtabpage.activity-stream.improvesearch.topSiteSearchShortcuts", true);
 
 // ASRouter provider configuration
-#if defined(NIGHTLY_BUILD)
 pref("browser.newtabpage.activity-stream.asrouter.providers.cfr", "{\"id\":\"cfr\",\"enabled\":true,\"type\":\"local\",\"localProvider\":\"CFRMessageProvider\",\"frequency\":{\"custom\":[{\"period\":\"daily\",\"cap\":1}]}}");
-#else
-pref("browser.newtabpage.activity-stream.asrouter.providers.cfr", "{\"id\":\"cfr\",\"enabled\":false,\"type\":\"local\",\"localProvider\":\"CFRMessageProvider\",\"frequency\":{\"custom\":[{\"period\":\"daily\",\"cap\":1}]}}");
-#endif
-
-#ifdef EARLY_BETA_OR_EARLIER
 pref("browser.newtabpage.activity-stream.asrouter.providers.snippets", "{\"id\":\"snippets\",\"enabled\":true,\"type\":\"remote\",\"url\":\"https://snippets.cdn.mozilla.net/%STARTPAGE_VERSION%/%NAME%/%VERSION%/%APPBUILDID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/\",\"updateCycleInMs\":14400000}");
+
+// The pref controls if search hand-off is enabled for Activity Stream.
+#ifdef NIGHTLY_BUILD
+pref("browser.newtabpage.activity-stream.improvesearch.handoffToAwesomebar", true);
 #else
-pref("browser.newtabpage.activity-stream.asrouter.providers.snippets", "{\"id\":\"snippets\",\"enabled\":false,\"type\":\"remote\",\"url\":\"https://snippets.cdn.mozilla.net/%STARTPAGE_VERSION%/%NAME%/%VERSION%/%APPBUILDID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/\",\"updateCycleInMs\":14400000}");
+pref("browser.newtabpage.activity-stream.improvesearch.handoffToAwesomebar", false);
 #endif
-
-
 
 // Enable the DOM fullscreen API.
 pref("full-screen-api.enabled", true);
@@ -1462,16 +1480,16 @@ pref("media.gmp-widevinecdm.visible", true);
 pref("media.gmp-widevinecdm.enabled", true);
 #endif
 
-#ifdef NIGHTLY_BUILD
+
 // Switch block autoplay logic to v2, and enable UI.
 pref("media.autoplay.enabled.user-gestures-needed", true);
 // Set Firefox to block autoplay, asking for permission by default.
 pref("media.autoplay.default", 1); // 0=Allowed, 1=Blocked
+
+#ifdef NIGHTLY_BUILD
 // Block WebAudio from playing automatically.
 pref("media.autoplay.block-webaudio", true);
 #else
-pref("media.autoplay.default", 0); // 0=Allowed, 1=Blocked
-pref("media.autoplay.enabled.user-gestures-needed", false);
 pref("media.autoplay.block-webaudio", false);
 #endif
 
@@ -1548,7 +1566,7 @@ pref("browser.contentblocking.reportBreakage.url", "https://tracking-protection-
 
 pref("browser.contentblocking.introCount", 0);
 
-pref("privacy.trackingprotection.introURL", "https://www.mozilla.org/%LOCALE%/firefox/%VERSION%/tracking-protection/start/");
+pref("privacy.trackingprotection.introURL", "https://www.mozilla.org/%LOCALE%/firefox/%VERSION%/content-blocking/start/");
 
 // Workaround for Google Recaptcha
 pref("urlclassifier.trackingAnnotationSkipURLs", "google.com/recaptcha/,*.google.com/recaptcha/");
@@ -1727,19 +1745,6 @@ pref("extensions.screenshots.disabled", false);
 // disable uploading to the server.
 pref("extensions.screenshots.upload-disabled", false);
 
-// Preferences for BrowserErrorReporter.jsm
-// Only collect errors on Nightly, and specifically not local builds
-#if defined(NIGHTLY_BUILD) && MOZ_UPDATE_CHANNEL != default
-pref("browser.chrome.errorReporter.enabled", true);
-#else
-pref("browser.chrome.errorReporter.enabled", false);
-#endif
-pref("browser.chrome.errorReporter.sampleRate", "0.001");
-pref("browser.chrome.errorReporter.publicKey", "c709cb7a2c0b4f0882fcc84a5af161ec");
-pref("browser.chrome.errorReporter.projectId", "339");
-pref("browser.chrome.errorReporter.submitUrl", "https://sentry.prod.mozaws.net/api/339/store/");
-pref("browser.chrome.errorReporter.logLevel", "Error");
-
 // URL for Learn More link for browser error logging in preferences
 pref("browser.chrome.errorReporter.infoURL",
      "https://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/nightly-error-collection");
@@ -1760,11 +1765,12 @@ pref("app.shield.optoutstudies.enabled", false);
 #endif
 
 // Multi-lingual preferences
-pref("intl.multilingual.enabled", false);
-// AMO only serves language packs for release and beta versions.
 #ifdef RELEASE_OR_BETA
+pref("intl.multilingual.enabled", true);
 pref("intl.multilingual.downloadEnabled", true);
 #else
+pref("intl.multilingual.enabled", false);
+// AMO only serves language packs for release and beta versions.
 pref("intl.multilingual.downloadEnabled", false);
 #endif
 
@@ -1804,3 +1810,8 @@ pref("browser.engagement.recent_visited_origins.expiry", 86400); // 24 * 60 * 60
 #ifdef NIGHTLY_BUILD
 pref("browser.aboutConfig.showWarning", true);
 #endif
+
+#if defined(XP_WIN) && defined(MOZ_LAUNCHER_PROCESS)
+// Launcher process is disabled by default, will be selectively enabled via SHIELD
+pref("browser.launcherProcess.enabled", false);
+#endif // defined(XP_WIN) && defined(MOZ_LAUNCHER_PROCESS)

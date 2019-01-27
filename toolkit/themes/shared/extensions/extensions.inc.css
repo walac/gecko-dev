@@ -250,36 +250,55 @@ button.warning {
   }
 }
 
+#go-back,
 #header-utils-btn {
-  -moz-appearance: none;
-  border: 1px solid var(--in-content-box-border-color);
-  border-radius: 2px;
-  line-height: 20px;
-  background-color: var(--in-content-page-background);
-  padding-right: 10px;
-  padding-left: 10px;
-  /* This button is too tall, adding margin-bottom shrinks it. */
-  margin-bottom: 2px;
+  -moz-context-properties: fill;
+  fill: currentColor;
+  min-width: auto;
   margin-inline-end: 0;
 }
 
-#header-utils-btn:hover {
-  background-color: var(--in-content-box-background-hover);
-  cursor: pointer;
+#header-utils-btn > .button-box > hbox > .button-icon {
+  list-style-image: url("chrome://mozapps/skin/extensions/utilities.svg");
 }
 
-#header-utils-btn:active:hover,
-#header-utils-btn[open="true"] {
-  background-color: var(--in-content-box-background-active);
+#header-utils-btn > .button-box > .button-menu-dropmarker {
+  display: block;
+  list-style-image: url("chrome://global/skin/icons/arrow-dropdown-12.svg");
+  width: 12px;
+  margin-inline-start: 5px;
+  margin-inline-end: 1px; /* Match the 1px margin-inline-start on the icon. */
 }
 
-#header-utils-btn > .toolbarbutton-text {
+#go-back > .button-box > .button-text,
+#header-utils-btn > .button-box > hbox > .button-text {
   display: none;
 }
 
+#go-back {
+  margin-inline-start: 0;
+  margin-inline-end: 16px;
+}
+
+#go-back > .button-box > .button-icon {
+  list-style-image: url("chrome://global/skin/icons/calendar-arrow-left.svg");
+  margin: 0;
+}
+
+#go-back > .button-box > .button-icon:-moz-locale-dir(rtl) {
+  list-style-image: url("chrome://global/skin/icons/calendar-arrow-right.svg");
+}
+
 #heading {
-  margin-top: 26px;
+  /* This should be margin-top: 26px to match preferences, but we want to lower
+   * .header-name to be closer to centre with the buttons. */
+  margin-top: 21px;
   margin-bottom: 16px;
+}
+
+.header-name {
+  /* Add some top margin to try to centre the heading next to the back button. */
+  margin-top: 5px;
 }
 
 .heading-inner {
@@ -578,8 +597,8 @@ button.warning {
 
 /*** detail view ***/
 
-#detail-view > .scrollbox-innerbox {
-  margin: 8px 28px;
+#detail-view {
+  padding: 8px 28px;
 }
 
 #detail-view .loading {
@@ -677,8 +696,18 @@ button.warning {
   margin: 8px 4px;
   max-width: 664px;
   /* The .addon-control element on the end has 4px of margin, remove it
-   * from the padding to stay balanced. */
-  padding-inline-end: 12px;
+   * from the padding to stay balanced (also the 1px border for high-contrast). */
+  padding-inline-end: calc(var(--card-padding) - 5px);
+}
+
+.list:focus > .addon[selected] {
+  /* Needed for high-contrast where the border will appear. */
+  border: 2px solid transparent;
+  /* Remove the border from the overall padding. */
+  padding: calc(var(--card-padding) - 2px);
+  /* The .addon-control element on the end has 4px of margin, remove it
+   * from the padding to stay balanced (also the 2px border). */
+  padding-inline-end: calc(var(--card-padding) - 6px);
 }
 
 .addon-detail.card:hover {

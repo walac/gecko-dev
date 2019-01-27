@@ -93,19 +93,38 @@ bool CopyScript(JSContext* cx, HandleScript src, HandleScript dst,
 }  // namespace js
 
 /*
- * Type of try note associated with each catch or finally block, and also with
- * for-in and other kinds of loops. Non-for-in loops do not need these notes
- * for exception unwinding, but storing their boundaries here is helpful for
- * heuristics that need to know whether a given op is inside a loop.
+ * [SMDOC] Try Notes
+ *
+ * Trynotes are attached to regions that are involved with
+ * exception unwinding. They can be broken up into four categories:
+ *
+ * 1. CATCH and FINALLY: Basic exception handling. A CATCH trynote
+ *    covers the range of the associated try. A FINALLY trynote covers
+ *    the try and the catch.
+
+ * 2. FOR_IN and DESTRUCTURING: These operations create an iterator
+ *    which must be cleaned up (by calling IteratorClose) during
+ *    exception unwinding.
+ *
+ * 3. FOR_OF and FOR_OF_ITERCLOSE: For-of loops handle unwinding using
+ *    catch blocks. These trynotes are used for for-of breaks/returns,
+ *    which create regions that are lexically within a for-of block,
+ *    but logically outside of it. See TryNoteIter::settle for more
+ *    details.
+ *
+ * 4. LOOP: This represents normal for/while/do-while loops. It is
+ *    unnecessary for exception unwinding, but storing the boundaries
+ *    of loops here is helpful for heuristics that need to know
+ *    whether a given op is inside a loop.
  */
 enum JSTryNoteKind {
   JSTRY_CATCH,
   JSTRY_FINALLY,
   JSTRY_FOR_IN,
+  JSTRY_DESTRUCTURING,
   JSTRY_FOR_OF,
-  JSTRY_LOOP,
   JSTRY_FOR_OF_ITERCLOSE,
-  JSTRY_DESTRUCTURING
+  JSTRY_LOOP
 };
 
 /*
@@ -1170,19 +1189,8 @@ class ScriptSourceObject : public NativeObject {
     }
     return value.toGCThing()->as<JSScript>();
   }
-  ScriptSourceObject* unwrappedIntroductionSourceObject() const {
-    Value value =
-        unwrappedCanonical()->getReservedSlot(INTRODUCTION_SOURCE_OBJECT_SLOT);
-    if (value.isUndefined()) {
-      return nullptr;
-    }
-    return &UncheckedUnwrap(&value.toObject())->as<ScriptSourceObject>();
-  }
 
-  void setPrivate(const Value& value) {
-    MOZ_ASSERT(isCanonical());
-    setReservedSlot(PRIVATE_SLOT, value);
-  }
+  void setPrivate(JSRuntime* rt, const Value& value);
 
   Value canonicalPrivate() const {
     Value value = getReservedSlot(PRIVATE_SLOT);
@@ -1197,7 +1205,6 @@ class ScriptSourceObject : public NativeObject {
     ELEMENT_SLOT,
     ELEMENT_PROPERTY_SLOT,
     INTRODUCTION_SCRIPT_SLOT,
-    INTRODUCTION_SOURCE_OBJECT_SLOT,
     PRIVATE_SLOT,
     RESERVED_SLOTS
   };
@@ -1607,7 +1614,9 @@ class JSScript : public js::gc::TenuredCell {
 
   // Immutable flags should not be modified after this script has been
   // initialized. These flags should likely be preserved when serializing
-  // (XDR) or copying (CopyScript) this script.
+  // (XDR) or copying (CopyScript) this script. This is only public for the
+  // JITs.
+ public:
   enum class ImmutableFlags : uint32_t {
     // No need for result value of last expression statement.
     NoScriptRval = 1 << 0,
@@ -1672,7 +1681,16 @@ class JSScript : public js::gc::TenuredCell {
 
     // See comments below.
     ArgsHasVarBinding = 1 << 21,
+
+    // Script came from eval().
+    IsForEval = 1 << 22,
+
+    // Whether the record/replay execution progress counter (see RecordReplay.h)
+    // should be updated as this script runs.
+    TrackRecordReplayProgress = 1 << 23,
   };
+
+ private:
   // Note: don't make this a bitfield! It makes it hard to read these flags
   // from JIT code.
   uint32_t immutableFlags_ = 0;
@@ -1690,11 +1708,7 @@ class JSScript : public js::gc::TenuredCell {
     // Script has been reused for a clone.
     HasBeenCloned = 1 << 2,
 
-    // Script came from eval(), and is still active.
-    IsActiveEval = 1 << 3,
-
-    // Script came from eval(), and is in eval cache.
-    IsCachedEval = 1 << 4,
+    // (1 << 3) and (1 << 4) are unused.
 
     // Script has an entry in Realm::scriptCountsMap.
     HasScriptCounts = 1 << 5,
@@ -1765,7 +1779,7 @@ class JSScript : public js::gc::TenuredCell {
   uint16_t funLength_ = 0;
 
   /* Number of type sets used in this script for dynamic type monitoring. */
-  uint16_t nTypeSets_ = 0;
+  uint16_t numBytecodeTypeSets_ = 0;
 
   //
   // End of fields.  Start methods.
@@ -1845,9 +1859,12 @@ class JSScript : public js::gc::TenuredCell {
 
   // ImmutableFlags accessors.
 
+ public:
   MOZ_MUST_USE bool hasFlag(ImmutableFlags flag) const {
     return immutableFlags_ & uint32_t(flag);
   }
+
+ private:
   void setFlag(ImmutableFlags flag) { immutableFlags_ |= uint32_t(flag); }
   void setFlag(ImmutableFlags flag, bool b) {
     if (b) {
@@ -1969,7 +1986,14 @@ class JSScript : public js::gc::TenuredCell {
     return scope->as<js::FunctionScope>().hasParameterExprs();
   }
 
-  size_t nTypeSets() const { return nTypeSets_; }
+  // If there are more than MaxBytecodeTypeSets JOF_TYPESET ops in the script,
+  // the first MaxBytecodeTypeSets - 1 JOF_TYPESET ops have their own TypeSet
+  // and all other JOF_TYPESET ops share the last TypeSet.
+  static constexpr size_t MaxBytecodeTypeSets = UINT16_MAX;
+  static_assert(sizeof(numBytecodeTypeSets_) == 2,
+                "MaxBytecodeTypeSets must match sizeof(numBytecodeTypeSets_)");
+
+  size_t numBytecodeTypeSets() const { return numBytecodeTypeSets_; }
 
   size_t funLength() const { return funLength_; }
 
@@ -2019,28 +2043,13 @@ class JSScript : public js::gc::TenuredCell {
   void setHasRunOnce() { setFlag(MutableFlags::HasRunOnce); }
   void setHasBeenCloned() { setFlag(MutableFlags::HasBeenCloned); }
 
-  bool isActiveEval() const { return hasFlag(MutableFlags::IsActiveEval); }
-  bool isCachedEval() const { return hasFlag(MutableFlags::IsCachedEval); }
-
   void cacheForEval() {
-    MOZ_ASSERT(isActiveEval());
-    MOZ_ASSERT(!isCachedEval());
-    clearFlag(MutableFlags::IsActiveEval);
-    setFlag(MutableFlags::IsCachedEval);
+    MOZ_ASSERT(isForEval());
     // IsEvalCacheCandidate will make sure that there's nothing in this
     // script that would prevent reexecution even if isRunOnce is
     // true.  So just pretend like we never ran this script.
     clearFlag(MutableFlags::HasRunOnce);
   }
-
-  void uncacheForEval() {
-    MOZ_ASSERT(isCachedEval());
-    MOZ_ASSERT(!isActiveEval());
-    clearFlag(MutableFlags::IsCachedEval);
-    setFlag(MutableFlags::IsActiveEval);
-  }
-
-  void setActiveEval() { setFlag(MutableFlags::IsActiveEval); }
 
   bool isLikelyConstructorWrapper() const {
     return hasFlag(ImmutableFlags::IsLikelyConstructorWrapper);
@@ -2207,6 +2216,9 @@ class JSScript : public js::gc::TenuredCell {
   static constexpr size_t offsetOfMutableFlags() {
     return offsetof(JSScript, mutableFlags_);
   }
+  static size_t offsetOfImmutableFlags() {
+    return offsetof(JSScript, immutableFlags_);
+  }
 
   bool hasAnyIonScript() const { return hasIonScript(); }
 
@@ -2349,9 +2361,9 @@ class JSScript : public js::gc::TenuredCell {
  public:
   /* Return whether this script was compiled for 'eval' */
   bool isForEval() const {
-    MOZ_ASSERT_IF(isCachedEval() || isActiveEval(),
-                  bodyScope()->is<js::EvalScope>());
-    return isCachedEval() || isActiveEval();
+    bool forEval = hasFlag(ImmutableFlags::IsForEval);
+    MOZ_ASSERT_IF(forEval, bodyScope()->is<js::EvalScope>());
+    return forEval;
   }
 
   /* Return whether this is a 'direct eval' script in a function scope. */
@@ -2602,6 +2614,8 @@ class JSScript : public js::gc::TenuredCell {
   }
 
   inline JSFunction* getFunction(size_t index);
+  inline JSFunction* getFunction(jsbytecode* pc);
+
   JSFunction* function() const {
     if (functionNonDelazifying()) {
       return functionNonDelazifying();
@@ -2729,9 +2743,9 @@ class JSScript : public js::gc::TenuredCell {
     void dropScript();
   };
 
-  // Return whether the record/replay execution progress counter
-  // (see RecordReplay.h) should be updated as this script runs.
-  inline bool trackRecordReplayProgress() const;
+  bool trackRecordReplayProgress() const {
+    return hasFlag(ImmutableFlags::TrackRecordReplayProgress);
+  }
 };
 
 /* If this fails, add/remove padding within JSScript. */

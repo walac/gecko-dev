@@ -542,6 +542,10 @@ static bool Snapshot(JSContext* cx, HandleObject pobj_, unsigned flags,
       return false;
     }
 
+    // The [[Prototype]] chain might be cyclic.
+    if (!CheckForInterrupt(cx)) {
+      return false;
+    }
   } while (pobj != nullptr);
 
 #ifdef JS_MORE_DETERMINISTIC
@@ -674,8 +678,8 @@ static PropertyIteratorObject* CreatePropertyIterator(
 NativeIterator::NativeIterator() {
   // Do our best to enforce that nothing in |this| except the two fields set
   // below is ever observed.
-  JS_POISON(static_cast<void*>(this), 0xCC, sizeof(*this),
-            MemCheckKind::MakeUndefined);
+  AlwaysPoison(static_cast<void*>(this), 0xCC, sizeof(*this),
+               MemCheckKind::MakeUndefined);
 
   // These are the only two fields in sentinel NativeIterators that are
   // examined, in ObjectRealm::sweepNativeIterators.  Everything else is

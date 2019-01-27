@@ -10,15 +10,15 @@
 #include <cstring>        // for memcmp
 
 #if defined(XP_WIN)
-#include "OculusSession.h"
+#  include "OculusSession.h"
 #endif
 
 #if defined(XP_WIN) || defined(XP_MACOSX) || \
     (defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID))
-#include "OpenVRSession.h"
+#  include "OpenVRSession.h"
 #endif
 #if !defined(MOZ_WIDGET_ANDROID)
-#include "OSVRSession.h"
+#  include "OSVRSession.h"
 #endif
 
 using namespace mozilla;
@@ -30,7 +30,7 @@ namespace {
 int64_t FrameIDFromBrowserState(const mozilla::gfx::VRBrowserState& aState) {
   for (const auto& layer : aState.layerState) {
     if (layer.type == VRLayerType::LayerType_Stereo_Immersive) {
-      return layer.layer_stereo_immersive.mFrameId;
+      return layer.layer_stereo_immersive.frameId;
     }
   }
   return 0;
@@ -261,7 +261,7 @@ void VRService::ServiceInitialize() {
     // other fields remaining zeroed out.
     memset(&mSystemState, 0, sizeof(mSystemState));
     mSystemState.enumerationCompleted = true;
-    mSystemState.displayState.mMinRestartInterval =
+    mSystemState.displayState.minRestartInterval =
         gfxPrefs::VRExternalNotDetectedTimeout();
     mSystemState.displayState.shutdown = true;
     PushState(mSystemState);
@@ -278,7 +278,7 @@ void VRService::ServiceShutdown() {
   mSystemState.enumerationCompleted = true;
   mSystemState.displayState.shutdown = true;
   if (mSession && mSession->ShouldQuit()) {
-    mSystemState.displayState.mMinRestartInterval =
+    mSystemState.displayState.minRestartInterval =
         gfxPrefs::VRExternalQuitTimeout();
   }
   PushState(mSystemState);
@@ -341,7 +341,7 @@ void VRService::ServiceImmersiveMode() {
   }
 
   uint64_t newFrameId = FrameIDFromBrowserState(mBrowserState);
-  if (newFrameId != mSystemState.displayState.mLastSubmittedFrameId) {
+  if (newFrameId != mSystemState.displayState.lastSubmittedFrameId) {
     // A new immersive frame has been received.
     // Submit the textures to the VR system compositor.
     bool success = false;
@@ -358,8 +358,8 @@ void VRService::ServiceImmersiveMode() {
     // rendering.  Changes to mLastSubmittedFrameId and the values
     // used for rendering, such as headset pose, must be pushed
     // atomically to the browser.
-    mSystemState.displayState.mLastSubmittedFrameId = newFrameId;
-    mSystemState.displayState.mLastSubmittedFrameSuccessful = success;
+    mSystemState.displayState.lastSubmittedFrameId = newFrameId;
+    mSystemState.displayState.lastSubmittedFrameSuccessful = success;
 
     // StartFrame may block to control the timing for the next frame start
     mSession->StartFrame(mSystemState);

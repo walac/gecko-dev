@@ -55,7 +55,7 @@
 
 #ifdef LoadImage
 // Undefine LoadImage to prevent naming conflict with Windows.
-#undef LoadImage
+#  undef LoadImage
 #endif
 
 using namespace mozilla;
@@ -985,7 +985,7 @@ nsresult nsImageLoadingContent::LoadImage(nsIURI* aNewURI, bool aForce,
       do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
   nsresult rv = nsContentUtils::LoadImage(
       aNewURI, thisNode, aDocument, triggeringPrincipal, 0,
-      aDocument->GetDocumentURI(), referrerPolicy, this, loadFlags,
+      aDocument->GetDocumentURIAsReferrer(), referrerPolicy, this, loadFlags,
       content->LocalName(), getter_AddRefs(req), policyType,
       mUseUrgentStartForChannel);
 
@@ -1407,12 +1407,11 @@ bool nsImageLoadingContent::HaveSize(imgIRequest* aImage) {
 
 void nsImageLoadingContent::BindToTree(Document* aDocument, nsIContent* aParent,
                                        nsIContent* aBindingParent) {
-  // We may be entering the document, so if our image should be tracked,
-  // track it.
-  if (!aDocument) return;
-
-  TrackImage(mCurrentRequest);
-  TrackImage(mPendingRequest);
+  // We may be getting connected, if so our image should be tracked,
+  if (GetOurCurrentDoc()) {
+    TrackImage(mCurrentRequest);
+    TrackImage(mPendingRequest);
+  }
 }
 
 void nsImageLoadingContent::UnbindFromTree(bool aDeep, bool aNullParent) {

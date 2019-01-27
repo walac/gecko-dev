@@ -3302,6 +3302,7 @@ void nsCSSBorderRenderer::CreateWebRenderCommands(
     const layers::StackingContextHelper& aSc) {
   LayoutDeviceRect outerRect = LayoutDeviceRect::FromUnknownRect(mOuterRect);
   wr::LayoutRect roundedRect = wr::ToRoundedLayoutRect(outerRect);
+  wr::LayoutRect clipRect = roundedRect;
   wr::BorderSide side[4];
   NS_FOR_CSS_SIDES(i) {
     side[i] =
@@ -3315,22 +3316,16 @@ void nsCSSBorderRenderer::CreateWebRenderCommands(
                          LayoutDeviceSize::FromUnknownSize(mBorderRadii[2]));
 
   if (mLocalClip) {
-    LayoutDeviceRect clip =
+    LayoutDeviceRect localClip =
         LayoutDeviceRect::FromUnknownRect(mLocalClip.value());
-    wr::LayoutRect clipRect = wr::ToRoundedLayoutRect(clip);
-    wr::WrClipId clipId = aBuilder.DefineClip(Nothing(), clipRect);
-    aBuilder.PushClip(clipId);
+    clipRect = wr::ToRoundedLayoutRect(localClip.Intersect(outerRect));
   }
 
   Range<const wr::BorderSide> wrsides(side, 4);
-  aBuilder.PushBorder(roundedRect, roundedRect, mBackfaceIsVisible,
+  aBuilder.PushBorder(roundedRect, clipRect, mBackfaceIsVisible,
                       wr::ToBorderWidths(mBorderWidths[0], mBorderWidths[1],
                                          mBorderWidths[2], mBorderWidths[3]),
                       wrsides, borderRadius);
-
-  if (mLocalClip) {
-    aBuilder.PopClip();
-  }
 }
 
 /* static */ Maybe<nsCSSBorderImageRenderer>
@@ -3558,7 +3553,8 @@ ImgDrawResult nsCSSBorderImageRenderer::CreateWebRenderCommands(
 
   LayoutDeviceRect destRect =
       LayoutDeviceRect::FromAppUnits(mArea, appUnitsPerDevPixel);
-  wr::LayoutRect dest = wr::ToRoundedLayoutRect(destRect);
+  destRect.Round();
+  wr::LayoutRect dest = wr::ToLayoutRect(destRect);
 
   wr::LayoutRect clip = dest;
   if (!mClip.IsEmpty()) {

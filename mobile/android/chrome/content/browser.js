@@ -371,6 +371,7 @@ var BrowserApp = {
     GlobalEventDispatcher.registerListener(this, [
       "Browser:LoadManifest",
       "Browser:Quit",
+      "Browser:ZombifyTabs",
       "Fonts:Reload",
       "FormHistory:Init",
       "FullScreen:Exit",
@@ -1728,6 +1729,13 @@ var BrowserApp = {
 
       case "Browser:Quit":
         this.quit(data);
+        break;
+
+      case "Browser:ZombifyTabs":
+        let tabs = this._tabs;
+        for (let i = 0; i < tabs.length; i++) {
+          tabs[i].zombify();
+        }
         break;
 
       case "Fonts:Reload":
@@ -3772,7 +3780,8 @@ Tab.prototype = {
 
     let flags = Ci.nsIWebProgress.NOTIFY_STATE_ALL |
                 Ci.nsIWebProgress.NOTIFY_LOCATION |
-                Ci.nsIWebProgress.NOTIFY_SECURITY;
+                Ci.nsIWebProgress.NOTIFY_SECURITY |
+                Ci.nsIWebProgress.NOTIFY_CONTENT_BLOCKING;
     this.filter = Cc["@mozilla.org/appshell/component/browser-status-filter;1"].createInstance(Ci.nsIWebProgress);
     this.filter.addProgressListener(this, flags)
     this.browser.addProgressListener(this.filter, flags);
@@ -3904,8 +3913,11 @@ Tab.prototype = {
       // We were redirected; reload the original URL
       url = this.originalURI.spec;
     }
-
-    this.browser.docShell.loadURI(url, flags, null, null, null, this.browser.contentPrincipal);
+    let loadURIOptions = {
+      triggeringPrincipal: this.browser.contentPrincipal,
+      loadFlags: flags,
+    };
+    this.browser.docShell.loadURI(url, loadURIOptions);
   },
 
   destroy: function() {
@@ -4753,6 +4765,26 @@ Tab.prototype = {
     GlobalEventDispatcher.sendRequest(message);
   },
 
+  // Cache last tracking event to limit firings and only propagate changes
+  _tracking: null,
+
+  onContentBlockingEvent: function(aWebProgress, aRequest, aState) {
+    let trackingMode = IdentityHandler.getTrackingMode(aState, this.browser);
+    if (this._tracking == trackingMode) {
+        return;
+    } else {
+        this._tracking = trackingMode;
+    }
+
+    let message = {
+      type: "Content:ContentBlockingEvent",
+      tabID: this.id,
+      tracking: trackingMode
+    };
+
+    GlobalEventDispatcher.sendRequest(message);
+  },
+
   OnHistoryNewEntry: function(newURI, oldIndex) {
     Services.obs.notifyObservers(this.browser, "Content:HistoryChange");
   },
@@ -5079,8 +5111,11 @@ var ErrorPageEventHandler = {
               attrs["privateBrowsingId"] = 1;
             }
 
-            let triggeringPrincipal = nullServices.scriptSecurityManager.createNullPrincipal(attrs);
-            webNav.loadURI(location, Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CLASSIFIER, null, null, triggeringPrincipal);
+            let loadURIOptions = {
+              triggeringPrincipal: Services.scriptSecurityManager.createNullPrincipal(attrs),
+              loadFlags: Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CLASSIFIER,
+            };
+            webNav.loadURI(location, loadURIOptions);
 
             // ....but add a notify bar as a reminder, so that they don't lose
             // track after, e.g., tab switching.
@@ -5378,7 +5413,7 @@ var XPInstallObserver = {
 };
 
 /**
- * Handler for blocked popups, triggered by DOMUpdateBlockedPopups events in browser.xml
+ * Handler for blocked popups, triggered by DOMUpdateBlockedPopups events in browser.js
  */
 var PopupBlockerObserver = {
   onUpdateBlockedPopups: function onUpdateBlockedPopups(aEvent) {
@@ -5809,14 +5844,12 @@ var IdentityHandler = {
     let identityMode = this.getIdentityMode(aState, this._uri);
     let mixedDisplay = this.getMixedDisplayMode(aState);
     let mixedActive = this.getMixedActiveMode(aState);
-    let trackingMode = this.getTrackingMode(aState, aBrowser);
     let result = {
       origin: locationObj.origin,
       mode: {
         identity: identityMode,
         mixed_display: mixedDisplay,
         mixed_active: mixedActive,
-        tracking: trackingMode
       }
     };
 

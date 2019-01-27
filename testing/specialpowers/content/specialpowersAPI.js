@@ -802,10 +802,6 @@ SpecialPowersAPI.prototype = {
           originalValue = Ci.nsIPermissionManager.PROMPT_ACTION;
         } else if (this.testPermission(permission.type, Ci.nsICookiePermission.ACCESS_SESSION, context)) {
           originalValue = Ci.nsICookiePermission.ACCESS_SESSION;
-        } else if (this.testPermission(permission.type, Ci.nsICookiePermission.ACCESS_ALLOW_FIRST_PARTY_ONLY, context)) {
-          originalValue = Ci.nsICookiePermission.ACCESS_ALLOW_FIRST_PARTY_ONLY;
-        } else if (this.testPermission(permission.type, Ci.nsICookiePermission.ACCESS_LIMIT_THIRD_PARTY, context)) {
-          originalValue = Ci.nsICookiePermission.ACCESS_LIMIT_THIRD_PARTY;
         }
 
         let principal = this._getPrincipalFromArg(context);
@@ -2222,7 +2218,7 @@ SpecialPowersAPI.prototype = {
    * chrome-privileged and allowed to run inside SystemGroup
    */
 
-  doUrlClassify(principal, eventTarget, tpEnabled, callback) {
+  doUrlClassify(principal, eventTarget, callback) {
     let classifierService =
       Cc["@mozilla.org/url-classifier/dbservice;1"].getService(Ci.nsIURIClassifier);
 
@@ -2237,7 +2233,7 @@ SpecialPowersAPI.prototype = {
     };
 
     return classifierService.classify(unwrapIfWrapped(principal), eventTarget,
-                                      tpEnabled, wrapCallback);
+                                      wrapCallback);
   },
 
   // TODO: Bug 1353701 - Supports custom event target for labelling.

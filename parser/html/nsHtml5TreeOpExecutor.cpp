@@ -103,7 +103,8 @@ nsHtml5TreeOpExecutor::nsHtml5TreeOpExecutor()
       mStarted(false),
       mRunFlushLoopOnStack(false),
       mCallContinueInterruptedParsingIfEnabled(false),
-      mAlreadyComplainedAboutCharset(false) {}
+      mAlreadyComplainedAboutCharset(false),
+      mAlreadyComplainedAboutDeepTree(false) {}
 
 nsHtml5TreeOpExecutor::~nsHtml5TreeOpExecutor() {
   if (gBackgroundFlushList && isInList()) {
@@ -169,6 +170,7 @@ nsHtml5TreeOpExecutor::DidBuildModel(bool aTerminated) {
     }
 
     if (!destroying) {
+      mDocument->TriggerInitialDocumentTranslation();
       nsContentSink::StartLayout(false);
     }
   }
@@ -225,6 +227,10 @@ NS_IMETHODIMP
 nsHtml5TreeOpExecutor::SetParser(nsParserBase* aParser) {
   mParser = aParser;
   return NS_OK;
+}
+
+void nsHtml5TreeOpExecutor::InitialDocumentTranslationCompleted() {
+  nsContentSink::StartLayout(false);
 }
 
 void nsHtml5TreeOpExecutor::FlushPendingNotifications(FlushType aType) {
@@ -800,6 +806,17 @@ void nsHtml5TreeOpExecutor::ComplainAboutBogusProtocolCharset(Document* aDoc) {
   nsContentUtils::ReportToConsole(
       nsIScriptError::errorFlag, NS_LITERAL_CSTRING("HTML parser"), aDoc,
       nsContentUtils::eHTMLPARSER_PROPERTIES, "EncProtocolUnsupported");
+}
+
+void nsHtml5TreeOpExecutor::MaybeComplainAboutDeepTree(uint32_t aLineNumber) {
+  if (mAlreadyComplainedAboutDeepTree) {
+    return;
+  }
+  mAlreadyComplainedAboutDeepTree = true;
+  nsContentUtils::ReportToConsole(
+      nsIScriptError::errorFlag, NS_LITERAL_CSTRING("HTML parser"), mDocument,
+      nsContentUtils::eHTMLPARSER_PROPERTIES, "errDeepTree", nullptr, 0,
+      nullptr, EmptyString(), aLineNumber);
 }
 
 nsHtml5Parser* nsHtml5TreeOpExecutor::GetParser() {

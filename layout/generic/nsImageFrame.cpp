@@ -53,7 +53,7 @@
 #include "nsNameSpaceManager.h"
 #include <algorithm>
 #ifdef ACCESSIBILITY
-#include "nsAccessibilityService.h"
+#  include "nsAccessibilityService.h"
 #endif
 #include "nsLayoutUtils.h"
 #include "nsDisplayList.h"
@@ -1262,7 +1262,7 @@ void nsImageFrame::DisplayAltText(nsPresContext* aPresContext,
 
 struct nsRecessedBorder : public nsStyleBorder {
   nsRecessedBorder(nscoord aBorderWidth, nsPresContext* aPresContext)
-      : nsStyleBorder(aPresContext) {
+      : nsStyleBorder(*aPresContext->Document()) {
     NS_FOR_CSS_SIDES(side) {
       BorderColorFor(side) = StyleComplexColor::Black();
       mBorder.Side(side) = aBorderWidth;
@@ -1618,15 +1618,17 @@ ImgDrawResult nsImageFrame::DisplayAltFeedbackWithoutLayer(
                   size);
 
       const int32_t factor = PresContext()->AppUnitsPerDevPixel();
-      const LayoutDeviceRect destRect(
-          LayoutDeviceRect::FromAppUnits(dest, factor));
+      LayoutDeviceRect destRect(LayoutDeviceRect::FromAppUnits(dest, factor));
+      destRect.Round();
+
       Maybe<SVGImageContext> svgContext;
       IntSize decodeSize =
           nsLayoutUtils::ComputeImageContainerDrawingParameters(
               imgCon, this, destRect, aSc, aFlags, svgContext);
       RefPtr<ImageContainer> container;
-      result = imgCon->GetImageContainerAtSize(
-          aManager->LayerManager(), decodeSize, svgContext, aFlags, getter_AddRefs(container));
+      result = imgCon->GetImageContainerAtSize(aManager->LayerManager(),
+                                               decodeSize, svgContext, aFlags,
+                                               getter_AddRefs(container));
       if (container) {
         bool wrResult = aManager->CommandBuilder().PushImage(
             aItem, container, aBuilder, aResources, aSc, destRect, bounds);
@@ -1666,12 +1668,7 @@ ImgDrawResult nsImageFrame::DisplayAltFeedbackWithoutLayer(
           rect, PresContext()->AppUnitsPerDevPixel());
       dest = wr::ToRoundedLayoutRect(devPxRect);
 
-      AutoTArray<wr::ComplexClipRegion, 1> clips;
-      clips.AppendElement(wr::SimpleRadii(dest, dest.size.width / 2));
-      auto clipId = aBuilder.DefineClip(Nothing(), dest, &clips, nullptr);
-      aBuilder.PushClip(clipId);
-      aBuilder.PushRect(dest, wrBounds, isBackfaceVisible, color);
-      aBuilder.PopClip();
+      aBuilder.PushRoundedRect(dest, wrBounds, isBackfaceVisible, color);
     }
 
     // Reduce the inner rect by the width of the icon, and leave an
@@ -1901,8 +1898,10 @@ bool nsDisplayImage::CreateWebRenderCommands(
   }
 
   const int32_t factor = mFrame->PresContext()->AppUnitsPerDevPixel();
-  const LayoutDeviceRect destRect(
+  LayoutDeviceRect destRect(
       LayoutDeviceRect::FromAppUnits(GetDestRect(), factor));
+  destRect.Round();
+
   Maybe<SVGImageContext> svgContext;
   IntSize decodeSize = nsLayoutUtils::ComputeImageContainerDrawingParameters(
       mImage, mFrame, destRect, aSc, flags, svgContext);
@@ -2312,8 +2311,8 @@ nsresult nsImageFrame::GetCursor(const nsPoint& aPoint,
           PresShell()->StyleSet()->ResolveStyleFor(area->AsElement(),
                                                    LazyComputeBehavior::Allow);
       FillCursorInformationFromStyle(areaStyle->StyleUI(), aCursor);
-      if (NS_STYLE_CURSOR_AUTO == aCursor.mCursor) {
-        aCursor.mCursor = NS_STYLE_CURSOR_DEFAULT;
+      if (StyleCursorKind::Auto == aCursor.mCursor) {
+        aCursor.mCursor = StyleCursorKind::Default;
       }
       return NS_OK;
     }

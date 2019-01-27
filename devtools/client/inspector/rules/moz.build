@@ -14,8 +14,10 @@ DIRS += [
 ]
 
 DevToolsModules(
+    'constants.js',
     'new-rules.js',
     'rules.js',
+    'types.js',
 )
 
 BROWSER_CHROME_MANIFESTS += ['test/browser.ini']

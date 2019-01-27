@@ -8,10 +8,11 @@ const {
   CONNECT_RUNTIME_SUCCESS,
   DISCONNECT_RUNTIME_SUCCESS,
   RUNTIMES,
-  UNWATCH_RUNTIME_SUCCESS,
   UPDATE_CONNECTION_PROMPT_SETTING_SUCCESS,
+  UPDATE_RUNTIME_MULTIE10S_SUCCESS,
   REMOTE_RUNTIMES_UPDATED,
-  WATCH_RUNTIME_SUCCESS,
+  SELECTED_RUNTIME_ID_UPDATED,
+  THIS_FIREFOX_RUNTIME_CREATED,
 } = require("../constants");
 
 const {
@@ -32,12 +33,10 @@ function RuntimesState() {
   return {
     networkRuntimes: [],
     selectedRuntimeId: null,
-    thisFirefoxRuntimes: [{
-      id: RUNTIMES.THIS_FIREFOX,
-      isUnknown: false,
-      name: "This Firefox",
-      type: RUNTIMES.THIS_FIREFOX,
-    }],
+    // "This Firefox" runtimes is an array for consistency, but it should only contain one
+    // runtime. This runtime will be added after initializing the application via
+    // THIS_FIREFOX_RUNTIME_CREATED.
+    thisFirefoxRuntimes: [],
     usbRuntimes: [],
   };
 }
@@ -84,8 +83,9 @@ function runtimesReducer(state = RuntimesState(), action) {
       return _updateRuntimeById(id, { runtimeDetails: null }, state);
     }
 
-    case UNWATCH_RUNTIME_SUCCESS: {
-      return Object.assign({}, state, { selectedRuntimeId: null });
+    case SELECTED_RUNTIME_ID_UPDATED: {
+      const selectedRuntimeId = action.runtimeId || null;
+      return Object.assign({}, state, { selectedRuntimeId });
     }
 
     case UPDATE_CONNECTION_PROMPT_SETTING_SUCCESS: {
@@ -97,6 +97,15 @@ function runtimesReducer(state = RuntimesState(), action) {
       return _updateRuntimeById(runtimeId, { runtimeDetails }, state);
     }
 
+    case UPDATE_RUNTIME_MULTIE10S_SUCCESS: {
+      const { isMultiE10s } = action;
+      const { id: runtimeId } = action.runtime;
+      const runtime = findRuntimeById(runtimeId, state);
+      const runtimeDetails =
+        Object.assign({}, runtime.runtimeDetails, { isMultiE10s });
+      return _updateRuntimeById(runtimeId, { runtimeDetails }, state);
+    }
+
     case REMOTE_RUNTIMES_UPDATED: {
       const { runtimes, runtimeType } = action;
       const key = TYPE_TO_RUNTIMES_KEY[runtimeType];
@@ -105,9 +114,11 @@ function runtimesReducer(state = RuntimesState(), action) {
       });
     }
 
-    case WATCH_RUNTIME_SUCCESS: {
-      const { id } = action.runtime;
-      return Object.assign({}, state, { selectedRuntimeId: id });
+    case THIS_FIREFOX_RUNTIME_CREATED: {
+      const { runtime } = action;
+      return Object.assign({}, state, {
+        thisFirefoxRuntimes: [runtime],
+      });
     }
 
     default:

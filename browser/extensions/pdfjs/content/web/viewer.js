@@ -1106,6 +1106,8 @@ let PDFViewerApplication = {
         this.initialBookmark = initialBookmark;
         pdfViewer.currentScaleValue = pdfViewer.currentScaleValue;
         this.setInitialView(hash);
+      }).catch(() => {
+        this.setInitialView();
       }).then(function () {
         pdfViewer.update();
       });
@@ -2644,46 +2646,42 @@ function backtrackBeforeAllVisibleElements(index, views, top) {
 }
 
 function getVisibleElements(scrollEl, views, sortByVisibility = false, horizontal = false) {
-  let top = scrollEl.scrollTop,
-      bottom = top + scrollEl.clientHeight;
-  let left = scrollEl.scrollLeft,
-      right = left + scrollEl.clientWidth;
+  const top = scrollEl.scrollTop,
+        bottom = top + scrollEl.clientHeight;
+  const left = scrollEl.scrollLeft,
+        right = left + scrollEl.clientWidth;
 
   function isElementBottomAfterViewTop(view) {
-    let element = view.div;
-    let elementBottom = element.offsetTop + element.clientTop + element.clientHeight;
+    const element = view.div;
+    const elementBottom = element.offsetTop + element.clientTop + element.clientHeight;
     return elementBottom > top;
   }
 
   function isElementRightAfterViewLeft(view) {
-    let element = view.div;
-    let elementRight = element.offsetLeft + element.clientLeft + element.clientWidth;
+    const element = view.div;
+    const elementRight = element.offsetLeft + element.clientLeft + element.clientWidth;
     return elementRight > left;
   }
 
-  let visible = [],
-      view,
-      element;
-  let currentHeight, viewHeight, viewBottom, hiddenHeight;
-  let currentWidth, viewWidth, viewRight, hiddenWidth;
-  let percentVisible;
-  let firstVisibleElementInd = views.length === 0 ? 0 : binarySearchFirstItem(views, horizontal ? isElementRightAfterViewLeft : isElementBottomAfterViewTop);
+  const visible = [],
+        numViews = views.length;
+  let firstVisibleElementInd = numViews === 0 ? 0 : binarySearchFirstItem(views, horizontal ? isElementRightAfterViewLeft : isElementBottomAfterViewTop);
 
-  if (views.length > 0 && !horizontal) {
+  if (numViews > 0 && firstVisibleElementInd < numViews && !horizontal) {
     firstVisibleElementInd = backtrackBeforeAllVisibleElements(firstVisibleElementInd, views, top);
   }
 
   let lastEdge = horizontal ? right : -1;
 
-  for (let i = firstVisibleElementInd, ii = views.length; i < ii; i++) {
-    view = views[i];
-    element = view.div;
-    currentWidth = element.offsetLeft + element.clientLeft;
-    currentHeight = element.offsetTop + element.clientTop;
-    viewWidth = element.clientWidth;
-    viewHeight = element.clientHeight;
-    viewRight = currentWidth + viewWidth;
-    viewBottom = currentHeight + viewHeight;
+  for (let i = firstVisibleElementInd; i < numViews; i++) {
+    const view = views[i],
+          element = view.div;
+    const currentWidth = element.offsetLeft + element.clientLeft;
+    const currentHeight = element.offsetTop + element.clientTop;
+    const viewWidth = element.clientWidth,
+          viewHeight = element.clientHeight;
+    const viewRight = currentWidth + viewWidth;
+    const viewBottom = currentHeight + viewHeight;
 
     if (lastEdge === -1) {
       if (viewBottom >= bottom) {
@@ -2697,20 +2695,20 @@ function getVisibleElements(scrollEl, views, sortByVisibility = false, horizonta
       continue;
     }
 
-    hiddenHeight = Math.max(0, top - currentHeight) + Math.max(0, viewBottom - bottom);
-    hiddenWidth = Math.max(0, left - currentWidth) + Math.max(0, viewRight - right);
-    percentVisible = (viewHeight - hiddenHeight) * (viewWidth - hiddenWidth) * 100 / viewHeight / viewWidth | 0;
+    const hiddenHeight = Math.max(0, top - currentHeight) + Math.max(0, viewBottom - bottom);
+    const hiddenWidth = Math.max(0, left - currentWidth) + Math.max(0, viewRight - right);
+    const percent = (viewHeight - hiddenHeight) * (viewWidth - hiddenWidth) * 100 / viewHeight / viewWidth | 0;
     visible.push({
       id: view.id,
       x: currentWidth,
       y: currentHeight,
       view,
-      percent: percentVisible
+      percent
     });
   }
 
-  let first = visible[0];
-  let last = visible[visible.length - 1];
+  const first = visible[0],
+        last = visible[visible.length - 1];
 
   if (sortByVisibility) {
     visible.sort(function (a, b) {
@@ -4909,7 +4907,7 @@ class PDFFindBar {
 
     Promise.resolve(matchesCountMsg).then(msg => {
       this.findResultsCount.textContent = msg;
-      this.findResultsCount.classList[!total ? 'add' : 'remove']('hidden');
+      this.findResultsCount.classList.toggle('hidden', !total);
 
       this._adjustWidth();
     });
@@ -5993,10 +5991,19 @@ class PDFHistory {
     }
 
     if (shouldReplace) {
-      window.history.replaceState(newState, '', newUrl);
+      if (newUrl) {
+        window.history.replaceState(newState, '', newUrl);
+      } else {
+        window.history.replaceState(newState, '');
+      }
     } else {
       this._maxUid = this._uid;
-      window.history.pushState(newState, '', newUrl);
+
+      if (newUrl) {
+        window.history.pushState(newState, '', newUrl);
+      } else {
+        window.history.pushState(newState, '');
+      }
     }
   }
 
@@ -8161,25 +8168,15 @@ class PDFViewer extends _base_viewer.BaseViewer {
     return this._getCurrentVisiblePage();
   }
 
-  update() {
-    let visible = this._getVisiblePages();
-
-    let visiblePages = visible.views,
-        numVisiblePages = visiblePages.length;
-
-    if (numVisiblePages === 0) {
+  _updateHelper(visiblePages) {
+    if (this.isInPresentationMode) {
       return;
     }
 
-    this._resizeBuffer(numVisiblePages, visiblePages);
-
-    this.renderingQueue.renderHighestPriority(visible);
     let currentId = this._currentPageNumber;
     let stillFullyVisible = false;
 
-    for (let i = 0; i < numVisiblePages; ++i) {
-      let page = visiblePages[i];
-
+    for (const page of visiblePages) {
       if (page.percent < 100) {
         break;
       }
@@ -8194,16 +8191,7 @@ class PDFViewer extends _base_viewer.BaseViewer {
       currentId = visiblePages[0].id;
     }
 
-    if (!this.isInPresentationMode) {
-      this._setCurrentPageNumber(currentId);
-    }
-
-    this._updateLocation(visible.first);
-
-    this.eventBus.dispatch('updateviewarea', {
-      source: this,
-      location: this._location
-    });
+    this._setCurrentPageNumber(currentId);
   }
 
   get _isScrollModeHorizontal() {
@@ -8955,8 +8943,32 @@ class BaseViewer {
     };
   }
 
+  _updateHelper(visiblePages) {
+    throw new Error('Not implemented: _updateHelper');
+  }
+
   update() {
-    throw new Error('Not implemented: update');
+    const visible = this._getVisiblePages();
+
+    const visiblePages = visible.views,
+          numVisiblePages = visiblePages.length;
+
+    if (numVisiblePages === 0) {
+      return;
+    }
+
+    this._resizeBuffer(numVisiblePages, visiblePages);
+
+    this.renderingQueue.renderHighestPriority(visible);
+
+    this._updateHelper(visiblePages);
+
+    this._updateLocation(visible.first);
+
+    this.eventBus.dispatch('updateviewarea', {
+      source: this,
+      location: this._location
+    });
   }
 
   containsElement(element) {
@@ -10792,27 +10804,7 @@ class PDFSinglePageViewer extends _base_viewer.BaseViewer {
     return this._getCurrentVisiblePage();
   }
 
-  update() {
-    let visible = this._getVisiblePages();
-
-    let visiblePages = visible.views,
-        numVisiblePages = visiblePages.length;
-
-    if (numVisiblePages === 0) {
-      return;
-    }
-
-    this._resizeBuffer(numVisiblePages);
-
-    this.renderingQueue.renderHighestPriority(visible);
-
-    this._updateLocation(visible.first);
-
-    this.eventBus.dispatch('updateviewarea', {
-      source: this,
-      location: this._location
-    });
-  }
+  _updateHelper(visiblePages) {}
 
   get _isScrollModeHorizontal() {
     return (0, _pdfjsLib.shadow)(this, '_isScrollModeHorizontal', false);

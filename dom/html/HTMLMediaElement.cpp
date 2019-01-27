@@ -5,10 +5,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifdef XP_WIN
-#include "objbase.h"
+#  include "objbase.h"
 // Some Windows header defines this, so undef it as it conflicts with our
 // function of the same name.
-#undef GetCurrentTime
+#  undef GetCurrentTime
 #endif
 
 #include "mozilla/dom/HTMLMediaElement.h"
@@ -24,7 +24,7 @@
 #include "FrameStatistics.h"
 #include "GMPCrashHelper.h"
 #ifdef MOZ_ANDROID_HLS_SUPPORT
-#include "HLSDecoder.h"
+#  include "HLSDecoder.h"
 #endif
 #include "HTMLMediaElement.h"
 #include "ImageContainer.h"
@@ -3188,6 +3188,18 @@ already_AddRefed<DOMMediaStream> HTMLMediaElement::CaptureAudio(
   return stream.forget();
 }
 
+RefPtr<GenericNonExclusivePromise> HTMLMediaElement::GetAllowedToPlayPromise() {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(!mOutputStreams.IsEmpty(),
+             "This method should only be called during stream capturing!");
+  if (AutoplayPolicy::IsAllowedToPlay(*this)) {
+    AUTOPLAY_LOG("MediaElement %p has allowed to play, resolve promise", this);
+    return GenericNonExclusivePromise::CreateAndResolve(true, __func__);
+  }
+  AUTOPLAY_LOG("create allow-to-play promise for MediaElement %p", this);
+  return mAllowedToPlayPromise.Ensure(__func__);
+}
+
 already_AddRefed<DOMMediaStream> HTMLMediaElement::MozCaptureStream(
     ErrorResult& aRv) {
   MediaStreamGraph::GraphDriverType graphDriverType =
@@ -3482,6 +3494,8 @@ HTMLMediaElement::~HTMLMediaElement() {
   UnregisterActivityObserver();
 
   mSetCDMRequest.DisconnectIfExists();
+  mAllowedToPlayPromise.RejectIfExists(NS_ERROR_FAILURE, __func__);
+
   if (mDecoder) {
     ShutdownDecoder();
   }
@@ -3634,6 +3648,7 @@ already_AddRefed<Promise> HTMLMediaElement::Play(ErrorResult& aRv) {
 
   if (AutoplayPolicy::IsAllowedToPlay(*this)) {
     AUTOPLAY_LOG("allow MediaElement %p to play", this);
+    mAllowedToPlayPromise.ResolveIfExists(true, __func__);
     PlayInternal(handlingUserInput);
     UpdateCustomPolicyAfterPlayed();
   } else {
@@ -4627,9 +4642,12 @@ void HTMLMediaElement::UpdateSrcMediaStreamPlaying(uint32_t aFlags) {
 
 void HTMLMediaElement::UpdateSrcStreamTime() {
   MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(mSrcStreamPausedGraphTime == GRAPH_TIME_MAX);
-  MOZ_ASSERT(!mPaused);
-  MOZ_ASSERT(!mSrcStreamPlaybackEnded);
+
+  if (mSrcStreamPlaybackEnded) {
+    // We do a separate FireTimeUpdate() when this is set.
+    return;
+  }
+
   FireTimeUpdate(true);
 }
 
@@ -5558,6 +5576,7 @@ void HTMLMediaElement::CheckAutoplayDataReady() {
     return;
   }
 
+  mAllowedToPlayPromise.ResolveIfExists(true, __func__);
   mPaused = false;
   // We changed mPaused which can affect AddRemoveSelfReference
   AddRemoveSelfReference();

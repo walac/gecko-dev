@@ -386,7 +386,7 @@ restart:
     case ParseNodeKind::Elision:
     case ParseNodeKind::NumberExpr:
 #ifdef ENABLE_BIGINT
-    case ParseNodeKind::BigInt:
+    case ParseNodeKind::BigIntExpr:
 #endif
     case ParseNodeKind::NewExpr:
     case ParseNodeKind::Generator:
@@ -468,7 +468,7 @@ static bool IsEffectless(ParseNode* node) {
          node->isKind(ParseNodeKind::TemplateStringExpr) ||
          node->isKind(ParseNodeKind::NumberExpr) ||
 #ifdef ENABLE_BIGINT
-         node->isKind(ParseNodeKind::BigInt) ||
+         node->isKind(ParseNodeKind::BigIntExpr) ||
 #endif
          node->isKind(ParseNodeKind::NullExpr) ||
          node->isKind(ParseNodeKind::RawUndefinedExpr) ||
@@ -486,9 +486,9 @@ static Truthiness Boolish(ParseNode* pn) {
                  : Falsy;
 
 #ifdef ENABLE_BIGINT
-    case ParseNodeKind::BigInt:
-      return (pn->as<BigIntLiteral>().box()->value()->toBoolean()) ? Truthy
-                                                                   : Falsy;
+    case ParseNodeKind::BigIntExpr:
+      return (pn->as<BigIntLiteral>().box()->value()->isZero()) ? Falsy
+                                                                : Truthy;
 #endif
 
     case ParseNodeKind::StringExpr:
@@ -562,7 +562,7 @@ static bool FoldTypeOfExpr(JSContext* cx, UnaryNode* node) {
     result = cx->names().number;
   }
 #ifdef ENABLE_BIGINT
-  else if (expr->isKind(ParseNodeKind::BigInt)) {
+  else if (expr->isKind(ParseNodeKind::BigIntExpr)) {
     result = cx->names().bigint;
   }
 #endif
@@ -1442,6 +1442,49 @@ class FoldVisitor : public ParseNodeVisitor<FoldVisitor> {
     }
 
     return Base::visitFunction(pn);
+  }
+
+  bool visitArrayExpr(ParseNode*& pn) {
+    if (!Base::visitArrayExpr(pn)) {
+      return false;
+    }
+
+    ListNode* list = &pn->as<ListNode>();
+    // Empty arrays are non-constant, since we cannot easily determine their
+    // type.
+    if (list->hasNonConstInitializer() && list->count() > 0) {
+      for (ParseNode* node : list->contents()) {
+        if (!node->isConstant()) {
+          return true;
+        }
+      }
+      list->unsetHasNonConstInitializer();
+    }
+    return true;
+  }
+
+  bool visitObjectExpr(ParseNode*& pn) {
+    if (!Base::visitObjectExpr(pn)) {
+      return false;
+    }
+
+    ListNode* list = &pn->as<ListNode>();
+    if (list->hasNonConstInitializer()) {
+      for (ParseNode* node : list->contents()) {
+        if (node->getKind() != ParseNodeKind::Colon) {
+          return true;
+        }
+        BinaryNode* binary = &node->as<BinaryNode>();
+        if (binary->left()->isKind(ParseNodeKind::ComputedName)) {
+          return true;
+        }
+        if (!binary->right()->isConstant()) {
+          return true;
+        }
+      }
+      list->unsetHasNonConstInitializer();
+    }
+    return true;
   }
 };
 

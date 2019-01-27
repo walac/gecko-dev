@@ -251,6 +251,8 @@ scheme host and port.""")
                              help="Run tests without electrolysis preferences")
     gecko_group.add_argument("--stackfix-dir", dest="stackfix_dir", action="store",
                              help="Path to directory containing assertion stack fixing scripts")
+    gecko_group.add_argument("--lsan-dir", dest="lsan_dir", action="store",
+                             help="Path to directory containing LSAN suppressions file")
     gecko_group.add_argument("--setpref", dest="extra_prefs", action='append',
                              default=[], metavar="PREF=VALUE",
                              help="Defines an extra user preference (overrides those in prefs_root)")
@@ -266,7 +268,7 @@ scheme host and port.""")
     gecko_group.add_argument("--reftest-external", dest="reftest_internal", action="store_false",
                              help="Disable reftest runner implemented inside Marionette")
     gecko_group.add_argument("--reftest-screenshot", dest="reftest_screenshot", action="store",
-                             choices=["always", "fail", "unexpected"], default="unexpected",
+                             choices=["always", "fail", "unexpected"], default=None,
                              help="With --reftest-internal, when to take a screenshot")
     gecko_group.add_argument("--chaos", dest="chaos_mode_flags", action="store",
                              nargs="?", const=0xFFFFFFFF, type=int,
@@ -524,6 +526,12 @@ def check_args(kwargs):
 
     if kwargs["reftest_internal"] is None:
         kwargs["reftest_internal"] = True
+
+    if kwargs["lsan_dir"] is None:
+        kwargs["lsan_dir"] = kwargs["prefs_root"]
+
+    if kwargs["reftest_screenshot"] is None:
+        kwargs["reftest_screenshot"] = "unexpected"
 
     return kwargs
 

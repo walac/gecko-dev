@@ -197,6 +197,10 @@ var dataProviders = {
       }
     }
 
+    try {
+      data.launcherProcessState = Services.appinfo.launcherProcessState;
+    } catch (e) {}
+
     data.remoteAutoStart = Services.appinfo.browserTabsRemoteAutostart;
 
     // Services.ppmm.childCount is a count of how many processes currently
@@ -237,8 +241,8 @@ var dataProviders = {
         return b.isActive ? 1 : -1;
 
       // In some unfortunate cases addon names can be null.
-      let aname = a.name || null;
-      let bname = b.name || null;
+      let aname = a.name || "";
+      let bname = b.name || "";
       let lc = aname.localeCompare(bname);
       if (lc != 0)
         return lc;

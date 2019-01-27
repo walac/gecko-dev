@@ -22,7 +22,7 @@
 #include "js/CharacterEncoding.h"
 #include "js/StableStringChars.h"
 #ifdef ENABLE_BIGINT
-#include "vm/BigIntType.h"
+#  include "vm/BigIntType.h"
 #endif
 #include "vm/JSAtom.h"
 #include "vm/JSObject.h"
@@ -3126,7 +3126,7 @@ bool ASTSerializer::literal(ParseNode* pn, MutableHandleValue dst) {
       break;
 
 #ifdef ENABLE_BIGINT
-    case ParseNodeKind::BigInt: {
+    case ParseNodeKind::BigIntExpr: {
       BigInt* x = pn->as<BigIntLiteral>().box()->value();
       cx->check(x);
       val.setBigInt(x);

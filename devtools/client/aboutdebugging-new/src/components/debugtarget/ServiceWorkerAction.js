@@ -11,6 +11,8 @@ const { connect } = require("devtools/client/shared/vendor/react-redux");
 
 const FluentReact = require("devtools/client/shared/vendor/fluent-react");
 
+const { getCurrentRuntimeDetails } = require("../../modules/runtimes-state-helper");
+
 const InspectAction = createFactory(require("./InspectAction"));
 
 const Actions = require("../../actions/index");
@@ -26,7 +28,7 @@ class ServiceWorkerAction extends PureComponent {
       // Provided by wrapping the component with FluentReact.withLocalization.
       getString: PropTypes.func.isRequired,
       // Provided by redux state
-      isMultiE10s: PropTypes.bool.isRequired,
+      runtimeDetails: Types.runtimeDetails.isRequired,
       target: Types.debugTarget.isRequired,
     };
   }
@@ -38,17 +40,18 @@ class ServiceWorkerAction extends PureComponent {
 
   start() {
     const { dispatch, target } = this.props;
-    dispatch(Actions.startServiceWorker(target.details.registrationActor));
+    dispatch(Actions.startServiceWorker(target.details.registrationFront));
   }
 
   _renderAction() {
-    const { dispatch, isMultiE10s, target } = this.props;
+    const { dispatch, runtimeDetails, target } = this.props;
     const { isActive, isRunning } = target.details;
+    const { isMultiE10s } = runtimeDetails;
 
     if (!isRunning) {
       const startLabel = this.props.getString("about-debugging-worker-action-start");
       return this._renderButton({
-        className: "default-button",
+        className: "default-button js-start-button",
         disabled: isMultiE10s,
         label: startLabel,
         onClick: this.start.bind(this),
@@ -95,7 +98,7 @@ class ServiceWorkerAction extends PureComponent {
 
 const mapStateToProps = state => {
   return {
-    isMultiE10s: state.ui.isMultiE10s,
+    runtimeDetails: getCurrentRuntimeDetails(state.runtimes),
   };
 };
 

@@ -6,6 +6,7 @@
 
 #include "mozilla/net/UrlClassifierCommon.h"
 
+#include "mozilla/AntiTrackingCommon.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/StaticPrefs.h"
 #include "mozIThirdPartyUtil.h"
@@ -59,20 +60,22 @@ LazyLogModule UrlClassifierCommon::sLog("nsChannelClassifier");
     return;
   }
 
-  NotifyChannelBlocked(aChannel,
+  nsCOMPtr<nsIURI> uriBeingLoaded =
+      AntiTrackingCommon::MaybeGetDocumentURIBeingLoaded(aChannel);
+  NotifyChannelBlocked(aChannel, uriBeingLoaded,
                        nsIWebProgressListener::STATE_LOADED_TRACKING_CONTENT);
 }
 
 /* static */ void UrlClassifierCommon::NotifyChannelBlocked(
-    nsIChannel* aChannel, unsigned aBlockedReason) {
+    nsIChannel* aChannel, nsIURI* aURIBeingLoaded, unsigned aBlockedReason) {
   nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil = services::GetThirdPartyUtil();
   if (NS_WARN_IF(!thirdPartyUtil)) {
     return;
   }
 
   nsCOMPtr<mozIDOMWindowProxy> win;
-  nsresult rv =
-      thirdPartyUtil->GetTopWindowForChannel(aChannel, getter_AddRefs(win));
+  nsresult rv = thirdPartyUtil->GetTopWindowForChannel(
+      aChannel, aURIBeingLoaded, getter_AddRefs(win));
   NS_ENSURE_SUCCESS_VOID(rv);
   auto* pwin = nsPIDOMWindowOuter::From(win);
   nsCOMPtr<nsIDocShell> docShell = pwin->GetDocShell();
@@ -84,16 +87,17 @@ LazyLogModule UrlClassifierCommon::sLog("nsChannelClassifier");
 
   nsCOMPtr<nsIURI> uri;
   aChannel->GetURI(getter_AddRefs(uri));
-  pwin->NotifyContentBlockingState(aBlockedReason, aChannel, true, uri);
+  pwin->NotifyContentBlockingEvent(aBlockedReason, aChannel, true, uri);
 }
 
-/* static */ bool
-UrlClassifierCommon::ShouldEnableTrackingProtectionOrAnnotation(
+/* static */ bool UrlClassifierCommon::ShouldEnableClassifier(
     nsIChannel* aChannel,
     AntiTrackingCommon::ContentBlockingAllowListPurpose aBlockingPurpose) {
   MOZ_ASSERT(aChannel);
   MOZ_ASSERT(aBlockingPurpose == AntiTrackingCommon::eTrackingProtection ||
-             aBlockingPurpose == AntiTrackingCommon::eTrackingAnnotations);
+             aBlockingPurpose == AntiTrackingCommon::eTrackingAnnotations ||
+             aBlockingPurpose == AntiTrackingCommon::eFingerprinting ||
+             aBlockingPurpose == AntiTrackingCommon::eCryptomining);
 
   nsCOMPtr<nsIHttpChannelInternal> channel = do_QueryInterface(aChannel);
   if (!channel) {
@@ -205,8 +209,11 @@ UrlClassifierCommon::ShouldEnableTrackingProtectionOrAnnotation(
     return NS_OK;
   }
 
+  nsCOMPtr<nsIURI> uriBeingLoaded =
+      AntiTrackingCommon::MaybeGetDocumentURIBeingLoaded(channel);
   nsCOMPtr<mozIDOMWindowProxy> win;
-  rv = thirdPartyUtil->GetTopWindowForChannel(channel, getter_AddRefs(win));
+  rv = thirdPartyUtil->GetTopWindowForChannel(channel, uriBeingLoaded,
+                                              getter_AddRefs(win));
   NS_ENSURE_SUCCESS(rv, NS_OK);
   auto* pwin = nsPIDOMWindowOuter::From(win);
   nsCOMPtr<nsIDocShell> docShell = pwin->GetDocShell();
@@ -223,7 +230,7 @@ UrlClassifierCommon::ShouldEnableTrackingProtectionOrAnnotation(
     state = nsIWebProgressListener::STATE_BLOCKED_UNSAFE_CONTENT;
   }
 
-  UrlClassifierCommon::NotifyChannelBlocked(channel, state);
+  UrlClassifierCommon::NotifyChannelBlocked(channel, uriBeingLoaded, state);
 
   // Log a warning to the web console.
   nsCOMPtr<nsIURI> uri;

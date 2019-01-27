@@ -27,6 +27,7 @@ function createClientMock() {
     _eventEmitter: eventEmitter,
     _preferences: {},
     contentProcessFronts: [],
+    serviceWorkerRegistrationFronts: [],
     addOneTimeListener: (evt, listener) => {
       eventEmitter.once(evt, listener);
     },
@@ -48,9 +49,10 @@ function createClientMock() {
         eventEmitter.off(evt, listener);
       },
     },
-
     // no-op
     close: () => {},
+    // client is not closed
+    isClosed: () => false,
     // no-op
     connect: () => {},
     // no-op
@@ -75,6 +77,8 @@ function createClientMock() {
       serviceWorkers: [],
       sharedWorkers: [],
     }),
+    // no-op
+    getFront: () => {},
     // no-op
     onFront: () => {},
     // stores the preference locally (doesn't update about:config)

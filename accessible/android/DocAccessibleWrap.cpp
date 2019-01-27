@@ -133,10 +133,18 @@ void DocAccessibleWrap::CacheViewportCallback(nsITimer* aTimer,
       auto uid = accessible->IsDoc() && accessible->AsDoc()->IPCDoc()
                      ? 0
                      : reinterpret_cast<uint64_t>(accessible->UniqueID());
+
+      nsAutoString name;
+      accessible->Name(name);
+      nsAutoString textValue;
+      accessible->Value(textValue);
+      nsAutoString nodeID;
+      static_cast<AccessibleWrap*>(accessible)->WrapperDOMNodeID(nodeID);
+
       cacheData.AppendElement(
           BatchData(accessible->Document()->IPCDoc(), uid, accessible->State(),
-                    accessible->Bounds(), accessible->ActionCount(), nsString(),
-                    nsString(), nsString(), UnspecifiedNaN<double>(),
+                    accessible->Bounds(), accessible->ActionCount(), name,
+                    textValue, nodeID, UnspecifiedNaN<double>(),
                     UnspecifiedNaN<double>(), UnspecifiedNaN<double>(),
                     UnspecifiedNaN<double>(), nsTArray<Attribute>()));
     }
@@ -251,8 +259,13 @@ void DocAccessibleWrap::UpdateFocusPathBounds() {
                  SessionAccessibility::GetInstanceFor(this)) {
     nsTArray<AccessibleWrap*> accessibles(mFocusPath.Count());
     for (auto iter = mFocusPath.Iter(); !iter.Done(); iter.Next()) {
-      accessibles.AppendElement(
-          static_cast<AccessibleWrap*>(iter.Data().get()));
+      Accessible* accessible = iter.Data();
+      if (!accessible || accessible->IsDefunct()) {
+        MOZ_ASSERT_UNREACHABLE("Focus path cached accessible is gone.");
+        continue;
+      }
+
+      accessibles.AppendElement(static_cast<AccessibleWrap*>(accessible));
     }
 
     sessionAcc->UpdateCachedBounds(accessibles);

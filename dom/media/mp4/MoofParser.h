@@ -185,6 +185,10 @@ class Sbgp final : public Atom  // SampleToGroup box.
   Result<Ok, nsresult> Parse(Box& aBox);
 };
 
+// Stores information form CencSampleEncryptionInformationGroupEntry (seig).
+// Cenc here refers to the common encryption standard, rather than the specific
+// cenc scheme from that standard. This structure is used for all encryption
+// schemes. I.e. it is used for both cenc and cbcs, not just cenc.
 struct CencSampleEncryptionInfoEntry final {
  public:
   CencSampleEncryptionInfoEntry() {}
@@ -194,6 +198,9 @@ struct CencSampleEncryptionInfoEntry final {
   bool mIsEncrypted = false;
   uint8_t mIVSize = 0;
   nsTArray<uint8_t> mKeyId;
+  uint8_t mCryptByteBlock = 0;
+  uint8_t mSkipByteBlock = 0;
+  nsTArray<uint8_t> mConsantIV;
 };
 
 class Sgpd final : public Atom  // SampleGroupDescription box.
@@ -220,7 +227,8 @@ struct SampleDescriptionEntry {
 class Moof final : public Atom {
  public:
   Moof(Box& aBox, Trex& aTrex, Mvhd& aMvhd, Mdhd& aMdhd, Edts& aEdts,
-       Sinf& aSinf, uint64_t* aDecoderTime, bool aIsAudio);
+       Sinf& aSinf, uint64_t* aDecoderTime, bool aIsAudio,
+       bool aIsMultitrackParser);
   bool GetAuxInfo(AtomType aType, FallibleTArray<MediaByteRange>* aByteRanges);
   void FixRounding(const Moof& aMoof);
 
@@ -241,12 +249,19 @@ class Moof final : public Atom {
  private:
   // aDecodeTime is updated to the end of the parsed TRAF on return.
   void ParseTraf(Box& aBox, Trex& aTrex, Mvhd& aMvhd, Mdhd& aMdhd, Edts& aEdts,
-                 Sinf& aSinf, uint64_t* aDecodeTime, bool aIsAudio);
+                 Sinf& aSinf, uint64_t* aDecodeTime, bool aIsAudio,
+                 bool aIsMultitrackParser);
   // aDecodeTime is updated to the end of the parsed TRUN on return.
   Result<Ok, nsresult> ParseTrun(Box& aBox, Mvhd& aMvhd, Mdhd& aMdhd,
                                  Edts& aEdts, uint64_t* aDecodeTime,
                                  bool aIsAudio);
-  bool ProcessCenc();
+  // Process the sample auxiliary information used by common encryption.
+  // aScheme is used to select the appropriate auxiliary information and should
+  // be set based on the encryption scheme used by the track being processed.
+  // Note, the term cenc here refers to the standard, not the specific scheme
+  // from that standard. I.e. this function is used to handle up auxiliary
+  // information from the cenc and cbcs schemes.
+  bool ProcessCencAuxInfo(AtomType aScheme);
   uint64_t mMaxRoundingError;
 };
 
@@ -254,14 +269,18 @@ DDLoggedTypeDeclName(MoofParser);
 
 class MoofParser : public DecoderDoctorLifeLogger<MoofParser> {
  public:
-  MoofParser(ByteStream* aSource, uint32_t aTrackId, bool aIsAudio)
+  MoofParser(ByteStream* aSource, uint32_t aTrackId, bool aIsAudio,
+             bool aIsMultitrackParser = false)
       : mSource(aSource),
         mOffset(0),
         mTrex(aTrackId),
         mIsAudio(aIsAudio),
-        mLastDecodeTime(0) {
-    // Setting the mTrex.mTrackId to 0 is a nasty work around for calculating
-    // the composition range for MSE. We need an array of tracks.
+        mLastDecodeTime(0),
+        mIsMultitrackParser(aIsMultitrackParser) {
+    // Setting mIsMultitrackParser is a nasty work around for calculating
+    // the composition range for MSE that causes the parser to parse multiple
+    // tracks. Ideally we'd store an array of tracks with different metadata
+    // for each.
     DDLINKCHILD("source", aSource);
   }
   bool RebuildFragmentedIndex(const mozilla::MediaByteRangeSet& aByteRanges);
@@ -313,6 +332,7 @@ class MoofParser : public DecoderDoctorLifeLogger<MoofParser> {
   nsTArray<MediaByteRange> mMediaRanges;
   bool mIsAudio;
   uint64_t mLastDecodeTime;
+  bool mIsMultitrackParser;
 };
 }  // namespace mozilla
 

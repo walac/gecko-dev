@@ -1236,7 +1236,8 @@ static MOZ_MUST_USE bool NewPromiseCapability(
   // For Promise.all and Promise.race we can only optimize away the creation
   // of the GetCapabilitiesExecutor function, and directly allocate the
   // result promise instead of invoking the Promise constructor.
-  if (IsNativeFunction(cVal, PromiseConstructor)) {
+  if (IsNativeFunction(cVal, PromiseConstructor) &&
+      cVal.toObject().nonCCWRealm() == cx->realm()) {
     PromiseObject* promise;
     if (canOmitResolutionFunctions) {
       promise = CreatePromiseObjectWithoutResolutionFunctions(cx);
@@ -2100,7 +2101,8 @@ static bool PromiseConstructor(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
   } else {
-    if (!GetPrototypeFromBuiltinConstructor(cx, args, &proto)) {
+    if (!GetPrototypeFromBuiltinConstructor(cx, args, JSProto_Promise,
+                                            &proto)) {
       return false;
     }
   }
@@ -4064,7 +4066,8 @@ static bool Promise_catch_impl(JSContext* cx, unsigned argc, Value* vp,
     return false;
   }
 
-  if (IsNativeFunction(thenVal, &Promise_then)) {
+  if (IsNativeFunction(thenVal, &Promise_then) &&
+      thenVal.toObject().nonCCWRealm() == cx->realm()) {
     return Promise_then_impl(cx, thisVal, onFulfilled, onRejected, args.rval(),
                              rvalUsed);
   }
@@ -4695,7 +4698,7 @@ void js::PromiseLookup::initialize(JSContext* cx) {
 }
 
 void js::PromiseLookup::reset() {
-  JS_POISON(this, 0xBB, sizeof(*this), MemCheckKind::MakeUndefined);
+  AlwaysPoison(this, 0xBB, sizeof(*this), MemCheckKind::MakeUndefined);
   state_ = State::Uninitialized;
 }
 

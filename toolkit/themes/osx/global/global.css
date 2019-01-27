@@ -11,12 +11,6 @@
 
 %include ../../shared/global.inc.css
 
-/* ::::: XBL bindings ::::: */
-
-menulist > menupopup {
-  -moz-binding: url("chrome://global/content/bindings/popup.xml#popup-scrollbars");
-}
-
 /* ::::: Variables ::::: */
 :root {
   --arrowpanel-padding: 16px;
@@ -109,19 +103,6 @@ sidebarheader {
 
 :root[lwtheme-image]:-moz-lwtheme-brighttext {
   text-shadow: 1px 1px 1.5px black;
-}
-
-.inset {
-  border: 1px solid ThreeDShadow;
-  border-right-color: ThreeDHighlight;
-  border-bottom-color: ThreeDHighlight;
-  margin: 0 5px 5px;
-}
-
-.outset {
-  border: 1px solid ThreeDShadow;
-  border-left-color: ThreeDHighlight;
-  border-top-color: ThreeDHighlight;
 }
 
 separator:not([orient="vertical"]) {

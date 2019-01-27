@@ -8,13 +8,14 @@
 #include "vm/TypedArrayObject.h"
 
 #include "mozilla/Alignment.h"
+#include "mozilla/CheckedInt.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/TextUtils.h"
 
 #include <string.h>
 #ifndef XP_WIN
-#include <sys/mman.h>
+#  include <sys/mman.h>
 #endif
 
 #include "jsapi.h"
@@ -55,6 +56,7 @@ using namespace js;
 using JS::CanonicalizeNaN;
 using JS::ToInt32;
 using JS::ToUint32;
+using mozilla::CheckedUint32;
 using mozilla::IsAsciiDigit;
 
 /*
@@ -75,6 +77,7 @@ using mozilla::IsAsciiDigit;
     return true;
   }
 
+  AutoRealm ar(cx, tarray);
   Rooted<ArrayBufferObject*> buffer(
       cx, ArrayBufferObject::create(cx, tarray->byteLength()));
   if (!buffer) {
@@ -159,9 +162,15 @@ void TypedArrayObject::finalize(FreeOp* fop, JSObject* obj) {
     return 0;
   }
 
-  Nursery& nursery = obj->runtimeFromMainThread()->gc.nursery();
   void* buf = oldObj->elements();
 
+  // Discarded objects (which didn't have enough room for inner elements) don't
+  // have any data to move.
+  if (!buf) {
+    return 0;
+  }
+
+  Nursery& nursery = obj->runtimeFromMainThread()->gc.nursery();
   if (!nursery.isInside(buf)) {
     nursery.removeMallocedBuffer(buf);
     return 0;
@@ -190,6 +199,9 @@ void TypedArrayObject::finalize(FreeOp* fop, JSObject* obj) {
     newObj->setInlineElements();
   } else {
     MOZ_ASSERT(!oldObj->hasInlineElements());
+    MOZ_ASSERT((CheckedUint32(nbytes) + sizeof(Value)).isValid(),
+               "JS_ROUNDUP must not overflow");
+
     AutoEnterOOMUnsafeRegion oomUnsafe;
     nbytes = JS_ROUNDUP(nbytes, sizeof(Value));
     void* data = newObj->zone()->pod_malloc<uint8_t>(
@@ -273,6 +285,10 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
   static constexpr Scalar::Type ArrayTypeID() {
     return TypeIDOfType<NativeType>::id;
   }
+  static constexpr JSProtoKey protoKey() {
+    return TypeIDOfType<NativeType>::protoKey;
+  }
+
   static constexpr bool ArrayTypeIsUnsigned() {
     return TypeIsUnsigned<NativeType>();
   }
@@ -347,6 +363,14 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     }
   }
 
+  static TypedArrayObject* newBuiltinClassInstance(JSContext* cx,
+                                                   gc::AllocKind allocKind,
+                                                   NewObjectKind newKind) {
+    JSObject* obj =
+        NewBuiltinClassInstance(cx, instanceClass(), allocKind, newKind);
+    return obj ? &obj->as<TypedArrayObject>() : nullptr;
+  }
+
   static TypedArrayObject* makeProtoInstance(JSContext* cx, HandleObject proto,
                                              gc::AllocKind allocKind) {
     MOZ_ASSERT(proto);
@@ -359,35 +383,24 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
   static TypedArrayObject* makeTypedInstance(JSContext* cx,
                                              CreateSingleton createSingleton,
                                              gc::AllocKind allocKind) {
-    const Class* clasp = instanceClass();
     if (createSingleton == CreateSingleton::Yes) {
-      JSObject* obj =
-          NewBuiltinClassInstance(cx, clasp, allocKind, SingletonObject);
-      if (!obj) {
-        return nullptr;
-      }
-      return &obj->as<TypedArrayObject>();
+      return newBuiltinClassInstance(cx, allocKind, SingletonObject);
     }
 
     jsbytecode* pc;
     RootedScript script(cx, cx->currentScript(&pc));
-    NewObjectKind newKind = GenericObject;
-    if (script &&
-        ObjectGroup::useSingletonForAllocationSite(script, pc, clasp)) {
-      newKind = SingletonObject;
-    }
-    RootedObject obj(cx,
-                     NewBuiltinClassInstance(cx, clasp, allocKind, newKind));
+    Rooted<TypedArrayObject*> obj(
+        cx, newBuiltinClassInstance(cx, allocKind, GenericObject));
     if (!obj) {
       return nullptr;
     }
 
     if (script && !ObjectGroup::setAllocationSiteObjectGroup(
-                      cx, script, pc, obj, newKind == SingletonObject)) {
+                      cx, script, pc, obj, /* singleton = */ false)) {
       return nullptr;
     }
 
-    return &obj->as<TypedArrayObject>();
+    return obj;
   }
 
   static TypedArrayObject* makeInstance(
@@ -405,8 +418,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     // it isn't, we can do some more TI optimizations.
     RootedObject checkProto(cx);
     if (proto) {
-      checkProto = GlobalObject::getOrCreatePrototype(
-          cx, JSCLASS_CACHED_PROTO_KEY(instanceClass()));
+      checkProto = GlobalObject::getOrCreatePrototype(cx, protoKey());
       if (!checkProto) {
         return nullptr;
       }
@@ -431,25 +443,19 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     size_t nbytes;
     MOZ_ALWAYS_TRUE(CalculateAllocSize<NativeType>(len, &nbytes));
     MOZ_ASSERT(nbytes < TypedArrayObject::SINGLETON_BYTE_LENGTH);
-    NewObjectKind newKind = TenuredObject;
     bool fitsInline = nbytes <= INLINE_BUFFER_LIMIT;
-    const Class* clasp = instanceClass();
-    gc::AllocKind allocKind = !fitsInline ? gc::GetGCObjectKind(clasp)
+    gc::AllocKind allocKind = !fitsInline ? gc::GetGCObjectKind(instanceClass())
                                           : AllocKindForLazyBuffer(nbytes);
 
     AutoSetNewObjectMetadata metadata(cx);
     jsbytecode* pc;
     RootedScript script(cx, cx->currentScript(&pc));
-    if (script &&
-        ObjectGroup::useSingletonForAllocationSite(script, pc, clasp)) {
-      newKind = SingletonObject;
-    }
-    JSObject* tmp = NewBuiltinClassInstance(cx, clasp, allocKind, newKind);
-    if (!tmp) {
+    Rooted<TypedArrayObject*> tarray(
+        cx, newBuiltinClassInstance(cx, allocKind, TenuredObject));
+    if (!tarray) {
       return nullptr;
     }
 
-    Rooted<TypedArrayObject*> tarray(cx, &tmp->as<TypedArrayObject>());
     initTypedArraySlots(tarray, len);
 
     // Template objects do not need memory for its elements, since there
@@ -458,7 +464,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     tarray->initPrivate(nullptr);
 
     if (script && !ObjectGroup::setAllocationSiteObjectGroup(
-                      cx, script, pc, tarray, newKind == SingletonObject)) {
+                      cx, script, pc, tarray, /* singleton = */ false)) {
       return nullptr;
     }
 
@@ -482,15 +488,9 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
 #endif
   }
 
-  static void initTypedArrayData(JSContext* cx, TypedArrayObject* tarray,
-                                 int32_t len, void* buf,
-                                 gc::AllocKind allocKind) {
+  static void initTypedArrayData(TypedArrayObject* tarray, int32_t len,
+                                 void* buf, gc::AllocKind allocKind) {
     if (buf) {
-#ifdef DEBUG
-      Nursery& nursery = cx->nursery();
-      MOZ_ASSERT_IF(!nursery.isInside(buf) && !tarray->hasInlineElements(),
-                    tarray->isTenured());
-#endif
       tarray->initPrivate(buf);
     } else {
       size_t nbytes = len * BYTES_PER_ELEMENT;
@@ -524,25 +524,30 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     RootedObjectGroup group(cx, templateObj->group());
     MOZ_ASSERT(group->clasp() == instanceClass());
 
-    NewObjectKind newKind = TenuredObject;
-
-    UniquePtr<void, JS::FreePolicy> buf;
-    if (!fitsInline) {
-      MOZ_ASSERT(len > 0);
-      buf.reset(cx->pod_calloc<uint8_t>(nbytes, js::ArrayBufferContentsArena));
-      if (!buf) {
-        return nullptr;
-      }
-    }
-
     TypedArrayObject* obj =
-        NewObjectWithGroup<TypedArrayObject>(cx, group, allocKind, newKind);
+        NewObjectWithGroup<TypedArrayObject>(cx, group, allocKind);
     if (!obj) {
       return nullptr;
     }
 
     initTypedArraySlots(obj, len);
-    initTypedArrayData(cx, obj, len, buf.release(), allocKind);
+
+    void* buf = nullptr;
+    if (!fitsInline) {
+      MOZ_ASSERT(len > 0);
+      MOZ_ASSERT((CheckedUint32(nbytes) + sizeof(Value)).isValid(),
+                 "JS_ROUNDUP must not overflow");
+
+      nbytes = JS_ROUNDUP(nbytes, sizeof(Value));
+      buf = cx->nursery().allocateZeroedBuffer(obj, nbytes,
+                                               js::ArrayBufferContentsArena);
+      if (!buf) {
+        ReportOutOfMemory(cx);
+        return nullptr;
+      }
+    }
+
+    initTypedArrayData(obj, len, buf, allocKind);
 
     return obj;
   }
@@ -585,7 +590,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
       // 22.2.4.1, step 3 and 22.2.4.2, step 5.
       // 22.2.4.2.1 AllocateTypedArray, step 1.
       RootedObject proto(cx);
-      if (!GetPrototypeFromBuiltinConstructor(cx, args, &proto)) {
+      if (!GetPrototypeFromBuiltinConstructor(cx, args, protoKey(), &proto)) {
         return nullptr;
       }
 
@@ -597,7 +602,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     // 22.2.4.{3,4,5}, step 4.
     // 22.2.4.2.1 AllocateTypedArray, step 1.
     RootedObject proto(cx);
-    if (!GetPrototypeFromBuiltinConstructor(cx, args, &proto)) {
+    if (!GetPrototypeFromBuiltinConstructor(cx, args, protoKey(), &proto)) {
       return nullptr;
     }
 
@@ -772,8 +777,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     // this compartment.
     RootedObject protoRoot(cx, proto);
     if (!protoRoot) {
-      protoRoot = GlobalObject::getOrCreatePrototype(
-          cx, JSCLASS_CACHED_PROTO_KEY(instanceClass()));
+      protoRoot = GlobalObject::getOrCreatePrototype(cx, protoKey());
       if (!protoRoot) {
         return nullptr;
       }
@@ -946,19 +950,8 @@ template <typename T>
   // As an optimization, skip the "prototype" lookup for %ArrayBuffer%.
   if (ctor != arrayBufferCtor) {
     // 9.1.13 OrdinaryCreateFromConstructor, steps 1-2.
-    if (!GetPrototypeFromConstructor(cx, ctor, &proto)) {
+    if (!GetPrototypeFromConstructor(cx, ctor, JSProto_ArrayBuffer, &proto)) {
       return false;
-    }
-
-    JSObject* arrayBufferProto =
-        GlobalObject::getOrCreateArrayBufferPrototype(cx, cx->global());
-    if (!arrayBufferProto) {
-      return false;
-    }
-
-    // Reset |proto| if it's the default %ArrayBufferPrototype%.
-    if (proto == arrayBufferProto) {
-      proto = nullptr;
     }
   }
 
@@ -1073,12 +1066,13 @@ template <typename T>
       return nullptr;
     }
 
-    JSAutoRealm ar(cx, unwrapped);
-
     srcArray = &unwrapped->as<TypedArrayObject>();
+  }
 
-    // To keep things simpler, we always reify the array buffer for
-    // wrapped typed arrays.
+  // To keep things simpler, we always reify the array buffer for cross-realm or
+  // wrapped typed arrays. Note: isWrapped does not imply cross-realm, because
+  // of same-compartment wrappers.
+  if (cx->realm() != srcArray->realm() || isWrapped) {
     if (!TypedArrayObject::ensureHasBuffer(cx, srcArray)) {
       return nullptr;
     }

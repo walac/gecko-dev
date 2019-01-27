@@ -1841,10 +1841,6 @@ IonBuilder::InliningResult IonBuilder::inlineStringSplitString(
   if (!group) {
     return InliningStatus_NotInlined;
   }
-  AutoSweepObjectGroup sweep(group);
-  if (group->maybePreliminaryObjects(sweep)) {
-    return InliningStatus_NotInlined;
-  }
 
   TypeSet::ObjectKey* retKey = TypeSet::ObjectKey::get(group);
   if (retKey->unknownProperties()) {
@@ -2806,8 +2802,7 @@ IonBuilder::InliningResult IonBuilder::inlineGuardToClass(CallInfo& callInfo,
     return InliningStatus_NotInlined;
   }
 
-  if (getInlineReturnType() != MIRType::ObjectOrNull &&
-      getInlineReturnType() != MIRType::Object) {
+  if (getInlineReturnType() != MIRType::Object) {
     return InliningStatus_NotInlined;
   }
 
@@ -2818,8 +2813,8 @@ IonBuilder::InliningResult IonBuilder::inlineGuardToClass(CallInfo& callInfo,
   if (knownClass && knownClass == clasp) {
     current->push(callInfo.getArg(0));
   } else {
-    MGuardToClass* guardToClass = MGuardToClass::New(
-        alloc(), callInfo.getArg(0), clasp, getInlineReturnType());
+    MGuardToClass* guardToClass =
+        MGuardToClass::New(alloc(), callInfo.getArg(0), clasp);
     current->add(guardToClass);
     current->push(guardToClass);
   }

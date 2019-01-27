@@ -38,9 +38,9 @@
 #include "UnitTransforms.h"          // for TransformTo
 #include "gfxPrefs.h"
 #if defined(MOZ_WIDGET_ANDROID)
-#include <android/log.h>
-#include "mozilla/layers/UiCompositorControllerParent.h"
-#include "mozilla/widget/AndroidCompositorWidget.h"
+#  include <android/log.h>
+#  include "mozilla/layers/UiCompositorControllerParent.h"
+#  include "mozilla/widget/AndroidCompositorWidget.h"
 #endif
 #include "GeckoProfiler.h"
 #include "FrameUniformityData.h"
@@ -1004,6 +1004,9 @@ bool AsyncCompositionManager::ApplyAsyncContentTransformToTree(
                     if (RefPtr<UiCompositorControllerParent> uiController =
                             UiCompositorControllerParent::
                                 GetFromRootLayerTreeId(rootLayerTreeId)) {
+                      if (!animator) {
+                        uiController->NotifyUpdateScreenMetrics(metrics);
+                      }
                       uiController->NotifyFirstPaint();
                     }
                     mIsFirstPaint = false;

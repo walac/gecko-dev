@@ -50,8 +50,8 @@
 #include "nsString.h"               // for nsAutoString
 #include "nsQueryObject.h"          // for do_QueryObject
 #ifdef HANDLE_NATIVE_TEXT_DIRECTION_SWITCH
-#include "nsContentUtils.h"   // for nsContentUtils, etc.
-#include "nsIBidiKeyboard.h"  // for nsIBidiKeyboard
+#  include "nsContentUtils.h"   // for nsContentUtils, etc.
+#  include "nsIBidiKeyboard.h"  // for nsIBidiKeyboard
 #endif
 
 #include "mozilla/dom/TabParent.h"
@@ -169,15 +169,12 @@ nsresult EditorEventListener::InstallToEditor() {
                                TrustedEventsAtCapture());
   elmP->AddEventListenerByType(this, NS_LITERAL_STRING("click"),
                                TrustedEventsAtCapture());
-  // Focus event doesn't bubble so adding the listener to capturing phase.
-  // XXX Should we listen focus/blur events of system group too? Or should
-  //     editor notified focus/blur of the element from nsFocusManager
-  //     directly?  Because if the event propagation is stopped by JS,
-  //     editor cannot initialize selection as expected.
+  // Focus event doesn't bubble so adding the listener to capturing phase as
+  // system event group.
   elmP->AddEventListenerByType(this, NS_LITERAL_STRING("blur"),
-                               TrustedEventsAtCapture());
+                               TrustedEventsAtSystemGroupCapture());
   elmP->AddEventListenerByType(this, NS_LITERAL_STRING("focus"),
-                               TrustedEventsAtCapture());
+                               TrustedEventsAtSystemGroupCapture());
   elmP->AddEventListenerByType(this, NS_LITERAL_STRING("text"),
                                TrustedEventsAtSystemGroupBubble());
   elmP->AddEventListenerByType(this, NS_LITERAL_STRING("compositionstart"),
@@ -243,9 +240,9 @@ void EditorEventListener::UninstallFromEditor() {
   elmP->RemoveEventListenerByType(this, NS_LITERAL_STRING("click"),
                                   TrustedEventsAtCapture());
   elmP->RemoveEventListenerByType(this, NS_LITERAL_STRING("blur"),
-                                  TrustedEventsAtCapture());
+                                  TrustedEventsAtSystemGroupCapture());
   elmP->RemoveEventListenerByType(this, NS_LITERAL_STRING("focus"),
-                                  TrustedEventsAtCapture());
+                                  TrustedEventsAtSystemGroupCapture());
   elmP->RemoveEventListenerByType(this, NS_LITERAL_STRING("text"),
                                   TrustedEventsAtSystemGroupBubble());
   elmP->RemoveEventListenerByType(this, NS_LITERAL_STRING("compositionstart"),

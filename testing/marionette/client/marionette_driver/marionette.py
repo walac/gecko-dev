@@ -698,7 +698,7 @@ class Marionette(object):
             attempt will be aborted.
         """
         if timeout is None:
-            timeout = self.DEFAULT_STARTUP_TIMEOUT
+            timeout = self.startup_timeout
 
         runner = None
         if self.instance is not None:
@@ -1427,6 +1427,20 @@ class Marionette(object):
         """A string representation of the DOM."""
         return self._send_message("WebDriver:GetPageSource",
                                   key="value")
+
+    def open(self, type=None, focus=False):
+        """Open a new window, or tab based on the specified context type.
+
+        If no context type is given the application will choose the best
+        option based on tab and window support.
+
+        :param type: Type of window to be opened. Can be one of "tab" or "window"
+        :param focus: If true, the opened window will be focused
+
+        :returns: Dict with new window handle, and type of opened window
+        """
+        body = {"type": type, "focus": focus}
+        return self._send_message("WebDriver:NewWindow", body)
 
     def close(self):
         """Close the current window, ending the session if it's the last

@@ -64,11 +64,11 @@
 #include "TrackingDummyChannel.h"
 
 #ifdef MOZ_TASK_TRACER
-#include "GeckoTaskTracer.h"
+#  include "GeckoTaskTracer.h"
 #endif
 
 #ifdef MOZ_GECKO_PROFILER
-#include "ProfilerMarkerPayload.h"
+#  include "ProfilerMarkerPayload.h"
 #endif
 
 #include <functional>
@@ -880,7 +880,11 @@ void HttpChannelChild::OnTransportAndData(const nsresult& channelStatus,
 
 bool HttpChannelChild::NeedToReportBytesRead() {
   if (mCacheNeedToReportBytesReadInitialized) {
-    return mNeedToReportBytesRead;
+    // No need to send SendRecvBytes when diversion starts since the parent
+    // process will suspend for diversion triggered in during OnStrartRequest at
+    // child side, which is earlier. Parent will take over the flow control
+    // after the diverting starts. Sending |SendBytesRead| is redundant.
+    return mNeedToReportBytesRead && !mDivertingToParent;
   }
 
   // Might notify parent for partial cache, and the IPC message is ignored by
@@ -2347,9 +2351,17 @@ HttpChannelChild::Resume() {
       SendResume();
     }
     if (mCallOnResume) {
-      rv = AsyncCall(mCallOnResume);
-      NS_ENSURE_SUCCESS(rv, rv);
-      mCallOnResume = nullptr;
+      nsCOMPtr<nsIEventTarget> neckoTarget = GetNeckoTarget();
+      MOZ_ASSERT(neckoTarget);
+
+      RefPtr<HttpChannelChild> self = this;
+      std::function<nsresult(HttpChannelChild*)> callOnResume = nullptr;
+      std::swap(callOnResume, mCallOnResume);
+      rv = neckoTarget->Dispatch(
+          NS_NewRunnableFunction(
+              "net::HttpChannelChild::mCallOnResume",
+              [callOnResume, self{std::move(self)}]() { callOnResume(self); }),
+          NS_DISPATCH_NORMAL);
     }
   }
   if (mSynthesizedResponsePump) {
@@ -2425,7 +2437,10 @@ HttpChannelChild::AsyncOpen(nsIStreamListener* listener,
   // immediately
   nsresult rv;
   rv = NS_CheckPortSafety(mURI);
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    ReleaseListeners();
+    return rv;
+  }
 
   nsAutoCString cookie;
   if (NS_SUCCEEDED(mRequestHead.GetHeader(nsHttp::Cookie, cookie))) {
@@ -2670,7 +2685,7 @@ nsresult HttpChannelChild::ContinueAsyncOpen() {
 
   // NB: This call forces us to cache mTopWindowURI if we haven't already.
   nsCOMPtr<nsIURI> uri;
-  GetTopWindowURI(getter_AddRefs(uri));
+  GetTopWindowURI(mURI, getter_AddRefs(uri));
 
   SerializeURI(mTopWindowURI, openArgs.topWindowURI());
 
@@ -3813,7 +3828,7 @@ HttpChannelChild::LogMimeTypeMismatch(const nsACString& aMessageName,
 
   nsAutoString url(aURL);
   nsAutoString contentType(aContentType);
-  const char16_t* params[] = { url.get(), contentType.get() };
+  const char16_t* params[] = {url.get(), contentType.get()};
   nsContentUtils::ReportToConsole(
       aWarning ? nsIScriptError::warningFlag : nsIScriptError::errorFlag,
       NS_LITERAL_CSTRING("MIMEMISMATCH"), doc,

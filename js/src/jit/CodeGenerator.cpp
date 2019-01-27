@@ -2982,7 +2982,7 @@ void CodeGenerator::visitModuleMetadata(LModuleMetadata* lir) {
   callVM(GetOrCreateModuleMetaObjectInfo, lir);
 }
 
-typedef JSObject* (*StartDynamicModuleImportFn)(JSContext*, HandleValue,
+typedef JSObject* (*StartDynamicModuleImportFn)(JSContext*, HandleScript,
                                                 HandleValue);
 static const VMFunction StartDynamicModuleImportInfo =
     FunctionInfo<StartDynamicModuleImportFn>(js::StartDynamicModuleImport,
@@ -2990,7 +2990,7 @@ static const VMFunction StartDynamicModuleImportInfo =
 
 void CodeGenerator::visitDynamicImport(LDynamicImport* lir) {
   pushArg(ToValue(lir, LDynamicImport::SpecifierIndex));
-  pushArg(ToValue(lir, LDynamicImport::ReferencingPrivateIndex));
+  pushArg(ImmGCPtr(current->mir()->info().script()));
   callVM(StartDynamicModuleImportInfo, lir);
 }
 
@@ -5403,27 +5403,37 @@ void CodeGenerator::visitCheckOverRecursed(LCheckOverRecursed* lir) {
   masm.bind(ool->rejoin());
 }
 
-typedef bool (*DefVarFn)(JSContext*, HandlePropertyName, unsigned,
-                         HandleObject);
-static const VMFunction DefVarInfo = FunctionInfo<DefVarFn>(DefVar, "DefVar");
+typedef bool (*DefVarFn)(JSContext*, HandleObject, HandleScript, jsbytecode*);
+static const VMFunction DefVarInfo =
+    FunctionInfo<DefVarFn>(DefVarOperation, "DefVarOperation");
 
 void CodeGenerator::visitDefVar(LDefVar* lir) {
   Register envChain = ToRegister(lir->environmentChain());
 
-  pushArg(envChain);                      // JSObject*
-  pushArg(Imm32(lir->mir()->attrs()));    // unsigned
-  pushArg(ImmGCPtr(lir->mir()->name()));  // PropertyName*
+  JSScript* script = current->mir()->info().script();
+  jsbytecode* pc = lir->mir()->resumePoint()->pc();
+
+  pushArg(ImmPtr(pc));        // jsbytecode*
+  pushArg(ImmGCPtr(script));  // JSScript*
+  pushArg(envChain);          // JSObject*
 
   callVM(DefVarInfo, lir);
 }
 
-typedef bool (*DefLexicalFn)(JSContext*, HandlePropertyName, unsigned);
+typedef bool (*DefLexicalFn)(JSContext*, HandleObject, HandleScript,
+                             jsbytecode*);
 static const VMFunction DefLexicalInfo =
-    FunctionInfo<DefLexicalFn>(DefGlobalLexical, "DefGlobalLexical");
+    FunctionInfo<DefLexicalFn>(DefLexicalOperation, "DefLexicalOperation");
 
 void CodeGenerator::visitDefLexical(LDefLexical* lir) {
-  pushArg(Imm32(lir->mir()->attrs()));    // unsigned
-  pushArg(ImmGCPtr(lir->mir()->name()));  // PropertyName*
+  Register envChain = ToRegister(lir->environmentChain());
+
+  JSScript* script = current->mir()->info().script();
+  jsbytecode* pc = lir->mir()->resumePoint()->pc();
+
+  pushArg(ImmPtr(pc));        // jsbytecode*
+  pushArg(ImmGCPtr(script));  // JSScript*
+  pushArg(envChain);          // JSObject*
 
   callVM(DefLexicalInfo, lir);
 }
@@ -5865,10 +5875,10 @@ bool CodeGenerator::generateBody() {
                                     current->mir()->pc(), &columnNumber);
       }
     } else {
-#ifdef DEBUG
+#  ifdef DEBUG
       lineNumber = current->mir()->lineno();
       columnNumber = current->mir()->columnIndex();
-#endif
+#  endif
     }
     JitSpew(JitSpew_Codegen, "# block%zu %s:%zu:%u%s:", i,
             filename ? filename : "?", lineNumber, columnNumber,
@@ -5946,12 +5956,12 @@ bool CodeGenerator::generateBody() {
 
       switch (iter->op()) {
 #ifndef JS_CODEGEN_NONE
-#define LIROP(op)              \
-  case LNode::Opcode::op:      \
-    visit##op(iter->to##op()); \
-    break;
+#  define LIROP(op)              \
+    case LNode::Opcode::op:      \
+      visit##op(iter->to##op()); \
+      break;
         LIR_OPCODE_LIST(LIROP)
-#undef LIROP
+#  undef LIROP
 #endif
         case LNode::Opcode::Invalid:
         default:
@@ -6565,29 +6575,6 @@ void CodeGenerator::visitNewCallObject(LNewCallObject* lir) {
   masm.createGCObject(objReg, tempReg, templateObject, gc::DefaultHeap,
                       ool->entry(), initContents);
 
-  masm.bind(ool->rejoin());
-}
-
-typedef JSObject* (*NewSingletonCallObjectFn)(JSContext*, HandleShape);
-static const VMFunction NewSingletonCallObjectInfo =
-    FunctionInfo<NewSingletonCallObjectFn>(NewSingletonCallObject,
-                                           "NewSingletonCallObject");
-
-void CodeGenerator::visitNewSingletonCallObject(LNewSingletonCallObject* lir) {
-  Register objReg = ToRegister(lir->output());
-
-  JSObject* templateObj = lir->mir()->templateObject();
-
-  OutOfLineCode* ool;
-  ool =
-      oolCallVM(NewSingletonCallObjectInfo, lir,
-                ArgList(ImmGCPtr(templateObj->as<CallObject>().lastProperty())),
-                StoreRegisterTo(objReg));
-
-  // Objects can only be given singleton types in VM calls.  We make the call
-  // out of line to not bloat inline code, even if (naively) this seems like
-  // extra work.
-  masm.jump(ool->entry());
   masm.bind(ool->rejoin());
 }
 
@@ -10103,16 +10090,6 @@ void CodeGenerator::visitSetFrameArgumentV(LSetFrameArgumentV* lir) {
   masm.storeValue(val, Address(masm.getStackPointer(), argOffset));
 }
 
-typedef bool (*RunOnceScriptPrologueFn)(JSContext*, HandleScript);
-static const VMFunction RunOnceScriptPrologueInfo =
-    FunctionInfo<RunOnceScriptPrologueFn>(js::RunOnceScriptPrologue,
-                                          "RunOnceScriptPrologue");
-
-void CodeGenerator::visitRunOncePrologue(LRunOncePrologue* lir) {
-  pushArg(ImmGCPtr(lir->mir()->block()->info().script()));
-  callVM(RunOnceScriptPrologueInfo, lir);
-}
-
 typedef JSObject* (*InitRestParameterFn)(JSContext*, uint32_t, Value*,
                                          HandleObject, HandleObject);
 static const VMFunction InitRestParameterInfo =
@@ -10682,9 +10659,9 @@ void CodeGenerator::visitOutOfLineUnboxFloatingPoint(
   masm.jump(ool->rejoin());
 }
 
-typedef JSObject* (*BindVarFn)(JSContext*, HandleObject);
+typedef JSObject* (*BindVarFn)(JSContext*, JSObject*);
 static const VMFunction BindVarInfo =
-    FunctionInfo<BindVarFn>(jit::BindVar, "BindVar");
+    FunctionInfo<BindVarFn>(BindVarOperation, "BindVarOperation");
 
 void CodeGenerator::visitCallBindVar(LCallBindVar* lir) {
   pushArg(ToRegister(lir->environmentChain()));
@@ -11683,6 +11660,12 @@ template <SwitchTableType tableType>
 void CodeGenerator::visitOutOfLineSwitch(
     OutOfLineSwitch<tableType>* jumpTable) {
   jumpTable->setOutOfLine();
+  auto& labels = jumpTable->labels();
+#if defined(JS_CODEGEN_ARM64)
+  AutoForbidPools afp(&masm, (labels.length() + 1) * (sizeof(void*) / vixl::kInstructionSize));
+#endif
+
+
   if (tableType == SwitchTableType::OutOfLine) {
 #if defined(JS_CODEGEN_ARM)
     MOZ_CRASH("NYI: SwitchTableType::OutOfLine");
@@ -11696,7 +11679,6 @@ void CodeGenerator::visitOutOfLineSwitch(
   }
 
   // Add table entries if the table is inlined.
-  auto& labels = jumpTable->labels();
   for (size_t i = 0, e = labels.length(); i < e; i++) {
     jumpTable->addTableEntry(masm);
   }
@@ -12407,10 +12389,6 @@ void CodeGenerator::emitIsCallableOrConstructor(Register object,
   Label notFunction, hasCOps, done;
   masm.loadObjClassUnsafe(object, output);
 
-  // Just skim proxies off. Their notion of isCallable()/isConstructor() is
-  // more complicated.
-  masm.branchTestClassIsProxy(true, output, failure);
-
   // An object is callable iff:
   //   is<JSFunction>() || (getClass()->cOps && getClass()->cOps->call).
   // An object is constructor iff:
@@ -12431,6 +12409,11 @@ void CodeGenerator::emitIsCallableOrConstructor(Register object,
   masm.jump(&done);
 
   masm.bind(&notFunction);
+
+  // Just skim proxies off. Their notion of isCallable()/isConstructor() is
+  // more complicated.
+  masm.branchTestClassIsProxy(true, output, failure);
+
   masm.branchPtr(Assembler::NonZero, Address(output, offsetof(js::Class, cOps)),
                  ImmPtr(nullptr), &hasCOps);
   masm.move32(Imm32(0), output);
@@ -12678,27 +12661,19 @@ void CodeGenerator::visitHasClass(LHasClass* ins) {
 
 void CodeGenerator::visitGuardToClass(LGuardToClass* ins) {
   Register lhs = ToRegister(ins->lhs());
-  Register output = ToRegister(ins->output());
   Register temp = ToRegister(ins->temp());
+
+  // branchTestObjClass may zero the object register on speculative paths
+  // (we should have a defineReuseInput allocation in this case).
+  Register spectreRegToZero = lhs;
 
   Label notEqual;
 
   masm.branchTestObjClass(Assembler::NotEqual, lhs, ins->mir()->getClass(),
-                          temp, output, &notEqual);
-  masm.mov(lhs, output);
+                          temp, spectreRegToZero, &notEqual);
 
-  if (ins->mir()->type() == MIRType::Object) {
-    // Can't return null-return here, so bail
-    bailoutFrom(&notEqual, ins->snapshot());
-  } else {
-    Label done;
-    masm.jump(&done);
-
-    masm.bind(&notEqual);
-    masm.mov(ImmPtr(0), output);
-
-    masm.bind(&done);
-  }
+  // Can't return null-return here, so bail.
+  bailoutFrom(&notEqual, ins->snapshot());
 }
 
 typedef JSString* (*ObjectClassToStringFn)(JSContext*, HandleObject);

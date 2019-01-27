@@ -48,8 +48,10 @@ var gExceptionPaths = [
 
 // These are not part of the omni.ja file, so we find them only when running
 // the test on a non-packaged build.
-if (AppConstants.platform == "macosx")
+if (AppConstants.platform == "macosx") {
   gExceptionPaths.push("resource://gre/res/cursors/");
+  gExceptionPaths.push("resource://gre/res/touchbar/");
+}
 
 var whitelist = [
   // browser/extensions/pdfjs/content/PdfStreamConverter.jsm
@@ -154,16 +156,10 @@ var whitelist = [
   {file: "resource://gre/modules/PerfMeasurement.jsm"},
   // Bug 1356045
   {file: "chrome://global/content/test-ipc.xul"},
-  // Bug 1356036
-  {file: "resource://gre/modules/PerformanceWatcher-content.js"},
-  {file: "resource://gre/modules/PerformanceWatcher.jsm"},
   // Bug 1378173 (warning: still used by devtools)
   {file: "resource://gre/modules/Promise.jsm"},
   // Still used by WebIDE, which is going away but not entirely gone.
   {file: "resource://gre/modules/ZipUtils.jsm"},
-  // Bug 1463225 (on Mac and Windows this is only used by a test)
-  {file: "chrome://global/content/bindings/toolbar.xml",
-   platforms: ["macosx", "win"]},
   // Bug 1483277 (temporarily unreferenced)
   {file: AppConstants.BROWSER_CHROME_URL == "chrome://browser/content/browser.xul" ?
     "chrome://browser/content/browser.xhtml" : "chrome://browser/content/browser.xul" },
@@ -177,6 +173,10 @@ var whitelist = [
   {file: "chrome://devtools/skin/images/aboutdebugging-firefox-release.svg",
    isFromDevTools: true},
   {file: "chrome://devtools/skin/images/next.svg", isFromDevTools: true},
+   // Feature gates are available but not used yet - Bug 1479127
+   {file: "resource://gre-resources/featuregates/FeatureGate.jsm"},
+   {file: "resource://gre-resources/featuregates/FeatureGateImplementation.jsm"},
+   {file: "resource://gre-resources/featuregates/feature_definitions.json"},
 ];
 
 whitelist = new Set(whitelist.filter(item =>

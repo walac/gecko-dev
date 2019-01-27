@@ -1920,7 +1920,7 @@ function ErrorRep(props) {
 
   if (preview.stack && props.mode !== MODE.TINY) {
     const stacktrace = props.renderStacktrace ? props.renderStacktrace(parseStackString(preview.stack)) : getStacktraceElements(props, preview);
-    content.push("\n", stacktrace);
+    content.push(stacktrace);
   }
 
   return span({
@@ -3688,13 +3688,26 @@ function getClosestNonBucketNode(item) {
   return getClosestNonBucketNode(parent);
 }
 
-function getNonPrototypeParentGripValue(item) {
+function getParentGripNode(item) {
   const parentNode = getParent(item);
   if (!parentNode) {
     return null;
   }
 
-  const parentGripNode = getClosestGripNode(parentNode);
+  return getClosestGripNode(parentNode);
+}
+
+function getParentGripValue(item) {
+  const parentGripNode = getParentGripNode(item);
+  if (!parentGripNode) {
+    return null;
+  }
+
+  return getValue(parentGripNode);
+}
+
+function getNonPrototypeParentGripValue(item) {
+  const parentGripNode = getParentGripNode(item);
   if (!parentGripNode) {
     return null;
   }
@@ -3716,6 +3729,7 @@ module.exports = {
   getClosestGripNode,
   getClosestNonBucketNode,
   getParent,
+  getParentGripValue,
   getNonPrototypeParentGripValue,
   getNumericalPropertiesCount,
   getValue,
@@ -4567,7 +4581,7 @@ class Tree extends Component {
           // it should be scrolled into view.
           this._focus(item, { preventAutoScroll: true });
           if (this.props.isExpanded(item)) {
-            this.props.onCollapse(item);
+            this.props.onCollapse(item, e.altKey);
           } else {
             this.props.onExpand(item, e.altKey);
           }
@@ -4575,10 +4589,7 @@ class Tree extends Component {
       });
     });
 
-    const style = Object.assign({}, this.props.style || {}, {
-      padding: 0,
-      margin: 0
-    });
+    const style = Object.assign({}, this.props.style || {});
 
     return _reactDomFactories2.default.div({
       className: `tree ${this.props.className ? this.props.className : ""}`,
@@ -6406,11 +6417,11 @@ function releaseActors(state, client) {
   }
 }
 
-function invokeGetter(node, grip, getterName) {
+function invokeGetter(node, targetGrip, receiverId, getterName) {
   return async ({ dispatch, client, getState }) => {
     try {
-      const objectClient = client.createObjectClient(grip);
-      const result = await objectClient.getPropertyValue(getterName);
+      const objectClient = client.createObjectClient(targetGrip);
+      const result = await objectClient.getPropertyValue(getterName, receiverId);
       dispatch({
         type: "GETTER_INVOKED",
         data: {
@@ -7004,7 +7015,8 @@ const {
   nodeIsLongString,
   nodeHasFullText,
   nodeHasGetter,
-  getNonPrototypeParentGripValue
+  getNonPrototypeParentGripValue,
+  getParentGripValue
 } = Utils.node;
 
 class ObjectInspectorItem extends Component {
@@ -7078,10 +7090,11 @@ class ObjectInspectorItem extends Component {
       }
 
       if (nodeHasGetter(item)) {
-        const parentGrip = getNonPrototypeParentGripValue(item);
-        if (parentGrip) {
+        const targetGrip = getParentGripValue(item);
+        const receiverGrip = getNonPrototypeParentGripValue(item);
+        if (targetGrip && receiverGrip) {
           Object.assign(repProps, {
-            onInvokeGetterButtonClick: () => this.props.invokeGetter(item, parentGrip, item.name)
+            onInvokeGetterButtonClick: () => this.props.invokeGetter(item, targetGrip, receiverGrip.actor, item.name)
           });
         }
       }

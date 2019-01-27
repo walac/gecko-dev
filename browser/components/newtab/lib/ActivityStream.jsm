@@ -183,7 +183,7 @@ const PREFS_CONFIG = new Map([
       } else {
         searchShortcuts.push("google");
       }
-      if (["AT", "DE", "FR", "GB", "IT", "JP", "US"].includes(geo)) {
+      if (["DE", "FR", "GB", "IT", "JP", "US"].includes(geo)) {
         searchShortcuts.push("amazon");
       }
       return searchShortcuts.join(",");
@@ -192,10 +192,6 @@ const PREFS_CONFIG = new Map([
   ["improvesearch.topSiteSearchShortcuts.havePinned", {
     title: "A comma-delimited list of search shortcuts that have previously been pinned",
     value: "",
-  }],
-  ["improvesearch.handoffToAwesomebar", {
-    title: "Should the search box handoff to the Awesomebar?",
-    value: true,
   }],
   ["asrouter.devtoolsEnabled", {
     title: "Are the asrouter devtools enabled?",
@@ -221,8 +217,9 @@ const PREFS_CONFIG = new Map([
     title: "Configuration for the new pocket new tab",
     value: JSON.stringify({
       enabled: false,
+      show_spocs: true,
       // This is currently an exmple layout used for dev purposes.
-      layout_endpoint: "https://getpocket.com/v3/newtab/layout?version=1&consumer_key=40249-e88c401e1b1f2242d9e441c4&layout_variant=dev-test-1",
+      layout_endpoint: "https://getpocket.com/v3/newtab/layout?version=1&consumer_key=40249-e88c401e1b1f2242d9e441c4&layout_variant=basic",
     }),
   }],
 ]);

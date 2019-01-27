@@ -3,11 +3,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use api::{ColorF, BorderStyle, DeviceIntPoint, DeviceIntRect, DeviceIntSize, DevicePixelScale};
-use api::{DocumentLayer, FilterOp, ImageFormat};
-use api::{MixBlendMode, PipelineId, DeviceRect, LayoutSize};
+use api::{DocumentLayer, FilterOp, ImageFormat, DevicePoint};
+use api::{MixBlendMode, PipelineId, DeviceRect, LayoutSize, WorldRect};
 use batch::{AlphaBatchBuilder, AlphaBatchContainer, ClipBatcher, resolve_image};
 use clip::ClipStore;
 use clip_scroll_tree::{ClipScrollTree};
+use debug_render::DebugItem;
 use device::{Texture};
 #[cfg(feature = "pathfinder")]
 use euclid::{TypedPoint2D, TypedVector2D};
@@ -20,7 +21,7 @@ use pathfinder_partitioner::mesh::Mesh;
 use picture::SurfaceInfo;
 use prim_store::{PrimitiveStore, DeferredResolve, PrimitiveScratchBuffer};
 use profiler::FrameProfileCounters;
-use render_backend::{FrameId, FrameResources};
+use render_backend::{DataStores, FrameId};
 use render_task::{BlitSource, RenderTaskAddress, RenderTaskId, RenderTaskKind};
 use render_task::{BlurTask, ClearMode, GlyphTask, RenderTaskLocation, RenderTaskTree, ScalingTask};
 use resource_cache::ResourceCache;
@@ -53,9 +54,10 @@ pub struct RenderTargetContext<'a, 'rc> {
     pub resource_cache: &'rc mut ResourceCache,
     pub use_dual_source_blending: bool,
     pub clip_scroll_tree: &'a ClipScrollTree,
-    pub resources: &'a FrameResources,
+    pub data_stores: &'a DataStores,
     pub surfaces: &'a [SurfaceInfo],
     pub scratch: &'a PrimitiveScratchBuffer,
+    pub screen_world_rect: WorldRect,
 }
 
 /// Represents a number of rendering operations on a surface.
@@ -343,7 +345,6 @@ pub struct ColorRenderTarget {
     pub blits: Vec<BlitJob>,
     // List of frame buffer outputs for this render target.
     pub outputs: Vec<FrameOutput>,
-    pub color_clears: Vec<RenderTaskId>,
     alpha_tasks: Vec<RenderTaskId>,
     screen_size: DeviceIntSize,
     // Track the used rect of the render target, so that
@@ -363,7 +364,6 @@ impl RenderTarget for ColorRenderTarget {
             blits: Vec::new(),
             outputs: Vec::new(),
             alpha_tasks: Vec::new(),
-            color_clears: Vec::new(),
             screen_size,
             used_rect: DeviceIntRect::zero(),
         }
@@ -379,7 +379,7 @@ impl RenderTarget for ColorRenderTarget {
         transforms: &mut TransformPalette,
         z_generator: &mut ZBufferIdGenerator,
     ) {
-        let mut merged_batches = AlphaBatchContainer::new(None);
+        let mut merged_batches = AlphaBatchContainer::new(None, Vec::new());
 
         for task_id in &self.alpha_tasks {
             let task = &render_tasks[*task_id];
@@ -390,9 +390,6 @@ impl RenderTarget for ColorRenderTarget {
                     panic!("bug: invalid clear mode for color task");
                 }
                 ClearMode::Transparent => {}
-                ClearMode::Color(..) => {
-                    self.color_clears.push(*task_id);
-                }
             }
 
             match task.kind {
@@ -614,7 +611,6 @@ impl RenderTarget for AlphaRenderTarget {
                 self.zero_clears.push(task_id);
             }
             ClearMode::One => {}
-            ClearMode::Color(..) |
             ClearMode::Transparent => {
                 panic!("bug: invalid clear mode for alpha task");
             }
@@ -656,15 +652,23 @@ impl RenderTarget for AlphaRenderTarget {
                     clip_store,
                     ctx.clip_scroll_tree,
                     transforms,
-                    &ctx.resources.clip_data_store,
+                    &ctx.data_stores.clip,
+                    task_info.actual_rect,
+                    &ctx.screen_world_rect,
+                    ctx.device_pixel_scale,
                 );
             }
-            RenderTaskKind::ClipRegion(ref task) => {
+            RenderTaskKind::ClipRegion(ref region_task) => {
                 let task_address = render_tasks.get_task_address(task_id);
+                let device_rect = DeviceRect::new(
+                    DevicePoint::zero(),
+                    task.get_dynamic_size().to_f32(),
+                );
                 self.clip_batcher.add_clip_region(
                     task_address,
-                    task.clip_data_address,
-                    task.local_pos,
+                    region_task.clip_data_address,
+                    region_task.local_pos,
+                    device_rect,
                 );
             }
             RenderTaskKind::Scaling(ref info) => {
@@ -1114,6 +1118,9 @@ pub struct Frame {
     /// True if this frame has been drawn by the
     /// renderer.
     pub has_been_rendered: bool,
+
+    /// Debugging information to overlay for this frame.
+    pub debug_items: Vec<DebugItem>,
 }
 
 impl Frame {

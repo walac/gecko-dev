@@ -222,7 +222,7 @@ static const unsigned NonVolatileRegsPushSize =
     NonVolatileRegs.fpus().getPushSizeInBytes();
 #endif
 
-#ifdef ENABLE_WASM_GC
+#ifdef ENABLE_WASM_REFTYPES
 static const unsigned NumExtraPushed = 2;  // tls and argv
 #else
 static const unsigned NumExtraPushed = 1;  // argv
@@ -287,7 +287,6 @@ static void CallFuncExport(MacroAssembler& masm, const FuncExport& fe,
 // must map from the ABI of ExportFuncPtr to the export's signature's ABI.
 static bool GenerateInterpEntry(MacroAssembler& masm, const FuncExport& fe,
                                 const Maybe<ImmPtr>& funcPtr,
-                                HasGcTypes gcTypesConfigured,
                                 Offsets* offsets) {
   AssertExpectedSP(masm);
   masm.haltingAlign(CodeAlignment);
@@ -296,16 +295,16 @@ static bool GenerateInterpEntry(MacroAssembler& masm, const FuncExport& fe,
 
   // Save the return address if it wasn't already saved by the call insn.
 #ifdef JS_USE_LINK_REGISTER
-#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS32) || \
-    defined(JS_CODEGEN_MIPS64)
+#  if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS32) || \
+      defined(JS_CODEGEN_MIPS64)
   masm.pushReturnAddress();
-#elif defined(JS_CODEGEN_ARM64)
+#  elif defined(JS_CODEGEN_ARM64)
   // WasmPush updates framePushed() unlike pushReturnAddress(), but that's
   // cancelled by the setFramePushed() below.
   WasmPush(masm, lr);
-#else
+#  else
   MOZ_CRASH("Implement this");
-#endif
+#  endif
 #endif
 
   // Save all caller non-volatile registers before we clobber them here and in
@@ -346,7 +345,7 @@ static bool GenerateInterpEntry(MacroAssembler& masm, const FuncExport& fe,
         WasmTlsReg);
   }
 
-#ifdef ENABLE_WASM_GC
+#ifdef ENABLE_WASM_REFTYPES
   WasmPush(masm, WasmTlsReg);
 #endif
 
@@ -403,7 +402,7 @@ static bool GenerateInterpEntry(MacroAssembler& masm, const FuncExport& fe,
   // Recover the 'argv' pointer which was saved before aligning the stack.
   WasmPop(masm, argv);
 
-#ifdef ENABLE_WASM_GC
+#ifdef ENABLE_WASM_REFTYPES
   WasmPop(masm, WasmTlsReg);
 #endif
 
@@ -512,7 +511,7 @@ static void GenerateJitEntryThrow(MacroAssembler& masm, unsigned frameSize) {
 
 static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
                              const FuncExport& fe, const Maybe<ImmPtr>& funcPtr,
-                             HasGcTypes gcTypesConfigured, Offsets* offsets) {
+                             Offsets* offsets) {
   AssertExpectedSP(masm);
 
   RegisterOrSP sp = masm.getStackPointer();
@@ -1893,13 +1892,12 @@ static bool GenerateDebugTrapStub(MacroAssembler& masm, Label* throwLabel,
 
 bool wasm::GenerateEntryStubs(MacroAssembler& masm, size_t funcExportIndex,
                               const FuncExport& fe, const Maybe<ImmPtr>& callee,
-                              bool isAsmJS, HasGcTypes gcTypesConfigured,
-                              CodeRangeVector* codeRanges) {
+                              bool isAsmJS, CodeRangeVector* codeRanges) {
   MOZ_ASSERT(!callee == fe.hasEagerStubs());
   MOZ_ASSERT_IF(isAsmJS, fe.hasEagerStubs());
 
   Offsets offsets;
-  if (!GenerateInterpEntry(masm, fe, callee, gcTypesConfigured, &offsets)) {
+  if (!GenerateInterpEntry(masm, fe, callee, &offsets)) {
     return false;
   }
   if (!codeRanges->emplaceBack(CodeRange::InterpEntry, fe.funcIndex(),
@@ -1911,8 +1909,7 @@ bool wasm::GenerateEntryStubs(MacroAssembler& masm, size_t funcExportIndex,
     return true;
   }
 
-  if (!GenerateJitEntry(masm, funcExportIndex, fe, callee, gcTypesConfigured,
-                        &offsets)) {
+  if (!GenerateJitEntry(masm, funcExportIndex, fe, callee, &offsets)) {
     return false;
   }
   if (!codeRanges->emplaceBack(CodeRange::JitEntry, fe.funcIndex(), offsets)) {
@@ -1973,7 +1970,7 @@ bool wasm::GenerateStubs(const ModuleEnvironment& env,
       continue;
     }
     if (!GenerateEntryStubs(masm, i, fe, noAbsolute, env.isAsmJS(),
-                            env.gcTypesConfigured, &code->codeRanges)) {
+                            &code->codeRanges)) {
       return false;
     }
   }

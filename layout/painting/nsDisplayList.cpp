@@ -1044,6 +1044,7 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
       mIsInChromePresContext(false),
       mSyncDecodeImages(false),
       mIsPaintingToWindow(false),
+      mIsPaintingForWebRender(false),
       mIsCompositingCheap(false),
       mContainsPluginItem(false),
       mAncestorHasApzAwareEventHandler(false),
@@ -2468,7 +2469,8 @@ FrameLayerBuilder* nsDisplayList::BuildLayers(nsDisplayListBuilder* aBuilder,
   {
 #ifdef MOZ_GECKO_PROFILER
     nsCOMPtr<nsIDocShell> docShell = presContext->GetDocShell();
-    AUTO_PROFILER_TRACING_DOCSHELL("Paint", "LayerBuilding", docShell);
+    AUTO_PROFILER_TRACING_DOCSHELL("Paint", "LayerBuilding", GRAPHICS,
+                                   docShell);
 #endif
 
     if (XRE_IsContentProcess() && gfxPrefs::AlwaysPaint()) {
@@ -2560,6 +2562,8 @@ already_AddRefed<LayerManager> nsDisplayList::PaintRoot(
   if (aFlags & PAINT_USE_WIDGET_LAYERS) {
     layerManager = aBuilder->GetWidgetLayerManager(&view);
     if (layerManager) {
+      layerManager->SetContainsSVG(false);
+
       doBeginTransaction = !(aFlags & PAINT_EXISTING_TRANSACTION);
       widgetTransaction = true;
     }
@@ -2616,17 +2620,16 @@ already_AddRefed<LayerManager> nsDisplayList::PaintRoot(
       auto* wrManager = static_cast<WebRenderLayerManager*>(layerManager.get());
 
       nsIDocShell* docShell = presContext->GetDocShell();
-      nsTArray<wr::WrFilterOp> wrFilters;
+      nsTArray<wr::FilterOp> wrFilters;
       gfx::Matrix5x4* colorMatrix =
           nsDocShell::Cast(docShell)->GetColorMatrix();
       if (colorMatrix) {
-        wr::WrFilterOp gs = {wr::WrFilterOpType::ColorMatrix};
-        MOZ_ASSERT(sizeof(gs.matrix) == sizeof(colorMatrix->components));
-        memcpy(&(gs.matrix), colorMatrix->components, sizeof(gs.matrix));
-        wrFilters.AppendElement(gs);
+        wrFilters.AppendElement(
+            wr::FilterOp::ColorMatrix(colorMatrix->components));
       }
 
-      wrManager->EndTransactionWithoutLayer(this, aBuilder, wrFilters);
+      wrManager->EndTransactionWithoutLayer(this, aBuilder,
+                                            std::move(wrFilters));
     }
 
     // For layers-free mode, we check the invalidation state bits in the
@@ -4627,9 +4630,12 @@ void nsDisplayBackgroundColor::PaintWithClip(nsDisplayListBuilder* aBuilder,
       pushedClip = true;
     }
 
-    RefPtr<Path> path =
-        aClip.MakeRoundedRectPath(*aCtx->GetDrawTarget(), A2D, roundedRect[0]);
-    dt->Fill(path, fill);
+    RectCornerRadii pixelRadii;
+    nsCSSRendering::ComputePixelRadii(roundedRect[0].mRadii, A2D, &pixelRadii);
+    dt->FillRoundedRect(
+        RoundedRect(NSRectToSnappedRect(roundedRect[0].mRect, A2D, *dt),
+                    pixelRadii),
+        fill);
     if (pushedClip) {
       dt->PopClip();
     }
@@ -4730,6 +4736,7 @@ void nsDisplayBackgroundColor::HitTest(nsDisplayListBuilder* aBuilder,
 void nsDisplayBackgroundColor::WriteDebugInfo(std::stringstream& aStream) {
   aStream << " (rgba " << mColor.r << "," << mColor.g << "," << mColor.b << ","
           << mColor.a << ")";
+  aStream << " backgroundRect" << mBackgroundRect;
 }
 
 already_AddRefed<Layer> nsDisplayClearBackground::BuildLayer(
@@ -5836,12 +5843,13 @@ static bool IsItemTooSmallForActiveLayer(nsIFrame* aFrame) {
 }
 
 /* static */ bool nsDisplayOpacity::NeedsActiveLayer(
-    nsDisplayListBuilder* aBuilder, nsIFrame* aFrame) {
+    nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+    bool aEnforceMinimumSize) {
   if (EffectCompositor::HasAnimationsForCompositor(aFrame,
                                                    eCSSProperty_opacity) ||
       (ActiveLayerTracker::IsStyleAnimated(aBuilder, aFrame,
                                            eCSSProperty_opacity) &&
-       !IsItemTooSmallForActiveLayer(aFrame))) {
+       !(aEnforceMinimumSize && IsItemTooSmallForActiveLayer(aFrame)))) {
     return true;
   }
   return false;
@@ -6070,10 +6078,11 @@ bool nsDisplayOpacity::CreateWebRenderCommands(
       animationsId,
   };
 
-  nsTArray<mozilla::wr::WrFilterOp> filters;
+  wr::StackingContextParams params;
+  params.animation = animationsId ? &prop : nullptr;
+  params.opacity = opacityForSC;
   StackingContextHelper sc(aSc, GetActiveScrolledRoot(), mFrame, this, aBuilder,
-                           filters, LayoutDeviceRect(), nullptr,
-                           animationsId ? &prop : nullptr, opacityForSC);
+                           params);
 
   aManager->CommandBuilder().CreateWebRenderCommandsFromDisplayList(
       &mList, this, aDisplayListBuilder, sc, aBuilder, aResources);
@@ -6109,11 +6118,11 @@ bool nsDisplayBlendMode::CreateWebRenderCommands(
     const StackingContextHelper& aSc,
     mozilla::layers::RenderRootStateManager* aManager,
     nsDisplayListBuilder* aDisplayListBuilder) {
-  nsTArray<mozilla::wr::WrFilterOp> filters;
+  wr::StackingContextParams params;
+  params.mix_blend_mode =
+      wr::ToMixBlendMode(nsCSSRendering::GetGFXBlendMode(mBlendMode));
   StackingContextHelper sc(aSc, GetActiveScrolledRoot(), mFrame, this, aBuilder,
-                           filters, LayoutDeviceRect(), nullptr, nullptr,
-                           nullptr, nullptr, nullptr,
-                           nsCSSRendering::GetGFXBlendMode(mBlendMode));
+                           params);
 
   return nsDisplayWrapList::CreateWebRenderCommands(
       aBuilder, aResources, sc, aManager, aDisplayListBuilder);
@@ -6340,9 +6349,11 @@ bool nsDisplayOwnLayer::CreateWebRenderCommands(
   prop.id = mWrAnimationId;
   prop.effect_type = wr::WrAnimationType::Transform;
 
+  wr::StackingContextParams params;
+  params.animation = &prop;
+
   StackingContextHelper sc(aSc, GetActiveScrolledRoot(), mFrame, this, aBuilder,
-                           nsTArray<wr::WrFilterOp>(), LayoutDeviceRect(),
-                           nullptr, &prop);
+                           params);
 
   nsDisplayWrapList::CreateWebRenderCommands(aBuilder, aResources, sc, aManager,
                                              aDisplayListBuilder);
@@ -6455,12 +6466,16 @@ UniquePtr<ScrollMetadata> nsDisplaySubDocument::ComputeScrollMetadata(
   nsRect viewport = mFrame->GetRect() - mFrame->GetPosition() +
                     mFrame->GetOffsetToCrossDoc(ReferenceFrame());
 
+  nsIScrollableFrame* scrollableFrame = rootScrollFrame->GetScrollTargetFrame();
+  if (isRootContentDocument) {
+    viewport.SizeTo(scrollableFrame->GetScrollPortRect().Size());
+  }
+
   UniquePtr<ScrollMetadata> metadata =
       MakeUnique<ScrollMetadata>(nsLayoutUtils::ComputeScrollMetadata(
           mFrame, rootScrollFrame, rootScrollFrame->GetContent(),
           ReferenceFrame(), aLayerManager, mScrollParentId, viewport, Nothing(),
           isRootContentDocument, Some(params)));
-  nsIScrollableFrame* scrollableFrame = rootScrollFrame->GetScrollTargetFrame();
   if (scrollableFrame) {
     scrollableFrame->NotifyApzTransaction();
   }
@@ -6880,6 +6895,8 @@ bool nsDisplayStickyPosition::CreateWebRenderCommands(
     }
   }
 
+  Maybe<wr::SpaceAndClipChainHelper> saccHelper;
+
   if (stickyScrollContainer) {
     float auPerDevPixel = mFrame->PresContext()->AppUnitsPerDevPixel();
 
@@ -6997,13 +7014,13 @@ bool nsDisplayStickyPosition::CreateWebRenderCommands(
     wr::LayoutVector2D applied = {
         NSAppUnitsToFloatPixels(appliedOffset.x, auPerDevPixel),
         NSAppUnitsToFloatPixels(appliedOffset.y, auPerDevPixel)};
-    wr::WrClipId id = aBuilder.DefineStickyFrame(
+    wr::WrSpatialId spatialId = aBuilder.DefineStickyFrame(
         wr::ToRoundedLayoutRect(bounds), topMargin.ptrOr(nullptr),
         rightMargin.ptrOr(nullptr), bottomMargin.ptrOr(nullptr),
         leftMargin.ptrOr(nullptr), vBounds, hBounds, applied);
 
-    aBuilder.PushClip(id);
-    aManager->CommandBuilder().PushOverrideForASR(mContainerASR, id);
+    saccHelper.emplace(aBuilder, spatialId);
+    aManager->CommandBuilder().PushOverrideForASR(mContainerASR, spatialId);
   }
 
   {
@@ -7015,7 +7032,6 @@ bool nsDisplayStickyPosition::CreateWebRenderCommands(
 
   if (stickyScrollContainer) {
     aManager->CommandBuilder().PopOverrideForASR(mContainerASR);
-    aBuilder.PopClip();
   }
 
   return true;
@@ -7184,7 +7200,6 @@ nsDisplayTransform::nsDisplayTransform(
       mAnimatedGeometryRootForScrollMetadata(mAnimatedGeometryRoot),
       mChildrenBuildingRect(aChildrenBuildingRect),
       mIndex(aIndex),
-      mNoExtendContext(false),
       mIsTransformSeparator(false),
       mTransformPreserves3DInited(false),
       mAllowAsyncAnimation(false) {
@@ -7248,7 +7263,6 @@ nsDisplayTransform::nsDisplayTransform(nsDisplayListBuilder* aBuilder,
       mAnimatedGeometryRootForScrollMetadata(mAnimatedGeometryRoot),
       mChildrenBuildingRect(aChildrenBuildingRect),
       mIndex(aIndex),
-      mNoExtendContext(false),
       mIsTransformSeparator(false),
       mTransformPreserves3DInited(false),
       mAllowAsyncAnimation(aAllowAsyncAnimation) {
@@ -7272,7 +7286,6 @@ nsDisplayTransform::nsDisplayTransform(nsDisplayListBuilder* aBuilder,
       mAnimatedGeometryRootForScrollMetadata(mAnimatedGeometryRoot),
       mChildrenBuildingRect(aChildrenBuildingRect),
       mIndex(aIndex),
-      mNoExtendContext(false),
       mIsTransformSeparator(true),
       mTransformPreserves3DInited(false),
       mAllowAsyncAnimation(false) {
@@ -7651,6 +7664,14 @@ bool nsDisplayBackgroundColor::CanUseAsyncAnimations(
     return FullPrerender;
   }
 
+  // If painting is for WebRender, allow full prerender even for large size
+  // frame. With WebRender, memory usage increase for async animation is limited
+  // compared to non-WebRender case.
+  if (aBuilder->IsPaintingForWebRender()) {
+    *aDirtyRect = overflow;
+    return FullPrerender;
+  }
+
   float viewportRatioX = gfxPrefs::AnimationPrerenderViewportRatioLimitX();
   float viewportRatioY = gfxPrefs::AnimationPrerenderViewportRatioLimitY();
   uint32_t absoluteLimitX = gfxPrefs::AnimationPrerenderAbsoluteLimitX();
@@ -7848,6 +7869,11 @@ bool nsDisplayTransform::CreateWebRenderCommands(
     // doesn't turn this stacking context into a reference frame, as it
     // affects positioning. Bug 1345577 tracks a better fix.
     transformForSC = nullptr;
+
+    // In ChooseScaleAndSetTransform, we round the offset from the reference
+    // frame used to adjust the transform, if there is no transform, or it
+    // is just a translation. We need to do the same here.
+    position.Round();
   }
 
   uint64_t animationsId = AddAnimationsForWebRender(
@@ -7857,7 +7883,6 @@ bool nsDisplayTransform::CreateWebRenderCommands(
       animationsId,
   };
 
-  nsTArray<mozilla::wr::WrFilterOp> filters;
   Maybe<nsDisplayTransform*> deferredTransformItem;
   if (!mFrame->ChildrenHavePerspective()) {
     // If it has perspective, we create a new scroll data via the
@@ -7873,13 +7898,18 @@ bool nsDisplayTransform::CreateWebRenderCommands(
   bool animated =
       ActiveLayerTracker::IsStyleMaybeAnimated(Frame(), eCSSProperty_transform);
 
-  StackingContextHelper sc(
-      aSc, GetActiveScrolledRoot(), mFrame, this, aBuilder, filters,
-      LayoutDeviceRect(position, LayoutDeviceSize()), &newTransformMatrix,
-      animationsId ? &prop : nullptr, nullptr, transformForSC, nullptr,
-      gfx::CompositionOp::OP_OVER, !BackfaceIsHidden(),
-      mFrame->Extend3DContext() && !mNoExtendContext, deferredTransformItem,
-      nullptr, animated);
+  wr::StackingContextParams params;
+  params.mBoundTransform = &newTransformMatrix;
+  params.animation = animationsId ? &prop : nullptr;
+  params.mTransformPtr = transformForSC;
+  params.is_backface_visible = !BackfaceIsHidden();
+  params.mDeferredTransformItem = deferredTransformItem;
+  params.mAnimated = animated;
+  params.SetPreserve3D(mFrame->Extend3DContext() && !mIsTransformSeparator);
+
+  StackingContextHelper sc(aSc, GetActiveScrolledRoot(), mFrame, this, aBuilder,
+                           params,
+                           LayoutDeviceRect(position, LayoutDeviceSize()));
 
   return mStoredList.CreateWebRenderCommands(aBuilder, aResources, sc, aManager,
                                              aDisplayListBuilder);
@@ -7932,8 +7962,8 @@ already_AddRefed<Layer> nsDisplayTransform::BuildLayer(
   }
 
   // Add the preserve-3d flag for this layer, BuildContainerLayerFor clears all
-  // flags, so we never need to explicitely unset this flag.
-  if (mFrame->Extend3DContext() && !mNoExtendContext) {
+  // flags, so we never need to explicitly unset this flag.
+  if (mFrame->Extend3DContext() && !mIsTransformSeparator) {
     container->SetContentFlags(container->GetContentFlags() |
                                Layer::CONTENT_EXTEND_3D_CONTEXT);
   } else {
@@ -7963,7 +7993,8 @@ already_AddRefed<Layer> nsDisplayTransform::BuildLayer(
   return container.forget();
 }
 
-bool nsDisplayTransform::MayBeAnimated(nsDisplayListBuilder* aBuilder) const {
+bool nsDisplayTransform::MayBeAnimated(nsDisplayListBuilder* aBuilder,
+                                       bool aEnforceMinimumSize) const {
   // If EffectCompositor::HasAnimationsForCompositor() is true then we can
   // completely bypass the main thread for this animation, so it is always
   // worthwhile.
@@ -7975,7 +8006,7 @@ bool nsDisplayTransform::MayBeAnimated(nsDisplayListBuilder* aBuilder) const {
                                                    eCSSProperty_transform) ||
       (ActiveLayerTracker::IsStyleAnimated(aBuilder, mFrame,
                                            eCSSProperty_transform) &&
-       !IsItemTooSmallForActiveLayer(mFrame))) {
+       !(aEnforceMinimumSize && IsItemTooSmallForActiveLayer(mFrame)))) {
     return true;
   }
   return false;
@@ -8036,7 +8067,7 @@ bool nsDisplayTransform::ComputeVisibility(nsDisplayListBuilder* aBuilder,
 }
 
 #ifdef DEBUG_HIT
-#include <time.h>
+#  include <time.h>
 #endif
 
 /* HitTest does some fun stuff with matrix transforms to obtain the answer. */
@@ -8352,6 +8383,9 @@ void nsDisplayTransform::WriteDebugInfo(std::stringstream& aStream) {
   if (mFrame->Combines3DTransformWithAncestors()) {
     aStream << " combines-3d-with-ancestors";
   }
+
+  aStream << " allowAsync(" << (mAllowAsyncAnimation ? "true" : "false") << ")";
+  aStream << " childrenBuildingRect" << mChildrenBuildingRect;
 }
 
 nsDisplayPerspective::nsDisplayPerspective(nsDisplayListBuilder* aBuilder,
@@ -8459,17 +8493,32 @@ bool nsDisplayPerspective::CreateWebRenderCommands(
               0.0f);
   Point3D roundedOrigin(NS_round(newOrigin.x), NS_round(newOrigin.y), 0);
 
-  gfx::Matrix4x4 transformForSC = gfx::Matrix4x4::Translation(roundedOrigin);
+  perspectiveMatrix.PostTranslate(roundedOrigin);
 
   nsIFrame* perspectiveFrame =
       mFrame->GetContainingBlock(nsIFrame::SKIP_SCROLLED_FRAME);
 
-  nsTArray<mozilla::wr::WrFilterOp> filters;
+  // Passing true here is always correct, since perspective always combines
+  // transforms with the descendants. However that'd make WR do a lot of work
+  // that it doesn't really need to do if there aren't other transforms forming
+  // part of the 3D context.
+  //
+  // WR knows how to treat perspective in that case, so the only thing we need
+  // to do is to ensure we pass true when we're involved in a 3d context in any
+  // other way via the transform-style property on either the transformed frame
+  // or the perspective frame in order to not confuse WR's preserve-3d code in
+  // very awful ways.
+  bool preserve3D =
+      mFrame->Extend3DContext() || perspectiveFrame->Extend3DContext();
+
+  wr::StackingContextParams params;
+  params.mTransformPtr = &perspectiveMatrix;
+  params.reference_frame_kind = wr::ReferenceFrameKind::Perspective;
+  params.is_backface_visible = !BackfaceIsHidden();
+  params.SetPreserve3D(preserve3D);
+
   StackingContextHelper sc(aSc, GetActiveScrolledRoot(), mFrame, this, aBuilder,
-                           filters, LayoutDeviceRect(), nullptr, nullptr,
-                           nullptr, &transformForSC, &perspectiveMatrix,
-                           gfx::CompositionOp::OP_OVER, !BackfaceIsHidden(),
-                           perspectiveFrame->Extend3DContext());
+                           params);
 
   return mList.CreateWebRenderCommands(aBuilder, aResources, sc, aManager,
                                        aDisplayListBuilder);
@@ -9060,19 +9109,11 @@ bool nsDisplayMasksAndClipPaths::CreateWebRenderCommands(
                                ? Some(mFrame->StyleEffects()->mOpacity)
                                : Nothing();
 
-    layer.emplace(aSc, GetActiveScrolledRoot(), mFrame, this, aBuilder,
-                  /*aFilters: */ nsTArray<wr::WrFilterOp>(),
-                  /*aBounds: */ bounds,
-                  /*aBoundTransform: */ nullptr,
-                  /*aAnimation: */ nullptr,
-                  /*aOpacity: */ opacity.ptrOr(nullptr),
-                  /*aTransform: */ nullptr,
-                  /*aPerspective: */ nullptr,
-                  /*aMixBlendMode: */ gfx::CompositionOp::OP_OVER,
-                  /*aBackfaceVisible: */ true,
-                  /*aIsPreserve3D: */ false,
-                  /*aTransformForScrollData: */ Nothing(),
-                  /*aClipNodeId: */ &clipId);
+    wr::StackingContextParams params;
+    params.clip = wr::WrStackingContextClip::ClipId(clipId);
+    params.opacity = opacity.ptrOr(nullptr);
+    layer.emplace(aSc, GetActiveScrolledRoot(), mFrame, this, aBuilder, params,
+                  bounds);
     sc = layer.ptr();
   }
 
@@ -9240,44 +9281,62 @@ static float ClampStdDeviation(float aStdDeviation) {
 }
 
 bool nsDisplayFilters::CreateWebRenderCSSFilters(
-    nsTArray<mozilla::wr::WrFilterOp>& wrFilters) {
+    nsTArray<mozilla::wr::FilterOp>& wrFilters) {
   // All CSS filters are supported by WebRender. SVG filters are not fully
   // supported, those use NS_STYLE_FILTER_URL and are handled separately.
   const nsTArray<nsStyleFilter>& filters = mFrame->StyleEffects()->mFilters;
+
+  // If there are too many filters to render, then just pretend that we
+  // succeeded, and don't render any of them.
+  if (filters.Length() > gfxPrefs::WebRenderMaxFilterOpsPerChain()) {
+    return true;
+  }
+  wrFilters.SetCapacity(filters.Length());
+
   for (const nsStyleFilter& filter : filters) {
     switch (filter.GetType()) {
       case NS_STYLE_FILTER_BRIGHTNESS:
+        wrFilters.AppendElement(wr::FilterOp::Brightness(
+            filter.GetFilterParameter().GetFactorOrPercentValue()));
+        break;
       case NS_STYLE_FILTER_CONTRAST:
+        wrFilters.AppendElement(wr::FilterOp::Contrast(
+            filter.GetFilterParameter().GetFactorOrPercentValue()));
+        break;
       case NS_STYLE_FILTER_GRAYSCALE:
+        wrFilters.AppendElement(wr::FilterOp::Grayscale(
+            filter.GetFilterParameter().GetFactorOrPercentValue()));
+        break;
       case NS_STYLE_FILTER_INVERT:
-      case NS_STYLE_FILTER_OPACITY:
+        wrFilters.AppendElement(wr::FilterOp::Invert(
+            filter.GetFilterParameter().GetFactorOrPercentValue()));
+        break;
+      case NS_STYLE_FILTER_OPACITY: {
+        float opacity = filter.GetFilterParameter().GetFactorOrPercentValue();
+        wrFilters.AppendElement(wr::FilterOp::Opacity(
+            wr::PropertyBinding<float>::Value(opacity), opacity));
+        break;
+      }
       case NS_STYLE_FILTER_SATURATE:
+        wrFilters.AppendElement(wr::FilterOp::Saturate(
+            filter.GetFilterParameter().GetFactorOrPercentValue()));
+        break;
       case NS_STYLE_FILTER_SEPIA: {
-        mozilla::wr::WrFilterOp filterOp = {
-            wr::ToWrFilterOpType(filter.GetType()),
-            filter.GetFilterParameter().GetFactorOrPercentValue(),
-        };
-        wrFilters.AppendElement(filterOp);
+        wrFilters.AppendElement(wr::FilterOp::Sepia(
+            filter.GetFilterParameter().GetFactorOrPercentValue()));
         break;
       }
       case NS_STYLE_FILTER_HUE_ROTATE: {
-        mozilla::wr::WrFilterOp filterOp = {
-            wr::ToWrFilterOpType(filter.GetType()),
-            (float)filter.GetFilterParameter().GetAngleValueInDegrees(),
-        };
-        wrFilters.AppendElement(filterOp);
+        wrFilters.AppendElement(wr::FilterOp::HueRotate(
+            (float)filter.GetFilterParameter().GetAngleValueInDegrees()));
         break;
       }
       case NS_STYLE_FILTER_BLUR: {
         float appUnitsPerDevPixel =
             mFrame->PresContext()->AppUnitsPerDevPixel();
-        mozilla::wr::WrFilterOp filterOp = {
-            wr::ToWrFilterOpType(filter.GetType()),
-            ClampStdDeviation(NSAppUnitsToFloatPixels(
-                filter.GetFilterParameter().GetCoordValue(),
-                appUnitsPerDevPixel)),
-        };
-        wrFilters.AppendElement(filterOp);
+        wrFilters.AppendElement(mozilla::wr::FilterOp::Blur(ClampStdDeviation(
+            NSAppUnitsToFloatPixels(filter.GetFilterParameter().GetCoordValue(),
+                                    appUnitsPerDevPixel))));
         break;
       }
       case NS_STYLE_FILTER_DROP_SHADOW: {
@@ -9294,19 +9353,18 @@ bool nsDisplayFilters::CreateWebRenderCSSFilters(
         nsCSSShadowItem* shadow = shadows->ShadowAt(0);
         nscolor color = shadow->mColor.CalcColor(mFrame);
 
-        mozilla::wr::WrFilterOp filterOp = {
-            wr::ToWrFilterOpType(filter.GetType()),
-            NSAppUnitsToFloatPixels(shadow->mRadius, appUnitsPerDevPixel),
+        auto filterOp = wr::FilterOp::DropShadow(
             {
                 NSAppUnitsToFloatPixels(shadow->mXOffset, appUnitsPerDevPixel),
                 NSAppUnitsToFloatPixels(shadow->mYOffset, appUnitsPerDevPixel),
             },
+            NSAppUnitsToFloatPixels(shadow->mRadius, appUnitsPerDevPixel),
             {
                 NS_GET_R(color) / 255.0f,
                 NS_GET_G(color) / 255.0f,
                 NS_GET_B(color) / 255.0f,
                 NS_GET_A(color) / 255.0f,
-            }};
+            });
 
         wrFilters.AppendElement(filterOp);
         break;
@@ -9319,36 +9377,52 @@ bool nsDisplayFilters::CreateWebRenderCSSFilters(
   return true;
 }
 
+bool nsDisplayFilters::CanCreateWebRenderCommands(
+    nsDisplayListBuilder* aBuilder) {
+  nsTArray<mozilla::wr::FilterOp> wrFilters;
+  Maybe<nsRect> filterClip;
+  if (!CreateWebRenderCSSFilters(wrFilters) &&
+      !nsSVGIntegrationUtils::BuildWebRenderFilters(mFrame, wrFilters,
+                                                    filterClip)) {
+    return false;
+  }
+  return true;
+}
+
 bool nsDisplayFilters::CreateWebRenderCommands(
     mozilla::wr::DisplayListBuilder& aBuilder,
     mozilla::wr::IpcResourceUpdateQueue& aResources,
     const StackingContextHelper& aSc,
     mozilla::layers::RenderRootStateManager* aManager,
     nsDisplayListBuilder* aDisplayListBuilder) {
-  bool snap;
   float auPerDevPixel = mFrame->PresContext()->AppUnitsPerDevPixel();
-  nsRect displayBounds = GetBounds(aDisplayListBuilder, &snap);
-  auto postFilterBounds = LayoutDeviceIntRect::Round(
-      LayoutDeviceRect::FromAppUnits(displayBounds, auPerDevPixel));
-  auto preFilterBounds = LayoutDeviceIntRect::Round(
-      LayoutDeviceRect::FromAppUnits(mBounds, auPerDevPixel));
 
-  nsTArray<mozilla::wr::WrFilterOp> wrFilters;
+  nsTArray<mozilla::wr::FilterOp> wrFilters;
+  Maybe<nsRect> filterClip;
   if (!CreateWebRenderCSSFilters(wrFilters) &&
-      !nsSVGIntegrationUtils::BuildWebRenderFilters(
-          mFrame, preFilterBounds, wrFilters, postFilterBounds)) {
+      !nsSVGIntegrationUtils::BuildWebRenderFilters(mFrame, wrFilters,
+                                                    filterClip)) {
     return false;
   }
 
-  wr::WrClipId clipId =
-      aBuilder.DefineClip(Nothing(), wr::ToLayoutRect(postFilterBounds));
+  wr::WrStackingContextClip clip;
+  if (filterClip) {
+    auto devPxRect = LayoutDeviceRect::FromAppUnits(
+        filterClip.value() + ToReferenceFrame(), auPerDevPixel);
+    wr::WrClipId clipId =
+        aBuilder.DefineClip(Nothing(), wr::ToRoundedLayoutRect(devPxRect));
+    clip = wr::WrStackingContextClip::ClipId(clipId);
+  } else {
+    clip = wr::WrStackingContextClip::ClipChain(aBuilder.CurrentClipChainId());
+  }
 
   float opacity = mFrame->StyleEffects()->mOpacity;
-  StackingContextHelper sc(
-      aSc, GetActiveScrolledRoot(), mFrame, this, aBuilder, wrFilters,
-      LayoutDeviceRect(), nullptr, nullptr,
-      opacity != 1.0f && mHandleOpacity ? &opacity : nullptr, nullptr, nullptr,
-      gfx::CompositionOp::OP_OVER, true, false, Nothing(), &clipId);
+  wr::StackingContextParams params;
+  params.mFilters = std::move(wrFilters);
+  params.opacity = opacity != 1.0f && mHandleOpacity ? &opacity : nullptr;
+  params.clip = clip;
+  StackingContextHelper sc(aSc, GetActiveScrolledRoot(), mFrame, this, aBuilder,
+                           params);
 
   nsDisplayEffectsBase::CreateWebRenderCommands(aBuilder, aResources, sc,
                                                 aManager, aDisplayListBuilder);

@@ -40,7 +40,7 @@
 #include "nsNetCID.h"
 #include "prtime.h"
 #ifdef MOZ_PLACES
-#include "nsIFaviconService.h"
+#  include "nsIFaviconService.h"
 #endif
 #include "nsIIconURI.h"
 #include "nsIDownloader.h"
@@ -55,8 +55,8 @@
 #include "nsWindowsHelpers.h"
 
 #ifdef NS_ENABLE_TSF
-#include <textstor.h>
-#include "TSFTextStore.h"
+#  include <textstor.h>
+#  include "TSFTextStore.h"
 #endif  // #ifdef NS_ENABLE_TSF
 
 #include <shlobj.h>
@@ -1300,8 +1300,7 @@ NS_IMETHODIMP AsyncEncodeAndWriteIcon::Run() {
     }
   }
   nsresult rv = gfxUtils::EncodeSourceSurface(
-      surface, NS_LITERAL_CSTRING("image/vnd.microsoft.icon"), EmptyString(),
-      gfxUtils::eBinaryEncode, file);
+      surface, ImageType::ICO, EmptyString(), gfxUtils::eBinaryEncode, file);
   fclose(file);
   NS_ENSURE_SUCCESS(rv, rv);
 

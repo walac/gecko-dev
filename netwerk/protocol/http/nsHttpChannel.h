@@ -138,11 +138,10 @@ class nsHttpChannel final : public HttpBaseChannel,
 
   nsHttpChannel();
 
-  virtual MOZ_MUST_USE nsresult Init(nsIURI *aURI, uint32_t aCaps,
-                                     nsProxyInfo *aProxyInfo,
-                                     uint32_t aProxyResolveFlags,
-                                     nsIURI *aProxyURI,
-                                     uint64_t aChannelId) override;
+  virtual MOZ_MUST_USE nsresult
+  Init(nsIURI *aURI, uint32_t aCaps, nsProxyInfo *aProxyInfo,
+       uint32_t aProxyResolveFlags, nsIURI *aProxyURI, uint64_t aChannelId,
+       nsContentPolicyType aContentPolicyType) override;
 
   MOZ_MUST_USE nsresult OnPush(const nsACString &uri,
                                Http2PushedStream *pushedStream);
@@ -163,6 +162,8 @@ class nsHttpChannel final : public HttpBaseChannel,
   NS_IMETHOD AsyncOpen2(nsIStreamListener *aListener) override;
   // nsIHttpChannel
   NS_IMETHOD GetEncodedBodySize(uint64_t *aEncodedBodySize) override;
+  NS_IMETHOD SwitchProcessTo(mozilla::dom::Promise *aTabParent,
+                             uint64_t aIdentifier) override;
   // nsIHttpChannelInternal
   NS_IMETHOD SetupFallbackChannel(const char *aFallbackKey) override;
   NS_IMETHOD SetChannelIsForDownload(bool aChannelIsForDownload) override;
@@ -302,6 +303,12 @@ class nsHttpChannel final : public HttpBaseChannel,
  private:
   typedef nsresult (nsHttpChannel::*nsContinueRedirectionFunc)(nsresult result);
 
+  // Directly call |aFunc| if the channel is not canceled and not suspended.
+  // Otherwise, set |aFunc| to |mCallOnResume| and wait until the channel
+  // resumes.
+  nsresult CallOrWaitForResume(
+      const std::function<nsresult(nsHttpChannel *)> &aFunc);
+
   bool RequestIsConditional();
   void HandleContinueCancelledByTrackingProtection();
   nsresult CancelInternal(nsresult status);
@@ -332,12 +339,18 @@ class nsHttpChannel final : public HttpBaseChannel,
   void AsyncContinueProcessResponse();
   MOZ_MUST_USE nsresult ContinueProcessResponse1();
   MOZ_MUST_USE nsresult ContinueProcessResponse2(nsresult);
+  void UpdateCacheDisposition(bool aSuccessfulReval, bool aPartialContentUsed);
   MOZ_MUST_USE nsresult ContinueProcessResponse3(nsresult);
+  MOZ_MUST_USE nsresult ContinueProcessResponse4(nsresult);
   MOZ_MUST_USE nsresult ProcessNormal();
   MOZ_MUST_USE nsresult ContinueProcessNormal(nsresult);
   void ProcessAltService();
   bool ShouldBypassProcessNotModified();
-  MOZ_MUST_USE nsresult ProcessNotModified();
+  MOZ_MUST_USE nsresult ProcessNotModified(
+      const std::function<nsresult(nsHttpChannel *, nsresult)>
+          &aContinueProcessResponseFunc);
+  MOZ_MUST_USE nsresult ContinueProcessResponseAfterNotModified(nsresult aRv);
+
   MOZ_MUST_USE nsresult AsyncProcessRedirection(uint32_t httpStatus);
   MOZ_MUST_USE nsresult ContinueProcessRedirection(nsresult);
   MOZ_MUST_USE nsresult ContinueProcessRedirectionAfterFallback(nsresult);
@@ -352,6 +365,7 @@ class nsHttpChannel final : public HttpBaseChannel,
   MOZ_MUST_USE nsresult ContinueOnStartRequest1(nsresult);
   MOZ_MUST_USE nsresult ContinueOnStartRequest2(nsresult);
   MOZ_MUST_USE nsresult ContinueOnStartRequest3(nsresult);
+  MOZ_MUST_USE nsresult ContinueOnStartRequest4(nsresult);
 
   void OnClassOfServiceUpdated();
 
@@ -409,10 +423,25 @@ class nsHttpChannel final : public HttpBaseChannel,
   void ClearBogusContentEncodingIfNeeded();
 
   // byte range request specific methods
-  MOZ_MUST_USE nsresult ProcessPartialContent();
+  MOZ_MUST_USE nsresult ProcessPartialContent(
+      const std::function<nsresult(nsHttpChannel *, nsresult)>
+          &aContinueProcessResponseFunc);
+  MOZ_MUST_USE nsresult
+  ContinueProcessResponseAfterPartialContent(nsresult aRv);
   MOZ_MUST_USE nsresult OnDoneReadingPartialCacheEntry(bool *streamDone);
 
-  MOZ_MUST_USE nsresult DoAuthRetry(nsAHttpConnection *);
+  MOZ_MUST_USE nsresult
+  DoAuthRetry(nsAHttpConnection *,
+              const std::function<nsresult(nsHttpChannel *, nsresult)> &aOuter);
+  MOZ_MUST_USE nsresult ContinueDoAuthRetry(
+      nsAHttpConnection *aConn,
+      const std::function<nsresult(nsHttpChannel *, nsresult)> &aOuter);
+  MOZ_MUST_USE nsresult DoConnect(nsAHttpConnection *aConn = nullptr);
+  MOZ_MUST_USE nsresult ContinueOnStopRequestAfterAuthRetry(
+      nsresult aStatus, bool aAuthRetry, bool aIsFromNet, bool aContentComplete,
+      nsAHttpConnection *aStickyConn);
+  MOZ_MUST_USE nsresult ContinueOnStopRequest(nsresult status, bool aIsFromNet,
+                                              bool aContentComplete);
 
   void HandleAsyncRedirectChannelToHttps();
   MOZ_MUST_USE nsresult StartRedirectChannelToHttps();

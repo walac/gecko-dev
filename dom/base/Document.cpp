@@ -75,6 +75,7 @@
 #include "mozilla/dom/Performance.h"
 #include "mozilla/dom/ServiceWorkerContainer.h"
 #include "mozilla/dom/ScriptLoader.h"
+#include "mozilla/dom/ShadowIncludingTreeIterator.h"
 #include "mozilla/dom/StyleSheetList.h"
 #include "mozilla/dom/SVGUseElement.h"
 #include "nsGenericHTMLElement.h"
@@ -265,15 +266,15 @@
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/TabGroup.h"
 #ifdef MOZ_XUL
-#include "mozilla/dom/XULBroadcastManager.h"
-#include "mozilla/dom/XULPersist.h"
-#include "mozilla/dom/TreeBoxObject.h"
-#include "nsIXULWindow.h"
-#include "nsXULCommandDispatcher.h"
-#include "nsXULPopupManager.h"
-#include "nsIDocShellTreeOwner.h"
+#  include "mozilla/dom/XULBroadcastManager.h"
+#  include "mozilla/dom/XULPersist.h"
+#  include "nsIXULWindow.h"
+#  include "nsXULCommandDispatcher.h"
+#  include "nsXULPopupManager.h"
+#  include "nsIDocShellTreeOwner.h"
 #endif
 #include "nsIPresShellInlines.h"
+#include "mozilla/dom/BoxObject.h"
 
 #include "mozilla/DocLoadingTimelineMarker.h"
 
@@ -283,6 +284,7 @@
 
 #include "mozilla/MediaManager.h"
 
+#include "AutoplayPolicy.h"
 #include "nsIURIMutator.h"
 #include "mozilla/DocumentStyleRootIterator.h"
 #include "mozilla/PendingFullscreenEvent.h"
@@ -310,7 +312,7 @@ typedef nsTArray<Link*> LinkArray;
 
 static LazyLogModule gDocumentLeakPRLog("DocumentLeak");
 static LazyLogModule gCspPRLog("CSP");
-static LazyLogModule gUserInteractionPRLog("UserInteraction");
+LazyLogModule gUserInteractionPRLog("UserInteraction");
 
 static nsresult GetHttpChannelHelper(nsIChannel* aChannel,
                                      nsIHttpChannel** aHttpChannel) {
@@ -797,7 +799,6 @@ void TransferZoomLevels(Document* aFromDoc, Document* aToDoc) {
   if (!toCtxt) return;
 
   toCtxt->SetFullZoom(fromCtxt->GetFullZoom());
-  toCtxt->SetBaseMinFontSize(fromCtxt->BaseMinFontSize());
   toCtxt->SetTextZoom(fromCtxt->TextZoom());
   toCtxt->SetOverrideDPPX(fromCtxt->GetOverrideDPPX());
 }
@@ -1206,6 +1207,7 @@ Document::Document(const char* aContentType)
       mStyledLinksCleared(false),
 #endif
       mBidiEnabled(false),
+      mFontGroupCacheDirty(true),
       mMathMLEnabled(false),
       mIsInitialDocumentInWindow(false),
       mIgnoreDocGroupMismatches(false),
@@ -1293,6 +1295,7 @@ Document::Document(const char* aContentType)
       mAsyncOnloadBlockCount(0),
       mCompatMode(eCompatibility_FullStandards),
       mReadyState(ReadyState::READYSTATE_UNINITIALIZED),
+      mAncestorIsLoading(false),
 #ifdef MOZILLA_INTERNAL_API
       mVisibilityState(dom::VisibilityState::Hidden),
 #else
@@ -1321,7 +1324,6 @@ Document::Document(const char* aContentType)
       mNotifiedPageForUseCounter(0),
       mUserHasInteracted(false),
       mHasUserInteractionTimerScheduled(false),
-      mUserGestureActivated(false),
       mStackRefCnt(0),
       mUpdateNestLevel(0),
       mViewportType(Unknown),
@@ -1329,6 +1331,8 @@ Document::Document(const char* aContentType)
       mSubDocuments(nullptr),
       mHeaderData(nullptr),
       mFlashClassification(FlashClassification::Unknown),
+      mScrollAnchorAdjustmentLength(0),
+      mScrollAnchorAdjustmentCount(0),
       mBoxObjectTable(nullptr),
       mCurrentOrientationAngle(0),
       mCurrentOrientationType(OrientationType::Portrait_primary),
@@ -1336,7 +1340,8 @@ Document::Document(const char* aContentType)
       mThrowOnDynamicMarkupInsertionCounter(0),
       mIgnoreOpensDuringUnloadCounter(0),
       mDocLWTheme(Doc_Theme_Uninitialized),
-      mSavedResolution(1.0f) {
+      mSavedResolution(1.0f),
+      mPendingInitialTranslation(false) {
   MOZ_LOG(gDocumentLeakPRLog, LogLevel::Debug, ("DOCUMENT %p created", this));
 
   SetIsInDocument();
@@ -1353,6 +1358,8 @@ Document::Document(const char* aContentType)
 
   // void state used to differentiate an empty source from an unselected source
   mPreloadPictureFoundSource.SetIsVoid(true);
+
+  RecomputeLanguageFromCharset();
 }
 
 void Document::ClearAllBoxObjects() {
@@ -1646,10 +1653,6 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_BEGIN(Document)
   return Element::CanSkipThis(tmp);
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 
-static const char* kNSURIs[] = {"([none])", "(xmlns)", "(xml)", "(xhtml)",
-                                "(XLink)",  "(XSLT)",  "(XBL)", "(MathML)",
-                                "(RDF)",    "(XUL)"};
-
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
   if (MOZ_UNLIKELY(cb.WantDebugInfo())) {
     char name[512];
@@ -1662,6 +1665,9 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
     uint32_t nsid = tmp->GetDefaultNamespaceID();
     nsAutoCString uri;
     if (tmp->mDocumentURI) uri = tmp->mDocumentURI->GetSpecOrDefault();
+    static const char* kNSURIs[] = {"([none])", "(xmlns)", "(xml)", "(xhtml)",
+                                    "(XLink)",  "(XSLT)",  "(XBL)", "(MathML)",
+                                    "(RDF)",    "(XUL)"};
     if (nsid < ArrayLength(kNSURIs)) {
       SprintfLiteral(name, "Document %s %s %s", loadedAsData.get(),
                      kNSURIs[nsid], uri.get());
@@ -3127,6 +3133,8 @@ void Document::LocalizationLinkAdded(Element* aLinkElement) {
     // will be resolved once the end of l10n resource
     // container is reached.
     mL10nResources.AppendElement(href);
+
+    mPendingInitialTranslation = true;
   }
 }
 
@@ -3169,9 +3177,18 @@ void Document::OnL10nResourceContainerParsed() {
 }
 
 void Document::TriggerInitialDocumentTranslation() {
+  // Let's call it again, in case the resource
+  // container has not been closed, and only
+  // now we're closing the document.
+  OnL10nResourceContainerParsed();
+
   if (mDocumentL10n) {
     mDocumentL10n->TriggerInitialDocumentTranslation();
   }
+}
+
+void Document::InitialDocumentTranslationCompleted() {
+  mPendingInitialTranslation = false;
 }
 
 bool Document::IsWebAnimationsEnabled(JSContext* aCx, JSObject* /*unused*/) {
@@ -3289,6 +3306,14 @@ void Document::GetReferrer(nsAString& aReferrer) const {
     CopyUTF8toUTF16(mReferrer, aReferrer);
 }
 
+mozilla::net::ReferrerPolicy Document::GetReferrerPolicy() const {
+  if (mIsSrcdocDocument && mParentDocument &&
+      mReferrerPolicy == mozilla::net::RP_Unset) {
+    return mParentDocument->GetReferrerPolicy();
+  }
+  return mReferrerPolicy;
+}
+
 nsresult Document::GetSrcdocData(nsAString& aSrcdocData) {
   if (mIsSrcdocDocument) {
     nsCOMPtr<nsIInputStreamChannel> inStrmChan = do_QueryInterface(mChannel);
@@ -3401,6 +3426,7 @@ void Document::SetDocumentCharacterSet(NotNull<const Encoding*> aEncoding) {
   if (mCharacterSet != aEncoding) {
     mCharacterSet = aEncoding;
     mEncodingMenuDisabled = aEncoding == UTF_8_ENCODING;
+    RecomputeLanguageFromCharset();
 
     if (nsPresContext* context = GetPresContext()) {
       context->DispatchCharSetChange(aEncoding);
@@ -3464,6 +3490,7 @@ void Document::SetHeaderData(nsAtom* aHeaderField, const nsAString& aData) {
 
   if (aHeaderField == nsGkAtoms::headerContentLanguage) {
     CopyUTF16toUTF8(aData, mContentLanguage);
+    ResetLangPrefs();
     if (auto* presContext = GetPresContext()) {
       presContext->ContentLanguageChanged();
     }
@@ -3548,21 +3575,21 @@ void Document::TryChannelCharset(nsIChannel* aChannel, int32_t& aCharsetSource,
   }
 }
 
-static inline void AssertNoStaleServoDataIn(const nsINode& aSubtreeRoot) {
+static inline void AssertNoStaleServoDataIn(nsINode& aSubtreeRoot) {
 #ifdef DEBUG
-  for (const nsINode* node = &aSubtreeRoot; node;
-       node = node->GetNextNode(&aSubtreeRoot)) {
+  for (nsINode* node : ShadowIncludingTreeIterator(aSubtreeRoot)) {
     const Element* element = Element::FromNode(node);
     if (!element) {
       continue;
     }
     MOZ_ASSERT(!element->HasServoData());
-    if (auto* shadow = element->GetShadowRoot()) {
-      AssertNoStaleServoDataIn(*shadow);
-    }
     if (nsXBLBinding* binding = element->GetXBLBinding()) {
       if (nsXBLBinding* bindingWithContent = binding->GetBindingWithContent()) {
         nsIContent* content = bindingWithContent->GetAnonymousContent();
+        // Need to do this instead of just AssertNoStaleServoDataIn(*content),
+        // because the parent of the children of the <content> element isn't the
+        // <content> element, but the bound element, and that confuses
+        // GetNextNode a lot.
         MOZ_ASSERT(!content->AsElement()->HasServoData());
         for (nsINode* child = content->GetFirstChild(); child;
              child = child->GetNextSibling()) {
@@ -3582,7 +3609,7 @@ already_AddRefed<nsIPresShell> Document::CreateShell(
   NS_ENSURE_FALSE(GetBFCacheEntry(), nullptr);
 
   FillStyleSet(aStyleSet.get());
-  AssertNoStaleServoDataIn(static_cast<nsINode&>(*this));
+  AssertNoStaleServoDataIn(*this);
 
   RefPtr<PresShell> shell = new PresShell;
   // Note: we don't hold a ref to the shell (it holds a ref to us)
@@ -3705,7 +3732,7 @@ void Document::DeleteShell() {
   mStyleSetFilled = false;
 
   ClearStaleServoData();
-  AssertNoStaleServoDataIn(static_cast<nsINode&>(*this));
+  AssertNoStaleServoDataIn(*this);
 }
 
 void Document::SetBFCacheEntry(nsIBFCacheEntry* aEntry) {
@@ -5892,21 +5919,7 @@ already_AddRefed<BoxObject> Document::GetBoxObjectFor(Element* aElement,
     return boxObject.forget();
   }
 
-  int32_t namespaceID;
-  RefPtr<nsAtom> tag = BindingManager()->ResolveTag(aElement, &namespaceID);
-#ifdef MOZ_XUL
-  if (namespaceID == kNameSpaceID_XUL) {
-    if (tag == nsGkAtoms::tree) {
-      boxObject = new TreeBoxObject();
-    } else {
-      boxObject = new BoxObject();
-    }
-  } else
-#endif  // MOZ_XUL
-  {
-    boxObject = new BoxObject();
-  }
-
+  boxObject = new BoxObject();
   boxObject->Init(aElement);
   entry.OrInsert([&boxObject]() { return boxObject; });
 
@@ -6921,6 +6934,11 @@ void Document::UpdateViewportOverflowType(nscoord aScrolledWidth,
   }
 }
 
+void Document::UpdateForScrollAnchorAdjustment(nscoord aLength) {
+  mScrollAnchorAdjustmentLength += abs(aLength);
+  mScrollAnchorAdjustmentCount += 1;
+}
+
 EventListenerManager* Document::GetOrCreateListenerManager() {
   if (!mListenerManager) {
     mListenerManager =
@@ -7335,7 +7353,7 @@ void Document::CollectDescendantDocuments(
 }
 
 #ifdef DEBUG_bryner
-#define DEBUG_PAGE_CACHE
+#  define DEBUG_PAGE_CACHE
 #endif
 
 bool Document::CanSavePresentation(nsIRequest* aNewRequest) {
@@ -8099,14 +8117,52 @@ nsresult Document::CloneDocHelper(Document* clone) const {
   return NS_OK;
 }
 
+static bool SetLoadingInSubDocument(Document* aDocument, void* aData) {
+  aDocument->SetAncestorLoading(*(static_cast<bool*>(aData)));
+  return true;
+}
+
+void Document::SetAncestorLoading(bool aAncestorIsLoading) {
+  NotifyLoading(mAncestorIsLoading, aAncestorIsLoading, mReadyState,
+                mReadyState);
+  mAncestorIsLoading = aAncestorIsLoading;
+}
+
+void Document::NotifyLoading(const bool& aCurrentParentIsLoading,
+                             bool aNewParentIsLoading,
+                             const ReadyState& aCurrentState,
+                             ReadyState aNewState) {
+  // Mirror the top-level loading state down to all subdocuments
+  bool was_loading = aCurrentParentIsLoading ||
+                     aCurrentState == READYSTATE_LOADING ||
+                     aCurrentState == READYSTATE_INTERACTIVE;
+  bool is_loading = aNewParentIsLoading || aNewState == READYSTATE_LOADING ||
+                    aNewState == READYSTATE_INTERACTIVE;  // new value for state
+  bool set_load_state = was_loading != is_loading;
+
+  if (set_load_state && StaticPrefs::dom_timeout_defer_during_load()) {
+    nsPIDOMWindowInner* inner = GetInnerWindow();
+    if (inner) {
+      inner->SetActiveLoadingState(is_loading);
+    }
+    EnumerateSubDocuments(SetLoadingInSubDocument, &is_loading);
+  }
+}
+
 void Document::SetReadyStateInternal(ReadyState rs) {
-  mReadyState = rs;
   if (rs == READYSTATE_UNINITIALIZED) {
     // Transition back to uninitialized happens only to keep assertions happy
     // right before readyState transitions to something else. Make this
     // transition undetectable by Web content.
+    mReadyState = rs;
     return;
   }
+
+  if (READYSTATE_LOADING == rs) {
+    mLoadingTimeStamp = mozilla::TimeStamp::Now();
+  }
+  NotifyLoading(mAncestorIsLoading, mAncestorIsLoading, mReadyState, rs);
+  mReadyState = rs;
   if (mTiming) {
     switch (rs) {
       case READYSTATE_LOADING:
@@ -8124,9 +8180,6 @@ void Document::SetReadyStateInternal(ReadyState rs) {
     }
   }
   // At the time of loading start, we don't have timing object, record time.
-  if (READYSTATE_LOADING == rs) {
-    mLoadingTimeStamp = mozilla::TimeStamp::Now();
-  }
 
   if (READYSTATE_INTERACTIVE == rs) {
     if (nsContentUtils::IsSystemPrincipal(NodePrincipal())) {
@@ -8136,7 +8189,6 @@ void Document::SetReadyStateInternal(ReadyState rs) {
         mXULPersist->Init();
       }
     }
-    TriggerInitialDocumentTranslation();
   }
 
   RecordNavigationTiming(rs);
@@ -8291,7 +8343,7 @@ void Document::MaybePreLoadImage(
   RefPtr<imgRequestProxy> request;
   nsresult rv = nsContentUtils::LoadImage(
       uri, static_cast<nsINode*>(this), this, NodePrincipal(), 0,
-      mDocumentURI,  // uri of document used as referrer
+      GetDocumentURIAsReferrer(),  // uri of document used as referrer
       aReferrerPolicy,
       nullptr,  // no observer
       loadFlags, NS_LITERAL_STRING("img"), getter_AddRefs(request), policyType);
@@ -8702,25 +8754,25 @@ void Document::ScrollToRef() {
     }
 
     if (NS_FAILED(rv)) {
-      char* tmpstr = ToNewCString(mScrollToRef);
-      if (!tmpstr) {
-        return;
-      }
-      nsUnescape(tmpstr);
-      nsAutoCString unescapedRef;
-      unescapedRef.Assign(tmpstr);
-      free(tmpstr);
+      nsAutoCString buff;
+      const bool unescaped =
+          NS_UnescapeURL(mScrollToRef.BeginReading(), mScrollToRef.Length(),
+                         /*aFlags =*/0, buff);
 
-      NS_ConvertUTF8toUTF16 utf16Str(unescapedRef);
-      if (!utf16Str.IsEmpty()) {
-        rv = shell->GoToAnchor(utf16Str, mChangeScrollPosWhenScrollingToRef);
+      // This attempt is only necessary if characters were unescaped.
+      if (unescaped) {
+        NS_ConvertUTF8toUTF16 utf16Str(buff);
+        if (!utf16Str.IsEmpty()) {
+          rv = shell->GoToAnchor(utf16Str, mChangeScrollPosWhenScrollingToRef);
+        }
       }
 
       // If UTF-8 URI failed then try to assume the string as a
       // document's charset.
       if (NS_FAILED(rv)) {
         const Encoding* encoding = GetDocumentCharacterSet();
-        rv = encoding->DecodeWithoutBOMHandling(unescapedRef, ref);
+        rv = encoding->DecodeWithoutBOMHandling(unescaped ? buff : mScrollToRef,
+                                                ref);
         if (NS_SUCCEEDED(rv) && !ref.IsEmpty()) {
           rv = shell->GoToAnchor(ref, mChangeScrollPosWhenScrollingToRef);
         }
@@ -8772,7 +8824,8 @@ void Document::RegisterPendingLinkUpdate(Link* aLink) {
         NewRunnableMethod("Document::FlushPendingLinkUpdatesFromRunnable", this,
                           &Document::FlushPendingLinkUpdatesFromRunnable);
     // Do this work in a second in the worst case.
-    nsresult rv = NS_IdleDispatchToCurrentThread(event.forget(), 1000);
+    nsresult rv = NS_DispatchToCurrentThreadQueue(event.forget(), 1000,
+                                                  EventQueuePriority::Idle);
     if (NS_FAILED(rv)) {
       // If during shutdown posting a runnable doesn't succeed, we probably
       // don't need to update link states.
@@ -10712,7 +10765,7 @@ PointerLockRequest::Run() {
   if (!error && !mUserInputOrChromeCaller && !doc->GetFullscreenElement()) {
     error = "PointerLockDeniedNotInputDriven";
   }
-  if (!error && !doc->SetPointerLock(e, NS_STYLE_CURSOR_NONE)) {
+  if (!error && !doc->SetPointerLock(e, StyleCursorKind::None)) {
     error = "PointerLockDeniedFailedToLock";
   }
   if (error) {
@@ -10750,7 +10803,7 @@ void Document::RequestPointerLock(Element* aElement, CallerType aCallerType) {
   Dispatch(TaskCategory::Other, request.forget());
 }
 
-bool Document::SetPointerLock(Element* aElement, int aCursorStyle) {
+bool Document::SetPointerLock(Element* aElement, StyleCursorKind aCursorStyle) {
   MOZ_ASSERT(!aElement || aElement->OwnerDoc() == this,
              "We should be either unlocking pointer (aElement is nullptr), "
              "or locking pointer to an element in this document");
@@ -10810,7 +10863,7 @@ void Document::UnlockPointer(Document* aDoc) {
   if (!pointerLockedDoc || (aDoc && aDoc != pointerLockedDoc)) {
     return;
   }
-  if (!pointerLockedDoc->SetPointerLock(nullptr, NS_STYLE_CURSOR_AUTO)) {
+  if (!pointerLockedDoc->SetPointerLock(nullptr, StyleCursorKind::Auto)) {
     return;
   }
 
@@ -10887,6 +10940,9 @@ void Document::DocAddSizeOfExcludingThis(nsWindowSizes& aWindowSizes) const {
   if (mPresShell) {
     mPresShell->AddSizeOfIncludingThis(aWindowSizes);
   }
+
+  aWindowSizes.mDOMOtherSize += mLangGroupFontPrefs.SizeOfExcludingThis(
+      aWindowSizes.mState.mMallocSizeOf);
 
   aWindowSizes.mPropertyTablesSize +=
       mPropertyTable.SizeOfExcludingThis(aWindowSizes.mState.mMallocSizeOf);
@@ -11348,6 +11404,15 @@ void Document::ReportUseCounters(UseCounterReportKind aKind) {
     }
     Telemetry::AccumulateCategorical(label);
   }
+
+  if (IsTopLevelContentDocument()) {
+    CSSIntCoord adjustmentLength =
+        CSSPixel::FromAppUnits(mScrollAnchorAdjustmentLength).Rounded();
+    Telemetry::Accumulate(Telemetry::SCROLL_ANCHOR_ADJUSTMENT_LENGTH,
+                          adjustmentLength);
+    Telemetry::Accumulate(Telemetry::SCROLL_ANCHOR_ADJUSTMENT_COUNT,
+                          mScrollAnchorAdjustmentCount);
+  }
 }
 
 void Document::UpdateIntersectionObservations() {
@@ -11666,16 +11731,29 @@ void Document::SetUserHasInteracted() {
   MaybeAllowStorageForOpenerAfterUserInteraction();
 }
 
+BrowsingContext* Document::GetBrowsingContext() const {
+  nsPIDOMWindowOuter* outer = GetWindow();
+  return outer ? outer->GetBrowsingContext() : nullptr;
+}
+
 void Document::NotifyUserGestureActivation() {
-  // Activate this document and all documents up to the top level
-  // content document.
-  Document* doc = this;
-  while (doc && !doc->mUserGestureActivated) {
-    MOZ_LOG(gUserInteractionPRLog, LogLevel::Debug,
-            ("Document %p has been activated by user.", this));
-    doc->mUserGestureActivated = true;
-    doc = doc->GetSameTypeParentDocument();
+  if (HasBeenUserGestureActivated()) {
+    return;
   }
+
+  RefPtr<BrowsingContext> bc = GetBrowsingContext();
+  if (!bc) {
+    return;
+  }
+  bc->NotifyUserGestureActivation();
+}
+
+bool Document::HasBeenUserGestureActivated() {
+  RefPtr<BrowsingContext> bc = GetBrowsingContext();
+  if (!bc) {
+    return false;
+  }
+  return bc->GetUserGestureActivation();
 }
 
 void Document::MaybeNotifyAutoplayBlocked() {
@@ -11692,6 +11770,17 @@ void Document::MaybeNotifyAutoplayBlocked() {
   asyncDispatcher->PostDOMEvent();
 }
 
+void Document::ClearUserGestureActivation() {
+  if (!HasBeenUserGestureActivated()) {
+    return;
+  }
+  RefPtr<BrowsingContext> bc = GetBrowsingContext();
+  if (!bc) {
+    return;
+  }
+  bc->NotifyResetUserGestureActivation();
+}
+
 void Document::SetDocTreeHadAudibleMedia() {
   Document* topLevelDoc = GetTopLevelContentDocument();
   if (!topLevelDoc) {
@@ -11706,6 +11795,10 @@ void Document::SetDocTreeHadPlayRevoked() {
   if (topLevelDoc) {
     topLevelDoc->mDocTreeHadPlayRevoked = true;
   }
+}
+
+DocumentAutoplayPolicy Document::AutoplayPolicy() const {
+  return AutoplayPolicy::IsAllowedToPlay(*this);
 }
 
 void Document::MaybeAllowStorageForOpenerAfterUserInteraction() {
@@ -11920,7 +12013,8 @@ void Document::MaybeStoreUserInteractionAsPermission() {
   }
 
   nsCOMPtr<nsIRunnable> task = new UserIntractionTimer(this);
-  nsresult rv = NS_IdleDispatchToCurrentThread(task.forget(), 2500);
+  nsresult rv = NS_DispatchToCurrentThreadQueue(task.forget(), 2500,
+                                                EventQueuePriority::Idle);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return;
   }
@@ -11931,26 +12025,6 @@ void Document::MaybeStoreUserInteractionAsPermission() {
 
 void Document::ResetUserInteractionTimer() {
   mHasUserInteractionTimerScheduled = false;
-}
-
-bool Document::HasBeenUserGestureActivated() {
-  if (mUserGestureActivated) {
-    return true;
-  }
-
-  // If any ancestor document is activated, so are we.
-  Document* doc = GetSameTypeParentDocument();
-  while (doc) {
-    if (doc->mUserGestureActivated) {
-      // An ancestor is also activated. Record activation on the unactivated
-      // sub-branch to speed up future queries.
-      NotifyUserGestureActivation();
-      break;
-    }
-    doc = doc->GetSameTypeParentDocument();
-  }
-
-  return mUserGestureActivated;
 }
 
 bool Document::IsExtensionPage() const {
@@ -12478,6 +12552,63 @@ void Document::ReportShadowDOMUsage() {
 bool Document::StorageAccessSandboxed() const {
   return StaticPrefs::dom_storage_access_enabled() &&
          (GetSandboxFlags() & SANDBOXED_STORAGE_ACCESS) != 0;
+}
+
+already_AddRefed<nsAtom> Document::GetContentLanguageAsAtomForStyle() const {
+  nsAutoString contentLang;
+  GetContentLanguage(contentLang);
+  contentLang.StripWhitespace();
+
+  // Content-Language may be a comma-separated list of language codes,
+  // in which case the HTML5 spec says to treat it as unknown
+  if (!contentLang.IsEmpty() && !contentLang.Contains(char16_t(','))) {
+    return NS_Atomize(contentLang);
+  }
+
+  return nullptr;
+}
+
+already_AddRefed<nsAtom> Document::GetLanguageForStyle() const {
+  RefPtr<nsAtom> lang = GetContentLanguageAsAtomForStyle();
+  if (!lang) {
+    lang = mLanguageFromCharset;
+  }
+  return lang.forget();
+}
+
+const LangGroupFontPrefs* Document::GetFontPrefsForLang(
+    nsAtom* aLanguage, bool* aNeedsToCache) const {
+  nsAtom* lang = aLanguage ? aLanguage : mLanguageFromCharset.get();
+  return StaticPresData::Get()->GetFontPrefsForLangHelper(
+      lang, &mLangGroupFontPrefs, aNeedsToCache);
+}
+
+void Document::DoCacheAllKnownLangPrefs() {
+  MOZ_ASSERT(mFontGroupCacheDirty);
+  RefPtr<nsAtom> lang = GetLanguageForStyle();
+  GetFontPrefsForLang(lang.get());
+  GetFontPrefsForLang(nsGkAtoms::x_math);
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1362599#c12
+  GetFontPrefsForLang(nsGkAtoms::Unicode);
+  for (auto iter = mLanguagesUsed.Iter(); !iter.Done(); iter.Next()) {
+    GetFontPrefsForLang(iter.Get()->GetKey());
+  }
+  mFontGroupCacheDirty = false;
+}
+
+void Document::RecomputeLanguageFromCharset() {
+  nsLanguageAtomService* service = nsLanguageAtomService::GetService();
+  RefPtr<nsAtom> language = service->LookupCharSet(mCharacterSet);
+  if (language == nsGkAtoms::Unicode) {
+    language = service->GetLocaleLanguage();
+  }
+
+  if (language == mLanguageFromCharset) {
+    return;
+  }
+
+  ResetLangPrefs();
+  mLanguageFromCharset = language.forget();
 }
 
 }  // namespace dom

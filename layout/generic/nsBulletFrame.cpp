@@ -45,7 +45,7 @@
 #include <algorithm>
 
 #ifdef ACCESSIBILITY
-#include "nsAccessibilityService.h"
+#  include "nsAccessibilityService.h"
 #endif
 
 using namespace mozilla;
@@ -432,6 +432,8 @@ ImgDrawResult BulletRenderer::CreateWebRenderCommandsForImage(
       aItem->Frame()->PresContext()->AppUnitsPerDevPixel();
   LayoutDeviceRect destRect =
       LayoutDeviceRect::FromAppUnits(mDest, appUnitsPerDevPixel);
+  destRect.Round();
+
   Maybe<SVGImageContext> svgContext;
   gfx::IntSize decodeSize =
       nsLayoutUtils::ComputeImageContainerDrawingParameters(
@@ -454,7 +456,7 @@ ImgDrawResult BulletRenderer::CreateWebRenderCommandsForImage(
     return drawResult;
   }
 
-  wr::LayoutRect dest = wr::ToRoundedLayoutRect(destRect);
+  wr::LayoutRect dest = wr::ToLayoutRect(destRect);
 
   aBuilder.PushImage(dest, dest, !aItem->BackfaceIsHidden(), rendering,
                      key.value());
@@ -485,12 +487,7 @@ bool BulletRenderer::CreateWebRenderCommandsForPath(
       return true;
     }
     case NS_STYLE_LIST_STYLE_DISC: {
-      AutoTArray<wr::ComplexClipRegion, 1> clips;
-      clips.AppendElement(wr::SimpleRadii(dest, dest.size.width / 2));
-      auto clipId = aBuilder.DefineClip(Nothing(), dest, &clips, nullptr);
-      aBuilder.PushClip(clipId);
-      aBuilder.PushRect(dest, dest, isBackfaceVisible, color);
-      aBuilder.PopClip();
+      aBuilder.PushRoundedRect(dest, dest, isBackfaceVisible, color);
       return true;
     }
     case NS_STYLE_LIST_STYLE_SQUARE: {

@@ -12,13 +12,11 @@ import java.lang.ref.WeakReference;
 import java.net.URLConnection;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.UUID;
 
 import org.mozilla.gecko.annotation.WrapForJNI;
 import org.mozilla.gecko.EventDispatcher;
 import org.mozilla.gecko.GeckoAppShell;
-import org.mozilla.gecko.GeckoEditableChild;
 import org.mozilla.gecko.GeckoThread;
 import org.mozilla.gecko.IGeckoEditableParent;
 import org.mozilla.gecko.mozglue.JNIObject;
@@ -109,7 +107,7 @@ public class GeckoSession implements Parcelable {
     private boolean mShouldPinOnScreen;
 
     // All fields are accessed on UI thread only.
-    private PanZoomController mNPZC;
+    private PanZoomController mPanZoomController = new PanZoomController(this);
     private OverscrollEdgeEffect mOverscroll;
     private DynamicToolbarAnimator mToolbar;
     private CompositorController mController;
@@ -1259,9 +1257,9 @@ public class GeckoSession implements Parcelable {
             throw new IllegalStateException("Session is open");
         }
 
-        final String chromeUri = mSettings.getString(GeckoSessionSettings.CHROME_URI);
-        final int screenId = mSettings.getInt(GeckoSessionSettings.SCREEN_ID);
-        final boolean isPrivate = mSettings.getBoolean(GeckoSessionSettings.USE_PRIVATE_MODE);
+        final String chromeUri = mSettings.getChromeUri();
+        final int screenId = mSettings.getScreenId();
+        final boolean isPrivate = mSettings.getUsePrivateMode();
 
         mWindow = new Window(runtime, this, mNativeQueue);
 
@@ -2354,20 +2352,6 @@ public class GeckoSession implements Parcelable {
                     return;
                 }
                 String[] mimeTypes = message.getStringArray("mimeTypes");
-                final String[] extensions = message.getStringArray("extension");
-                if (extensions != null) {
-                    final ArrayList<String> combined =
-                            new ArrayList<>(mimeTypes.length + extensions.length);
-                    combined.addAll(Arrays.asList(mimeTypes));
-                    for (final String extension : extensions) {
-                        final String mimeType =
-                                URLConnection.guessContentTypeFromName(extension);
-                        if (mimeType != null) {
-                            combined.add(mimeType);
-                        }
-                    }
-                    mimeTypes = combined.toArray(new String[combined.size()]);
-                }
                 delegate.onFilePrompt(session, title, intMode, mimeTypes, cb);
                 break;
             }
@@ -2498,18 +2482,12 @@ public class GeckoSession implements Parcelable {
              * CONTENT_UNKNOWN, CONTENT_BLOCKED, and CONTENT_LOADED.
              */
             public final @ContentType int mixedModeActive;
-            /**
-             * Indicates the status of tracking protection; possible values are
-             * CONTENT_UNKNOWN, CONTENT_BLOCKED, and CONTENT_LOADED.
-             */
-            public final @ContentType int trackingMode;
 
             /* package */ SecurityInformation(GeckoBundle identityData) {
                 final GeckoBundle mode = identityData.getBundle("mode");
 
                 mixedModePassive = mode.getInt("mixed_display");
                 mixedModeActive = mode.getInt("mixed_active");
-                trackingMode = mode.getInt("tracking");
 
                 securityMode = mode.getInt("identity");
 
@@ -2529,7 +2507,6 @@ public class GeckoSession implements Parcelable {
             protected SecurityInformation() {
                 mixedModePassive = 0;
                 mixedModeActive = 0;
-                trackingMode = 0;
                 securityMode = 0;
                 isSecure = false;
                 isException = false;
@@ -3618,9 +3595,10 @@ public class GeckoSession implements Parcelable {
          * @param session GeckoSession that triggered the prompt
          * @param title Title for the prompt dialog.
          * @param type One of FILE_TYPE_* indicating the prompt type.
-         * @param mimeTypes Array of permissible MIME types for the selected files, in
-         *                  the form "type/subtype", where "type" and/or "subtype" can be
-         *                  "*" to indicate any value.
+         * @param mimeTypes Array of permissible MIME types or extensions for the selected
+         *                  files. MIME types are of the form "type/subtype", where "type"
+         *                  and/or "subtype" can be "*" to indicate any value. Extensions
+         *                  are of the form ".ext".
          * @param callback Callback interface.
          */
         @UiThread
@@ -3667,13 +3645,7 @@ public class GeckoSession implements Parcelable {
     public @NonNull PanZoomController getPanZoomController() {
         ThreadUtils.assertOnUiThread();
 
-        if (mNPZC == null) {
-            mNPZC = new PanZoomController(this);
-            if (mAttachedCompositor) {
-                mCompositor.attachNPZC(mNPZC);
-            }
-        }
-        return mNPZC;
+        return mPanZoomController;
     }
 
     /**
@@ -3831,7 +3803,7 @@ public class GeckoSession implements Parcelable {
         @IntDef(flag = true,
                 value = { CATEGORY_NONE, CATEGORY_AD, CATEGORY_ANALYTIC,
                           CATEGORY_SOCIAL, CATEGORY_CONTENT, CATEGORY_ALL,
-                          CATEGORY_TEST })
+                          CATEGORY_TEST, CATEGORY_AD_EXT })
         /* package */ @interface Category {}
 
         static final int CATEGORY_NONE = 0;
@@ -3859,6 +3831,10 @@ public class GeckoSession implements Parcelable {
          * Block all known trackers.
          */
         static final int CATEGORY_ALL = (1 << 5) - 1;
+        /**
+         * Experimental: Block advertisements.
+         */
+        static final int CATEGORY_AD_EXT = 1 << 6;
 
         /**
          * A tracking element has been blocked from loading.
@@ -4349,10 +4325,7 @@ public class GeckoSession implements Parcelable {
         }
 
         mAttachedCompositor = true;
-
-        if (mNPZC != null) {
-            mCompositor.attachNPZC(mNPZC);
-        }
+        mCompositor.attachNPZC(mPanZoomController);
 
         if (mSurface != null) {
             // If we have a valid surface, create the compositor now that we're attached.
@@ -4450,6 +4423,10 @@ public class GeckoSession implements Parcelable {
     /* package */ void onCompositorReady() {
         if (DEBUG) {
             ThreadUtils.assertOnUiThread();
+        }
+
+        if (!mAttachedCompositor) {
+            return;
         }
 
         mCompositorReady = true;

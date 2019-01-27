@@ -20,14 +20,14 @@ ChromeUtils.defineModuleGetter(this, "Extension",
                                "resource://gre/modules/Extension.jsm");
 ChromeUtils.defineModuleGetter(this, "ExtensionParent",
                                "resource://gre/modules/ExtensionParent.jsm");
-ChromeUtils.defineModuleGetter(this, "Preferences",
-                               "resource://gre/modules/Preferences.jsm");
-
-
 ChromeUtils.defineModuleGetter(this, "PluralForm",
                                "resource://gre/modules/PluralForm.jsm");
 ChromeUtils.defineModuleGetter(this, "Preferences",
                                "resource://gre/modules/Preferences.jsm");
+ChromeUtils.defineModuleGetter(this, "ClientID",
+                               "resource://gre/modules/ClientID.jsm");
+ChromeUtils.defineModuleGetter(this, "PrivateBrowsingUtils",
+                               "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 XPCOMUtils.defineLazyPreferenceGetter(this, "WEBEXT_PERMISSION_PROMPTS",
                                       "extensions.webextPermissionPrompts", false);
@@ -280,9 +280,14 @@ function isDiscoverEnabled() {
 
 function setSearchLabel(type) {
   let searchLabel = document.getElementById("search-label");
-  if (type == "extension" || type == "theme") {
+  let keyMap = {
+    extension: "extension",
+    shortcuts: "extension",
+    theme: "theme",
+  };
+  if (type in keyMap) {
     searchLabel
-      .textContent = gStrings.ext.GetStringFromName(`searchLabel.${type}`);
+      .textContent = gStrings.ext.GetStringFromName(`searchLabel.${keyMap[type]}`);
     searchLabel.hidden = false;
   } else {
     searchLabel.textContent = "";
@@ -681,17 +686,20 @@ var gViewController = {
   viewChangeCallback: null,
   initialViewSelected: false,
   lastHistoryIndex: -1,
+  backButton: null,
 
   initialize() {
     this.viewPort = document.getElementById("view-port");
     this.headeredViews = document.getElementById("headered-views");
     this.headeredViewsDeck = document.getElementById("headered-views-content");
+    this.backButton = document.getElementById("go-back");
 
     this.viewObjects.discover = gDiscoverView;
     this.viewObjects.list = gListView;
     this.viewObjects.legacy = gLegacyView;
     this.viewObjects.detail = gDetailView;
     this.viewObjects.updates = gUpdatesView;
+    this.viewObjects.shortcuts = gShortcutsView;
 
     for (let type in this.viewObjects) {
       let view = this.viewObjects[type];
@@ -866,6 +874,8 @@ var gViewController = {
       this.currentViewObj.refresh(view.param, ++this.currentViewRequest, aState);
     else
       this.currentViewObj.show(view.param, ++this.currentViewRequest, aState);
+
+    this.backButton.hidden = this.currentViewObj.isRoot || !gHistory.canGoBack;
   },
 
   // Moves back in the document history and removes the current history entry
@@ -1381,6 +1391,15 @@ var gViewController = {
       },
       doCommand() {
         gViewController.loadView("addons://list/extension");
+      },
+    },
+
+    cmd_showShortcuts: {
+      isEnabled() {
+        return true;
+      },
+      doCommand() {
+        gViewController.loadView("addons://shortcuts/shortcuts");
       },
     },
   },
@@ -1994,12 +2013,31 @@ var gDiscoverView = {
   homepageURL: null,
   _loadListeners: [],
   hideHeader: true,
+  isRoot: true,
+
+  get clientIdDiscoveryEnabled() {
+    // These prefs match Discovery.jsm for enabling clientId cookies.
+    return Services.prefs.getBoolPref("datareporting.healthreport.uploadEnabled", false) &&
+           Services.prefs.getBoolPref("browser.discovery.enabled", false) &&
+           !PrivateBrowsingUtils.isContentWindowPrivate(window);
+  },
+
+  async getClientHeader() {
+    if (!this.clientIdDiscoveryEnabled) {
+      return undefined;
+    }
+    let clientId = await ClientID.getClientIdHash();
+
+    let stream = Cc["@mozilla.org/io/string-input-stream;1"].createInstance(Ci.nsISupportsCString);
+    stream.data = `Moz-Client-Id: ${clientId}\r\n`;
+    return stream;
+  },
 
   async initialize() {
     this.enabled = isDiscoverEnabled();
     if (!this.enabled) {
       gCategories.get("addons://discover/").hidden = true;
-      return;
+      return null;
     }
 
     this.node = document.getElementById("discover-view");
@@ -2017,7 +2055,7 @@ var gDiscoverView = {
     url = url.replace("%COMPATIBILITY_MODE%", compatMode);
     url = Services.urlFormatter.formatURL(url);
 
-    let setURL = (aURL) => {
+    let setURL = async (aURL) => {
       try {
         this.homepageURL = Services.io.newURI(aURL);
       } catch (e) {
@@ -2028,16 +2066,17 @@ var gDiscoverView = {
 
       this._browser.addProgressListener(this);
 
-      if (this.loaded)
+      if (this.loaded) {
         this._loadURL(this.homepageURL.spec, false, notifyInitialized,
-                      Services.scriptSecurityManager.getSystemPrincipal());
-      else
+                      Services.scriptSecurityManager.getSystemPrincipal(),
+                      await this.getClientHeader());
+      } else {
         notifyInitialized();
+      }
     };
 
     if (!Services.prefs.getBoolPref(PREF_GETADDONS_CACHE_ENABLED)) {
-      setURL(url);
-      return;
+      return setURL(url);
     }
 
     gPendingInitializations++;
@@ -2060,7 +2099,7 @@ var gDiscoverView = {
       };
     }
 
-    setURL(url + "#" + JSON.stringify(list));
+    return setURL(url + "#" + JSON.stringify(list));
   },
 
   destroy() {
@@ -2071,7 +2110,7 @@ var gDiscoverView = {
     }
   },
 
-  show(aParam, aRequest, aState, aIsRefresh) {
+  async show(aParam, aRequest, aState, aIsRefresh) {
     gViewController.updateCommands();
 
     // If we're being told to load a specific URL then just do that
@@ -2100,7 +2139,8 @@ var gDiscoverView = {
 
     this._loadURL(this.homepageURL.spec, aIsRefresh,
                   gViewController.notifyViewChanged.bind(gViewController),
-                  Services.scriptSecurityManager.getSystemPrincipal());
+                  Services.scriptSecurityManager.getSystemPrincipal(),
+                  await this.getClientHeader());
   },
 
   canRefresh() {
@@ -2120,7 +2160,7 @@ var gDiscoverView = {
     this.node.selectedPanel = this._error;
   },
 
-  _loadURL(aURL, aKeepHistory, aCallback, aPrincipal) {
+  _loadURL(aURL, aKeepHistory, aCallback, aPrincipal, headers) {
     if (this._browser.currentURI && this._browser.currentURI.spec == aURL) {
       if (aCallback)
         aCallback();
@@ -2137,6 +2177,7 @@ var gDiscoverView = {
     this._browser.loadURI(aURL, {
       flags,
       triggeringPrincipal: aPrincipal || Services.scriptSecurityManager.createNullPrincipal({}),
+      headers,
     });
   },
 
@@ -2191,6 +2232,8 @@ var gDiscoverView = {
     // the error page
     aRequest.cancel(Cr.NS_BINDING_ABORTED);
   },
+
+  onContentBlockingEvent(aWebProgress, aRequest, aEvent) {},
 
   onStateChange(aWebProgress, aRequest, aStateFlags, aStatus) {
     let transferStart = Ci.nsIWebProgressListener.STATE_IS_DOCUMENT |
@@ -2252,6 +2295,7 @@ var gLegacyView = {
   node: null,
   _listBox: null,
   _categoryItem: null,
+  isRoot: true,
 
   initialize() {
     this.node = document.getElementById("legacy-view");
@@ -2350,6 +2394,7 @@ var gListView = {
   _listBox: null,
   _emptyNotice: null,
   _type: null,
+  isRoot: true,
 
   initialize() {
     this.node = document.getElementById("list-view");
@@ -2544,6 +2589,10 @@ var gListView = {
     if (aIsInstall && aObj.existingAddon)
       return;
 
+    if (aObj.addon && aObj.addon.hidden) {
+      return;
+    }
+
     let prop = aIsInstall ? "mInstall" : "mAddon";
     for (let item of this._listBox.childNodes) {
       if (item[prop] == aObj)
@@ -2591,9 +2640,11 @@ var gDetailView = {
   _addon: null,
   _loadingTimer: null,
   _autoUpdate: null,
+  isRoot: false,
 
   initialize() {
     this.node = document.getElementById("detail-view");
+    this.headingImage = this.node.querySelector(".card-heading-image");
 
     this._autoUpdate = document.getElementById("detail-autoUpdate");
 
@@ -2614,10 +2665,11 @@ var gDetailView = {
     setSearchLabel(aAddon.type);
 
     // Set the preview image for themes, if available.
+    this.headingImage.src = "";
     if (aAddon.type == "theme") {
       let previewURL = aAddon.screenshots && aAddon.screenshots[0] && aAddon.screenshots[0].url;
       if (previewURL) {
-        this.node.querySelector(".card-heading-image").src = previewURL;
+        this.headingImage.src = previewURL;
       }
     }
 
@@ -3098,6 +3150,30 @@ var gDetailView = {
       browser.setAttribute("remote", "true");
       browser.setAttribute("remoteType", E10SUtils.EXTENSION_REMOTE_TYPE);
       readyPromise = promiseEvent("XULFrameLoaderCreated", browser);
+
+      readyPromise.then(() => {
+        if (!browser.messageManager) {
+          // Early exit if the the extension page's XUL browser has been destroyed in the meantime
+          // (e.g. because the extension has been reloaded while the options page was still loading).
+          return;
+        }
+        const parentChromeWindow = window.docShell.parent.domWindow;
+        const parentContextMenuPopup = parentChromeWindow.document.getElementById("contentAreaContextMenu");
+
+        // Override openPopupAtScreen on the dummy menupopup element, so that we can forward
+        // "nsContextMenu.js openContextMenu"'s calls related to the extensions "options page"
+        // context menu events.
+        document.getElementById("contentAreaContextMenu").openPopupAtScreen = (...args) => {
+          return parentContextMenuPopup.openPopupAtScreen(...args);
+        };
+
+        // Subscribe a "contextmenu" listener to handle the context menus for the extension option page
+        // running in the extension process (the context menu will be handled only for extension running
+        // in OOP mode, but that's ok as it is the default on any platform that uses these extensions
+        // options pages).
+        browser.messageManager.addMessageListener(
+          "contextmenu", message => parentChromeWindow.openContextMenu(message));
+      });
     } else {
       readyPromise = promiseEvent("load", browser, true);
     }
@@ -3237,6 +3313,7 @@ var gUpdatesView = {
   _emptyNotice: null,
   _updateSelected: null,
   _categoryItem: null,
+  isRoot: true,
 
   initialize() {
     this.node = document.getElementById("updates-view");
@@ -3444,6 +3521,36 @@ var gUpdatesView = {
   onPropertyChanged(aAddon, aProperties) {
     if (aProperties.includes("applyBackgroundUpdates"))
       this.updateAvailableCount();
+  },
+};
+
+var gShortcutsView = {
+  node: null,
+  loaded: null,
+  isRoot: false,
+
+  initialize() {
+    this.node = document.getElementById("shortcuts-view");
+    this.node.loadURI("chrome://mozapps/content/extensions/shortcuts.html", {
+      triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+    });
+    // Store a Promise for when the contentWindow will exist.
+    this.loaded = new Promise(resolve => this.node.addEventListener("load", resolve, {once: true}));
+  },
+
+  async show() {
+    // Ensure the Extensions category is selected in case of refresh/restart.
+    gCategories.select("addons://list/extension");
+
+    await this.loaded;
+    await this.node.contentWindow.render();
+    gViewController.notifyViewChanged();
+  },
+
+  hide() {},
+
+  getSelectedAddon() {
+    return null;
   },
 };
 

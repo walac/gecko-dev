@@ -47,7 +47,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   ProcessHangMonitor: "resource:///modules/ProcessHangMonitor.jsm",
   PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
-  ReaderMode: "resource://gre/modules/ReaderMode.jsm",
   ReaderParent: "resource:///modules/ReaderParent.jsm",
   SafeBrowsing: "resource://gre/modules/SafeBrowsing.jsm",
   Sanitizer: "resource:///modules/Sanitizer.jsm",
@@ -79,6 +78,11 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 if (AppConstants.MOZ_CRASHREPORTER) {
   ChromeUtils.defineModuleGetter(this, "PluginCrashReporter",
     "resource:///modules/ContentCrashHandlers.jsm");
+}
+
+if (!Services.prefs.getBoolPref("browser.urlbar.quantumbar", false)) {
+  ChromeUtils.defineModuleGetter(this, "ReaderMode",
+    "resource://gre/modules/ReaderMode.jsm");
 }
 
 XPCOMUtils.defineLazyScriptGetter(this, "PlacesTreeView",
@@ -188,14 +192,6 @@ XPCOMUtils.defineLazyGetter(this, "gURLBar", () => {
 
   if (!Services.prefs.getBoolPref("browser.urlbar.quantumbar", false)) {
     return element;
-  }
-
-  // Disable the legacy XBL binding.
-  element.setAttribute("quantumbar", "true");
-
-  // Re-focus the input field if it was focused before switching bindings.
-  if (element.hasAttribute("focused")) {
-    element.inputField.focus();
   }
 
   return new UrlbarInput({
@@ -1063,6 +1059,13 @@ function _loadURI(browser, uri, params = {}) {
   if (!requiredRemoteType) {
     browser.inLoadURI = true;
   }
+  let loadURIOptions = {
+    triggeringPrincipal,
+    loadFlags: flags,
+    referrerURI,
+    referrerPolicy,
+    postData,
+  };
   try {
     if (!mustChangeProcess) {
       if (userContextId) {
@@ -1071,10 +1074,7 @@ function _loadURI(browser, uri, params = {}) {
           privateBrowsingId: PrivateBrowsingUtils.isBrowserPrivate(browser) ? 1 : 0,
         });
       }
-
-      browser.webNavigation.loadURIWithOptions(uri, flags,
-                                               referrerURI, referrerPolicy,
-                                               postData, null, null, triggeringPrincipal);
+      browser.webNavigation.loadURI(uri, loadURIOptions);
     } else {
       // Check if the current browser is allowed to unload.
       let {permitUnload, timedOut} = browser.permitUnload();
@@ -1121,9 +1121,7 @@ function _loadURI(browser, uri, params = {}) {
           privateBrowsingId: PrivateBrowsingUtils.isBrowserPrivate(browser) ? 1 : 0,
         });
       }
-
-      browser.webNavigation.loadURIWithOptions(uri, flags, referrerURI, referrerPolicy,
-                                               postData, null, null, triggeringPrincipal);
+      browser.webNavigation.loadURI(uri, loadURIOptions);
     } else {
       throw e;
     }
@@ -1539,12 +1537,6 @@ var gBrowserInit = {
 
     gNavToolbox.addEventListener("customizationstarting", CustomizationHandler);
     gNavToolbox.addEventListener("customizationending", CustomizationHandler);
-
-    if (AppConstants.platform == "linux") {
-      let { WindowDraggingElement } =
-        ChromeUtils.import("resource://gre/modules/WindowDraggingUtils.jsm", {});
-      new WindowDraggingElement(document.getElementById("titlebar"));
-    }
 
     SessionStore.promiseInitialized.then(() => {
       // Bail out if the window has been closed in the meantime.
@@ -2965,12 +2957,14 @@ var BrowserOnClick = {
             flags |= overrideService.ERROR_TIME;
           }
           let uri = Services.uriFixup.createFixupURI(location, 0);
+          let permanentOverride =
+            Services.prefs.getBoolPref("security.certerrors.permanentOverride");
           cert = securityInfo.serverCert;
           overrideService.rememberValidityOverride(
             uri.asciiHost, uri.port,
             cert,
             flags,
-            true);
+            !permanentOverride);
           browser.reload();
           return;
         }
@@ -4004,7 +3998,6 @@ const BrowserSearch = {
 
     let focusUrlBarIfSearchFieldIsNotActive = function(aSearchBar) {
       if (!aSearchBar || document.activeElement != aSearchBar.textbox.inputField) {
-        focusAndSelectUrlBar(true);
         // Limit the results to search suggestions, like the search bar.
         gURLBar.typeRestrictToken(UrlbarTokenizer.RESTRICT.SEARCH);
       }
@@ -4153,10 +4146,8 @@ const BrowserSearch = {
    *        allowed values.
    * @param type
    *        (string) Indicates how the user selected the search item.
-   * @param where
-   *        (string) Where was the search link opened (e.g. new tab, current tab, ..).
    */
-  recordOneoffSearchInTelemetry(engine, source, type, where) {
+  recordOneoffSearchInTelemetry(engine, source, type) {
     try {
       const details = {type, isOneOff: true};
       BrowserUsageTelemetry.recordSearch(gBrowser, engine, source, details);
@@ -4833,6 +4824,7 @@ var XULBrowserWindow = {
 
       CFRPageActions.updatePageActions(gBrowser.selectedBrowser);
     }
+    Services.obs.notifyObservers(null, "touchbar-location-change", location);
     UpdateBackForwardCommands(gBrowser.webNavigation);
     ReaderParent.updateReaderButton(gBrowser.selectedBrowser);
 
@@ -4904,13 +4896,40 @@ var XULBrowserWindow = {
   // Properties used to cache security state used to update the UI
   _state: null,
   _lastLocation: null,
+  _event: null,
+  _lastLocationForEvent: null,
+
+  // This is called in multiple ways:
+  //  1. Due to the nsIWebProgressListener.onContentBlockingEvent notification.
+  //  2. Called by tabbrowser.xml when updating the current browser.
+  //  3. Called directly during this object's initializations.
+  //  4. Due to the nsIWebProgressListener.onLocationChange notification.
+  // aRequest will be null always in case 2 and 3, and sometimes in case 1 (for
+  // instance, there won't be a request when STATE_BLOCKED_TRACKING_CONTENT is observed).
+  onContentBlockingEvent(aWebProgress, aRequest, aEvent, aIsSimulated) {
+    // Don't need to do anything if the data we use to update the UI hasn't
+    // changed
+    let uri = gBrowser.currentURI;
+    let spec = uri.spec;
+    if (this._event == aEvent &&
+        this._lastLocationForEvent == spec) {
+      return;
+    }
+    this._event = aEvent;
+    this._lastLocationForEvent = spec;
+
+    if (typeof(aIsSimulated) != "boolean" && typeof(aIsSimulated) != "undefined") {
+      throw "onContentBlockingEvent: aIsSimulated receieved an unexpected type";
+    }
+
+    ContentBlocking.onContentBlockingEvent(this._event, aWebProgress, aIsSimulated);
+  },
 
   // This is called in multiple ways:
   //  1. Due to the nsIWebProgressListener.onSecurityChange notification.
   //  2. Called by tabbrowser.xml when updating the current browser.
   //  3. Called directly during this object's initializations.
-  // aRequest will be null always in case 2 and 3, and sometimes in case 1 (for
-  // instance, there won't be a request when STATE_BLOCKED_TRACKING_CONTENT is observed).
+  // aRequest will be null always in case 2 and 3, and sometimes in case 1.
   onSecurityChange(aWebProgress, aRequest, aState, aIsSimulated) {
     // Don't need to do anything if the data we use to update the UI hasn't
     // changed
@@ -4926,10 +4945,6 @@ var XULBrowserWindow = {
     this._state = aState;
     this._lastLocation = spec;
 
-    if (typeof(aIsSimulated) != "boolean" && typeof(aIsSimulated) != "undefined") {
-      throw "onSecurityChange: aIsSimulated receieved an unexpected type";
-    }
-
     // Make sure the "https" part of the URL is striked out or not,
     // depending on the current mixed active content blocking state.
     gURLBar.formatValue();
@@ -4938,7 +4953,6 @@ var XULBrowserWindow = {
       uri = Services.uriFixup.createExposableURI(uri);
     } catch (e) {}
     gIdentityHandler.updateIdentity(this._state, uri);
-    ContentBlocking.onSecurityChange(this._state, aWebProgress, aIsSimulated);
   },
 
   // simulate all change notifications after switching tabs
@@ -5334,6 +5348,17 @@ var TabsProgressListener = {
     gBrowser.getNotificationBox(aBrowser).removeTransientNotifications();
 
     FullZoom.onLocationChange(aLocationURI, false, aBrowser);
+  },
+
+  onLinkIconAvailable(browser, dataURI, iconURI) {
+    if (!iconURI) {
+      return;
+    }
+    if (browser == gBrowser.selectedBrowser) {
+      // If the "Add Search Engine" page action is in the urlbar, its image
+      // needs to be set to the new icon, so call updateOpenSearchBadge.
+      BrowserSearch.updateOpenSearchBadge();
+    }
   },
 };
 

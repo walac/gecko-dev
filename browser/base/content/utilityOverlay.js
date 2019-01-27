@@ -339,7 +339,7 @@ function openLinkIn(url, where, params) {
         userContextId: aUserContextId,
         privateBrowsingId: aIsPrivate || (w && PrivateBrowsingUtils.isWindowPrivate(w)),
       };
-      return Services.scriptSecurityManager.createCodebasePrincipal(principal.URI, attrs);
+      return Services.scriptSecurityManager.principalWithOA(principal, attrs);
     }
     return principal;
   }
@@ -972,6 +972,8 @@ function openHelpLink(aHelpTopic, aCalledFromModal, aWhere) {
 
   openTrustedLinkIn(url, where);
 }
+
+window.addEventListener("dialoghelp", openPrefsHelp);
 
 function openPrefsHelp() {
   // non-instant apply prefwindows are usually modal, so we can't open in the topmost window,
