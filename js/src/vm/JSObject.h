@@ -441,10 +441,6 @@ class JSObject : public js::gc::Cell {
   // all realms in the compartment).
   JS::Realm* maybeCCWRealm() const { return group_->realm(); }
 
-  // Deprecated: call nonCCWRealm(), maybeCCWRealm(), or NativeObject::realm()
-  // instead!
-  JS::Realm* deprecatedRealm() const { return group_->realm(); }
-
   /*
    * ES5 meta-object properties and operations.
    */
@@ -952,38 +948,6 @@ MOZ_ALWAYS_INLINE JSObject* ToObjectFromStack(JSContext* cx, HandleValue vp) {
     return &vp.toObject();
   }
   return js::ToObjectSlow(cx, vp, true);
-}
-
-JSObject* ToObjectSlowForPropertyAccess(JSContext* cx, JS::HandleValue val,
-                                        HandleId key, bool reportScanStack);
-JSObject* ToObjectSlowForPropertyAccess(JSContext* cx, JS::HandleValue val,
-                                        HandlePropertyName key,
-                                        bool reportScanStack);
-JSObject* ToObjectSlowForPropertyAccess(JSContext* cx, JS::HandleValue val,
-                                        HandleValue keyValue,
-                                        bool reportScanStack);
-
-MOZ_ALWAYS_INLINE JSObject* ToObjectFromStackForPropertyAccess(JSContext* cx,
-                                                               HandleValue vp,
-                                                               HandleId key) {
-  if (vp.isObject()) {
-    return &vp.toObject();
-  }
-  return js::ToObjectSlowForPropertyAccess(cx, vp, key, true);
-}
-MOZ_ALWAYS_INLINE JSObject* ToObjectFromStackForPropertyAccess(
-    JSContext* cx, HandleValue vp, HandlePropertyName key) {
-  if (vp.isObject()) {
-    return &vp.toObject();
-  }
-  return js::ToObjectSlowForPropertyAccess(cx, vp, key, true);
-}
-MOZ_ALWAYS_INLINE JSObject* ToObjectFromStackForPropertyAccess(
-    JSContext* cx, HandleValue vp, HandleValue key) {
-  if (vp.isObject()) {
-    return &vp.toObject();
-  }
-  return js::ToObjectSlowForPropertyAccess(cx, vp, key, true);
 }
 
 template <XDRMode mode>

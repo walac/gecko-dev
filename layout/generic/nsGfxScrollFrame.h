@@ -97,7 +97,7 @@ class ScrollFrameHelper : public nsIReflowCallback {
    */
   void CurPosAttributeChanged(nsIContent* aChild, bool aDoScroll = true);
 
-  void PostScrollEvent();
+  void PostScrollEvent(bool aDelayed = false);
   void FireScrollEvent();
   void PostScrolledAreaEvent();
   void FireScrolledAreaEvent();
@@ -127,7 +127,7 @@ class ScrollFrameHelper : public nsIReflowCallback {
   class ScrollEvent : public Runnable {
    public:
     NS_DECL_NSIRUNNABLE
-    explicit ScrollEvent(ScrollFrameHelper* aHelper);
+    explicit ScrollEvent(ScrollFrameHelper* aHelper, bool aDelayed);
     void Revoke() { mHelper = nullptr; }
 
    private:
@@ -395,9 +395,9 @@ class ScrollFrameHelper : public nsIReflowCallback {
   // adjust the scrollbar rectangle aRect to account for any visible resizer.
   // aHasResizer specifies if there is a content resizer, however this method
   // will also check if a widget resizer is present as well.
-  void AdjustScrollbarRectForResizer(nsIFrame* aFrame,
-                                     nsPresContext* aPresContext, nsRect& aRect,
-                                     bool aHasResizer, bool aVertical);
+  void AdjustScrollbarRectForResizer(
+      nsIFrame* aFrame, nsPresContext* aPresContext, nsRect& aRect,
+      bool aHasResizer, mozilla::layers::ScrollDirection aDirection);
   // returns true if a resizer should be visible
   bool HasResizer() { return mResizerBox && !mCollapsedResizer; }
   void LayoutScrollbars(nsBoxLayoutState& aState, const nsRect& aContentArea,
@@ -525,7 +525,6 @@ class ScrollFrameHelper : public nsIReflowCallback {
   RefPtr<ScrollbarActivity> mScrollbarActivity;
   nsTArray<nsIScrollPositionListener*> mListeners;
   nsAtom* mLastScrollOrigin;
-  bool mAllowScrollOriginDowngrade;
   nsAtom* mLastSmoothScrollOrigin;
   Maybe<nsPoint> mApzSmoothScrollDestination;
   uint32_t mScrollGeneration;
@@ -558,7 +557,6 @@ class ScrollFrameHelper : public nsIReflowCallback {
 
   // The scroll position where we last updated frame visibility.
   nsPoint mLastUpdateFramesPos;
-  bool mHadDisplayPortAtLastFrameUpdate;
   nsRect mDisplayPortAtLastFrameUpdate;
 
   nsRect mPrevScrolledRect;
@@ -568,6 +566,8 @@ class ScrollFrameHelper : public nsIReflowCallback {
   // Timer to remove the displayport some time after scrolling has stopped
   nsCOMPtr<nsITimer> mDisplayPortExpiryTimer;
 
+  bool mAllowScrollOriginDowngrade : 1;
+  bool mHadDisplayPortAtLastFrameUpdate : 1;
   bool mNeverHasVerticalScrollbar : 1;
   bool mNeverHasHorizontalScrollbar : 1;
   bool mHasVerticalScrollbar : 1;
@@ -739,8 +739,7 @@ class nsHTMLScrollFrame : public nsContainerFrame,
                  bool aAssumeVScroll, bool aAssumeHScroll, bool aForce);
   bool ScrolledContentDependsOnHeight(ScrollReflowInput* aState);
   void ReflowScrolledFrame(ScrollReflowInput* aState, bool aAssumeHScroll,
-                           bool aAssumeVScroll, ReflowOutput* aMetrics,
-                           bool aFirstPass);
+                           bool aAssumeVScroll, ReflowOutput* aMetrics);
   void ReflowContents(ScrollReflowInput* aState,
                       const ReflowOutput& aDesiredSize);
   void PlaceScrollArea(ScrollReflowInput& aState,

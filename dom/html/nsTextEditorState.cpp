@@ -797,7 +797,7 @@ void TextInputListener::OnSelectionChange(Selection& aSelection,
                                 nsISelectionListener::SELECTALL_REASON))) {
     nsIContent* content = mFrame->GetContent();
     if (content) {
-      nsCOMPtr<nsIDocument> doc = content->GetComposedDoc();
+      nsCOMPtr<Document> doc = content->GetComposedDoc();
       if (doc) {
         nsCOMPtr<nsIPresShell> presShell = doc->GetShell();
         if (presShell) {
@@ -997,7 +997,7 @@ nsresult TextInputListener::UpdateTextInputCommands(
   nsIContent* content = mFrame->GetContent();
   NS_ENSURE_TRUE(content, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIDocument> doc = content->GetComposedDoc();
+  nsCOMPtr<Document> doc = content->GetComposedDoc();
   NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
 
   nsPIDOMWindowOuter* domWindow = doc->GetWindow();
@@ -1330,7 +1330,7 @@ nsresult nsTextEditorState::PrepareEditor(const nsAString* aValue) {
     //       editor's Init() call.
 
     // Get the DOM document
-    nsCOMPtr<nsIDocument> doc = shell->GetDocument();
+    nsCOMPtr<Document> doc = shell->GetDocument();
     if (NS_WARN_IF(!doc)) {
       return NS_ERROR_FAILURE;
     }
@@ -2260,7 +2260,7 @@ bool nsTextEditorState::SetValue(const nsAString& aValue,
       RefPtr<TextEditor> textEditor = mTextEditor;
       AutoInputEventSuppresser suppressInputEventDispatching(textEditor);
 
-      nsCOMPtr<nsIDocument> document = textEditor->GetDocument();
+      nsCOMPtr<Document> document = textEditor->GetDocument();
       if (NS_WARN_IF(!document)) {
         return true;
       }
@@ -2426,13 +2426,15 @@ bool nsTextEditorState::SetValue(const nsAString& aValue,
       }
 
       // If this is called as part of user input, we need to dispatch "input"
-      // event since web apps may want to know the user operation.
+      // event with "insertReplacementText" since web apps may want to know
+      // the user operation which changes editor value with a built-in function
+      // like autocomplete, password manager, session restore, etc.
       if (aFlags & eSetValue_BySetUserInput) {
         nsCOMPtr<Element> element = do_QueryInterface(textControlElement);
         MOZ_ASSERT(element);
-        RefPtr<TextEditor> textEditor;
-        DebugOnly<nsresult> rvIgnored =
-            nsContentUtils::DispatchInputEvent(element, textEditor);
+        RefPtr<TextEditor> textEditor;  // See bug 1506439
+        DebugOnly<nsresult> rvIgnored = nsContentUtils::DispatchInputEvent(
+            element, EditorInputType::eInsertReplacementText, textEditor);
         NS_WARNING_ASSERTION(NS_SUCCEEDED(rvIgnored),
                              "Failed to dispatch input event");
       }

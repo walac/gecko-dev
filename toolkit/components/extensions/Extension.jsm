@@ -42,6 +42,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   AppConstants: "resource://gre/modules/AppConstants.jsm",
   AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
   ExtensionPermissions: "resource://gre/modules/ExtensionPermissions.jsm",
+  ExtensionProcessScript: "resource://gre/modules/ExtensionProcessScript.jsm",
   ExtensionStorage: "resource://gre/modules/ExtensionStorage.jsm",
   ExtensionStorageIDB: "resource://gre/modules/ExtensionStorageIDB.jsm",
   ExtensionTelemetry: "resource://gre/modules/ExtensionTelemetry.jsm",
@@ -56,11 +57,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   Schemas: "resource://gre/modules/Schemas.jsm",
   XPIProvider: "resource://gre/modules/addons/XPIProvider.jsm",
 });
-
-XPCOMUtils.defineLazyGetter(
-  this, "processScript",
-  () => Cc["@mozilla.org/webextensions/extension-process-script;1"]
-          .getService().wrappedJSObject);
 
 // This is used for manipulating jar entry paths, which always use Unix
 // separators.
@@ -636,6 +632,7 @@ class ExtensionData {
       schemaURLs: null,
       type: this.type,
       webAccessibleResources,
+      privateBrowsingAllowed: manifest.incognito !== "not_allowed",
     };
 
     if (this.type === "extension") {
@@ -1599,6 +1596,14 @@ class Extension extends ExtensionData {
     return this.manifest.optional_permissions;
   }
 
+  get privateBrowsingAllowed() {
+    return this.policy.privateBrowsingAllowed;
+  }
+
+  canAccessWindow(window) {
+    return this.policy.canAccessWindow(window);
+  }
+
   // Representation of the extension to send to content
   // processes. This should include anything the content process might
   // need.
@@ -1615,6 +1620,7 @@ class Extension extends ExtensionData {
       whiteListedHosts: this.whiteListedHosts.patterns.map(pat => pat.pattern),
       permissions: this.permissions,
       optionalPermissions: this.optionalPermissions,
+      privateBrowsingAllowed: this.privateBrowsingAllowed,
     };
   }
 
@@ -1850,12 +1856,18 @@ class Extension extends ExtensionData {
         return;
       }
 
+      if (this.addonData && this.addonData.incognitoOverride !== undefined) {
+        this.policy.privateBrowsingAllowed = this.addonData.incognitoOverride !== "not_allowed";
+      } else {
+        this.policy.privateBrowsingAllowed = this.manifest.incognito !== "not_allowed";
+      }
+
       GlobalManager.init(this);
 
       this.initSharedData();
 
       this.policy.active = false;
-      this.policy = processScript.initExtension(this);
+      this.policy = ExtensionProcessScript.initExtension(this);
       this.policy.extension = this;
 
       this.updatePermissions(this.startupReason);

@@ -63,6 +63,7 @@
 #include "nsIURI.h"
 #include "nsIWindowWatcher.h"
 #include "nsIWebBrowserChrome.h"
+#include "nsIWebProtocolHandlerRegistrar.h"
 #include "nsIXULBrowserWindow.h"
 #include "nsIXULWindow.h"
 #include "nsViewManager.h"
@@ -531,7 +532,8 @@ mozilla::ipc::IPCResult TabParent::RecvSizeShellTo(
 }
 
 mozilla::ipc::IPCResult TabParent::RecvDropLinks(nsTArray<nsString>&& aLinks) {
-  nsCOMPtr<nsIBrowser> browser = do_QueryInterface(mFrameElement);
+  nsCOMPtr<nsIBrowser> browser =
+      mFrameElement ? mFrameElement->AsBrowser() : nullptr;
   if (browser) {
     // Verify that links have not been modified by the child. If links have
     // not been modified then it's safe to load those links using the
@@ -1101,7 +1103,7 @@ void TabParent::SendRealMouseEvent(WidgetMouseEvent& aEvent) {
 }
 
 LayoutDeviceToCSSScale TabParent::GetLayoutDeviceToCSSScale() {
-  nsIDocument* doc = (mFrameElement ? mFrameElement->OwnerDoc() : nullptr);
+  Document* doc = (mFrameElement ? mFrameElement->OwnerDoc() : nullptr);
   nsPresContext* ctx = (doc ? doc->GetPresContext() : nullptr);
   return LayoutDeviceToCSSScale(
       ctx ? (float)ctx->AppUnitsPerDevPixel() / AppUnitsPerCSSPixel() : 0.0f);
@@ -1178,7 +1180,7 @@ bool TabParent::QueryDropLinksForVerification() {
 
 void TabParent::SendRealDragEvent(WidgetDragEvent& aEvent, uint32_t aDragAction,
                                   uint32_t aDropEffect,
-                                  const nsCString& aPrincipalURISpec) {
+                                  const IPC::Principal& aPrincipal) {
   if (mIsDestroyed || !mIsReadyToHandleInputEvents) {
     return;
   }
@@ -1190,7 +1192,7 @@ void TabParent::SendRealDragEvent(WidgetDragEvent& aEvent, uint32_t aDragAction,
     }
   }
   DebugOnly<bool> ret = PBrowserParent::SendRealDragEvent(
-      aEvent, aDragAction, aDropEffect, aPrincipalURISpec);
+      aEvent, aDragAction, aDropEffect, aPrincipal);
   NS_WARNING_ASSERTION(ret, "PBrowserParent::SendRealDragEvent() failed");
   MOZ_ASSERT(!ret || aEvent.HasBeenPostedToRemoteProcess());
 }
@@ -1578,6 +1580,7 @@ mozilla::ipc::IPCResult TabParent::RecvSyncMessage(
     nsTArray<StructuredCloneData>* aRetVal) {
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING("TabParent::RecvSyncMessage",
                                              OTHER, aMessage);
+  MMPrinter::Print("TabParent::RecvSyncMessage", aMessage, aData);
 
   StructuredCloneData data;
   ipc::UnpackClonedMessageDataForParent(aData, data);
@@ -1595,6 +1598,7 @@ mozilla::ipc::IPCResult TabParent::RecvRpcMessage(
     nsTArray<StructuredCloneData>* aRetVal) {
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING("TabParent::RecvRpcMessage", OTHER,
                                              aMessage);
+  MMPrinter::Print("TabParent::RecvRpcMessage", aMessage, aData);
 
   StructuredCloneData data;
   ipc::UnpackClonedMessageDataForParent(aData, data);
@@ -1611,6 +1615,7 @@ mozilla::ipc::IPCResult TabParent::RecvAsyncMessage(
     const IPC::Principal& aPrincipal, const ClonedMessageData& aData) {
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING("TabParent::RecvAsyncMessage",
                                              OTHER, aMessage);
+  MMPrinter::Print("TabParent::RecvAsyncMessage", aMessage, aData);
 
   StructuredCloneData data;
   ipc::UnpackClonedMessageDataForParent(aData, data);
@@ -1909,7 +1914,8 @@ mozilla::ipc::IPCResult TabParent::RecvRequestFocus(const bool& aCanRaise) {
 mozilla::ipc::IPCResult TabParent::RecvEnableDisableCommands(
     const nsString& aAction, nsTArray<nsCString>&& aEnabledCommands,
     nsTArray<nsCString>&& aDisabledCommands) {
-  nsCOMPtr<nsIBrowser> browser = do_QueryInterface(mFrameElement);
+  nsCOMPtr<nsIBrowser> browser =
+      mFrameElement ? mFrameElement->AsBrowser() : nullptr;
   bool isRemoteBrowser = false;
   if (browser) {
     browser->GetIsRemoteBrowser(&isRemoteBrowser);
@@ -2019,7 +2025,7 @@ mozilla::ipc::IPCResult TabParent::RecvReplyKeyEvent(
 
   // Here we convert the WidgetEvent that we received to an Event
   // to be able to dispatch it to the <browser> element as the target element.
-  nsIDocument* doc = mFrameElement->OwnerDoc();
+  Document* doc = mFrameElement->OwnerDoc();
   nsPresContext* presContext = doc->GetPresContext();
   NS_ENSURE_TRUE(presContext, IPC_OK());
 
@@ -2074,7 +2080,7 @@ mozilla::ipc::IPCResult TabParent::RecvAccessKeyNotHandled(
 
   // Here we convert the WidgetEvent that we received to an Event
   // to be able to dispatch it to the <browser> element as the target element.
-  nsIDocument* doc = mFrameElement->OwnerDoc();
+  Document* doc = mFrameElement->OwnerDoc();
   nsIPresShell* presShell = doc->GetShell();
   NS_ENSURE_TRUE(presShell, IPC_OK());
 
@@ -2091,6 +2097,19 @@ mozilla::ipc::IPCResult TabParent::RecvAccessKeyNotHandled(
 mozilla::ipc::IPCResult TabParent::RecvSetHasBeforeUnload(
     const bool& aHasBeforeUnload) {
   mHasBeforeUnload = aHasBeforeUnload;
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult TabParent::RecvRegisterProtocolHandler(
+    const nsString& aScheme, nsIURI* aHandlerURI, const nsString& aTitle,
+    nsIURI* aDocURI) {
+  nsCOMPtr<nsIWebProtocolHandlerRegistrar> registrar =
+      do_GetService(NS_WEBPROTOCOLHANDLERREGISTRAR_CONTRACTID);
+  if (registrar) {
+    registrar->RegisterProtocolHandler(aScheme, aHandlerURI, aTitle, aDocURI,
+                                       mFrameElement);
+  }
+
   return IPC_OK();
 }
 
@@ -2697,14 +2716,14 @@ TabParent::GetContentBlockingLog(Promise** aPromise) {
 
   auto cblPromise = SendGetContentBlockingLog();
   cblPromise->Then(GetMainThreadSerialEventTarget(), __func__,
-                   [jsPromise](Tuple<nsString, bool> aResult) {
+                   [jsPromise](Tuple<nsString, bool>&& aResult) {
                      if (Get<1>(aResult)) {
-                       jsPromise->MaybeResolve(Get<0>(aResult));
+                       jsPromise->MaybeResolve(std::move(Get<0>(aResult)));
                      } else {
                        jsPromise->MaybeRejectWithUndefined();
                      }
                    },
-                   [jsPromise](ResponseRejectReason aReason) {
+                   [jsPromise](ResponseRejectReason&& aReason) {
                      jsPromise->MaybeRejectWithUndefined();
                    });
 
@@ -2816,7 +2835,7 @@ void TabParent::RequestRootPaint(gfx::CrossProcessPaint* aPaint, IntRect aRect,
                 [paint, tabId](PaintFragment&& aFragment) {
                   paint->ReceiveFragment(tabId, std::move(aFragment));
                 },
-                [paint, tabId](ResponseRejectReason aReason) {
+                [paint, tabId](ResponseRejectReason&& aReason) {
                   paint->LostFragment(tabId);
                 });
 }
@@ -2831,7 +2850,7 @@ void TabParent::RequestSubPaint(gfx::CrossProcessPaint* aPaint, float aScale,
                 [paint, tabId](PaintFragment&& aFragment) {
                   paint->ReceiveFragment(tabId, std::move(aFragment));
                 },
-                [paint, tabId](ResponseRejectReason aReason) {
+                [paint, tabId](ResponseRejectReason&& aReason) {
                   paint->LostFragment(tabId);
                 });
 }
@@ -3061,7 +3080,7 @@ mozilla::ipc::IPCResult TabParent::RecvInvokeDragSession(
     nsTArray<IPCDataTransfer>&& aTransfers, const uint32_t& aAction,
     const OptionalShmem& aVisualDnDData, const uint32_t& aStride,
     const gfx::SurfaceFormat& aFormat, const LayoutDeviceIntRect& aDragRect,
-    const nsCString& aPrincipalURISpec) {
+    const IPC::Principal& aPrincipal) {
   mInitialDataTransferItems.Clear();
   nsIPresShell* shell = mFrameElement->OwnerDoc()->GetShell();
   if (!shell) {
@@ -3099,7 +3118,7 @@ mozilla::ipc::IPCResult TabParent::RecvInvokeDragSession(
 
   mDragValid = true;
   mDragRect = aDragRect;
-  mDragPrincipalURISpec = aPrincipalURISpec;
+  mDragPrincipal = aPrincipal;
 
   esm->BeginTrackingRemoteDragGesture(mFrameElement);
 
@@ -3111,19 +3130,8 @@ mozilla::ipc::IPCResult TabParent::RecvInvokeDragSession(
 }
 
 void TabParent::AddInitialDnDDataTo(DataTransfer* aDataTransfer,
-                                    nsACString& aPrincipalURISpec) {
-  aPrincipalURISpec.Assign(mDragPrincipalURISpec);
-
-  nsCOMPtr<nsIPrincipal> principal;
-  if (!mDragPrincipalURISpec.IsEmpty()) {
-    // If principal is given, try using it first.
-    principal = BasePrincipal::CreateCodebasePrincipal(mDragPrincipalURISpec);
-  }
-  if (!principal) {
-    // Fallback to system principal, to handle like the data is from browser
-    // chrome or OS.
-    principal = nsContentUtils::GetSystemPrincipal();
-  }
+                                    nsIPrincipal** aPrincipal) {
+  NS_IF_ADDREF(*aPrincipal = mDragPrincipal);
 
   for (uint32_t i = 0; i < mInitialDataTransferItems.Length(); ++i) {
     nsTArray<IPCDataTransferItem>& itemArray = mInitialDataTransferItems[i];
@@ -3164,12 +3172,12 @@ void TabParent::AddInitialDnDDataTo(DataTransfer* aDataTransfer,
       // from content in the parent process where there is no content.
       // XXX: Nested Content Processes may change this
       aDataTransfer->SetDataWithPrincipalFromOtherProcess(
-          NS_ConvertUTF8toUTF16(item.flavor()), variant, i, principal,
+          NS_ConvertUTF8toUTF16(item.flavor()), variant, i, mDragPrincipal,
           /* aHidden = */ false);
     }
   }
   mInitialDataTransferItems.Clear();
-  mDragPrincipalURISpec.Truncate(0);
+  mDragPrincipal = nullptr;
 }
 
 bool TabParent::TakeDragVisualization(
@@ -3292,8 +3300,9 @@ mozilla::ipc::IPCResult TabParent::RecvLookUpDictionary(
 }
 
 mozilla::ipc::IPCResult TabParent::RecvShowCanvasPermissionPrompt(
-    const nsCString& aFirstPartyURI) {
-  nsCOMPtr<nsIBrowser> browser = do_QueryInterface(mFrameElement);
+    const nsCString& aFirstPartyURI, const bool& aHideDoorHanger) {
+  nsCOMPtr<nsIBrowser> browser =
+      mFrameElement ? mFrameElement->AsBrowser() : nullptr;
   if (!browser) {
     // If the tab is being closed, the browser may not be available.
     // In this case we can ignore the request.
@@ -3303,9 +3312,11 @@ mozilla::ipc::IPCResult TabParent::RecvShowCanvasPermissionPrompt(
   if (!os) {
     return IPC_FAIL_NO_REASON(this);
   }
-  nsresult rv =
-      os->NotifyObservers(browser, "canvas-permissions-prompt",
-                          NS_ConvertUTF8toUTF16(aFirstPartyURI).get());
+  nsresult rv = os->NotifyObservers(
+      browser,
+      aHideDoorHanger ? "canvas-permissions-prompt-hide-doorhanger"
+                      : "canvas-permissions-prompt",
+      NS_ConvertUTF8toUTF16(aFirstPartyURI).get());
   if (NS_FAILED(rv)) {
     return IPC_FAIL_NO_REASON(this);
   }

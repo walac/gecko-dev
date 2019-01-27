@@ -50,6 +50,12 @@ const vixl::MacroAssembler& MacroAssemblerCompat::asVIXL() const {
   return *static_cast<const vixl::MacroAssembler*>(this);
 }
 
+void MacroAssemblerCompat::mov(CodeLabel* label, Register dest) {
+  BufferOffset bo = movePatchablePtr(ImmPtr(/* placeholder */ nullptr), dest);
+  label->patchAt()->bind(bo.getOffset());
+  label->setLinkMode(CodeLabel::MoveImmediate);
+}
+
 BufferOffset MacroAssemblerCompat::movePatchablePtr(ImmPtr ptr, Register dest) {
   const size_t numInst = 1;           // Inserting one load instruction.
   const unsigned numPoolEntries = 2;  // Every pool entry is 4 bytes.
@@ -196,7 +202,21 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
       Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfReturnValue()),
       JSReturnOperand);
   movePtr(BaselineFrameReg, r28);
-  vixl::MacroAssembler::Pop(ARMRegister(BaselineFrameReg, 64), vixl::lr);
+  vixl::MacroAssembler::Pop(ARMRegister(BaselineFrameReg, 64));
+
+  // If profiling is enabled, then update the lastProfilingFrame to refer to
+  // caller frame before returning.
+  {
+    Label skipProfilingInstrumentation;
+    AbsoluteAddress addressOfEnabled(
+        GetJitContext()->runtime->geckoProfiler().addressOfEnabled());
+    asMasm().branch32(Assembler::Equal, addressOfEnabled, Imm32(0),
+                      &skipProfilingInstrumentation);
+    jump(profilerExitTail);
+    bind(&skipProfilingInstrumentation);
+  }
+
+  vixl::MacroAssembler::Pop(vixl::lr);
   syncStackPtr();
   vixl::MacroAssembler::Ret(vixl::lr);
 
@@ -447,7 +467,38 @@ void MacroAssembler::PushRegsInMask(LiveRegisterSet set) {
 
 void MacroAssembler::storeRegsInMask(LiveRegisterSet set, Address dest,
                                      Register scratch) {
-  MOZ_CRASH("NYI: storeRegsInMask");
+  FloatRegisterSet fpuSet(set.fpus().reduceSetForPush());
+  unsigned numFpu = fpuSet.size();
+  int32_t diffF = fpuSet.getPushSizeInBytes();
+  int32_t diffG = set.gprs().size() * sizeof(intptr_t);
+
+  MOZ_ASSERT(dest.offset >= diffG + diffF);
+
+  for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); ++iter) {
+    diffG -= sizeof(intptr_t);
+    dest.offset -= sizeof(intptr_t);
+    storePtr(*iter, dest);
+  }
+  MOZ_ASSERT(diffG == 0);
+
+  for (FloatRegisterBackwardIterator iter(fpuSet); iter.more(); ++iter) {
+    FloatRegister reg = *iter;
+    diffF -= reg.size();
+    numFpu -= 1;
+    dest.offset -= reg.size();
+    if (reg.isDouble()) {
+      storeDouble(reg, dest);
+    } else if (reg.isSingle()) {
+      storeFloat32(reg, dest);
+    } else {
+      MOZ_CRASH("Unknown register type.");
+    }
+
+  }
+  MOZ_ASSERT(numFpu == 0);
+  // Padding to keep the stack aligned, taken from the x64 and mips64 implementations.
+  diffF -= diffF % sizeof(uintptr_t);
+  MOZ_ASSERT(diffF == 0);
 }
 
 void MacroAssembler::PopRegsInMaskIgnore(LiveRegisterSet set,
@@ -583,12 +634,12 @@ void MacroAssembler::call(ImmPtr imm) {
   Blr(vixl::ip0);
 }
 
-void MacroAssembler::call(wasm::SymbolicAddress imm) {
+CodeOffset MacroAssembler::call(wasm::SymbolicAddress imm) {
   vixl::UseScratchRegisterScope temps(this);
   const Register scratch = temps.AcquireX().asUnsized();
   syncStackPtr();
   movePtr(imm, scratch);
-  call(scratch);
+  return call(scratch);
 }
 
 void MacroAssembler::call(const Address& addr) {
@@ -815,6 +866,14 @@ uint32_t MacroAssembler::pushFakeReturnAddress(Register scratch) {
 
   leaveNoPool();
   return pseudoReturnOffset;
+}
+
+bool MacroAssemblerCompat::buildOOLFakeExitFrame(void* fakeReturnAddr) {
+  uint32_t descriptor = MakeFrameDescriptor(
+      asMasm().framePushed(), FrameType::IonJS, ExitFrameLayout::Size());
+  asMasm().Push(Imm32(descriptor));
+  asMasm().Push(ImmPtr(fakeReturnAddr));
+  return true;
 }
 
 // ===============================================================

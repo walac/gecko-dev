@@ -10,14 +10,13 @@
 #include "mozilla/Logging.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/AudioContext.h"
-#include "mozilla/AutoplayPermissionManager.h"
 #include "mozilla/dom/FeaturePolicyUtils.h"
 #include "mozilla/dom/HTMLMediaElement.h"
 #include "mozilla/dom/HTMLMediaElementBinding.h"
 #include "nsGlobalWindowInner.h"
 #include "nsIAutoplay.h"
 #include "nsContentUtils.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "MediaManager.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
@@ -31,7 +30,7 @@ mozilla::LazyLogModule gAutoplayPermissionLog("Autoplay");
 namespace mozilla {
 namespace dom {
 
-static nsIDocument* ApproverDocOf(const nsIDocument& aDocument) {
+static Document* ApproverDocOf(const Document& aDocument) {
   nsCOMPtr<nsIDocShell> ds = aDocument.GetDocShell();
   if (!ds) {
     return nullptr;
@@ -87,14 +86,7 @@ static bool IsWindowAllowedToPlay(nsPIDOMWindowInner* aWindow) {
     return false;
   }
 
-  nsCOMPtr<nsPIDOMWindowOuter> topWindow = aWindow->GetScriptableTop();
-  if (topWindow && topWindow->HasTemporaryAutoplayPermission()) {
-    AUTOPLAY_LOG(
-        "Allow autoplay as document has temporary autoplay permission.");
-    return true;
-  }
-
-  nsIDocument* approver = ApproverDocOf(*aWindow->GetExtantDoc());
+  Document* approver = ApproverDocOf(*aWindow->GetExtantDoc());
   if (!approver) {
     return false;
   }
@@ -119,33 +111,20 @@ static bool IsWindowAllowedToPlay(nsPIDOMWindowInner* aWindow) {
   return false;
 }
 
-/* static */
-already_AddRefed<AutoplayPermissionManager> AutoplayPolicy::RequestFor(
-    const nsIDocument& aDocument) {
-  nsIDocument* document = ApproverDocOf(aDocument);
-  if (!document) {
-    return nullptr;
-  }
-  nsPIDOMWindowInner* window = document->GetInnerWindow();
-  if (!window) {
-    return nullptr;
-  }
-  return window->GetAutoplayPermissionManager();
-}
-
 static uint32_t DefaultAutoplayBehaviour() {
   int prefValue =
       Preferences::GetInt("media.autoplay.default", nsIAutoplay::ALLOWED);
-  if (prefValue < nsIAutoplay::ALLOWED || prefValue > nsIAutoplay::PROMPT) {
-    // Invalid pref values are just converted to ALLOWED.
-    return nsIAutoplay::ALLOWED;
+  if (prefValue < nsIAutoplay::ALLOWED || prefValue > nsIAutoplay::BLOCKED) {
+    // Invalid pref values are just converted to BLOCKED.
+    return nsIAutoplay::BLOCKED;
   }
   return prefValue;
 }
 
 static bool IsMediaElementAllowedToPlay(const HTMLMediaElement& aElement) {
-  if ((aElement.Volume() == 0.0 || aElement.Muted()) &&
-      Preferences::GetBool("media.autoplay.allow-muted", true)) {
+  const bool isAllowedMuted =
+      Preferences::GetBool("media.autoplay.allow-muted", true);
+  if ((aElement.Volume() == 0.0 || aElement.Muted()) && isAllowedMuted) {
     AUTOPLAY_LOG("Allow muted media %p to autoplay.", &aElement);
     return true;
   }
@@ -156,15 +135,16 @@ static bool IsMediaElementAllowedToPlay(const HTMLMediaElement& aElement) {
     return true;
   }
 
-  nsIDocument* topDocument = ApproverDocOf(*aElement.OwnerDoc());
-  if (topDocument && topDocument->MediaDocumentKind() ==
-                         nsIDocument::MediaDocumentKind::Video) {
+  Document* topDocument = ApproverDocOf(*aElement.OwnerDoc());
+  if (topDocument &&
+      topDocument->MediaDocumentKind() == Document::MediaDocumentKind::Video) {
     AUTOPLAY_LOG("Allow video document %p to autoplay", &aElement);
     return true;
   }
 
   if (!aElement.HasAudio() &&
-      aElement.ReadyState() >= HTMLMediaElement_Binding::HAVE_METADATA) {
+      aElement.ReadyState() >= HTMLMediaElement_Binding::HAVE_METADATA &&
+      isAllowedMuted) {
     AUTOPLAY_LOG("Allow media %p without audio track to autoplay", &aElement);
     return true;
   }

@@ -40,9 +40,9 @@ nsIFrame* NS_NewNumberControlFrame(nsIPresShell* aPresShell,
 NS_IMPL_FRAMEARENA_HELPERS(nsNumberControlFrame)
 
 NS_QUERYFRAME_HEAD(nsNumberControlFrame)
-NS_QUERYFRAME_ENTRY(nsNumberControlFrame)
-NS_QUERYFRAME_ENTRY(nsIAnonymousContentCreator)
-NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
+  NS_QUERYFRAME_ENTRY(nsNumberControlFrame)
+  NS_QUERYFRAME_ENTRY(nsIAnonymousContentCreator)
+  NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 nsNumberControlFrame::nsNumberControlFrame(ComputedStyle* aStyle)
@@ -300,7 +300,7 @@ class FocusTextField : public Runnable {
 already_AddRefed<Element> nsNumberControlFrame::MakeAnonymousElement(
     Element* aParent, nsAtom* aTagName, CSSPseudoElementType aPseudoType) {
   // Get the NodeInfoManager and tag necessary to create the anonymous divs.
-  nsIDocument* doc = mContent->GetComposedDoc();
+  Document* doc = mContent->GetComposedDoc();
   RefPtr<Element> resultElement = doc->CreateHTMLElement(aTagName);
   resultElement->SetPseudoElementType(aPseudoType);
 

@@ -235,10 +235,16 @@ bool SandboxBroker::LaunchApp(const wchar_t* aPath, const wchar_t* aArguments,
     key.AppendInt(static_cast<uint32_t>(last_error), 16);
 
     // Only accumulate for each combination once per session.
-    if (!sLaunchErrors->Contains(key)) {
+    if (sLaunchErrors) {
+      if (!sLaunchErrors->Contains(key)) {
+        Telemetry::Accumulate(Telemetry::SANDBOX_FAILED_LAUNCH_KEYED, key,
+                              result);
+        sLaunchErrors->PutEntry(key);
+      }
+    } else {
+      // If sLaunchErrors not created yet then always accumulate.
       Telemetry::Accumulate(Telemetry::SANDBOX_FAILED_LAUNCH_KEYED, key,
                             result);
-      sLaunchErrors->PutEntry(key);
     }
 
     LOG_E(
@@ -749,6 +755,16 @@ bool SandboxBroker::SetSecurityLevelForRDDProcess() {
   // which are Section handles, to the content processes.
   result = mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_HANDLES,
                             sandbox::TargetPolicy::HANDLES_DUP_ANY, L"Section");
+  SANDBOX_ENSURE_SUCCESS(
+      result,
+      "With these static arguments AddRule should never fail, what happened?");
+
+  // This section is needed to avoid an assert during crash reporting code
+  // when running mochitests.  The assertion is here:
+  // toolkit/crashreporter/nsExceptionHandler.cpp:2041
+  result =
+      mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_HANDLES,
+                       sandbox::TargetPolicy::HANDLES_DUP_BROKER, L"Section");
   SANDBOX_ENSURE_SUCCESS(
       result,
       "With these static arguments AddRule should never fail, what happened?");

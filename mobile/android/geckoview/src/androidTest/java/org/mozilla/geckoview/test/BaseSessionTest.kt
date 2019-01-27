@@ -29,6 +29,7 @@ open class BaseSessionTest(noErrorCollector: Boolean = false) {
         const val CONTENT_CRASH_URL = "about:crashcontent"
         const val DOWNLOAD_HTML_PATH = "/assets/www/download.html"
         const val FORMS_HTML_PATH = "/assets/www/forms.html"
+        const val FORMS2_HTML_PATH = "/assets/www/forms2.html"
         const val HELLO_HTML_PATH = "/assets/www/hello.html"
         const val HELLO2_HTML_PATH = "/assets/www/hello2.html"
         const val INPUTS_PATH = "/assets/www/inputs.html"
@@ -47,6 +48,7 @@ open class BaseSessionTest(noErrorCollector: Boolean = false) {
         const val VIDEO_BAD_PATH = "/assets/www/badVideoPath.html"
         const val UNKNOWN_HOST_URI = "http://www.test.invalid/"
         const val FULLSCREEN_PATH = "/assets/www/fullscreen.html"
+        const val VEIWPORT_PATH = "/assets/www/viewport.html"
     }
 
     @get:Rule val sessionRule = GeckoSessionTestRule()

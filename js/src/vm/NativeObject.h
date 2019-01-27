@@ -1465,7 +1465,11 @@ class NativeObject : public ShapedObject {
   }
 
   void setPrivateGCThing(gc::Cell* cell) {
-    MOZ_ASSERT_IF(IsMarkedBlack(this), !cell->isMarkedGray());
+#ifdef DEBUG
+    if (IsMarkedBlack(this)) {
+      JS::AssertCellIsNotGray(cell);
+    }
+#endif
     void** pprivate = &privateRef(numFixedSlots());
     privateWriteBarrierPre(pprivate);
     *pprivate = reinterpret_cast<void*>(cell);
@@ -1507,10 +1511,10 @@ class NativeObject : public ShapedObject {
     return sizeof(NativeObject) + sizeof(ObjectElements);
   }
 
-  static size_t getFixedSlotOffset(size_t slot) {
+  static constexpr size_t getFixedSlotOffset(size_t slot) {
     return sizeof(NativeObject) + slot * sizeof(Value);
   }
-  static size_t getPrivateDataOffset(size_t nfixed) {
+  static constexpr size_t getPrivateDataOffset(size_t nfixed) {
     return getFixedSlotOffset(nfixed);
   }
   static size_t offsetOfSlots() { return offsetof(NativeObject, slots_); }

@@ -99,7 +99,7 @@ void VRDisplayExternal::ExpireNavigationTransition() {
   }
 }
 
-VRHMDSensorState VRDisplayExternal::GetSensorState() {
+VRHMDSensorState& VRDisplayExternal::GetSensorState() {
   return mLastSensorState;
 }
 
@@ -439,10 +439,6 @@ VRSystemManagerExternal::VRSystemManagerExternal(
   mEnumerationCompleted = false;
 #endif
   mDoShutdown = false;
-
-  if (!aAPIShmem) {
-    OpenShmem();
-  }
 }
 
 VRSystemManagerExternal::~VRSystemManagerExternal() { CloseShmem(); }

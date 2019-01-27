@@ -255,6 +255,12 @@ class DebuggerWeakMap
       zoneCounts.remove(zone);
     }
   }
+
+#ifdef JS_GC_ZEAL
+  // Let the weak map marking verifier know that this map can
+  // contain keys in other zones.
+  virtual bool allowKeysInOtherZones() const override { return true; }
+#endif
 };
 
 class LeaveDebuggeeNoExecute;
@@ -435,7 +441,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   }
   static void writeBarrierPost(Debugger** vp, Debugger* prev, Debugger* next) {}
 #ifdef DEBUG
-  static bool thingIsNotGray(Debugger* dbg) { return true; }
+  static void assertThingIsNotGray(Debugger* dbg) { return; }
 #endif
 
  private:
@@ -1645,10 +1651,11 @@ class DebuggerObject : public NativeObject {
                                     bool& result);
   static MOZ_MUST_USE bool getProperty(JSContext* cx,
                                        HandleDebuggerObject object, HandleId id,
+                                       HandleValue receiver,
                                        MutableHandleValue result);
   static MOZ_MUST_USE bool setProperty(JSContext* cx,
                                        HandleDebuggerObject object, HandleId id,
-                                       HandleValue value,
+                                       HandleValue value, HandleValue receiver,
                                        MutableHandleValue result);
   static MOZ_MUST_USE bool getPrototypeOf(JSContext* cx,
                                           HandleDebuggerObject object,

@@ -762,11 +762,14 @@
         </body>
       </method>
 
-      <method name="notifyAudibleAutoplayMediaOccurred">
+      <method name="notifyGloballyAutoplayBlocked">
         <body>
           <![CDATA[
-            let event = document.createEvent("Events");
-            event.initEvent("AudibleAutoplayMediaOccurred", true, false);
+            let event = document.createEvent("CustomEvent");
+            event.initCustomEvent("GloballyAutoplayBlocked", true, false,
+              {
+                url: this.documentURI,
+              });
             this.dispatchEvent(event);
           ]]>
         </body>
@@ -1108,7 +1111,7 @@
             this.messageManager.addMessageListener("AudioPlayback:ActiveMediaBlockStart", this);
             this.messageManager.addMessageListener("AudioPlayback:ActiveMediaBlockStop", this);
             this.messageManager.addMessageListener("UnselectedTabHover:Toggle", this);
-            this.messageManager.addMessageListener("AudibleAutoplayMediaOccurred", this);
+            this.messageManager.addMessageListener("GloballyAutoplayBlocked", this);
 
             if (this.hasAttribute("selectmenulist")) {
               this.messageManager.addMessageListener("Forms:ShowDropDown", this);
@@ -1250,8 +1253,8 @@
                 ++this._unselectedTabHoverMessageListenerCount > 0 :
                 --this._unselectedTabHoverMessageListenerCount == 0;
               break;
-            case "AudibleAutoplayMediaOccurred":
-              this.notifyAudibleAutoplayMediaOccurred();
+            case "GloballyAutoplayBlocked":
+              this.notifyGloballyAutoplayBlocked();
               break;
             case "Forms:ShowDropDown": {
               if (!this._selectParentHelper) {
@@ -1262,7 +1265,6 @@
               let menulist = document.getElementById(this.getAttribute("selectmenulist"));
               menulist.menupopup.style.direction = data.direction;
               this._selectParentHelper.populate(menulist, data.options, data.selectedIndex, this._fullZoom,
-                                                data.uaBackgroundColor, data.uaColor,
                                                 data.uaSelectBackgroundColor, data.uaSelectColor,
                                                 data.selectBackgroundColor, data.selectColor, data.selectTextShadow);
               this._selectParentHelper.open(this, menulist, data.rect, data.isOpenedViaTouch);
@@ -1317,7 +1319,7 @@
               let zoom = Services.prefs.getBoolPref("browser.zoom.full") ||
                          this.isSyntheticDocument ? this._fullZoom : this._textZoom;
               this._selectParentHelper.populate(menulist, data.options, data.selectedIndex,
-                                                zoom, data.uaBackgroundColor, data.uaColor,
+                                                zoom,
                                                 data.uaSelectBackgroundColor, data.uaSelectColor,
                                                 data.selectBackgroundColor, data.selectColor, data.selectTextShadow);
               this._selectParentHelper.open(this, menulist, data.rect, data.isOpenedViaTouch);

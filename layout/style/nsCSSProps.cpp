@@ -271,97 +271,6 @@ KTableEntry nsCSSProps::kDisplayKTable[] = {
     {eCSSKeyword_flow_root, StyleDisplay::FlowRoot},
     {eCSSKeyword_UNKNOWN, -1}};
 
-const KTableEntry nsCSSProps::kAlignAllKeywords[] = {
-    {eCSSKeyword_auto, NS_STYLE_ALIGN_AUTO},
-    {eCSSKeyword_normal, NS_STYLE_ALIGN_NORMAL},
-    {eCSSKeyword_start, NS_STYLE_ALIGN_START},
-    {eCSSKeyword_end, NS_STYLE_ALIGN_END},
-    {eCSSKeyword_flex_start, NS_STYLE_ALIGN_FLEX_START},
-    {eCSSKeyword_flex_end, NS_STYLE_ALIGN_FLEX_END},
-    {eCSSKeyword_center, NS_STYLE_ALIGN_CENTER},
-    {eCSSKeyword_left, NS_STYLE_ALIGN_LEFT},
-    {eCSSKeyword_right, NS_STYLE_ALIGN_RIGHT},
-    {eCSSKeyword_baseline, NS_STYLE_ALIGN_BASELINE},
-    // Also "first/last baseline"; see
-    // nsCSSValue::AppendAlignJustifyValueToString
-    {eCSSKeyword_stretch, NS_STYLE_ALIGN_STRETCH},
-    {eCSSKeyword_self_start, NS_STYLE_ALIGN_SELF_START},
-    {eCSSKeyword_self_end, NS_STYLE_ALIGN_SELF_END},
-    {eCSSKeyword_space_between, NS_STYLE_ALIGN_SPACE_BETWEEN},
-    {eCSSKeyword_space_around, NS_STYLE_ALIGN_SPACE_AROUND},
-    {eCSSKeyword_space_evenly, NS_STYLE_ALIGN_SPACE_EVENLY},
-    {eCSSKeyword_legacy, NS_STYLE_ALIGN_LEGACY},
-    {eCSSKeyword_safe, NS_STYLE_ALIGN_SAFE},
-    {eCSSKeyword_unsafe, NS_STYLE_ALIGN_UNSAFE},
-    {eCSSKeyword_UNKNOWN, -1}};
-
-const KTableEntry nsCSSProps::kAlignOverflowPosition[] = {
-    {eCSSKeyword_unsafe, NS_STYLE_ALIGN_UNSAFE},
-    {eCSSKeyword_safe, NS_STYLE_ALIGN_SAFE},
-    {eCSSKeyword_UNKNOWN, -1}};
-
-const KTableEntry nsCSSProps::kAlignSelfPosition[] = {
-    {eCSSKeyword_start, NS_STYLE_ALIGN_START},
-    {eCSSKeyword_end, NS_STYLE_ALIGN_END},
-    {eCSSKeyword_flex_start, NS_STYLE_ALIGN_FLEX_START},
-    {eCSSKeyword_flex_end, NS_STYLE_ALIGN_FLEX_END},
-    {eCSSKeyword_center, NS_STYLE_ALIGN_CENTER},
-    {eCSSKeyword_left, NS_STYLE_ALIGN_LEFT},
-    {eCSSKeyword_right, NS_STYLE_ALIGN_RIGHT},
-    {eCSSKeyword_self_start, NS_STYLE_ALIGN_SELF_START},
-    {eCSSKeyword_self_end, NS_STYLE_ALIGN_SELF_END},
-    {eCSSKeyword_UNKNOWN, -1}};
-
-const KTableEntry nsCSSProps::kAlignLegacy[] = {
-    {eCSSKeyword_legacy, NS_STYLE_ALIGN_LEGACY}, {eCSSKeyword_UNKNOWN, -1}};
-
-const KTableEntry nsCSSProps::kAlignLegacyPosition[] = {
-    {eCSSKeyword_center, NS_STYLE_ALIGN_CENTER},
-    {eCSSKeyword_left, NS_STYLE_ALIGN_LEFT},
-    {eCSSKeyword_right, NS_STYLE_ALIGN_RIGHT},
-    {eCSSKeyword_UNKNOWN, -1}};
-
-const KTableEntry nsCSSProps::kAlignAutoNormalStretchBaseline[] = {
-    {eCSSKeyword_auto, NS_STYLE_ALIGN_AUTO},
-    {eCSSKeyword_normal, NS_STYLE_ALIGN_NORMAL},
-    {eCSSKeyword_stretch, NS_STYLE_ALIGN_STRETCH},
-    {eCSSKeyword_baseline, NS_STYLE_ALIGN_BASELINE},
-    // Also "first baseline" & "last baseline"; see
-    // CSSParserImpl::ParseAlignEnum
-    {eCSSKeyword_UNKNOWN, -1}};
-
-const KTableEntry nsCSSProps::kAlignNormalStretchBaseline[] = {
-    {eCSSKeyword_normal, NS_STYLE_ALIGN_NORMAL},
-    {eCSSKeyword_stretch, NS_STYLE_ALIGN_STRETCH},
-    {eCSSKeyword_baseline, NS_STYLE_ALIGN_BASELINE},
-    // Also "first baseline" & "last baseline"; see
-    // CSSParserImpl::ParseAlignEnum
-    {eCSSKeyword_UNKNOWN, -1}};
-
-const KTableEntry nsCSSProps::kAlignNormalBaseline[] = {
-    {eCSSKeyword_normal, NS_STYLE_ALIGN_NORMAL},
-    {eCSSKeyword_baseline, NS_STYLE_ALIGN_BASELINE},
-    // Also "first baseline" & "last baseline"; see
-    // CSSParserImpl::ParseAlignEnum
-    {eCSSKeyword_UNKNOWN, -1}};
-
-const KTableEntry nsCSSProps::kAlignContentDistribution[] = {
-    {eCSSKeyword_stretch, NS_STYLE_ALIGN_STRETCH},
-    {eCSSKeyword_space_between, NS_STYLE_ALIGN_SPACE_BETWEEN},
-    {eCSSKeyword_space_around, NS_STYLE_ALIGN_SPACE_AROUND},
-    {eCSSKeyword_space_evenly, NS_STYLE_ALIGN_SPACE_EVENLY},
-    {eCSSKeyword_UNKNOWN, -1}};
-
-const KTableEntry nsCSSProps::kAlignContentPosition[] = {
-    {eCSSKeyword_start, NS_STYLE_ALIGN_START},
-    {eCSSKeyword_end, NS_STYLE_ALIGN_END},
-    {eCSSKeyword_flex_start, NS_STYLE_ALIGN_FLEX_START},
-    {eCSSKeyword_flex_end, NS_STYLE_ALIGN_FLEX_END},
-    {eCSSKeyword_center, NS_STYLE_ALIGN_CENTER},
-    {eCSSKeyword_left, NS_STYLE_ALIGN_LEFT},
-    {eCSSKeyword_right, NS_STYLE_ALIGN_RIGHT},
-    {eCSSKeyword_UNKNOWN, -1}};
-
 // <NOTE> these are only used for auto-completion, not parsing:
 const KTableEntry nsCSSProps::kAutoCompletionAlignJustifySelf[] = {
     {eCSSKeyword_auto, NS_STYLE_ALIGN_AUTO},
@@ -447,32 +356,6 @@ const KTableEntry nsCSSProps::kContainKTable[] = {
     {eCSSKeyword_size, NS_STYLE_CONTAIN_SIZE},
     {eCSSKeyword_UNKNOWN, -1}};
 
-const KTableEntry nsCSSProps::kOverflowClipBoxKTable[] = {
-    {eCSSKeyword_padding_box, NS_STYLE_OVERFLOW_CLIP_BOX_PADDING_BOX},
-    {eCSSKeyword_content_box, NS_STYLE_OVERFLOW_CLIP_BOX_CONTENT_BOX},
-    {eCSSKeyword_UNKNOWN, -1}};
-
-const KTableEntry nsCSSProps::kOverflowSubKTable[] = {
-    {eCSSKeyword_auto, NS_STYLE_OVERFLOW_AUTO},
-    {eCSSKeyword_visible, NS_STYLE_OVERFLOW_VISIBLE},
-    {eCSSKeyword_hidden, NS_STYLE_OVERFLOW_HIDDEN},
-    {eCSSKeyword_scroll, NS_STYLE_OVERFLOW_SCROLL},
-    // Deprecated:
-    {eCSSKeyword__moz_hidden_unscrollable, NS_STYLE_OVERFLOW_CLIP},
-    {eCSSKeyword_UNKNOWN, -1}};
-
-const KTableEntry nsCSSProps::kOverscrollBehaviorKTable[] = {
-    {eCSSKeyword_auto, StyleOverscrollBehavior::Auto},
-    {eCSSKeyword_contain, StyleOverscrollBehavior::Contain},
-    {eCSSKeyword_none, StyleOverscrollBehavior::None},
-    {eCSSKeyword_UNKNOWN, -1}};
-
-const KTableEntry nsCSSProps::kScrollSnapTypeKTable[] = {
-    {eCSSKeyword_none, NS_STYLE_SCROLL_SNAP_TYPE_NONE},
-    {eCSSKeyword_mandatory, NS_STYLE_SCROLL_SNAP_TYPE_MANDATORY},
-    {eCSSKeyword_proximity, NS_STYLE_SCROLL_SNAP_TYPE_PROXIMITY},
-    {eCSSKeyword_UNKNOWN, -1}};
-
 const KTableEntry nsCSSProps::kTextAlignKTable[] = {
     {eCSSKeyword_left, NS_STYLE_TEXT_ALIGN_LEFT},
     {eCSSKeyword_right, NS_STYLE_TEXT_ALIGN_RIGHT},
@@ -537,16 +420,16 @@ const KTableEntry nsCSSProps::kVerticalAlignKTable[] = {
     {eCSSKeyword_UNKNOWN, -1}};
 
 const KTableEntry nsCSSProps::kWidthKTable[] = {
-    {eCSSKeyword__moz_max_content, NS_STYLE_WIDTH_MAX_CONTENT},
-    {eCSSKeyword__moz_min_content, NS_STYLE_WIDTH_MIN_CONTENT},
+    {eCSSKeyword_max_content, NS_STYLE_WIDTH_MAX_CONTENT},
+    {eCSSKeyword_min_content, NS_STYLE_WIDTH_MIN_CONTENT},
     {eCSSKeyword__moz_fit_content, NS_STYLE_WIDTH_FIT_CONTENT},
     {eCSSKeyword__moz_available, NS_STYLE_WIDTH_AVAILABLE},
     {eCSSKeyword_UNKNOWN, -1}};
 
 // This must be the same as kWidthKTable, but just with 'content' added:
 const KTableEntry nsCSSProps::kFlexBasisKTable[] = {
-    {eCSSKeyword__moz_max_content, NS_STYLE_WIDTH_MAX_CONTENT},
-    {eCSSKeyword__moz_min_content, NS_STYLE_WIDTH_MIN_CONTENT},
+    {eCSSKeyword_max_content, NS_STYLE_WIDTH_MAX_CONTENT},
+    {eCSSKeyword_min_content, NS_STYLE_WIDTH_MIN_CONTENT},
     {eCSSKeyword__moz_fit_content, NS_STYLE_WIDTH_FIT_CONTENT},
     {eCSSKeyword__moz_available, NS_STYLE_WIDTH_AVAILABLE},
     {eCSSKeyword_content, NS_STYLE_FLEX_BASIS_CONTENT},

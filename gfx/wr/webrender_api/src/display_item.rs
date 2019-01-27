@@ -61,7 +61,7 @@ pub type ItemTag = (u64, u16);
 pub struct GenericDisplayItem<T> {
     pub item: T,
     pub clip_and_scroll: ClipAndScrollInfo,
-    pub info: LayoutPrimitiveInfo,
+    pub layout: LayoutPrimitiveInfo,
 }
 
 pub type DisplayItem = GenericDisplayItem<SpecificDisplayItem>;
@@ -72,7 +72,7 @@ pub type DisplayItem = GenericDisplayItem<SpecificDisplayItem>;
 pub struct SerializedDisplayItem<'a> {
     pub item: &'a SpecificDisplayItem,
     pub clip_and_scroll: &'a ClipAndScrollInfo,
-    pub info: &'a LayoutPrimitiveInfo,
+    pub layout: &'a LayoutPrimitiveInfo,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -128,6 +128,8 @@ pub enum SpecificDisplayItem {
     SetGradientStops,
     PushShadow(Shadow),
     PopAllShadows,
+    PushCacheMarker(CacheMarkerDisplayItem),
+    PopCacheMarker,
 }
 
 /// This is a "complete" version of the DI specifics,
@@ -159,6 +161,8 @@ pub enum CompletelySpecificDisplayItem {
     SetGradientStops(Vec<GradientStop>),
     PushShadow(Shadow),
     PopAllShadows,
+    PushCacheMarker(CacheMarkerDisplayItem),
+    PopCacheMarker,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -517,8 +521,15 @@ pub struct PushReferenceFrameDisplayListItem {
     pub reference_frame: ReferenceFrame,
 }
 
+/// Provides a hint to WR that it should try to cache the items
+/// within a cache marker context in an off-screen surface.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CacheMarkerDisplayItem {
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ReferenceFrame {
+    pub transform_style: TransformStyle,
     pub transform: Option<PropertyBinding<LayoutTransform>>,
     pub perspective: Option<LayoutTransform>,
     pub id: ClipId,
@@ -678,16 +689,6 @@ pub enum YuvColorSpace {
     Rec601 = 0,
     Rec709 = 1,
 }
-pub const YUV_COLOR_SPACES: [YuvColorSpace; 2] = [YuvColorSpace::Rec601, YuvColorSpace::Rec709];
-
-impl YuvColorSpace {
-    pub fn get_feature_string(&self) -> &'static str {
-        match *self {
-            YuvColorSpace::Rec601 => "YUV_REC601",
-            YuvColorSpace::Rec709 => "YUV_REC709",
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum YuvData {
@@ -712,11 +713,6 @@ pub enum YuvFormat {
     PlanarYCbCr = 1,
     InterleavedYCbCr = 2,
 }
-pub const YUV_FORMATS: [YuvFormat; 3] = [
-    YuvFormat::NV12,
-    YuvFormat::PlanarYCbCr,
-    YuvFormat::InterleavedYCbCr,
-];
 
 impl YuvFormat {
     pub fn get_plane_num(&self) -> usize {
@@ -724,14 +720,6 @@ impl YuvFormat {
             YuvFormat::NV12 => 2,
             YuvFormat::PlanarYCbCr => 3,
             YuvFormat::InterleavedYCbCr => 1,
-        }
-    }
-
-    pub fn get_feature_string(&self) -> &'static str {
-        match *self {
-            YuvFormat::NV12 => "YUV_NV12",
-            YuvFormat::PlanarYCbCr => "YUV_PLANAR",
-            YuvFormat::InterleavedYCbCr => "YUV_INTERLEAVED",
         }
     }
 }

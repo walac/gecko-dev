@@ -612,6 +612,9 @@ class ContentChild final : public PContentChild,
   virtual mozilla::ipc::IPCResult RecvFlushCodeCoverageCounters(
       FlushCodeCoverageCountersResolver&& aResolver) override;
 
+  virtual mozilla::ipc::IPCResult RecvGetMemoryUniqueSetSize(
+      GetMemoryUniqueSetSizeResolver&& aResolver) override;
+
   virtual mozilla::ipc::IPCResult RecvSetInputEventQueueEnabled() override;
 
   virtual mozilla::ipc::IPCResult RecvFlushInputEventQueue() override;
@@ -641,7 +644,8 @@ class ContentChild final : public PContentChild,
 
   // PURLClassifierLocalChild
   virtual PURLClassifierLocalChild* AllocPURLClassifierLocalChild(
-      const URIParams& aUri, const nsCString& aTables) override;
+      const URIParams& aUri,
+      const nsTArray<IPCURLClassifierFeature>& aFeatures) override;
   virtual bool DeallocPURLClassifierLocalChild(
       PURLClassifierLocalChild* aActor) override;
 
@@ -722,12 +726,24 @@ class ContentChild final : public PContentChild,
 
   virtual void OnChannelReceivedMessage(const Message& aMsg) override;
 
+  virtual mozilla::ipc::IPCResult RecvWindowClose(
+      const BrowsingContextId& aContextId, const bool& aTrustedCaller) override;
+  virtual mozilla::ipc::IPCResult RecvWindowFocus(
+      const BrowsingContextId& aContextId) override;
+  virtual mozilla::ipc::IPCResult RecvWindowBlur(
+      const BrowsingContextId& aContextId) override;
+  virtual mozilla::ipc::IPCResult RecvWindowPostMessage(
+      const BrowsingContextId& aContextId, const ClonedMessageData& aMessage,
+      const PostMessageData& aData) override;
+
 #ifdef NIGHTLY_BUILD
   virtual PContentChild::Result OnMessageReceived(const Message& aMsg) override;
+#else
+  using PContentChild::OnMessageReceived;
+#endif
 
   virtual PContentChild::Result OnMessageReceived(const Message& aMsg,
                                                   Message*& aReply) override;
-#endif
 
   InfallibleTArray<nsAutoPtr<AlertObserver>> mAlertObservers;
   RefPtr<ConsoleListener> mConsoleListener;

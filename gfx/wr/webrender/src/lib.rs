@@ -153,6 +153,8 @@ extern crate core_text;
 
 #[cfg(all(unix, not(target_os = "macos")))]
 extern crate freetype;
+#[cfg(all(unix, not(target_os = "macos")))]
+extern crate libc;
 
 #[cfg(target_os = "windows")]
 extern crate dwrote;
@@ -192,6 +194,7 @@ extern crate png;
 extern crate rand;
 
 pub extern crate webrender_api;
+extern crate webrender_build;
 
 #[doc(hidden)]
 pub use device::{build_shader_strings, ReadPixelsFormat, UploadMethod, VertexUsageHint};

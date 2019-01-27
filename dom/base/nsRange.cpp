@@ -14,7 +14,7 @@
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "nsIContent.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsError.h"
 #include "nsIContentIterator.h"
 #include "nsINodeList.h"
@@ -66,7 +66,7 @@ static void InvalidateAllFrames(nsINode* aNode) {
       break;
     }
     case nsINode::DOCUMENT_NODE: {
-      nsIDocument* doc = static_cast<nsIDocument*>(aNode);
+      Document* doc = static_cast<Document*>(aNode);
       nsIPresShell* shell = doc ? doc->GetShell() : nullptr;
       frame = shell ? shell->GetRootFrame() : nullptr;
       break;
@@ -344,11 +344,8 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsRange)
 
   tmp->Reset();
 
-  // This needs to be unlinked after Reset() is called, as it controls
-  // the result of IsInSelection() which is used by tmp->Reset().
   MOZ_DIAGNOSTIC_ASSERT(!tmp->isInList(),
                         "Shouldn't be registered now that we're unlinking");
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mSelection);
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsRange)
@@ -356,7 +353,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsRange)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStart)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEnd)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRoot)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSelection)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsRange)
@@ -896,7 +892,7 @@ void nsRange::NotifySelectionListenersAfterRangeSet() {
     mCalledByJS = false;
     // Be aware, this range may be modified or stop being a range for selection
     // after this call.  Additionally, the selection instance may have gone.
-    RefPtr<Selection> selection = mSelection;
+    RefPtr<Selection> selection = mSelection.get();
     selection->NotifySelectionListeners(calledByJSRestorer.SavedValue());
   }
 }
@@ -1799,7 +1795,7 @@ nsresult nsRange::CutContents(DocumentFragment** aFragment) {
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
-  nsCOMPtr<nsIDocument> doc = mStart.Container()->OwnerDoc();
+  nsCOMPtr<Document> doc = mStart.Container()->OwnerDoc();
 
   ErrorResult res;
   nsCOMPtr<nsINode> commonAncestor = GetCommonAncestorContainer(res);
@@ -1827,7 +1823,7 @@ nsresult nsRange::CutContents(DocumentFragment** aFragment) {
     // For extractContents(), abort early if there's a doctype (bug 719533).
     // This can happen only if the common ancestor is a document, in which case
     // we just need to find its doctype child and check if that's in the range.
-    nsCOMPtr<nsIDocument> commonAncestorDocument =
+    nsCOMPtr<Document> commonAncestorDocument =
         do_QueryInterface(commonAncestor);
     if (commonAncestorDocument) {
       RefPtr<DocumentType> doctype = commonAncestorDocument->GetDoctype();
@@ -2212,7 +2208,7 @@ already_AddRefed<DocumentFragment> nsRange::CloneContents(ErrorResult& aRv) {
   nsCOMPtr<nsINode> commonAncestor = GetCommonAncestorContainer(aRv);
   MOZ_ASSERT(!aRv.Failed(), "GetCommonAncestorContainer() shouldn't fail!");
 
-  nsCOMPtr<nsIDocument> doc = mStart.Container()->OwnerDoc();
+  nsCOMPtr<Document> doc = mStart.Container()->OwnerDoc();
   NS_ASSERTION(doc, "CloneContents needs a document to continue.");
   if (!doc) {
     aRv.Throw(NS_ERROR_FAILURE);
@@ -2731,7 +2727,7 @@ static void ExtractRectFromOffset(nsIFrame* aFrame, const int32_t aOffset,
 
 static nsTextFrame* GetTextFrameForContent(nsIContent* aContent,
                                            bool aFlushLayout) {
-  nsIDocument* doc = aContent->OwnerDoc();
+  Document* doc = aContent->OwnerDoc();
   nsIPresShell* presShell = doc->GetShell();
   if (!presShell) {
     return nullptr;
@@ -2951,7 +2947,7 @@ nsresult nsRange::GetUsedFontFaces(nsLayoutUtils::UsedFontFaceList& aResult,
   nsCOMPtr<nsINode> endContainer = mEnd.Container();
 
   // Flush out layout so our frames are up to date.
-  nsIDocument* doc = mStart.Container()->OwnerDoc();
+  Document* doc = mStart.Container()->OwnerDoc();
   NS_ENSURE_TRUE(doc, NS_ERROR_UNEXPECTED);
   doc->FlushPendingNotifications(FlushType::Frames);
 

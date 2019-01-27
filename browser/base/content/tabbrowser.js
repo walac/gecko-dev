@@ -298,6 +298,10 @@ window._gBrowser = {
       remoteType = E10SUtils.NOT_REMOTE;
     } else {
       let uriToLoad = gBrowserInit.uriToLoadPromise;
+      if (uriToLoad && Array.isArray(uriToLoad)) {
+        uriToLoad = uriToLoad[0]; // we only care about the first item
+      }
+
       if (uriToLoad && typeof uriToLoad == "string") {
         remoteType = E10SUtils.getRemoteTypeForURI(
           uriToLoad,
@@ -1145,7 +1149,7 @@ window._gBrowser = {
 
     // If there's a tabmodal prompt showing, focus it.
     if (newBrowser.hasAttribute("tabmodalPromptShowing")) {
-      let prompts = newBrowser.parentNode.getElementsByTagNameNS(this._XUL_NS, "tabmodalprompt");
+      let prompts = newBrowser.tabModalPromptBox.listPrompts();
       let prompt = prompts[prompts.length - 1];
       // @tabmodalPromptShowing is also set for other tab modal prompts
       // (e.g. the Payment Request dialog) so there may not be a <tabmodalprompt>.
@@ -4759,14 +4763,17 @@ window._gBrowser = {
       }
     });
 
-    this.addEventListener("AudibleAutoplayMediaOccurred", (event) => {
+    this.addEventListener("GloballyAutoplayBlocked", (event) => {
       let browser = event.originalTarget;
       let tab = this.getTabForBrowser(browser);
       if (!tab) {
         return;
       }
 
-      Services.obs.notifyObservers(tab, "AudibleAutoplayMediaOccurred");
+      SitePermissions.set(event.detail.url, "autoplay-media",
+                          SitePermissions.BLOCK,
+                          SitePermissions.SCOPE_GLOBAL,
+                          browser);
     });
   },
 
@@ -5084,6 +5091,9 @@ class TabProgressListener {
 
     if (topLevel) {
       let isSameDocument = !!(aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT);
+      let isReload = !!(aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_RELOAD);
+      let isErrorPage = !!(aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE);
+
       // We need to clear the typed value
       // if the document failed to load, to make sure the urlbar reflects the
       // failed URI (particularly for SSL errors). However, don't clear the value
@@ -5094,8 +5104,7 @@ class TabProgressListener {
       // Finally, we do insert the URL if this is a same-document navigation
       // and the user cleared the URL manually.
       if (this.mBrowser.didStartLoadSinceLastUserTyping() ||
-          ((aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE) &&
-            aLocation.spec != "about:blank") ||
+          (isErrorPage && aLocation.spec != "about:blank") ||
           (isSameDocument && this.mBrowser.inLoadURI) ||
           (isSameDocument && !this.mBrowser.userTypedValue)) {
         this.mBrowser.userTypedValue = null;
@@ -5107,8 +5116,7 @@ class TabProgressListener {
       // isn't any (STATE_IS_NETWORK & STATE_STOP) state to cause busy
       // attribute being removed. In this case we should remove the
       // attribute here.
-      if ((aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE) &&
-          this.mTab.hasAttribute("busy")) {
+      if (isErrorPage && this.mTab.hasAttribute("busy")) {
         this.mTab.removeAttribute("busy");
         gBrowser._tabAttrModified(this.mTab, ["busy"]);
       }
@@ -5135,7 +5143,9 @@ class TabProgressListener {
         }
       }
 
-      gBrowser.setTabTitle(this.mTab);
+      if (!isReload) {
+        gBrowser.setTabTitle(this.mTab);
+      }
 
       // Don't clear the favicon if this tab is in the pending
       // state, as SessionStore will have set the icon for us even

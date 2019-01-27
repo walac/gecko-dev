@@ -132,7 +132,7 @@
 #include "nsIContentProcess.h"
 #include "nsICycleCollectorListener.h"
 #include "nsIDocShellTreeOwner.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsGeolocation.h"
 #include "nsIDragService.h"
 #include "mozilla/dom/WakeLock.h"
@@ -153,6 +153,7 @@
 #include "nsIRemoteWindowContext.h"
 #include "nsIScriptError.h"
 #include "nsIScriptSecurityManager.h"
+#include "nsIServiceWorkerManager.h"
 #include "nsISiteSecurityService.h"
 #include "nsISound.h"
 #include "mozilla/mozSpellChecker.h"
@@ -1302,9 +1303,12 @@ void ContentParent::Init() {
     }
   }
 
-  // Register ContentParent as an observer for changes to any pref whose prefix
-  // matches the empty string, i.e. all of them.
-  Preferences::AddStrongObserver(this, "");
+  // Flush any pref updates that happened during launch and weren't
+  // included in the blobs set up in LaunchSubprocessInternal.
+  for (const Pref& pref : mQueuedPrefs) {
+    Unused << NS_WARN_IF(!SendPreferenceUpdate(pref));
+  }
+  mQueuedPrefs.Clear();
 
   if (obs) {
     nsAutoString cpId;
@@ -1509,14 +1513,9 @@ void ContentParent::RemoveFromList() {
   }
 }
 
-void ContentParent::MarkAsTroubled() {
-  RemoveFromList();
-  mIsAvailable = false;
-}
-
 void ContentParent::MarkAsDead() {
-  MarkAsTroubled();
-  mIsAlive = false;
+  RemoveFromList();
+  mLifecycleState = LifecycleState::DEAD;
 }
 
 void ContentParent::OnChannelError() {
@@ -1733,7 +1732,7 @@ bool ContentParent::TryToRecycle() {
   // This life time check should be replaced by a memory health check (memory
   // usage + fragmentation).
   const double kMaxLifeSpan = 5;
-  if (mShutdownPending || mCalledKillHard || !IsAvailable() ||
+  if (mShutdownPending || mCalledKillHard || !IsAlive() ||
       !mRemoteType.EqualsLiteral(DEFAULT_REMOTE_TYPE) ||
       (TimeStamp::Now() - mActivateTS).ToSeconds() > kMaxLifeSpan ||
       !PreallocatedProcessManager::Provide(this)) {
@@ -1760,8 +1759,8 @@ bool ContentParent::ShouldKeepProcessAlive() const {
     return false;
   }
 
-  // If we have already been marked as troubled/dead, don't prevent shutdown.
-  if (!IsAvailable()) {
+  // If we have already been marked as dead, don't prevent shutdown.
+  if (!IsAlive()) {
     return false;
   }
 
@@ -2138,6 +2137,12 @@ void ContentParent::LaunchSubprocessInternal(
   // Copy the serialized prefs into the shared memory.
   memcpy(static_cast<char*>(shm.memory()), prefs.get(), prefs.Length());
 
+  // Register ContentParent as an observer for changes to any pref
+  // whose prefix matches the empty string, i.e. all of them.  The
+  // observation starts here in order to capture pref updates that
+  // happen during async launch.
+  Preferences::AddStrongObserver(this, "");
+
   // Formats a pointer or pointer-sized-integer as a string suitable for passing
   // in an arguments list.
   auto formatPtrArg = [](auto arg) {
@@ -2244,7 +2249,7 @@ void ContentParent::LaunchSubprocessInternal(
         CodeCoverageHandler::Get()->GetMutexHandle(procId));
 #endif
 
-    mIsAlive = true;
+    mLifecycleState = LifecycleState::ALIVE;
     InitInternal(aInitialPriority);
 
     ContentProcessManager::GetSingleton()->AddContentProcess(this);
@@ -2335,8 +2340,7 @@ ContentParent::ContentParent(ContentParent* aOpener,
       mJSPluginID(aJSPluginID),
       mRemoteWorkerActors(0),
       mNumDestroyingTabs(0),
-      mIsAvailable(true),
-      mIsAlive(false),
+      mLifecycleState(LifecycleState::LAUNCHING),
       mIsForBrowser(!mRemoteType.IsEmpty()),
       mRecordReplayState(aRecordReplayState),
       mRecordingFile(aRecordingFile),
@@ -2736,7 +2740,9 @@ void ContentParent::InitInternal(ProcessPriority aInitialPriority) {
   MaybeEnableRemoteInputEventQueue();
 }
 
-bool ContentParent::IsAlive() const { return mIsAlive; }
+bool ContentParent::IsAlive() const {
+  return mLifecycleState == LifecycleState::ALIVE;
+}
 
 int32_t ContentParent::Pid() const {
   if (!mSubprocess || !mSubprocess->GetChildProcessHandle()) {
@@ -3045,12 +3051,11 @@ ContentParent::Observe(nsISupports* aSubject, const char* aTopic,
     NS_ASSERTION(!mSubprocess, "Close should have nulled mSubprocess");
   }
 
-  if (!mIsAlive || !mSubprocess) return NS_OK;
+  if (IsDead() || !mSubprocess) {
+    return NS_OK;
+  }
 
-  // listening for memory pressure event
-  if (!strcmp(aTopic, "memory-pressure")) {
-    Unused << SendFlushMemory(nsDependentString(aData));
-  } else if (!strcmp(aTopic, "nsPref:changed")) {
+  if (!strcmp(aTopic, "nsPref:changed")) {
     // A pref changed. If it's not on the blacklist, inform child processes.
 #define BLACKLIST_ENTRY(s) \
   { s, (sizeof(s) / sizeof(char16_t)) - 1 }
@@ -3083,9 +3088,24 @@ ContentParent::Observe(nsISupports* aSubject, const char* aTopic,
 
     Pref pref(strData, /* isLocked */ false, null_t(), null_t());
     Preferences::GetPreference(&pref);
-    if (!SendPreferenceUpdate(pref)) {
-      return NS_ERROR_NOT_AVAILABLE;
+    if (IsAlive()) {
+      MOZ_ASSERT(mQueuedPrefs.IsEmpty());
+      if (!SendPreferenceUpdate(pref)) {
+        return NS_ERROR_NOT_AVAILABLE;
+      }
+    } else {
+      MOZ_ASSERT(IsLaunching());
+      mQueuedPrefs.AppendElement(pref);
     }
+  }
+
+  if (!IsAlive()) {
+    return NS_OK;
+  }
+
+  // listening for memory pressure event
+  if (!strcmp(aTopic, "memory-pressure")) {
+    Unused << SendFlushMemory(nsDependentString(aData));
   } else if (!strcmp(aTopic, NS_IPC_IOSERVICE_SET_OFFLINE_TOPIC)) {
     NS_ConvertUTF16toUTF8 dataStr(aData);
     const char* offline = dataStr.get();
@@ -3825,6 +3845,33 @@ mozilla::ipc::IPCResult ContentParent::RecvOpenNotificationSettings(
   if (HasNotificationPermission(aPrincipal)) {
     Unused << Notification::OpenSettings(aPrincipal);
   }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvNotificationEvent(
+    const nsString& aType, const NotificationEventData& aData) {
+  nsCOMPtr<nsIServiceWorkerManager> swm =
+      mozilla::services::GetServiceWorkerManager();
+  if (NS_WARN_IF(!swm)) {
+    // Probably shouldn't happen, but no need to crash the child process.
+    return IPC_OK();
+  }
+
+  if (aType.EqualsLiteral("click")) {
+    nsresult rv = swm->SendNotificationClickEvent(
+        aData.originSuffix(), aData.scope(), aData.ID(), aData.title(),
+        aData.dir(), aData.lang(), aData.body(), aData.tag(), aData.icon(),
+        aData.data(), aData.behavior());
+    Unused << NS_WARN_IF(NS_FAILED(rv));
+  } else {
+    MOZ_ASSERT(aType.EqualsLiteral("close"));
+    nsresult rv = swm->SendNotificationCloseEvent(
+        aData.originSuffix(), aData.scope(), aData.ID(), aData.title(),
+        aData.dir(), aData.lang(), aData.body(), aData.tag(), aData.icon(),
+        aData.data(), aData.behavior());
+    Unused << NS_WARN_IF(NS_FAILED(rv));
+  }
+
   return IPC_OK();
 }
 
@@ -5080,19 +5127,6 @@ mozilla::ipc::IPCResult ContentParent::RecvA11yHandlerControl(
 #endif
 }
 
-}  // namespace dom
-}  // namespace mozilla
-
-NS_IMPL_ISUPPORTS(ParentIdleListener, nsIObserver)
-
-NS_IMETHODIMP
-ParentIdleListener::Observe(nsISupports*, const char* aTopic,
-                            const char16_t* aData) {
-  mozilla::Unused << mParent->SendNotifyIdleObserver(
-      mObserver, nsDependentCString(aTopic), nsDependentString(aData));
-  return NS_OK;
-}
-
 bool ContentParent::HandleWindowsMessages(const Message& aMsg) const {
   MOZ_ASSERT(aMsg.is_sync());
 
@@ -5353,7 +5387,7 @@ bool ContentParent::DeallocPURLClassifierParent(PURLClassifierParent* aActor) {
 // PURLClassifierLocalParent
 
 PURLClassifierLocalParent* ContentParent::AllocPURLClassifierLocalParent(
-    const URIParams& aURI, const nsCString& aTables) {
+    const URIParams& aURI, const nsTArray<IPCURLClassifierFeature>& aFeatures) {
   MOZ_ASSERT(NS_IsMainThread());
 
   RefPtr<URLClassifierLocalParent> actor = new URLClassifierLocalParent();
@@ -5362,9 +5396,11 @@ PURLClassifierLocalParent* ContentParent::AllocPURLClassifierLocalParent(
 
 mozilla::ipc::IPCResult ContentParent::RecvPURLClassifierLocalConstructor(
     PURLClassifierLocalParent* aActor, const URIParams& aURI,
-    const nsCString& aTables) {
+    nsTArray<IPCURLClassifierFeature>&& aFeatures) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aActor);
+
+  nsTArray<IPCURLClassifierFeature> features = std::move(aFeatures);
 
   nsCOMPtr<nsIURI> uri = DeserializeURI(aURI);
   if (!uri) {
@@ -5373,7 +5409,7 @@ mozilla::ipc::IPCResult ContentParent::RecvPURLClassifierLocalConstructor(
   }
 
   auto* actor = static_cast<URLClassifierLocalParent*>(aActor);
-  return actor->StartClassify(uri, aTables);
+  return actor->StartClassify(uri, features);
 }
 
 bool ContentParent::DeallocPURLClassifierLocalParent(
@@ -5416,23 +5452,6 @@ bool ContentParent::DeallocPLoginReputationParent(
   RefPtr<LoginReputationParent> actor =
       dont_AddRef(static_cast<LoginReputationParent*>(aActor));
   return true;
-}
-
-mozilla::ipc::IPCResult ContentParent::RecvClassifyLocal(
-    const URIParams& aURI, const nsCString& aTables, nsresult* aRv,
-    nsTArray<nsCString>* aResults) {
-  MOZ_ASSERT(aResults);
-  nsCOMPtr<nsIURI> uri = DeserializeURI(aURI);
-  if (!uri) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  nsCOMPtr<nsIURIClassifier> uriClassifier =
-      do_GetService(NS_URICLASSIFIERSERVICE_CONTRACTID);
-  if (!uriClassifier) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  *aRv = uriClassifier->ClassifyLocalWithTables(uri, aTables, *aResults);
-  return IPC_OK();
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvFileCreationRequest(
@@ -5550,12 +5569,12 @@ mozilla::ipc::IPCResult
 ContentParent::RecvFirstPartyStorageAccessGrantedForOrigin(
     const Principal& aParentPrincipal, const Principal& aTrackingPrincipal,
     const nsCString& aTrackingOrigin, const nsCString& aGrantedOrigin,
-    const bool& aAnySite,
+    const int& aAllowMode,
     FirstPartyStorageAccessGrantedForOriginResolver&& aResolver) {
   AntiTrackingCommon::
       SaveFirstPartyStorageAccessGrantedForOriginOnParentProcess(
           aParentPrincipal, aTrackingPrincipal, aTrackingOrigin, aGrantedOrigin,
-          aAnySite)
+          aAllowMode)
           ->Then(GetCurrentThreadSerialEventTarget(), __func__,
                  [aResolver = std::move(aResolver)](
                      AntiTrackingCommon::FirstPartyStorageAccessGrantPromise::
@@ -5727,4 +5746,101 @@ void ContentParent::UnregisterRemoveWorkerActor() {
         "dom::ContentParent::ShutDownProcess", this,
         &ContentParent::ShutDownProcess, SEND_SHUTDOWN_MESSAGE));
   }
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvWindowClose(
+    const BrowsingContextId& aContextId, const bool& aTrustedCaller) {
+  RefPtr<ChromeBrowsingContext> bc = ChromeBrowsingContext::Get(aContextId);
+  if (!bc) {
+    MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
+            ("ParentIPC: Trying to send a message to dead or detached context "
+             "0x%08" PRIx64,
+             (uint64_t)aContextId));
+    return IPC_OK();
+  }
+
+  // FIXME Need to check that the sending process has access to the unit of
+  // related
+  //       browsing contexts of bc.
+
+  ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
+  ContentParent* cp =
+      cpm->GetContentProcessById(ContentParentId(bc->OwnerProcessId()));
+  Unused << cp->SendWindowClose(aContextId, aTrustedCaller);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvWindowFocus(
+    const BrowsingContextId& aContextId) {
+  RefPtr<ChromeBrowsingContext> bc = ChromeBrowsingContext::Get(aContextId);
+  if (!bc) {
+    MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
+            ("ParentIPC: Trying to send a message to dead or detached context "
+             "0x%08" PRIx64,
+             (uint64_t)aContextId));
+    return IPC_OK();
+  }
+
+  ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
+  ContentParent* cp =
+      cpm->GetContentProcessById(ContentParentId(bc->OwnerProcessId()));
+  Unused << cp->SendWindowFocus(aContextId);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvWindowBlur(
+    const BrowsingContextId& aContextId) {
+  RefPtr<ChromeBrowsingContext> bc = ChromeBrowsingContext::Get(aContextId);
+  if (!bc) {
+    MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
+            ("ParentIPC: Trying to send a message to dead or detached context "
+             "0x%08" PRIx64,
+             (uint64_t)aContextId));
+    return IPC_OK();
+  }
+
+  ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
+  ContentParent* cp =
+      cpm->GetContentProcessById(ContentParentId(bc->OwnerProcessId()));
+  Unused << cp->SendWindowBlur(aContextId);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvWindowPostMessage(
+    const BrowsingContextId& aContextId, const ClonedMessageData& aMessage,
+    const PostMessageData& aData) {
+  RefPtr<ChromeBrowsingContext> bc = ChromeBrowsingContext::Get(aContextId);
+  if (!bc) {
+    MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
+            ("ParentIPC: Trying to send a message to dead or detached context "
+             "0x%08" PRIx64,
+             (uint64_t)aContextId));
+    return IPC_OK();
+  }
+
+  ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
+  ContentParent* cp =
+      cpm->GetContentProcessById(ContentParentId(bc->OwnerProcessId()));
+  StructuredCloneData messageFromChild;
+  UnpackClonedMessageDataForParent(aMessage, messageFromChild);
+  ClonedMessageData message;
+  if (!BuildClonedMessageDataForParent(cp, messageFromChild, message)) {
+    // FIXME Logging?
+    return IPC_OK();
+  }
+  Unused << cp->SendWindowPostMessage(aContextId, message, aData);
+  return IPC_OK();
+}
+
+}  // namespace dom
+}  // namespace mozilla
+
+NS_IMPL_ISUPPORTS(ParentIdleListener, nsIObserver)
+
+NS_IMETHODIMP
+ParentIdleListener::Observe(nsISupports*, const char* aTopic,
+                            const char16_t* aData) {
+  mozilla::Unused << mParent->SendNotifyIdleObserver(
+      mObserver, nsDependentCString(aTopic), nsDependentString(aData));
+  return NS_OK;
 }

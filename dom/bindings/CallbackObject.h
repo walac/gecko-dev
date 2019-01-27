@@ -127,6 +127,10 @@ class CallbackObject : public nsISupports {
     // because the value of mCallback cannot change after if has been set.
     return JS::Handle<JSObject*>::fromMarkedLocation(mCallback.address());
   }
+  JS::Handle<JSObject*> CallbackGlobalPreserveColor() const {
+    // The comment in CallbackPreserveColor applies here as well.
+    return JS::Handle<JSObject*>::fromMarkedLocation(mCallbackGlobal.address());
+  }
 
   /*
    * If the callback is known to be non-gray, then this method can be
@@ -134,7 +138,7 @@ class CallbackObject : public nsISupports {
    * ExposeObjectToActiveJS().
    */
   JS::Handle<JSObject*> CallbackKnownNotGray() const {
-    MOZ_ASSERT(JS::ObjectIsNotGray(mCallback));
+    JS::AssertObjectIsNotGray(mCallback);
     return CallbackPreserveColor();
   }
 

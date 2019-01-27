@@ -25,6 +25,15 @@ function WebConsoleClient(debuggerClient, response) {
   this._client = debuggerClient;
   this._longStrings = {};
   this.traits = response.traits || {};
+
+  /**
+   * Tells if the window.console object of the remote web page is the native
+   * object or not.
+   * @private
+   * @type boolean
+   */
+  this.hasNativeConsoleAPI = response.nativeConsoleAPI;
+
   this.events = [];
   this._networkRequests = new Map();
 
@@ -305,11 +314,6 @@ WebConsoleClient.prototype = {
    * See evaluateJS for parameter and response information.
    */
   evaluateJSAsync: function(string, onResponse, options = {}) {
-    // Pre-37 servers don't support async evaluation.
-    if (!this.traits.evaluateJSAsync) {
-      return this.evaluateJS(string, onResponse, options);
-    }
-
     const packet = {
       to: this._actor,
       type: "evaluateJSAsync",
@@ -377,10 +381,20 @@ WebConsoleClient.prototype = {
    * @param {String} frameActor
    *        The id of the frame actor that made the call.
    * @param {String} selectedNodeActor: Actor id of the selected node in the inspector.
+   * @param {Array} authorizedEvaluations
+   *        Array of the properties access which can be executed by the engine.
+   *        Example: [["x", "myGetter"], ["x", "myGetter", "y", "anotherGetter"]] to
+   *        retrieve properties of `x.myGetter.` and `x.myGetter.y.anotherGetter`.
    * @return request
    *         Request object that implements both Promise and EventEmitter interfaces
    */
-  autocomplete: function(string, cursor, frameActor, selectedNodeActor) {
+  autocomplete: function(
+    string,
+    cursor,
+    frameActor,
+    selectedNodeActor,
+    authorizedEvaluations
+  ) {
     const packet = {
       to: this._actor,
       type: "autocomplete",
@@ -388,6 +402,7 @@ WebConsoleClient.prototype = {
       cursor,
       frameActor,
       selectedNodeActor,
+      authorizedEvaluations,
     };
     return this._client.request(packet);
   },

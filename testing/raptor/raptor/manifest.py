@@ -88,6 +88,8 @@ def write_test_settings_json(args, test_details, oskey):
             test_settings['raptor-options']['measure']['hero'] = test_details['hero'].split()
         if "ttfi" in test_details['measure']:
             test_settings['raptor-options']['measure']['ttfi'] = True
+        if "loadtime" in test_details['measure']:
+            test_settings['raptor-options']['measure']['loadtime'] = True
     if test_details.get("page_timeout", None) is not None:
         test_settings['raptor-options']['page_timeout'] = int(test_details['page_timeout'])
     test_settings['raptor-options']['unit'] = test_details.get("unit", "ms")
@@ -108,6 +110,9 @@ def write_test_settings_json(args, test_details, oskey):
 
     if test_details.get("alert_threshold", None) is not None:
         test_settings['raptor-options']['alert_threshold'] = float(test_details['alert_threshold'])
+
+    if test_details.get("screen_capture", None) is not None:
+        test_settings['raptor-options']['screen_capture'] = test_details.get("screen_capture")
 
     # if gecko profiling is enabled, write profiling settings for webext
     if test_details.get("gecko_profile", False):

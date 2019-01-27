@@ -11,7 +11,6 @@
 #include "mozilla/AddonManagerWebAPI.h"
 #include "mozilla/ResultExtensions.h"
 #include "nsEscape.h"
-#include "nsIDocShell.h"
 #include "nsIObserver.h"
 #include "nsISubstitutingProtocolHandler.h"
 #include "nsNetUtil.h"
@@ -133,7 +132,8 @@ WebExtensionPolicy::WebExtensionPolicy(GlobalObject& aGlobal,
       mName(aInit.mName),
       mContentSecurityPolicy(aInit.mContentSecurityPolicy),
       mLocalizeCallback(aInit.mLocalizeCallback),
-      mPermissions(new AtomSet(aInit.mPermissions)) {
+      mPermissions(new AtomSet(aInit.mPermissions)),
+      mPrivateBrowsingAllowed(aInit.mPrivateBrowsingAllowed) {
   if (!ParseGlobs(aGlobal, aInit.mWebAccessibleResources, mWebAccessiblePaths,
                   aRv)) {
     return;
@@ -440,6 +440,22 @@ void WebExtensionPolicy::GetContentScripts(
   aScripts.AppendElements(mContentScripts);
 }
 
+bool WebExtensionPolicy::CanAccessContext(nsILoadContext* aContext) const {
+  MOZ_ASSERT(aContext);
+  return mPrivateBrowsingAllowed || !aContext->UsePrivateBrowsing();
+}
+
+bool WebExtensionPolicy::CanAccessWindow(
+    const dom::WindowProxyHolder& aWindow) const {
+  if (mPrivateBrowsingAllowed) {
+    return true;
+  }
+  // match browsing mode with policy
+  nsIDocShell* docShell = aWindow.get()->GetDocShell();
+  nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(docShell);
+  return !(loadContext && loadContext->UsePrivateBrowsing());
+}
+
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(WebExtensionPolicy, mParent,
                                       mLocalizeCallback, mHostPermissions,
                                       mWebAccessiblePaths, mContentScripts)
@@ -543,6 +559,12 @@ bool MozDocumentMatcher::Matches(const DocInfo& aDoc) const {
     if (!mAllFrames && !aDoc.IsTopLevel()) {
       return false;
     }
+  }
+
+  // match browsing mode with policy
+  nsCOMPtr<nsILoadContext> loadContext = aDoc.GetLoadContext();
+  if (loadContext && mExtension && !mExtension->CanAccessContext(loadContext)) {
+    return false;
   }
 
   if (!mMatchAboutBlank && aDoc.URL().InheritsPrincipal()) {
@@ -653,7 +675,8 @@ void DocumentObserver::Disconnect() {
 void DocumentObserver::NotifyMatch(MozDocumentMatcher& aMatcher,
                                    nsPIDOMWindowOuter* aWindow) {
   IgnoredErrorResult rv;
-  mCallbacks->OnNewDocument(aMatcher, aWindow, rv);
+  mCallbacks->OnNewDocument(
+      aMatcher, WindowProxyHolder(aWindow->GetBrowsingContext()), rv);
 }
 
 void DocumentObserver::NotifyMatch(MozDocumentMatcher& aMatcher,
@@ -709,7 +732,7 @@ bool WindowShouldMatchActiveTab(nsPIDOMWindowOuter* aWin) {
     return false;
   }
 
-  nsIDocument* doc = aWin->GetExtantDoc();
+  Document* doc = aWin->GetExtantDoc();
   if (!doc) {
     return false;
   }
@@ -766,7 +789,7 @@ nsIPrincipal* DocInfo::Principal() const {
       const DocInfo& mThis;
 
       nsIPrincipal* match(Window aWin) {
-        nsCOMPtr<nsIDocument> doc = aWin->GetDoc();
+        RefPtr<Document> doc = aWin->GetDoc();
         return doc->NodePrincipal();
       }
       nsIPrincipal* match(LoadInfo aLoadInfo) {

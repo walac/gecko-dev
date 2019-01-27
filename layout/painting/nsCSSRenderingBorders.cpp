@@ -30,6 +30,7 @@
 #include "gfx2DGlue.h"
 #include "gfxGradientCache.h"
 #include "mozilla/layers/StackingContextHelper.h"
+#include "mozilla/layers/RenderRootStateManager.h"
 #include "mozilla/layers/WebRenderLayerManager.h"
 #include "mozilla/Range.h"
 #include <algorithm>
@@ -147,7 +148,7 @@ typedef enum {
 } CornerStyle;
 
 nsCSSBorderRenderer::nsCSSBorderRenderer(
-    nsPresContext* aPresContext, const nsIDocument* aDocument,
+    nsPresContext* aPresContext, const Document* aDocument,
     DrawTarget* aDrawTarget, const Rect& aDirtyRect, Rect& aOuterRect,
     const StyleBorderStyle* aBorderStyles, const Float* aBorderWidths,
     RectCornerRadii& aBorderRadii, const nscolor* aBorderColors,
@@ -3538,7 +3539,7 @@ ImgDrawResult nsCSSBorderImageRenderer::CreateWebRenderCommands(
     mozilla::wr::DisplayListBuilder& aBuilder,
     mozilla::wr::IpcResourceUpdateQueue& aResources,
     const mozilla::layers::StackingContextHelper& aSc,
-    mozilla::layers::WebRenderLayerManager* aManager,
+    mozilla::layers::RenderRootStateManager* aManager,
     nsDisplayListBuilder* aDisplayListBuilder) {
   if (!mImageRenderer.IsReady()) {
     return ImgDrawResult::NOT_READY;
@@ -3584,8 +3585,9 @@ ImgDrawResult nsCSSBorderImageRenderer::CreateWebRenderCommands(
               img, aForFrame, destRect, aSc, flags, svgContext);
 
       RefPtr<layers::ImageContainer> container;
-      drawResult = img->GetImageContainerAtSize(
-          aManager, decodeSize, svgContext, flags, getter_AddRefs(container));
+      drawResult = img->GetImageContainerAtSize(aManager->LayerManager(),
+                                                decodeSize, svgContext, flags,
+                                                getter_AddRefs(container));
       if (!container) {
         break;
       }
@@ -3771,6 +3773,9 @@ nsCSSBorderImageRenderer::nsCSSBorderImageRenderer(
         break;
       case eStyleUnit_Auto:  // same as the slice value, in CSS pixels
         value = mSlice.Side(s);
+        break;
+      case eStyleUnit_Calc:
+        value = std::max(0, coord.ComputeComputedCalc(borderDimension));
         break;
       default:
         MOZ_ASSERT_UNREACHABLE(

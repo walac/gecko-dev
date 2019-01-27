@@ -1409,7 +1409,7 @@ var gCSSProperties = {
     type: CSS_TYPE_LONGHAND,
     applies_to_first_letter: true,
     initial_values: [ "1", "1 1 1 1" ],
-    other_values: [ "0", "0%", "0px", "auto auto auto auto", "10 10% auto 15px", "10px 10px 10px 10px", "10", "10 10", "10 10 10" ],
+    other_values: [ "0", "0%", "0px", "auto auto auto auto", "10 10% auto 15px", "10px 10px 10px 10px", "10", "10 10", "10 10 10", "calc(10px)", "calc(10px + 5%)" ],
     invalid_values: [ "-10", "-10px", "-10%", "10 10 10 10 10", "10 10 10 10 auto", "auto auto auto auto auto", "10px calc(nonsense)", "1px red" ],
     unbalanced_values: [ "10px calc(" ]
   },
@@ -1637,6 +1637,14 @@ var gCSSProperties = {
     initial_values: [ "start" ],
     other_values: [ "center", "end", "justify" ],
     invalid_values: []
+  },
+  "box-decoration-break": {
+    domProp: "boxDecorationBreak",
+    inherited: false,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: [ "slice" ],
+    other_values: [ "clone" ],
+    invalid_values: [ "auto",  "none",  "1px" ],
   },
   "box-sizing": {
     domProp: "boxSizing",
@@ -2738,6 +2746,18 @@ var gCSSProperties = {
     other_values: [ "fixed", "local", "scroll,scroll", "fixed, scroll", "scroll, fixed, local, scroll", "fixed, fixed" ],
     invalid_values: []
   },
+  "background-blend-mode": {
+    domProp: "backgroundBlendMode",
+    inherited: false,
+    type: CSS_TYPE_LONGHAND,
+    applies_to_first_letter: true,
+    applies_to_first_line: true,
+    applies_to_placeholder: true,
+    initial_values: [ "normal" ],
+    other_values: [ "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn",
+      "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity" ],
+    invalid_values: ["none", "10px", "multiply multiply"],
+  },
   "background-clip": {
     /*
      * When we rename this to 'background-clip', we also
@@ -3740,7 +3760,9 @@ var gCSSProperties = {
     /* computed value tests for height test more with display:block */
     prerequisites: { "display": "block" },
     other_values: [ "15px", "3em", "15%",
-      "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
+      "max-content", "min-content", "-moz-fit-content", "-moz-available",
+      // these two keywords are the aliases of above first two.
+      "-moz-max-content", "-moz-min-content",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -3993,7 +4015,9 @@ var gCSSProperties = {
     prerequisites: { "display": "block" },
     initial_values: [ "none" ],
     other_values: [ "30px", "50%", "0",
-      "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
+      "max-content", "min-content", "-moz-fit-content", "-moz-available",
+      // these two keywords are the aliases of above first two.
+      "-moz-max-content", "-moz-min-content",
       "calc(2px)",
       "calc(-2px)",
       "calc(0px)",
@@ -4015,7 +4039,9 @@ var gCSSProperties = {
       // these four keywords compute to the initial value only when the
       // writing mode is vertical, and we're testing with a horizontal
       // writing mode
-      "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
+      "max-content", "min-content", "-moz-fit-content", "-moz-available",
+      // these two keywords are the aliases of above first two.
+      "-moz-max-content", "-moz-min-content",
       "calc(2px)",
       "calc(-2px)",
       "calc(0px)",
@@ -4034,7 +4060,9 @@ var gCSSProperties = {
     prerequisites: { "display": "block" },
     initial_values: [ "auto", "0", "calc(0em)", "calc(-2px)" ],
     other_values: [ "30px", "50%",
-      "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
+      "max-content", "min-content", "-moz-fit-content", "-moz-available",
+      // these two keywords are the aliases of above first two.
+      "-moz-max-content", "-moz-min-content",
       "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
@@ -4055,7 +4083,9 @@ var gCSSProperties = {
       // these four keywords compute to the initial value only when the
       // writing mode is vertical, and we're testing with a horizontal
       // writing mode
-      "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
+      "max-content", "min-content", "-moz-fit-content", "-moz-available",
+      // these two keywords are the aliases of above first two.
+      "-moz-max-content", "-moz-min-content",
       "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
@@ -4433,6 +4463,14 @@ var gCSSProperties = {
       "over left", "right under", "0", "100px", "50%"
     ]
   },
+  "scroll-behavior": {
+    domProp: "scrollBehavior",
+    inherited: false,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: [ "auto" ],
+    other_values: [ "smooth" ],
+    invalid_values: [ "none",  "1px" ],
+  },
   "table-layout": {
     domProp: "tableLayout",
     inherited: false,
@@ -4738,7 +4776,9 @@ var gCSSProperties = {
       // these three keywords compute to the initial value only when the
       // writing mode is vertical, and we're testing with a horizontal
       // writing mode
-      "-moz-max-content", "-moz-min-content", "-moz-fit-content",
+      "max-content", "min-content", "-moz-fit-content",
+      // these two keywords are the aliases of above first two.
+      "-moz-max-content", "-moz-min-content",
       // whether -moz-available computes to the initial value depends on
       // the container size, and for the container size we're testing
       // with, it does
@@ -5186,6 +5226,14 @@ var gCSSProperties = {
     other_values: [ "0", "0.3", "-7.3" ],
     invalid_values: []
   },
+  "image-orientation": {
+    domProp: "imageOrientation",
+    inherited: true,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: [ "none" ],
+    other_values: [ "from-image" ],
+    invalid_values: [ "0", "0deg" ],
+  },
   "image-rendering": {
     domProp: "imageRendering",
     inherited: true,
@@ -5193,6 +5241,14 @@ var gCSSProperties = {
     initial_values: [ "auto" ],
     other_values: [ "optimizeSpeed", "optimizeQuality", "-moz-crisp-edges" ],
     invalid_values: []
+  },
+  "isolation": {
+    domProp: "isolation",
+    inherited: false,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: [ "auto" ],
+    other_values: ["isolate"],
+    invalid_values: [],
   },
   "lighting-color": {
     domProp: "lightingColor",
@@ -5235,6 +5291,15 @@ var gCSSProperties = {
     initial_values: [ "none" ],
     other_values: [ "url(#mysym)" ],
     invalid_values: []
+  },
+  "mix-blend-mode": {
+    domProp: "mixBlendMode",
+    inherited: false,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: [ "normal" ],
+    other_values: ["multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn",
+        "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"],
+    invalid_values: [],
   },
   "shape-image-threshold": {
     domProp: "shapeImageThreshold",
@@ -5537,11 +5602,11 @@ var gCSSProperties = {
       "2 auto",
       "auto 4",
       "auto 5.6 7.8",
-      "-moz-max-content",
-      "1 -moz-max-content",
-      "1 2 -moz-max-content",
-      "-moz-max-content 1",
-      "-moz-max-content 1 2",
+      "max-content",
+      "1 max-content",
+      "1 2 max-content",
+      "max-content 1",
+      "max-content 1 2",
       "-0"
     ],
     invalid_values: [
@@ -5566,7 +5631,10 @@ var gCSSProperties = {
         // a reusable array defined at the top of this file?)
     other_values: [
       "content",
-      "15px", "3em", "15%", "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
+      "15px", "3em", "15%",
+      "max-content", "min-content",
+      "-moz-max-content", "-moz-min-content",
+      "-moz-fit-content", "-moz-available",
       // valid calc() values
       "calc(-2px)",
       "calc(2px)",
@@ -5922,13 +5990,16 @@ var gCSSProperties = {
     initial_values: [ "auto" ],
     prerequisites: { "display": "block" },
     other_values: [ "15px", "3em", "15%",
+      // These keywords are treated as initial value.
+      "max-content", "min-content", "-moz-fit-content", "-moz-available",
+      "-moz-max-content", "-moz-min-content",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
       "calc(25px*3)",
       "calc(3*25px + 50%)",
     ],
-    invalid_values: [ "none", "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available" ],
+    invalid_values: [ "none" ],
   },
   "border-block-end-color": {
     domProp: "borderBlockEndColor",
@@ -6101,7 +6172,9 @@ var gCSSProperties = {
       // these three keywords compute to the initial value only when the
       // writing mode is vertical, and we're testing with a horizontal
       // writing mode
-      "-moz-max-content", "-moz-min-content", "-moz-fit-content",
+      "max-content", "min-content", "-moz-fit-content",
+      // these two keywords are the aliases of above first two.
+      "-moz-max-content", "-moz-min-content",
       // whether -moz-available computes to the initial value depends on
       // the container size, and for the container size we're testing
       // with, it does
@@ -6175,13 +6248,16 @@ var gCSSProperties = {
     prerequisites: { "display": "block" },
     initial_values: [ "none" ],
     other_values: [ "30px", "50%",
+      // These keywords are treated as initial value.
+      "max-content", "min-content", "-moz-fit-content", "-moz-available",
+      "-moz-max-content", "-moz-min-content",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
       "calc(25px*3)",
       "calc(3*25px + 50%)",
     ],
-    invalid_values: [ "auto", "5", "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available" ]
+    invalid_values: [ "auto", "5" ]
   },
   "max-inline-size": {
     domProp: "maxInlineSize",
@@ -6195,7 +6271,9 @@ var gCSSProperties = {
       // these four keywords compute to the initial value only when the
       // writing mode is vertical, and we're testing with a horizontal
       // writing mode
-      "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
+      "max-content", "min-content", "-moz-fit-content", "-moz-available",
+      // these two keywords are the aliases of above first two.
+      "-moz-max-content", "-moz-min-content",
       "calc(2px)",
       "calc(50%)",
       "calc(3*25px)",
@@ -6213,6 +6291,9 @@ var gCSSProperties = {
     prerequisites: { "display": "block" },
     initial_values: [ "auto", "0", "calc(0em)", "calc(-2px)" ],
     other_values: [ "30px", "50%",
+      // These keywords are treated as initial value.
+      "max-content", "min-content", "-moz-fit-content", "-moz-available",
+      "-moz-max-content", "-moz-min-content",
       "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
@@ -6220,7 +6301,7 @@ var gCSSProperties = {
       "calc(25px*3)",
       "calc(3*25px + 50%)",
     ],
-    invalid_values: [ "none", "5", "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available" ]
+    invalid_values: [ "none", "5" ]
   },
   "min-inline-size": {
     domProp: "minInlineSize",
@@ -6234,7 +6315,9 @@ var gCSSProperties = {
       // these four keywords compute to the initial value only when the
       // writing mode is vertical, and we're testing with a horizontal
       // writing mode
-      "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
+      "max-content", "min-content", "-moz-fit-content", "-moz-available",
+      // these two keywords are the aliases of above first two.
+      "-moz-max-content", "-moz-min-content",
       "calc(-1%)",
       "calc(2px)",
       "calc(50%)",
@@ -7158,16 +7241,6 @@ if (IsCSSPropertyPrefEnabled("layout.css.contain.enabled")) {
   };
 }
 
-if (IsCSSPropertyPrefEnabled("layout.css.image-orientation.enabled")) {
-  gCSSProperties["image-orientation"] = {
-    domProp: "imageOrientation",
-    inherited: true,
-    type: CSS_TYPE_LONGHAND,
-    initial_values: [ "none" ],
-    other_values: [ "from-image" ],
-    invalid_values: [ "0", "0deg" ]
-  };
-}
 
 if (IsCSSPropertyPrefEnabled("layout.css.initial-letter.enabled")) {
   gCSSProperties["initial-letter"] = {
@@ -7192,44 +7265,6 @@ if (IsCSSPropertyPrefEnabled("layout.css.osx-font-smoothing.enabled")) {
     initial_values: [ "auto" ],
     other_values: [ "grayscale" ],
     invalid_values: [ "none", "subpixel-antialiased", "antialiased" ]
-  };
-}
-
-if (IsCSSPropertyPrefEnabled("layout.css.mix-blend-mode.enabled")) {
-  gCSSProperties["mix-blend-mode"] = {
-    domProp: "mixBlendMode",
-    inherited: false,
-    type: CSS_TYPE_LONGHAND,
-    initial_values: [ "normal" ],
-    other_values: ["multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn",
-        "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"],
-    invalid_values: []
-  };
-}
-
-if (IsCSSPropertyPrefEnabled("layout.css.isolation.enabled")) {
-  gCSSProperties["isolation"] = {
-    domProp: "isolation",
-    inherited: false,
-    type: CSS_TYPE_LONGHAND,
-    initial_values: [ "auto" ],
-    other_values: ["isolate"],
-    invalid_values: []
-  };
-}
-
-if (IsCSSPropertyPrefEnabled("layout.css.background-blend-mode.enabled")) {
-  gCSSProperties["background-blend-mode"] = {
-    domProp: "backgroundBlendMode",
-    inherited: false,
-    type: CSS_TYPE_LONGHAND,
-    applies_to_first_letter: true,
-    applies_to_first_line: true,
-    applies_to_placeholder: true,
-    initial_values: [ "normal" ],
-    other_values: [ "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn",
-      "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity" ],
-    invalid_values: ["none", "10px", "multiply multiply"]
   };
 }
 
@@ -7262,28 +7297,6 @@ if (IsCSSPropertyPrefEnabled("layout.css.overflow-clip-box.enabled")) {
                     "content-box content-box" ],
     invalid_values: [ "none", "auto", "content-box none", "border-box", "0",
                       "content-box, content-box" ]
-  };
-}
-
-if (IsCSSPropertyPrefEnabled("layout.css.box-decoration-break.enabled")) {
-  gCSSProperties["box-decoration-break"] = {
-    domProp: "boxDecorationBreak",
-    inherited: false,
-    type: CSS_TYPE_LONGHAND,
-    initial_values: [ "slice" ],
-    other_values: [ "clone" ],
-    invalid_values: [ "auto",  "none",  "1px" ]
-  };
-}
-
-if (IsCSSPropertyPrefEnabled("layout.css.scroll-behavior.property-enabled")) {
-  gCSSProperties["scroll-behavior"] = {
-    domProp: "scrollBehavior",
-    inherited: false,
-    type: CSS_TYPE_LONGHAND,
-    initial_values: [ "auto" ],
-    other_values: [ "smooth" ],
-    invalid_values: [ "none",  "1px" ]
   };
 }
 

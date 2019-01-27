@@ -9,13 +9,13 @@
 *|*:root {
   --in-content-page-color: #0c0c0d;
   --in-content-page-background: #f9f9fa;
-  --in-content-text-color: #0c0c0d;
+  --in-content-text-color: var(--grey-90);
   --in-content-selected-text: #fff;
   --in-content-box-background: #fff;
   --in-content-box-background-odd: rgba(12, 12, 13, 0.05); /* grey 90 a05 */
   --in-content-box-background-hover: #ededf0; /* grey 20 */
   --in-content-box-background-active: #d7d7db; /* grey 30 */
-  --in-content-box-border-color: var(--grey-90-a30);
+  --in-content-box-border-color: var(--grey-90-a40);
   --in-content-item-hover: rgba(69, 161, 255, 0.2); /* blue 40 a20 */
   --in-content-item-selected: #0a84ff;
   --in-content-border-highlight: #0a84ff;
@@ -39,6 +39,9 @@
   --in-content-link-color-hover: #0060df;
   --in-content-link-color-active: #003eaa;
   --in-content-link-color-visited: #0a8dff;
+  --in-content-button-background: var(--grey-90-a10);
+  --in-content-button-background-hover: var(--grey-90-a20);
+  --in-content-button-background-active: var(--grey-90-a30);
   --in-content-primary-button-background: var(--blue-60);
   --in-content-primary-button-background-hover: var(--blue-70);
   --in-content-primary-button-background-active: var(--blue-80);
@@ -46,6 +49,8 @@
   --in-content-table-border-dark-color: #d1d1d1;
   --in-content-table-header-background: #0a84ff;
 
+  --blue-40: #45a1ff;
+  --blue-40-a10: rgb(69, 161, 255, 0.1);
   --blue-50: #0a84ff;
   --blue-50-a30: rgba(10, 132, 255, 0.3);
   --blue-60: #0060df;
@@ -58,6 +63,7 @@
   --grey-90-a10: rgba(12, 12, 13, 0.1);
   --grey-90-a20: rgba(12, 12, 13, 0.2);
   --grey-90-a30: rgba(12, 12, 13, 0.3);
+  --grey-90-a40: rgba(12, 12, 13, 0.4);
   --grey-90-a50: rgba(12, 12, 13, 0.5);
   --red-50: #ff0039;
   --red-50-a30: rgba(255, 0, 57, 0.3);
@@ -163,12 +169,15 @@ xul|menulist,
 html|*.numberbox-input::-moz-number-spin-up,
 html|*.numberbox-input::-moz-number-spin-down {
   -moz-appearance: none;
-  min-height: 30px;
+  min-height: 32px;
   /* !important overrides button.css for disabled and default XUL buttons: */
-  color: var(--in-content-text-color) !important;
-  border: 1px solid var(--in-content-box-border-color);
+  color: inherit !important;
+  border: none;
   border-radius: 2px;
-  background-color: var(--in-content-page-background);
+  background-color: var(--in-content-button-background);
+  font-weight: 400;
+  padding: 0 8px;
+  text-decoration: none;
   margin: 4px 8px;
   /* Ensure font-size isn't overridden by widget styling (e.g. in forms.css) */
   font-size: 1em;
@@ -179,6 +188,24 @@ html|button {
   /* use the same margin of other elements for the alignment */
   margin-left: 4px;
   margin-right: 4px;
+}
+
+html|button::-moz-focus-inner,
+html|select::-moz-focus-inner,
+html|input[type="color"]::-moz-focus-inner {
+  border: none;
+}
+
+*|button:-moz-focusring,
+html|select:-moz-focusring,
+html|input[type="color"]:-moz-focusring,
+xul|menulist:-moz-focusring,
+html|input[type="number"]:-moz-focusring::-moz-number-spin-up,
+html|input[type="number"]:-moz-focusring::-moz-number-spin-down {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--in-content-border-active) inset,
+    0 0 0 1px var(--in-content-border-active),
+    0 0 0 4px var(--in-content-border-active-shadow);
 }
 
 html|select:not([size]):not([multiple]) {
@@ -203,7 +230,7 @@ html|*.numberbox-input::-moz-number-spin-down:hover,
 html|input[type="color"]:hover,
 xul|button:not([disabled="true"]):hover,
 xul|menulist:not([disabled="true"]):hover {
-  background-color: var(--in-content-box-background-hover);
+  background-color: var(--in-content-button-background-hover);
 }
 
 html|button:enabled:hover:active,
@@ -213,7 +240,7 @@ html|*.numberbox-input::-moz-number-spin-down:hover:active,
 html|input[type="color"]:enabled:hover:active,
 xul|button:not([disabled="true"]):hover:active,
 xul|menulist[open="true"]:not([disabled="true"]) {
-  background-color: var(--in-content-box-background-active);
+  background-color: var(--in-content-button-background-active);
 }
 
 html|button:disabled,
@@ -222,12 +249,11 @@ html|*.numberbox-input:disabled::-moz-number-spin-box,
 html|input[type="color"]:disabled,
 xul|button[disabled="true"],
 xul|menulist[disabled="true"] {
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 *|button.primary {
   background-color: var(--in-content-primary-button-background);
-  border-color: transparent;
   color: var(--in-content-selected-text) !important;
 }
 
@@ -244,12 +270,6 @@ xul|button.primary:not([disabled="true"]):hover:active {
 html|input[type="color"] {
   padding: 6px;
   width: 50px;
-}
-
-xul|button > xul|*.button-box,
-xul|menulist > xul|*.menulist-label-box {
-  padding-right: 10px !important;
-  padding-left: 10px !important;
 }
 
 xul|menulist > xul|*.menulist-label-box > xul|*.menulist-icon[src] {
@@ -380,6 +400,7 @@ xul|button[type="menu"] > xul|menupopup xul|menuseparator {
 html|input[type="email"],
 html|input[type="tel"],
 html|input[type="text"],
+html|input[type="number"],
 html|textarea,
 xul|textbox {
   -moz-appearance: none;
@@ -416,6 +437,7 @@ xul|textbox.tree-input {
 html|input[type="email"],
 html|input[type="tel"],
 html|input[type="text"],
+html|input[type="number"],
 html|textarea {
   font-family: inherit;
   font-size: inherit;
@@ -425,6 +447,7 @@ html|textarea {
 html|input[type="email"]:enabled:not(:focus):hover,
 html|input[type="tel"]:enabled:not(:focus):hover,
 html|input[type="text"]:enabled:not(:focus):hover,
+html|input[type="number"]:enabled:not(:focus):hover,
 html|textarea:enabled:not(:focus):hover,
 xul|textbox:not([disabled="true"]):not([focused]):hover {
   border-color: var(--in-content-border-hover);
@@ -433,15 +456,18 @@ xul|textbox:not([disabled="true"]):not([focused]):hover {
 html|input[type="email"]:focus,
 html|input[type="tel"]:focus,
 html|input[type="text"]:focus,
+html|input[type="number"]:focus,
 html|textarea:focus,
 xul|textbox[focused] {
   border-color: var(--in-content-border-active);
-  box-shadow: 0 0 0 3px var(--in-content-border-active-shadow);
+  box-shadow: 0 0 0 1px var(--in-content-border-active),
+    0 0 0 4px var(--in-content-border-active-shadow);
 }
 
 html|input[type="email"]:-moz-ui-invalid,
 html|input[type="tel"]:-moz-ui-invalid,
 html|input[type="text"]:-moz-ui-invalid,
+html|input[type="number"]:-moz-ui-invalid,
 html|textarea:-moz-ui-invalid {
   border-color: var(--in-content-border-invalid);
 }
@@ -452,6 +478,7 @@ html|textarea:-moz-ui-invalid {
 html|input[type="email"]:-moz-ui-invalid:focus,
 html|input[type="tel"]:-moz-ui-invalid:focus,
 html|input[type="text"]:-moz-ui-invalid:focus,
+html|input[type="number"]:-moz-ui-invalid:focus,
 html|textarea:-moz-ui-invalid:focus {
   box-shadow: 0 0 0 3px var(--in-content-border-invalid-shadow);
 }
@@ -459,6 +486,7 @@ html|textarea:-moz-ui-invalid:focus {
 html|input[type="email"]:disabled,
 html|input[type="tel"]:disabled,
 html|input[type="text"]:disabled,
+html|input[type="number"]:disabled,
 html|textarea:disabled,
 xul|textbox[disabled="true"] {
   opacity: 0.4;
@@ -583,8 +611,7 @@ xul|*.radio-label-box {
 *|*#categories {
   -moz-appearance: none;
   background-color: initial; /* override the background-color set on all richlistboxes in common.inc.css */
-  padding-top: 70px;
-  margin: 0;
+  margin: 70px 0 0;
   border-width: 0;
   width: 240px;
 }
@@ -611,7 +638,7 @@ xul|*.radio-label-box {
 *|*#categories > *|*.category[selected],
 *|*#categories > *|*.category.selected {
   color: var(--in-content-category-text-selected);
-  background: none;
+  background-color: transparent;
 }
 
 *|*#categories > *|*.category[selected]:hover,
@@ -694,13 +721,30 @@ xul|*.radio-label-box {
 /* List boxes */
 
 html|select[size][multiple],
+xul|listheader,
 xul|richlistbox {
   -moz-appearance: none;
-  margin-inline-start: 0;
+  margin-left: 0;
+  margin-right: 0;
   background-color: var(--in-content-box-background);
   border: 1px solid var(--in-content-box-border-color);
   border-radius: 2px;
   color: var(--in-content-text-color);
+}
+
+xul|listheader {
+  border-bottom: none;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  padding-bottom: 1px;
+  box-shadow: inset 0 -1px var(--in-content-border-color);
+}
+
+xul|listheader + xul|richlistbox {
+  margin-top: 0;
+  border-top: none;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 html|select[size][multiple] > html|option,
@@ -741,7 +785,6 @@ xul|richlistbox:-moz-focusring {
   border: 1px dotted var(--in-content-border-focus);
 }
 
-xul|listheader,
 xul|treecols {
   -moz-appearance: none;
   border: none;

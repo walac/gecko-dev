@@ -291,13 +291,12 @@ const AppCacheCleaner = {
 
 const QuotaCleaner = {
   deleteByPrincipal(aPrincipal) {
-    if (!Services.lsm.nextGenLocalStorageEnabled) {
-      // localStorage: The legacy LocalStorage implementation that will
-      // eventually be removed depends on this observer notification to clear by
-      // principal.  Only generate it if we're using the legacy implementation.
-      Services.obs.notifyObservers(null, "browser:purge-domain-data",
-                                   aPrincipal.URI.host);
-    }
+    // localStorage: The legacy LocalStorage implementation that will
+    // eventually be removed depends on this observer notification to clear by
+    // principal.  Some other subsystems like Reporting headers depend on this
+    // too.
+    Services.obs.notifyObservers(null, "browser:purge-domain-data",
+                                 aPrincipal.URI.host);
 
     // ServiceWorkers: they must be removed before cleaning QuotaManager.
     return ServiceWorkerCleanUp.removeFromPrincipal(aPrincipal)
@@ -319,12 +318,10 @@ const QuotaCleaner = {
   },
 
   deleteByHost(aHost, aOriginAttributes) {
-    if (!Services.lsm.nextGenLocalStorageEnabled) {
-      // localStorage: The legacy LocalStorage implementation that will
-      // eventually be removed depends on this observer notification to clear by
-      // principal.  Only generate it if we're using the legacy implementation.
-      Services.obs.notifyObservers(null, "browser:purge-domain-data", aHost);
-    }
+    // localStorage: The legacy LocalStorage implementation that will
+    // eventually be removed depends on this observer notification to clear by
+    // host.  Some other subsystems like Reporting headers depend on this too.
+    Services.obs.notifyObservers(null, "browser:purge-domain-data", aHost);
 
     let exceptionThrown = false;
 
@@ -855,6 +852,11 @@ ClearDataService.prototype = Object.freeze({
     return this._deleteInternal(aFlags, aCallback, aCleaner => {
       return aCleaner.deleteAll();
     });
+  },
+
+  deleteDataFromOriginAttributesPattern(aPattern) {
+    Services.obs.notifyObservers(null, "clear-origin-attributes-data",
+      JSON.stringify(aPattern));
   },
 
   // This internal method uses aFlags against FLAGS_MAP in order to retrieve a

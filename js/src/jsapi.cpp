@@ -61,6 +61,7 @@
 #include "js/JSON.h"
 #include "js/LocaleSensitive.h"
 #include "js/MemoryFunctions.h"
+#include "js/PropertySpec.h"
 #include "js/Proxy.h"
 #include "js/SliceBudget.h"
 #include "js/SourceText.h"
@@ -124,19 +125,17 @@ using JS::SourceText;
 #define JS_ADDRESSOF_VA_LIST(ap) (&(ap))
 #endif
 
-JS_PUBLIC_API bool JS::CallArgs::requireAtLeast(JSContext* cx,
-                                                const char* fnname,
-                                                unsigned required) const {
-  if (length() < required) {
-    char numArgsStr[40];
-    SprintfLiteral(numArgsStr, "%u", required - 1);
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, fnname, numArgsStr,
-                              required == 2 ? "" : "s");
-    return false;
-  }
-
-  return true;
+JS_PUBLIC_API void JS::CallArgs::reportMoreArgsNeeded(JSContext* cx,
+                                                      const char* fnname,
+                                                      unsigned required,
+                                                      unsigned actual) {
+  char requiredArgsStr[40];
+  SprintfLiteral(requiredArgsStr, "%u", required);
+  char actualArgsStr[40];
+  SprintfLiteral(actualArgsStr, "%u", actual);
+  JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                            JSMSG_MORE_ARGS_NEEDED, fnname, requiredArgsStr,
+                            required == 1 ? "" : "s", actualArgsStr);
 }
 
 static bool ErrorTakesArguments(unsigned msg) {
@@ -361,33 +360,6 @@ JS_PUBLIC_API JSType JS_TypeOfValue(JSContext* cx, HandleValue value) {
   return TypeOfValue(value);
 }
 
-JS_PUBLIC_API bool JS_StrictlyEqual(JSContext* cx, HandleValue value1,
-                                    HandleValue value2, bool* equal) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  cx->check(value1, value2);
-  MOZ_ASSERT(equal);
-  return StrictlyEqual(cx, value1, value2, equal);
-}
-
-JS_PUBLIC_API bool JS_LooselyEqual(JSContext* cx, HandleValue value1,
-                                   HandleValue value2, bool* equal) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  cx->check(value1, value2);
-  MOZ_ASSERT(equal);
-  return LooselyEqual(cx, value1, value2, equal);
-}
-
-JS_PUBLIC_API bool JS_SameValue(JSContext* cx, HandleValue value1,
-                                HandleValue value2, bool* same) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  cx->check(value1, value2);
-  MOZ_ASSERT(same);
-  return SameValue(cx, value1, value2, same);
-}
-
 JS_PUBLIC_API bool JS_IsBuiltinEvalFunction(JSFunction* fun) {
   return IsAnyBuiltinEval(fun);
 }
@@ -468,7 +440,7 @@ JS_PUBLIC_API bool JS::InitSelfHostedCode(JSContext* cx) {
   }
 
 #ifndef JS_CODEGEN_NONE
-  if (!rt->getJitRuntime(cx)) {
+  if (!rt->createJitRuntime(cx)) {
     return false;
   }
 #endif
@@ -712,7 +684,7 @@ JS_PUBLIC_API JSObject* JS_TransplantObject(JSContext* cx, HandleObject origobj,
   MOZ_ASSERT(!target->is<CrossCompartmentWrapperObject>());
   MOZ_ASSERT(origobj->getClass() == target->getClass());
   ReleaseAssertObjectHasNoWrappers(cx, target);
-  MOZ_ASSERT(JS::CellIsNotGray(target));
+  JS::AssertCellIsNotGray(target);
 
   RootedValue origv(cx, ObjectValue(*origobj));
   RootedObject newIdentity(cx);
@@ -776,7 +748,7 @@ JS_PUBLIC_API JSObject* JS_TransplantObject(JSContext* cx, HandleObject origobj,
 
   // The new identity object might be one of several things. Return it to avoid
   // ambiguity.
-  MOZ_ASSERT(JS::CellIsNotGray(newIdentity));
+  JS::AssertCellIsNotGray(newIdentity);
   return newIdentity;
 }
 
@@ -1285,15 +1257,14 @@ JS_PUBLIC_API uint32_t JS_GetGCParameter(JSContext* cx, JSGCParamKey key) {
   return cx->runtime()->gc.getParameter(key, lock);
 }
 
-static const size_t NumGCConfigs = 14;
-struct JSGCConfig {
-  JSGCParamKey key;
-  uint32_t value;
-};
-
 JS_PUBLIC_API void JS_SetGCParametersBasedOnAvailableMemory(JSContext* cx,
                                                             uint32_t availMem) {
-  static const JSGCConfig minimal[NumGCConfigs] = {
+  struct JSGCConfig {
+    JSGCParamKey key;
+    uint32_t value;
+  };
+
+  static const JSGCConfig minimal[] = {
       {JSGC_MAX_MALLOC_BYTES, 6 * 1024 * 1024},
       {JSGC_SLICE_TIME_BUDGET, 30},
       {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1500},
@@ -1308,28 +1279,24 @@ JS_PUBLIC_API void JS_SetGCParametersBasedOnAvailableMemory(JSContext* cx,
       {JSGC_ALLOCATION_THRESHOLD, 1},
       {JSGC_MODE, JSGC_MODE_INCREMENTAL}};
 
-  const JSGCConfig* config = minimal;
-  if (availMem > 512) {
-    static const JSGCConfig nominal[NumGCConfigs] = {
-        {JSGC_MAX_MALLOC_BYTES, 6 * 1024 * 1024},
-        {JSGC_SLICE_TIME_BUDGET, 30},
-        {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1000},
-        {JSGC_HIGH_FREQUENCY_HIGH_LIMIT, 500},
-        {JSGC_HIGH_FREQUENCY_LOW_LIMIT, 100},
-        {JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MAX, 300},
-        {JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MIN, 150},
-        {JSGC_LOW_FREQUENCY_HEAP_GROWTH, 150},
-        {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1500},
-        {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1500},
-        {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1500},
-        {JSGC_ALLOCATION_THRESHOLD, 30},
-        {JSGC_MODE, JSGC_MODE_ZONE}};
+  static const JSGCConfig nominal[] = {
+      {JSGC_MAX_MALLOC_BYTES, 6 * 1024 * 1024},
+      {JSGC_SLICE_TIME_BUDGET, 30},
+      {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1000},
+      {JSGC_HIGH_FREQUENCY_HIGH_LIMIT, 500},
+      {JSGC_HIGH_FREQUENCY_LOW_LIMIT, 100},
+      {JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MAX, 300},
+      {JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MIN, 150},
+      {JSGC_LOW_FREQUENCY_HEAP_GROWTH, 150},
+      {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1500},
+      {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1500},
+      {JSGC_HIGH_FREQUENCY_TIME_LIMIT, 1500},
+      {JSGC_ALLOCATION_THRESHOLD, 30},
+      {JSGC_MODE, JSGC_MODE_ZONE}};
 
-    config = nominal;
-  }
-
-  for (size_t i = 0; i < NumGCConfigs; i++) {
-    JS_SetGCParameter(cx, config[i].key, config[i].value);
+  const auto& configSet = availMem > 512 ? nominal : minimal;
+  for (const auto& config : configSet) {
+    JS_SetGCParameter(cx, config.key, config.value);
   }
 }
 
@@ -3742,16 +3709,40 @@ JS_PUBLIC_API void JS::SetModulePrivate(JSObject* module,
 }
 
 JS_PUBLIC_API JS::Value JS::GetModulePrivate(JSObject* module) {
-  return module->as<ModuleObject>().scriptSourceObject()->getPrivate();
+  return module->as<ModuleObject>().scriptSourceObject()->canonicalPrivate();
 }
 
 JS_PUBLIC_API void JS::SetScriptPrivate(JSScript* script,
                                         const JS::Value& value) {
-  script->scriptSourceUnwrap().setPrivate(value);
+  script->sourceObject()->setPrivate(value);
 }
 
 JS_PUBLIC_API JS::Value JS::GetScriptPrivate(JSScript* script) {
-  return script->scriptSourceUnwrap().getPrivate();
+  return script->sourceObject()->canonicalPrivate();
+}
+
+JS_PUBLIC_API JS::Value JS::GetScriptedCallerPrivate(JSContext* cx) {
+  AssertHeapIsIdle();
+  CHECK_THREAD(cx);
+
+  NonBuiltinFrameIter iter(cx, cx->realm()->principals());
+  if (iter.done() || !iter.hasScript()) {
+    return UndefinedValue();
+  }
+
+  return FindScriptOrModulePrivateForScript(iter.script());
+}
+
+JS_PUBLIC_API JS::ScriptPrivateFinalizeHook JS::GetScriptPrivateFinalizeHook(
+    JSRuntime* rt) {
+  AssertHeapIsIdle();
+  return rt->scriptPrivateFinalizeHook;
+}
+
+JS_PUBLIC_API void JS::SetScriptPrivateFinalizeHook(
+    JSRuntime* rt, JS::ScriptPrivateFinalizeHook func) {
+  AssertHeapIsIdle();
+  rt->scriptPrivateFinalizeHook = func;
 }
 
 JS_PUBLIC_API bool JS::ModuleInstantiate(JSContext* cx,
@@ -3857,19 +3848,19 @@ JS_PUBLIC_API void JS_ResetInterruptCallback(JSContext* cx, bool enable) {
  * Promises.
  */
 JS_PUBLIC_API void JS::SetGetIncumbentGlobalCallback(
-    JSContext* cx, JSGetIncumbentGlobalCallback callback) {
+    JSContext* cx, GetIncumbentGlobalCallback callback) {
   cx->getIncumbentGlobalCallback = callback;
 }
 
 JS_PUBLIC_API void JS::SetEnqueuePromiseJobCallback(
-    JSContext* cx, JSEnqueuePromiseJobCallback callback,
+    JSContext* cx, EnqueuePromiseJobCallback callback,
     void* data /* = nullptr */) {
   cx->enqueuePromiseJobCallback = callback;
   cx->enqueuePromiseJobCallbackData = data;
 }
 
 extern JS_PUBLIC_API void JS::SetPromiseRejectionTrackerCallback(
-    JSContext* cx, JSPromiseRejectionTrackerCallback callback,
+    JSContext* cx, PromiseRejectionTrackerCallback callback,
     void* data /* = nullptr */) {
   cx->promiseRejectionTrackerCallback = callback;
   cx->promiseRejectionTrackerCallbackData = data;
@@ -4034,26 +4025,18 @@ JS_PUBLIC_API bool JS::RejectPromise(JSContext* cx, JS::HandleObject promiseObj,
   return ResolveOrRejectPromise(cx, promiseObj, rejectionValue, true);
 }
 
-static bool CallOriginalPromiseThenImpl(
-    JSContext* cx, JS::HandleObject promiseObj, JS::HandleObject onResolvedObj_,
-    JS::HandleObject onRejectedObj_, JS::MutableHandleObject resultObj,
+static MOZ_MUST_USE bool CallOriginalPromiseThenImpl(
+    JSContext* cx, JS::HandleObject promiseObj, JS::HandleObject onFulfilledObj,
+    JS::HandleObject onRejectedObj, JS::MutableHandleObject resultObj,
     CreateDependentPromise createDependent) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
-  cx->check(promiseObj, onResolvedObj_, onRejectedObj_);
+  cx->check(promiseObj, onFulfilledObj, onRejectedObj);
 
-  MOZ_ASSERT_IF(onResolvedObj_, IsCallable(onResolvedObj_));
-  MOZ_ASSERT_IF(onRejectedObj_, IsCallable(onRejectedObj_));
-  RootedObject onResolvedObj(cx, onResolvedObj_);
-  RootedObject onRejectedObj(cx, onRejectedObj_);
+  MOZ_ASSERT_IF(onFulfilledObj, IsCallable(onFulfilledObj));
+  MOZ_ASSERT_IF(onRejectedObj, IsCallable(onRejectedObj));
 
-  if (IsWrapper(promiseObj) && !CheckedUnwrap(promiseObj)) {
-    ReportAccessDenied(cx);
-    return false;
-  }
-  MOZ_ASSERT(CheckedUnwrap(promiseObj)->is<PromiseObject>());
-
-  RootedValue onFulfilled(cx, ObjectOrNullValue(onResolvedObj));
+  RootedValue onFulfilled(cx, ObjectOrNullValue(onFulfilledObj));
   RootedValue onRejected(cx, ObjectOrNullValue(onRejectedObj));
   return OriginalPromiseThen(cx, promiseObj, onFulfilled, onRejected, resultObj,
                              createDependent);
@@ -4157,11 +4140,6 @@ JS_PUBLIC_API void JS::InitDispatchToEventLoop(
 
 JS_PUBLIC_API void JS::ShutdownAsyncTasks(JSContext* cx) {
   cx->runtime()->offThreadPromiseState.ref().shutdown(cx);
-}
-
-JS_PUBLIC_API bool JS::GetOptimizedEncodingBuildId(
-    JS::BuildIdCharVector* buildId) {
-  return wasm::GetOptimizedEncodingBuildId(buildId);
 }
 
 JS_PUBLIC_API void JS::InitConsumeStreamCallback(
@@ -4988,37 +4966,6 @@ JS_PUBLIC_API JS::WarningReporter JS::SetWarningReporter(
   WarningReporter older = cx->runtime()->warningReporter;
   cx->runtime()->warningReporter = reporter;
   return older;
-}
-
-/************************************************************************/
-
-/*
- * Dates.
- */
-JS_PUBLIC_API JSObject* JS_NewDateObject(JSContext* cx, int year, int mon,
-                                         int mday, int hour, int min, int sec) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  return NewDateObject(cx, year, mon, mday, hour, min, sec);
-}
-
-JS_PUBLIC_API JSObject* JS::NewDateObject(JSContext* cx, JS::ClippedTime time) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  return NewDateObjectMsec(cx, time);
-}
-
-JS_PUBLIC_API bool JS_ObjectIsDate(JSContext* cx, HandleObject obj,
-                                   bool* isDate) {
-  cx->check(obj);
-
-  ESClass cls;
-  if (!GetBuiltinClass(cx, obj, &cls)) {
-    return false;
-  }
-
-  *isDate = cls == ESClass::Date;
-  return true;
 }
 
 /************************************************************************/
@@ -6038,10 +5985,6 @@ JS_PUBLIC_API bool JS::FinishIncrementalEncoding(JSContext* cx,
     return false;
   }
   return true;
-}
-
-JS_PUBLIC_API void JS::SetProcessBuildIdOp(JS::BuildIdOp buildIdOp) {
-  GetBuildId = buildIdOp;
 }
 
 JS_PUBLIC_API void JS::SetAsmJSCacheOps(JSContext* cx,

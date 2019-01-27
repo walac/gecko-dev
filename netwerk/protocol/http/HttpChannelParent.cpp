@@ -46,7 +46,7 @@
 #include "nsIPrompt.h"
 #include "mozilla/net/RedirectChannelRegistrar.h"
 #include "nsIWindowWatcher.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsISecureBrowserUI.h"
 #include "nsStreamUtils.h"
 #include "nsStringStream.h"
@@ -556,7 +556,10 @@ bool HttpChannelParent::DoAsyncOpen(
 
     if (!aSecurityInfoSerialization.IsEmpty()) {
       nsCOMPtr<nsISupports> secInfo;
-      NS_DeserializeObject(aSecurityInfoSerialization, getter_AddRefs(secInfo));
+      rv = NS_DeserializeObject(aSecurityInfoSerialization,
+                                getter_AddRefs(secInfo));
+      MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv),
+                            "Deserializing security info should not fail");
       rv = httpChannel->OverrideSecurityInfo(secInfo);
       MOZ_ASSERT(NS_SUCCEEDED(rv));
     }
@@ -658,9 +661,8 @@ bool HttpChannelParent::DoAsyncOpen(
   MOZ_ASSERT(mPromise.IsEmpty());
   // Wait for HttpBackgrounChannel to continue the async open procedure.
   ++mAsyncOpenBarrier;
-  RefPtr<GenericPromise> promise = WaitForBgParent();
   RefPtr<HttpChannelParent> self = this;
-  promise
+  WaitForBgParent()
       ->Then(GetMainThreadSerialEventTarget(), __func__,
              [self]() {
                self->mRequest.Complete();
@@ -682,7 +684,7 @@ bool HttpChannelParent::DoAsyncOpen(
   return true;
 }
 
-already_AddRefed<GenericPromise> HttpChannelParent::WaitForBgParent() {
+RefPtr<GenericNonExclusivePromise> HttpChannelParent::WaitForBgParent() {
   LOG(("HttpChannelParent::WaitForBgParent [this=%p]\n", this));
   MOZ_ASSERT(!mBgParent);
   MOZ_ASSERT(mChannel);
@@ -693,10 +695,7 @@ already_AddRefed<GenericPromise> HttpChannelParent::WaitForBgParent() {
   registrar->LinkHttpChannel(mChannel->ChannelId(), this);
 
   if (mBgParent) {
-    RefPtr<GenericPromise> promise = mPromise.Ensure(__func__);
-    // resolve promise immediatedly if bg channel is ready.
-    mPromise.Resolve(true, __func__);
-    return promise.forget();
+    return GenericNonExclusivePromise::CreateAndResolve(true, __func__);
   }
 
   return mPromise.Ensure(__func__);
@@ -754,9 +753,8 @@ bool HttpChannelParent::ConnectChannel(const uint32_t& registrarId,
   MOZ_ASSERT(!mBgParent);
   MOZ_ASSERT(mPromise.IsEmpty());
   // Waiting for background channel
-  RefPtr<GenericPromise> promise = WaitForBgParent();
   RefPtr<HttpChannelParent> self = this;
-  promise
+  WaitForBgParent()
       ->Then(GetMainThreadSerialEventTarget(), __func__,
              [self]() { self->mRequest.Complete(); },
              [self](const nsresult& aResult) {
@@ -956,14 +954,14 @@ HttpChannelParent::ContinueVerification(
   MOZ_ASSERT(!mPromise.IsEmpty());
 
   // Otherwise, wait for the background channel.
-  RefPtr<GenericPromise> promise = WaitForBgParent();
   nsCOMPtr<nsIAsyncVerifyRedirectReadyCallback> callback = aCallback;
-  promise->Then(GetMainThreadSerialEventTarget(), __func__,
-                [callback]() { callback->ReadyToVerify(NS_OK); },
-                [callback](const nsresult& aResult) {
-                  NS_ERROR("failed to establish the background channel");
-                  callback->ReadyToVerify(aResult);
-                });
+  WaitForBgParent()->Then(
+      GetMainThreadSerialEventTarget(), __func__,
+      [callback]() { callback->ReadyToVerify(NS_OK); },
+      [callback](const nsresult& aResult) {
+        NS_ERROR("failed to establish the background channel");
+        callback->ReadyToVerify(aResult);
+      });
   return NS_OK;
 }
 
@@ -1238,9 +1236,8 @@ mozilla::ipc::IPCResult HttpChannelParent::RecvCrossProcessRedirectDone(
     const nsresult& aResult) {
   RefPtr<nsHttpChannel> chan = do_QueryObject(mChannel);
   if (!mBgParent) {
-    RefPtr<GenericPromise> promise = WaitForBgParent();
     RefPtr<HttpChannelParent> self = this;
-    promise->Then(
+    WaitForBgParent()->Then(
         GetMainThreadSerialEventTarget(), __func__,
         [self, chan, aResult]() { FinishCrossProcessRedirect(chan, aResult); },
         [self, chan](const nsresult& aRejectionRv) {
@@ -1830,6 +1827,17 @@ HttpChannelParent::NotifyTrackingResource(bool aIsThirdParty) {
 }
 
 NS_IMETHODIMP
+HttpChannelParent::NotifyFlashPluginStateChanged(
+    nsIHttpChannel::FlashPluginState aState) {
+  LOG(("HttpChannelParent::NotifyFlashPluginStateChanged [this=%p]\n", this));
+  if (!mIPCClosed) {
+    MOZ_ASSERT(mBgParent);
+    Unused << mBgParent->OnNotifyFlashPluginStateChanged(aState);
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 HttpChannelParent::Delete() {
   if (!mIPCClosed) Unused << DoSendDeleteSelf();
 
@@ -2394,6 +2402,18 @@ nsresult HttpChannelParent::LogBlockedCORSRequest(const nsAString& aMessage,
                                                   const nsACString& aCategory) {
   if (mIPCClosed || NS_WARN_IF(!SendLogBlockedCORSRequest(
                         nsString(aMessage), nsCString(aCategory)))) {
+    return NS_ERROR_UNEXPECTED;
+  }
+  return NS_OK;
+}
+
+nsresult HttpChannelParent::LogMimeTypeMismatch(const nsACString& aMessageName,
+                                                bool aWarning,
+                                                const nsAString& aURL,
+                                                const nsAString& aContentType) {
+  if (mIPCClosed || NS_WARN_IF(!SendLogMimeTypeMismatch(
+                        nsCString(aMessageName), aWarning, nsString(aURL),
+                        nsString(aContentType)))) {
     return NS_ERROR_UNEXPECTED;
   }
   return NS_OK;

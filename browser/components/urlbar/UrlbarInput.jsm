@@ -10,7 +10,7 @@ ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
-  QueryContext: "resource:///modules/UrlbarController.jsm",
+  QueryContext: "resource:///modules/UrlbarUtils.jsm",
   Services: "resource://gre/modules/Services.jsm",
   UrlbarController: "resource:///modules/UrlbarController.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
@@ -96,16 +96,18 @@ class UrlbarInput {
       return new UrlbarValueFormatter(this);
     });
 
-    this.addEventListener("input", this);
+    this.addEventListener("mousedown", this);
     this.inputField.addEventListener("blur", this);
     this.inputField.addEventListener("focus", this);
-    this.inputField.addEventListener("mousedown", this);
+    this.inputField.addEventListener("input", this);
     this.inputField.addEventListener("mouseover", this);
     this.inputField.addEventListener("overflow", this);
     this.inputField.addEventListener("underflow", this);
     this.inputField.addEventListener("scrollend", this);
     this.inputField.addEventListener("select", this);
     this.inputField.addEventListener("keydown", this);
+    this.view.panel.addEventListener("popupshowing", this);
+    this.view.panel.addEventListener("popuphidden", this);
 
     this.inputField.controllers.insertControllerAt(0, new CopyCutController(this));
   }
@@ -133,10 +135,6 @@ class UrlbarInput {
 
   closePopup() {
     this.view.close();
-  }
-
-  openResults() {
-    this.view.open();
   }
 
   /**
@@ -236,23 +234,29 @@ class UrlbarInput {
     try {
       new URL(url);
     } catch (ex) {
-      // TODO: Figure out why we need lastLocationChange here.
-      // let lastLocationChange = browser.lastLocationChange;
-      // UrlbarUtils.getShortcutOrURIAndPostData(text).then(data => {
-      //   if (where != "current" ||
-      //       browser.lastLocationChange == lastLocationChange) {
-      //     params.postData = data.postData;
-      //     params.allowInheritPrincipal = data.mayInheritPrincipal;
-      //     this._loadURL(data.url, browser, where,
-      //                   openUILinkParams);
-      //   }
-      // });
+      let browser = this.window.gBrowser.selectedBrowser;
+      let lastLocationChange = browser.lastLocationChange;
+
+      UrlbarUtils.getShortcutOrURIAndPostData(url).then(data => {
+        if (where != "current" ||
+            browser.lastLocationChange == lastLocationChange) {
+          openParams.postData = data.postData;
+          openParams.allowInheritPrincipal = data.mayInheritPrincipal;
+          this._loadURL(data.url, where, openParams);
+        }
+      });
       return;
     }
 
     this._loadURL(url, where, openParams);
+  }
 
-    this.view.close();
+  handleRevert() {
+    this.window.gBrowser.userTypedValue = null;
+    this.window.URLBarSetURI(null, true);
+    if (this.value && this.focused) {
+      this.select();
+    }
   }
 
   /**
@@ -277,14 +281,13 @@ class UrlbarInput {
 
     switch (result.type) {
       case UrlbarUtils.MATCH_TYPE.TAB_SWITCH: {
-        // TODO: Implement handleRevert or equivalent on the input.
-        // this.input.handleRevert();
+        this.handleRevert();
         let prevTab = this.window.gBrowser.selectedTab;
         let loadOpts = {
           adoptIntoActiveWindow: UrlbarPrefs.get("switchTabs.adoptIntoActiveWindow"),
         };
 
-        if (this.window.switchToTabHavingURI(result.payload.url, false, loadOpts) &&
+        if (this.window.switchToTabHavingURI(Services.io.newURI(result.payload.url), false, loadOpts) &&
             prevTab.isEmpty) {
           this.window.gBrowser.removeTab(prevTab);
         }
@@ -329,6 +332,36 @@ class UrlbarInput {
       val = this.window.losslessDecodeURI(uri);
     }
     this.value = val;
+  }
+
+  /**
+   * Starts a query based on the user input.
+   *
+   * @param {string} [options.searchString]
+   *   The string the user entered in autocomplete.
+   * @param {number} [options.lastKey]
+   *   The last key the user entered (as a key code).
+   */
+  startQuery({
+    searchString = "",
+    lastKey = null,
+  } = {}) {
+    this.controller.startQuery(new QueryContext({
+      searchString,
+      lastKey,
+      maxResults: UrlbarPrefs.get("maxRichResults"),
+      isPrivate: this.isPrivate,
+      providers: ["UnifiedComplete"],
+      muxer: "UnifiedComplete",
+    }));
+  }
+
+  typeRestrictToken(char) {
+    this.inputField.value = char + " ";
+
+    let event = this.document.createEvent("UIEvents");
+    event.initUIEvent("input", true, false, this.window, 0);
+    this.inputField.dispatchEvent(event);
   }
 
   // Getters and Setters below.
@@ -381,7 +414,13 @@ class UrlbarInput {
       if (input && this._overflowing) {
         let side = input.scrollLeft &&
                    input.scrollLeft == input.scrollLeftMax ? "start" : "end";
-        this.setAttribute("textoverflow", side);
+        this.window.requestAnimationFrame(() => {
+          // And check once again, since we might have stopped overflowing
+          // since the promiseDocumentFlushed callback fired.
+          if (this._overflowing) {
+            this.setAttribute("textoverflow", side);
+          }
+        });
       }
     });
   }
@@ -534,7 +573,7 @@ class UrlbarInput {
       browser.initialPageLoadedFromURLBar = url;
     }
     try {
-      UrlbarUtils.addToUrlbarHistory(url);
+      UrlbarUtils.addToUrlbarHistory(url, this.window);
     } catch (ex) {
       // Things may go wrong when adding url to session history,
       // but don't let that interfere with the loading of the url.
@@ -558,8 +597,7 @@ class UrlbarInput {
     browser.focus();
 
     if (openUILinkWhere != "current") {
-      // TODO: Implement handleRevert or equivalent on the input.
-      // this.input.handleRevert();
+      this.handleRevert();
     }
 
     try {
@@ -568,14 +606,15 @@ class UrlbarInput {
       // This load can throw an exception in certain cases, which means
       // we'll want to replace the URL with the loaded URL:
       if (ex.result != Cr.NS_ERROR_LOAD_SHOWED_ERRORPAGE) {
-        // TODO: Implement handleRevert or equivalent on the input.
-        // this.input.handleRevert();
+        this.handleRevert();
       }
     }
 
     // TODO This should probably be handed via input.
     // Ensure the start of the URL is visible for usability reasons.
     // this.selectionStart = this.selectionEnd = 0;
+
+    this.closePopup();
   }
 
   /**
@@ -599,7 +638,7 @@ class UrlbarInput {
     } else {
       where = this.window.whereToOpenLink(event, false, false);
     }
-    if (this.openInTab) {
+    if (UrlbarPrefs.get("openintab")) {
       if (where == "current") {
         where = "tab";
       } else if (where == "tab") {
@@ -632,11 +671,22 @@ class UrlbarInput {
   }
 
   _on_mousedown(event) {
-    if (event.button == 0 &&
+    if (event.originalTarget == this.inputField &&
+        event.button == 0 &&
         event.detail == 2 &&
         UrlbarPrefs.get("doubleClickSelectsAll")) {
       this.editor.selectAll();
       event.preventDefault();
+      return;
+    }
+
+    if (event.originalTarget.classList.contains("urlbar-history-dropmarker") &&
+        event.button == 0) {
+      if (this.view.isOpen) {
+        this.view.close();
+      } else {
+        this.startQuery();
+      }
     }
   }
 
@@ -653,12 +703,10 @@ class UrlbarInput {
     }
 
     // XXX Fill in lastKey, and add anything else we need.
-    this.controller.startQuery(new QueryContext({
+    this.startQuery({
       searchString: value,
-      lastKey: "",
-      maxResults: UrlbarPrefs.get("maxRichResults"),
-      isPrivate: this.isPrivate,
-    }));
+      lastKey: null,
+    });
   }
 
   _on_select(event) {
@@ -716,6 +764,14 @@ class UrlbarInput {
   _on_keydown(event) {
     this.controller.handleKeyNavigation(event);
   }
+
+  _on_popupshowing() {
+    this.setAttribute("open", "true");
+  }
+
+  _on_popuphidden() {
+    this.removeAttribute("open");
+  }
 }
 
 /**
@@ -749,10 +805,8 @@ class CopyCutController {
       urlbar.selectionStart = urlbar.selectionEnd = start;
 
       let event = urlbar.document.createEvent("UIEvents");
-      event.initUIEvent("input", true, false, this.window, 0);
-      urlbar.textbox.dispatchEvent(event);
-
-      urlbar.window.SetPageProxyState("invalid");
+      event.initUIEvent("input", true, false, urlbar.window, 0);
+      urlbar.inputField.dispatchEvent(event);
     }
 
     ClipboardHelper.copyString(val);

@@ -298,16 +298,6 @@ class GCRuntime {
   void setDeterministic(bool enable);
 #endif
 
-#ifdef ENABLE_WASM_GC
-  // If we run with wasm-gc enabled and there's wasm frames on the stack,
-  // then GCs are suppressed and many APIs should not be available.
-  // TODO (bug 1456824) This is temporary and should be removed once proper
-  // GC support is implemented.
-  static bool temporaryAbortIfWasmGc(JSContext* cx);
-#else
-  static bool temporaryAbortIfWasmGc(JSContext* cx) { return false; }
-#endif
-
   uint64_t nextCellUniqueId() {
     MOZ_ASSERT(nextCellUniqueId_ > 0);
     uint64_t uid = ++nextCellUniqueId_;
@@ -526,7 +516,7 @@ class GCRuntime {
   void mergeRealms(JS::Realm* source, JS::Realm* target);
 
  private:
-  enum IncrementalResult { ResetIncremental = 0, ReturnToEvictNursery, Ok };
+  enum IncrementalResult { ResetIncremental = 0, Ok };
 
   // Delete an empty zone after its contents have been merged.
   void deleteEmptyZone(Zone* zone);
@@ -566,10 +556,8 @@ class GCRuntime {
   SliceBudget defaultBudget(JS::gcreason::Reason reason, int64_t millis);
   IncrementalResult budgetIncrementalGC(bool nonincrementalByAPI,
                                         JS::gcreason::Reason reason,
-                                        SliceBudget& budget,
-                                        AutoGCSession& session);
-  IncrementalResult resetIncrementalGC(AbortReason reason,
-                                       AutoGCSession& session);
+                                        SliceBudget& budget);
+  IncrementalResult resetIncrementalGC(AbortReason reason);
 
   // Assert if the system state is such that we should never
   // receive a request to do GC work.
@@ -590,17 +578,14 @@ class GCRuntime {
    * Returns:
    *  * ResetIncremental if we "reset" an existing incremental GC, which would
    *    force us to run another cycle or
-   *  * ReturnToEvictNursery if the collector needs the nursery to be
-   *    evicted before it can continue or
    *  * Ok otherwise.
    */
   MOZ_MUST_USE IncrementalResult gcCycle(bool nonincrementalByAPI,
-                                         SliceBudget& budget,
+                                         SliceBudget budget,
                                          JS::gcreason::Reason reason);
   bool shouldRepeatForDeadZone(JS::gcreason::Reason reason);
-  IncrementalResult incrementalSlice(SliceBudget& budget,
-                                     JS::gcreason::Reason reason,
-                                     AutoGCSession& session);
+  void incrementalSlice(SliceBudget& budget, JS::gcreason::Reason reason,
+                        AutoGCSession& session);
   MOZ_MUST_USE bool shouldCollectNurseryForSlice(bool nonincrementalByAPI,
                                                  SliceBudget& budget);
 
@@ -622,16 +607,15 @@ class GCRuntime {
   void traceRuntimeCommon(JSTracer* trc, TraceOrMarkRuntime traceOrMark);
   void maybeDoCycleCollection();
   void markCompartments();
-  IncrementalProgress markUntilBudgetExhaused(SliceBudget& sliceBudget,
-                                              gcstats::PhaseKind phase);
+  IncrementalProgress markUntilBudgetExhausted(SliceBudget& sliceBudget,
+                                               gcstats::PhaseKind phase);
   void drainMarkStack();
   template <class ZoneIterT>
   void markWeakReferences(gcstats::PhaseKind phase);
   void markWeakReferencesInCurrentGroup(gcstats::PhaseKind phase);
   template <class ZoneIterT>
-  void markGrayReferences(gcstats::PhaseKind phase);
+  void markGrayRoots(gcstats::PhaseKind phase);
   void markBufferedGrayRoots(JS::Zone* zone);
-  void markGrayReferencesInCurrentGroup(gcstats::PhaseKind phase);
   void markAllWeakReferences(gcstats::PhaseKind phase);
   void markAllGrayReferences(gcstats::PhaseKind phase);
 
@@ -639,6 +623,8 @@ class GCRuntime {
   void groupZonesForSweeping(JS::gcreason::Reason reason);
   MOZ_MUST_USE bool findInterZoneEdges();
   void getNextSweepGroup();
+  IncrementalProgress markGrayReferencesInCurrentGroup(FreeOp* fop,
+                                                       SliceBudget& budget);
   IncrementalProgress endMarkingSweepGroup(FreeOp* fop, SliceBudget& budget);
   void markIncomingCrossCompartmentPointers(MarkColor color);
   IncrementalProgress beginSweepingSweepGroup(FreeOp* fop, SliceBudget& budget);
@@ -896,7 +882,17 @@ class GCRuntime {
   MainThreadOrGCTaskData<JS::Zone*> sweepZone;
   MainThreadData<mozilla::Maybe<AtomsTable::SweepIterator>> maybeAtomsToSweep;
   MainThreadOrGCTaskData<JS::detail::WeakCacheBase*> sweepCache;
+  MainThreadData<bool> hasMarkedGrayRoots;
   MainThreadData<bool> abortSweepAfterCurrentGroup;
+
+#ifdef DEBUG
+  // During gray marking, delay AssertCellIsNotGray checks by
+  // recording the cell pointers here and checking after marking has
+  // finished.
+  MainThreadData<Vector<const Cell*, 0, SystemAllocPolicy>>
+      cellsToAssertNotGray;
+  friend void js::gc::detail::AssertCellIsNotGray(const Cell*);
+#endif
 
   friend class SweepGroupsIter;
   friend class WeakCacheSweepIterator;
@@ -1107,7 +1103,8 @@ inline bool GCRuntime::hasIncrementalTwoSliceZealMode() {
          hasZealMode(ZealMode::YieldBeforeSweepingTypes) ||
          hasZealMode(ZealMode::YieldBeforeSweepingObjects) ||
          hasZealMode(ZealMode::YieldBeforeSweepingNonObjects) ||
-         hasZealMode(ZealMode::YieldBeforeSweepingShapeTrees);
+         hasZealMode(ZealMode::YieldBeforeSweepingShapeTrees) ||
+         hasZealMode(ZealMode::YieldWhileGrayMarking);
 }
 
 #else

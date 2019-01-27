@@ -23,6 +23,7 @@
 
 #include "builtin/TypedObject.h"
 #include "jit/JitOptions.h"
+#include "js/BuildId.h"  // JS::BuildIdCharVector
 #include "threading/LockGuard.h"
 #include "util/NSPR.h"
 #include "wasm/WasmCompile.h"
@@ -1150,9 +1151,12 @@ static bool MakeStructField(JSContext* cx, const ValType& v, bool isMutable,
                                                    Scalar::Float64);
       break;
     case ValType::Ref:
-    case ValType::AnyRef:
       t = GlobalObject::getOrCreateReferenceTypeDescr(
           cx, cx->global(), ReferenceType::TYPE_OBJECT);
+      break;
+    case ValType::AnyRef:
+      t = GlobalObject::getOrCreateReferenceTypeDescr(
+          cx, cx->global(), ReferenceType::TYPE_WASM_ANYREF);
       break;
     default:
       MOZ_CRASH("Bad field type");

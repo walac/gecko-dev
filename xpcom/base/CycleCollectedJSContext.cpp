@@ -226,7 +226,7 @@ class PromiseJobRunnable final : public MicroTaskRunnable {
     if (global && !global->IsDying()) {
       // Propagate the user input event handling bit if needed.
       nsCOMPtr<nsPIDOMWindowInner> win = do_QueryInterface(global);
-      nsCOMPtr<nsIDocument> doc;
+      RefPtr<Document> doc;
       if (win) {
         doc = win->GetExtantDoc();
       }
@@ -331,6 +331,8 @@ void CycleCollectedJSContext::ProcessStableStateQueue() {
   MOZ_RELEASE_ASSERT(!mDoingStableStates);
   mDoingStableStates = true;
 
+  // When run, one event can add another event to the mStableStateEvents, as
+  // such you can't use iterators here.
   for (uint32_t i = 0; i < mStableStateEvents.Length(); ++i) {
     nsCOMPtr<nsIRunnable> event = mStableStateEvents[i].forget();
     event->Run();
@@ -406,7 +408,7 @@ void CycleCollectedJSContext::AfterProcessMicrotasks() {
   CleanupIDBTransactions(RecursionDepth());
 }
 
-void CycleCollectedJSContext::IsIdleGCTaskNeeded() {
+void CycleCollectedJSContext::IsIdleGCTaskNeeded() const {
   class IdleTimeGCTaskRunnable : public mozilla::IdleRunnable {
    public:
     using mozilla::IdleRunnable::IdleRunnable;
@@ -430,7 +432,7 @@ void CycleCollectedJSContext::IsIdleGCTaskNeeded() {
   }
 }
 
-uint32_t CycleCollectedJSContext::RecursionDepth() {
+uint32_t CycleCollectedJSContext::RecursionDepth() const {
   return mOwningThread->RecursionDepth();
 }
 

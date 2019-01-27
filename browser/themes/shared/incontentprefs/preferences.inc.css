@@ -109,10 +109,20 @@ button > hbox > label {
 }
 
 .spotlight {
-  background-color: rgba(0,200,215,0.3);
+  background-color: var(--blue-40-a10);
+  outline: var(--blue-60) 1px dotted;
+  -moz-outline-radius: 2px;
+  animation: fade-out 0.5s ease-out 2s forwards;
   /* Show the border to spotlight the components in high-contrast mode. */
   border: 1px solid transparent;
   border-radius: 2px;
+}
+
+@keyframes fade-out {
+  100% {
+    background-color: transparent;
+    outline-color: transparent;
+   }
 }
 
 [data-subcategory] {
@@ -140,11 +150,8 @@ button > hbox > label {
 
 /* Category List */
 
-#categories > scrollbox {
+#categories {
   overflow: visible !important; /* Cancel scrollbar and do not clip overflow content when window size goes very small */
-}
-
-#categories > scrollbox > box {
   padding: 1px; /* Adding padding around richlistitem in order to make entire keyboard focusing outline visible */
 }
 

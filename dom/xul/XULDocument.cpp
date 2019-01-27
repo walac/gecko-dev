@@ -78,6 +78,7 @@
 #include "nsCCUncollectableMarker.h"
 #include "nsURILoader.h"
 #include "mozilla/BasicEvents.h"
+#include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/dom/DocumentL10n.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/NodeInfoInlines.h"
@@ -139,7 +140,7 @@ XULDocument::XULDocument(void)
       mOffThreadCompileStringBuf(nullptr),
       mOffThreadCompileStringLength(0),
       mInitialLayoutComplete(false) {
-  // Override the default in nsDocument
+  // Override the default in Document
   mCharacterSet = UTF_8_ENCODING;
 
   mDefaultElementType = kNameSpaceID_XUL;
@@ -166,7 +167,7 @@ XULDocument::~XULDocument() {
 }  // namespace dom
 }  // namespace mozilla
 
-nsresult NS_NewXULDocument(nsIDocument** result) {
+nsresult NS_NewXULDocument(Document** result) {
   MOZ_ASSERT(result != nullptr, "null ptr");
   if (!result) return NS_ERROR_NULL_POINTER;
 
@@ -213,7 +214,7 @@ NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED(XULDocument, XMLDocument,
 
 //----------------------------------------------------------------------
 //
-// nsIDocument interface
+// Document interface
 //
 
 void XULDocument::Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup) {
@@ -253,7 +254,7 @@ nsresult XULDocument::StartDocumentLoad(const char* aCommand,
       }
     }
   }
-  // NOTE: If this ever starts calling nsDocument::StartDocumentLoad
+  // NOTE: If this ever starts calling Document::StartDocumentLoad
   // we'll possibly need to reset our content type afterwards.
   mStillWalking = true;
   mMayStartLayout = false;
@@ -433,7 +434,7 @@ void XULDocument::ContentRemoved(nsIContent* aChild,
 
 //----------------------------------------------------------------------
 //
-// nsIDocument interface
+// Document interface
 //
 
 void XULDocument::AddElementToDocumentPost(Element* aElement) {
@@ -989,9 +990,8 @@ nsresult XULDocument::DoneWalking() {
                      mDocumentL10n, true, false);
 
     nsContentUtils::DispatchTrustedEvent(
-        this, static_cast<nsIDocument*>(this),
-        NS_LITERAL_STRING("MozBeforeInitialXULLayout"), CanBubble::eYes,
-        Cancelable::eNo);
+        this, ToSupports(this), NS_LITERAL_STRING("MozBeforeInitialXULLayout"),
+        CanBubble::eYes, Cancelable::eNo);
 
     RemoveEventListener(NS_LITERAL_STRING("MozBeforeInitialXULLayout"),
                         mDocumentL10n, true);
@@ -1380,8 +1380,14 @@ nsresult XULDocument::CreateElementFromPrototype(
         aPrototype->mNodeInfo->NamespaceID(), ELEMENT_NODE);
     if (!newNodeInfo) return NS_ERROR_OUT_OF_MEMORY;
     RefPtr<mozilla::dom::NodeInfo> xtfNi = newNodeInfo;
-    rv = NS_NewElement(getter_AddRefs(result), newNodeInfo.forget(),
-                       NOT_FROM_PARSER);
+    if (aPrototype->mIsAtom &&
+        newNodeInfo->NamespaceID() == kNameSpaceID_XHTML) {
+      rv = NS_NewHTMLElement(getter_AddRefs(result), newNodeInfo.forget(),
+                             NOT_FROM_PARSER, aPrototype->mIsAtom);
+    } else {
+      rv = NS_NewElement(getter_AddRefs(result), newNodeInfo.forget(),
+                         NOT_FROM_PARSER);
+    }
     if (NS_FAILED(rv)) return rv;
 
     rv = AddAttributes(aPrototype, result);

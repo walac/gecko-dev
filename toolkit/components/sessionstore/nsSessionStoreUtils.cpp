@@ -45,7 +45,7 @@ class DynamicFrameEventFilter final : public nsIDOMEventListener {
       return false;
     }
 
-    nsPIDOMWindowOuter* outer = target->GetOwnerGlobalForBindings();
+    nsPIDOMWindowOuter* outer = target->GetOwnerGlobalForBindingsInternal();
     if (!outer) {
       return false;
     }
@@ -235,7 +235,7 @@ nsSessionStoreUtils::RestoreDocShellCapabilities(
 }
 
 NS_IMETHODIMP
-nsSessionStoreUtils::CollectScrollPosition(nsIDocument* aDocument,
+nsSessionStoreUtils::CollectScrollPosition(Document* aDocument,
                                            nsACString& aRet) {
   aRet.Truncate();
 

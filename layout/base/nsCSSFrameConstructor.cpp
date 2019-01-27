@@ -33,8 +33,8 @@
 #include "nsIFrameInlines.h"
 #include "nsGkAtoms.h"
 #include "nsPresContext.h"
-#include "nsIDocument.h"
-#include "nsIDocumentInlines.h"
+#include "mozilla/dom/Document.h"
+#include "mozilla/dom/DocumentInlines.h"
 #include "nsTableFrame.h"
 #include "nsTableColFrame.h"
 #include "nsTableRowFrame.h"
@@ -388,6 +388,41 @@ static bool ShouldSuppressFloatingOfDescendants(nsIFrame* aFrame) {
          aFrame->IsFrameOfType(nsIFrame::eMathML);
 }
 
+// Return true if column-span descendants should be suppressed under aFrame's
+// subtree (until a multi-column container re-establishing a block formatting
+// context). Basically, this is testing whether aFrame establishes a new block
+// formatting context or not.
+static bool ShouldSuppressColumnSpanDescendants(nsIFrame* aFrame) {
+  MOZ_ASSERT(StaticPrefs::layout_css_column_span_enabled(),
+             "Call this only when layout.css.column-span.enabled is true!");
+
+  if (aFrame->Style()->GetPseudo() == nsCSSAnonBoxes::columnContent()) {
+    // Never suppress column-span under ::-moz-column-content frames.
+    return false;
+  }
+
+  if (aFrame->IsInlineFrame()) {
+    // Allow inline frames to have column-span block children.
+    return false;
+  }
+
+  if (!nsLayoutUtils::GetAsBlock(aFrame) ||
+      aFrame->HasAnyStateBits(NS_BLOCK_FLOAT_MGR | NS_FRAME_OUT_OF_FLOW)) {
+    // Need to suppress column-span under a different block formatting
+    // context or an out-of-flow frame.
+    //
+    // For example, the children of a column-span never need to be further
+    // processed even if there is a nested column-span child. Because a
+    // column-span always creates its own block formatting context, a nested
+    // column-span child won't be in the same block formatting context with the
+    // nearest multi-column ancestor. This is the same case as if the
+    // column-span is outside of a multi-column hierarchy.
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * If any children require a block parent, return the first such child.
  * Otherwise return null.
@@ -529,11 +564,11 @@ static nsIFrame* GetIBContainingBlockFor(nsIFrame* aFrame) {
   return parentFrame;
 }
 
-static nsIFrame* GetMultiColumnContainingBlockFor(nsIFrame* aFrame) {
+static nsContainerFrame* GetMultiColumnContainingBlockFor(nsIFrame* aFrame) {
   MOZ_ASSERT(aFrame->HasAnyStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR),
              "Should only be called if the frame has a multi-column ancestor!");
 
-  nsIFrame* current = aFrame->GetParent();
+  nsContainerFrame* current = aFrame->GetParent();
   while (current && !current->IsColumnSetWrapperFrame()) {
     current = current->GetParent();
   }
@@ -1451,7 +1486,7 @@ static bool ShouldCreateImageFrameForContent(const Element& aElement,
 
 //----------------------------------------------------------------------
 
-nsCSSFrameConstructor::nsCSSFrameConstructor(nsIDocument* aDocument,
+nsCSSFrameConstructor::nsCSSFrameConstructor(Document* aDocument,
                                              nsIPresShell* aPresShell)
     : nsFrameManager(aPresShell),
       mDocument(aDocument),
@@ -1689,7 +1724,6 @@ void nsCSSFrameConstructor::CreateGeneratedContentItem(
                        aParentFrame->IsDateTimeControlFrame())) {
     // Video frames and date time control frames may not be leafs when backed by
     // an UA widget, but we still don't want to expose generated content.
-    MOZ_ASSERT(aOriginatingElement.GetShadowRoot()->IsUAWidget());
     return;
   }
 
@@ -1728,7 +1762,7 @@ void nsCSSFrameConstructor::CreateGeneratedContentItem(
   // If the parent is in a shadow tree, make sure we don't
   // bind with a document because shadow roots and its descendants
   // are not in document.
-  nsIDocument* bindDocument =
+  Document* bindDocument =
       aOriginatingElement.HasFlag(NODE_IS_IN_SHADOW_TREE) ? nullptr : mDocument;
   rv = container->BindToTree(bindDocument, &aOriginatingElement,
                              &aOriginatingElement);
@@ -3514,7 +3548,7 @@ nsCSSFrameConstructor::FindCanvasData(const Element& aElement,
   // could be painting to the canvas.  That's the owner document of
   // the canvas, except when the owner document is a static document,
   // in which case it's the original document it was cloned from.
-  nsIDocument* doc = aElement.OwnerDoc();
+  Document* doc = aElement.OwnerDoc();
   if (doc->IsStaticDocument()) {
     doc = doc->GetOriginalDocument();
   }
@@ -3838,7 +3872,7 @@ nsresult nsCSSFrameConstructor::GetAnonymousContent(
     // If the parent is in a shadow tree, make sure we don't
     // bind with a document because shadow roots and its descendants
     // are not in document.
-    nsIDocument* bindDocument =
+    Document* bindDocument =
         aParent->HasFlag(NODE_IS_IN_SHADOW_TREE) ? nullptr : mDocument;
     rv = content->BindToTree(bindDocument, aParent, aParent);
     // If the anonymous content creator requested that the content should be
@@ -4088,8 +4122,7 @@ nsCSSFrameConstructor::FindXULDisplayData(const nsStyleDisplay& aDisplay,
       aDisplay.mDisplay == StyleDisplay::MozInlineBox) {
     if (!aElement.IsInNativeAnonymousSubtree() &&
         aElement.OwnerDoc()->IsContentDocument()) {
-      aElement.OwnerDoc()->WarnOnceAbout(
-          nsIDocument::eMozBoxOrInlineBoxDisplay);
+      aElement.OwnerDoc()->WarnOnceAbout(Document::eMozBoxOrInlineBoxDisplay);
     }
 
     // If we're emulating -moz-box with flexbox, then treat it as non-XUL and
@@ -4198,15 +4231,15 @@ void nsCSSFrameConstructor::FinishBuildingScrollFrame(
  * scrollbars.
  *
  * @param aContent the content node of the child to wrap.
-
+ *
  * @param aScrolledFrame The frame of the content to wrap. This should not be
  * Initialized. This method will initialize it with a scrolled pseudo and no
  * nsIContent. The content will be attached to the scrollframe returned.
-
+ *
  * @param aContentStyle the style that has already been resolved for the content
  * being passed in.
  *
- * @param aParentFrame The parent to attach the scroll frame to
+ * @param aParentFrame   The parent to attach the scroll frame to
  *
  * @param aNewFrame The new scrollframe or gfx scrollframe that we create. It
  * will contain the scrolled frame you passed in. (returned) If this is not
@@ -8282,7 +8315,8 @@ bool nsCSSFrameConstructor::MaybeRecreateContainerForFrameRemoval(
          grandparent->GetPrevSibling());
 
     if (needsReframe) {
-      nsIFrame* containingBlock = GetMultiColumnContainingBlockFor(inFlowFrame);
+      nsContainerFrame* containingBlock =
+          GetMultiColumnContainingBlockFor(inFlowFrame);
 
 #ifdef DEBUG
       if (IsFramePartOfIBSplit(inFlowFrame)) {
@@ -10491,14 +10525,6 @@ void nsCSSFrameConstructor::ConstructBlock(
     // No need to create column hierarchy. Initialize block frame.
     blockFrame->SetComputedStyleWithoutNotification(aComputedStyle);
     InitAndRestoreFrame(aState, aContent, aParentFrame, blockFrame);
-
-    if (StaticPrefs::layout_css_column_span_enabled()) {
-      if (blockFrame->IsColumnSpan()) {
-        // Per spec, a column-span always establishes a new block formatting
-        // context.
-        blockFrame->AddStateBits(NS_BLOCK_FORMATTING_CONTEXT_STATE_BITS);
-      }
-    }
   }
 
   aState.AddChild(*aNewFrame, aFrameItems, aContent,
@@ -10524,20 +10550,10 @@ void nsCSSFrameConstructor::ConstructBlock(
         *aNewFrame, aPositionedFrameForAbsPosContainer, absoluteSaveState);
   }
 
-  // Ensure all the children in the multi-column subtree are tagged with
-  // NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR, except for those children in a new
-  // block formatting context. InitAndRestoreFrame() will add
-  // mAdditionalStateBits for us.
-  AutoRestore<nsFrameState> savedStateBits(aState.mAdditionalStateBits);
   if (StaticPrefs::layout_css_column_span_enabled()) {
-    // Multi-column container creates new block formatting context, so check
-    // needsColumn first to make sure we have the bit set when creating frames
-    // for the elements having style like "columns:3; column-span:all;".
-    if (needsColumn) {
-      aState.mAdditionalStateBits |= NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR;
-    } else if (blockFrame->HasAllStateBits(
-                   NS_BLOCK_FORMATTING_CONTEXT_STATE_BITS)) {
-      aState.mAdditionalStateBits &= ~NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR;
+    if (aParentFrame->HasAnyStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR) &&
+        !ShouldSuppressColumnSpanDescendants(aParentFrame)) {
+      blockFrame->AddStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR);
     }
   }
 
@@ -10734,33 +10750,13 @@ bool nsCSSFrameConstructor::MayNeedToCreateColumnSpanSiblings(
     return false;
   }
 
-  if (aBlockFrame->HasAllStateBits(NS_BLOCK_FORMATTING_CONTEXT_STATE_BITS) &&
-      aBlockFrame->Style()->GetPseudo() != nsCSSAnonBoxes::columnContent()) {
-    // The block creates its own block formatting context, and is not the block
-    // representing actual column contents.
-    //
-    // For example, the children of a column-span never need to be further
-    // processed even if there is a nested column-span child. Because a
-    // column-span always creates its own block formatting context, a nested
-    // column-span child won't be in the same block formatting context with the
-    // nearest multi-column ancestor. This is the same case as if the
-    // column-span is outside of a multi-column hierarchy.
+  if (ShouldSuppressColumnSpanDescendants(aBlockFrame)) {
+    // No need to create column-span siblings for a frame that suppresses them.
     return false;
   }
 
   if (aChildList.IsEmpty()) {
     // No child needs to be processed.
-    return false;
-  }
-
-  if (aBlockFrame->IsDetailsFrame()) {
-    // Not dealing with details frame for now.
-    return false;
-  }
-
-  if (aBlockFrame->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW)) {
-    // No need to deal with an out-of-flow frame because column-span applies
-    // only to in-flow elements per spec.
     return false;
   }
 
@@ -10774,7 +10770,6 @@ nsFrameItems nsCSSFrameConstructor::CreateColumnSpanSiblings(
   MOZ_ASSERT(!aPositionedFrame || aPositionedFrame->IsAbsPosContainingBlock());
 
   nsIContent* const content = aInitialBlock->GetContent();
-  ComputedStyle* const initialBlockStyle = aInitialBlock->Style();
   nsContainerFrame* const parentFrame = aInitialBlock->GetParent();
 
   aInitialBlock->SetProperty(nsIFrame::HasColumnSpanSiblings(), true);
@@ -10794,7 +10789,8 @@ nsFrameItems nsCSSFrameConstructor::CreateColumnSpanSiblings(
     nsBlockFrame* columnSpanWrapper =
         NS_NewBlockFrame(mPresShell, columnSpanWrapperStyle);
     InitAndRestoreFrame(aState, content, parentFrame, columnSpanWrapper, false);
-    columnSpanWrapper->AddStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
+    columnSpanWrapper->AddStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR |
+                                    NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
 
     nsFrameList columnSpanKids =
         aChildList.Split([](nsIFrame* f) { return !f->IsColumnSpan(); });
@@ -10806,13 +10802,13 @@ nsFrameItems nsCSSFrameConstructor::CreateColumnSpanSiblings(
 
     siblings.AddChild(columnSpanWrapper);
 
-    // Grab the consecutive non-column-span kids, and reparent them into a
-    // block frame.
-    nsBlockFrame* nonColumnSpanWrapper =
-        NS_NewBlockFrame(mPresShell, initialBlockStyle);
-    InitAndRestoreFrame(aState, content, parentFrame, nonColumnSpanWrapper,
-                        false);
-    nonColumnSpanWrapper->AddStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
+    // Grab the consecutive non-column-span kids, and reparent them into a new
+    // continuation of the last non-column-span wrapper frame.
+    auto* nonColumnSpanWrapper = static_cast<nsContainerFrame*>(
+        CreateContinuingFrame(mPresShell->GetPresContext(),
+                              lastNonColumnSpanWrapper, parentFrame, false));
+    nonColumnSpanWrapper->AddStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR |
+                                       NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
 
     if (aChildList.NotEmpty()) {
       nsFrameList nonColumnSpanKids =
@@ -10826,8 +10822,6 @@ nsFrameItems nsCSSFrameConstructor::CreateColumnSpanSiblings(
       }
     }
 
-    lastNonColumnSpanWrapper->SetNextContinuation(nonColumnSpanWrapper);
-    nonColumnSpanWrapper->SetPrevContinuation(lastNonColumnSpanWrapper);
     siblings.AddChild(nonColumnSpanWrapper);
 
     lastNonColumnSpanWrapper = nonColumnSpanWrapper;
@@ -10932,6 +10926,13 @@ nsIFrame* nsCSSFrameConstructor::ConstructInline(
     aState.PushAbsoluteContainingBlock(newFrame, newFrame, absoluteSaveState);
   }
 
+  if (StaticPrefs::layout_css_column_span_enabled()) {
+    if (aParentFrame->HasAnyStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR) &&
+        !ShouldSuppressColumnSpanDescendants(aParentFrame)) {
+      newFrame->AddStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR);
+    }
+  }
+
   // Process the child content
   nsFrameItems childItems;
   ConstructFramesFromItemList(aState, aItem.mChildItems, newFrame,
@@ -11008,6 +11009,9 @@ void nsCSSFrameConstructor::CreateIBSiblings(nsFrameConstructorState& aState,
     // children of the inline.
     nsBlockFrame* blockFrame = NS_NewBlockFrame(mPresShell, blockSC);
     InitAndRestoreFrame(aState, content, parentFrame, blockFrame, false);
+    if (aInitialInline->HasAnyStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR)) {
+      blockFrame->AddStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR);
+    }
 
     // Find the first non-block child which defines the end of our block kids
     // and the start of our next inline's kids
@@ -11031,10 +11035,12 @@ void nsCSSFrameConstructor::CreateIBSiblings(nsFrameConstructorState& aState,
       aSiblings.AddChild(blockFrame);
 
       if (blockKids.NotEmpty()) {
-        // Add NS_FRAME_PART_OF_IBSPLIT bit to all the wrapper frames
-        // created by CreateColumnSpanSiblings.
-        AutoRestore<nsFrameState> savedStateBits(aState.mAdditionalStateBits);
-        aState.mAdditionalStateBits |= NS_FRAME_PART_OF_IBSPLIT;
+        // Although SetFrameIsIBSplit() will add NS_FRAME_PART_OF_IBSPLIT for
+        // blockFrame later, we manually add the bit earlier here to make all
+        // the continuations of blockFrame created in
+        // CreateColumnSpanSiblings(), i.e. non-column-span wrappers, have the
+        // bit via nsFrame::Init().
+        blockFrame->AddStateBits(NS_FRAME_PART_OF_IBSPLIT);
 
         nsFrameItems columnSpanSiblings =
             CreateColumnSpanSiblings(aState, blockFrame, blockKids,
@@ -11048,6 +11054,10 @@ void nsCSSFrameConstructor::CreateIBSiblings(nsFrameConstructorState& aState,
     nsInlineFrame* inlineFrame = NS_NewInlineFrame(mPresShell, computedStyle);
     InitAndRestoreFrame(aState, content, parentFrame, inlineFrame, false);
     inlineFrame->AddStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
+    if (aInitialInline->HasAnyStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR)) {
+      inlineFrame->AddStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR);
+    }
+
     if (aIsAbsPosCB) {
       inlineFrame->MarkAsAbsoluteContainingBlock();
     }
@@ -11422,15 +11432,15 @@ bool nsCSSFrameConstructor::WipeContainingBlock(
   }
 
   // Situation #6 is a column hierarchy that's getting new children.
-  if (aFrame->HasAnyStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR)) {
-    if (aFrame->IsColumnSetWrapperFrame()) {
-      // Reframe the multi-column container whenever elements insert/append
-      // into it.
-      TRACE("Multi-column");
-      RecreateFramesForContent(aFrame->GetContent(), InsertionKind::Async);
-      return true;
-    }
+  if (aFrame->IsColumnSetWrapperFrame()) {
+    // Reframe the multi-column container whenever elements insert/append
+    // into it.
+    TRACE("Multi-column");
+    RecreateFramesForContent(aFrame->GetContent(), InsertionKind::Async);
+    return true;
+  }
 
+  if (aFrame->HasAnyStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR)) {
     bool anyColumnSpanItems = false;
     for (FCItemIterator iter(aItems); !iter.IsDone(); iter.Next()) {
       if (iter.item().mComputedStyle->StyleColumn()->IsColumnSpanStyle()) {

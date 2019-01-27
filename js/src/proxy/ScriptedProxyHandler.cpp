@@ -9,6 +9,8 @@
 #include "jsapi.h"
 
 #include "js/CharacterEncoding.h"
+#include "js/PropertyDescriptor.h"  // JS::FromPropertyDescriptor
+#include "vm/EqualityOperations.h"  // js::SameValue
 
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
@@ -1445,9 +1447,7 @@ bool IsRevokedScriptedProxy(JSObject* obj) {
 // ES8 rev 0c1bd3004329336774cbc90de727cd0cf5f11e93
 // 9.5.14 ProxyCreate.
 static bool ProxyCreate(JSContext* cx, CallArgs& args, const char* callerName) {
-  if (args.length() < 2) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, callerName, "1", "s");
+  if (!args.requireAtLeast(cx, callerName, 2)) {
     return false;
   }
 

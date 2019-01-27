@@ -27,6 +27,8 @@
 #include "jit/BaselineJIT.h"
 #include "js/CharacterEncoding.h"
 #include "js/Date.h"
+#include "js/PropertyDescriptor.h"
+#include "js/PropertySpec.h"
 #include "js/SourceText.h"
 #include "js/StableStringChars.h"
 #include "js/UbiNodeBreadthFirst.h"
@@ -2491,12 +2493,13 @@ ResumeMode Debugger::firePromiseHook(JSContext* cx, Hook hook,
     JSContext* cx, Hook hook, Handle<PromiseObject*> promise) {
   MOZ_ASSERT(hook == OnNewPromise || hook == OnPromiseSettled);
 
-  Maybe<AutoRealm> ar;
-  if (hook == OnNewPromise) {
-    ar.emplace(cx, promise);
+  if (hook == OnPromiseSettled) {
+    // We should be in the right compartment, but for simplicity always enter
+    // the promise's realm below.
+    cx->check(promise);
   }
 
-  cx->check(promise);
+  AutoRealm ar(cx, promise);
 
   RootedValue rval(cx);
   ResumeMode resumeMode = dispatchHook(
@@ -3037,7 +3040,10 @@ void Debugger::updateObservesAsmJSOnDebuggees(IsObserving observing) {
     const GlobalObject& debuggee) {
   if (auto* v = debuggee.getDebuggers()) {
     for (auto p = v->begin(); p != v->end(); p++) {
-      if ((*p)->trackingAllocationSites && (*p)->enabled) {
+      // Use unbarrieredGet() to prevent triggering read barrier while
+      // collecting, this is safe as long as dbg does not escape.
+      Debugger* dbg = p->unbarrieredGet();
+      if (dbg->trackingAllocationSites && dbg->enabled) {
         return true;
       }
     }
@@ -3175,6 +3181,8 @@ void Debugger::traceCrossCompartmentEdges(JSTracer* trc) {
  * returns false.
  */
 /* static */ bool Debugger::markIteratively(GCMarker* marker) {
+  MOZ_ASSERT(JS::RuntimeHeapIsCollecting(),
+             "This method should be called during GC.");
   bool markedAny = false;
 
   // Find all Debugger objects in danger of GC. This code is a little
@@ -3192,7 +3200,7 @@ void Debugger::traceCrossCompartmentEdges(JSTracer* trc) {
       const GlobalObject::DebuggerVector* debuggers = global->getDebuggers();
       MOZ_ASSERT(debuggers);
       for (auto p = debuggers->begin(); p != debuggers->end(); p++) {
-        Debugger* dbg = *p;
+        Debugger* dbg = p->unbarrieredGet();
 
         // dbg is a Debugger with at least one debuggee. Check three things:
         //   - dbg is actually in a compartment that is being marked
@@ -4203,6 +4211,21 @@ static T* findDebuggerInVector(Debugger* dbg,
   return p;
 }
 
+// a ReadBarriered version for findDebuggerInVector
+// TODO: Bug 1515934 - findDebuggerInVector<T> triggers read barriers.
+static ReadBarriered<Debugger*>*
+findDebuggerInVector(Debugger* dbg,
+                     Vector<ReadBarriered<Debugger*>, 0, js::SystemAllocPolicy>* vec) {
+  ReadBarriered<Debugger*>* p;
+  for (p = vec->begin(); p != vec->end(); p++) {
+    if (p->unbarrieredGet() == dbg) {
+      break;
+    }
+  }
+  MOZ_ASSERT(p != vec->end());
+  return p;
+}
+
 void Debugger::removeDebuggeeGlobal(FreeOp* fop, GlobalObject* global,
                                     WeakGlobalObjectSet::Enum* debugEnum) {
   // The caller might have found global by enumerating this->debuggees; if
@@ -4222,7 +4245,7 @@ void Debugger::removeDebuggeeGlobal(FreeOp* fop, GlobalObject* global,
   for (FrameMap::Enum e(frames); !e.empty(); e.popFront()) {
     AbstractFramePtr frame = e.front().key();
     DebuggerFrame* frameobj = e.front().value();
-    if (frame.global() == global) {
+    if (frame.hasGlobal(global)) {
       frameobj->freeFrameIterData(fop);
       DebuggerFrame_maybeDecrementFrameScriptStepModeCount(fop, frame,
                                                            frameobj);
@@ -4866,11 +4889,6 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
                                         Value* vp) {
   THIS_DEBUGGER(cx, argc, vp, "findScripts", args, dbg);
 
-  if (gc::GCRuntime::temporaryAbortIfWasmGc(cx)) {
-    JS_ReportErrorASCII(cx, "API temporarily unavailable under wasm gc");
-    return false;
-  }
-
   ScriptQuery query(cx, dbg);
 
   if (args.length() >= 1) {
@@ -5057,11 +5075,6 @@ static inline DebuggerSourceReferent AsSourceReferent(JSObject* obj) {
 /* static */ bool Debugger::findSources(JSContext* cx, unsigned argc,
                                         Value* vp) {
   THIS_DEBUGGER(cx, argc, vp, "findSources", args, dbg);
-
-  if (gc::GCRuntime::temporaryAbortIfWasmGc(cx)) {
-    JS_ReportErrorASCII(cx, "API temporarily unavailable under wasm gc");
-    return false;
-  }
 
   SourceQuery query(cx, dbg);
   if (!query.findSources()) {
@@ -7805,7 +7818,7 @@ static bool DebuggerSource_getDisplayURL(JSContext* cx, unsigned argc,
 struct DebuggerSourceGetElementMatcher {
   using ReturnType = JSObject*;
   ReturnType match(HandleScriptSourceObject sourceObject) {
-    return sourceObject->element();
+    return sourceObject->unwrappedElement();
   }
   ReturnType match(Handle<WasmInstanceObject*> wasmInstance) { return nullptr; }
 };
@@ -7828,7 +7841,7 @@ static bool DebuggerSource_getElement(JSContext* cx, unsigned argc, Value* vp) {
 struct DebuggerSourceGetElementPropertyMatcher {
   using ReturnType = Value;
   ReturnType match(HandleScriptSourceObject sourceObject) {
-    return sourceObject->elementAttributeName();
+    return sourceObject->unwrappedElementAttributeName();
   }
   ReturnType match(Handle<WasmInstanceObject*> wasmInstance) {
     return UndefinedValue();
@@ -7857,7 +7870,7 @@ class DebuggerSourceGetIntroductionScriptMatcher {
   using ReturnType = bool;
 
   ReturnType match(HandleScriptSourceObject sourceObject) {
-    RootedScript script(cx_, sourceObject->introductionScript());
+    RootedScript script(cx_, sourceObject->unwrappedIntroductionScript());
     if (script) {
       RootedObject scriptDO(cx_, dbg_->wrapScript(cx_, script));
       if (!scriptDO) {
@@ -7896,7 +7909,8 @@ struct DebuggerGetIntroductionOffsetMatcher {
     // ScriptSource, only hand out the introduction offset if we also have
     // the script within which it applies.
     ScriptSource* ss = sourceObject->source();
-    if (ss->hasIntroductionOffset() && sourceObject->introductionScript()) {
+    if (ss->hasIntroductionOffset() &&
+        sourceObject->unwrappedIntroductionScript()) {
       return Int32Value(ss->introductionOffset());
     }
     return UndefinedValue();
@@ -10248,7 +10262,10 @@ static JSObject* IdVectorToArray(JSContext* cx, Handle<IdVector> ids) {
     return false;
   }
 
-  if (!DebuggerObject::getProperty(cx, object, id, args.rval())) {
+  RootedValue receiver(cx,
+                       args.length() < 2 ? ObjectValue(*object) : args.get(1));
+
+  if (!DebuggerObject::getProperty(cx, object, id, receiver, args.rval())) {
     return false;
   }
 
@@ -10266,7 +10283,11 @@ static JSObject* IdVectorToArray(JSContext* cx, Handle<IdVector> ids) {
 
   RootedValue value(cx, args.get(1));
 
-  if (!DebuggerObject::setProperty(cx, object, id, value, args.rval())) {
+  RootedValue receiver(cx,
+                       args.length() < 3 ? ObjectValue(*object) : args.get(2));
+
+  if (!DebuggerObject::setProperty(cx, object, id, value, receiver,
+                                   args.rval())) {
     return false;
   }
 
@@ -11205,38 +11226,15 @@ double DebuggerObject::promiseTimeToResolution() const {
 /* static */ bool DebuggerObject::getProperty(JSContext* cx,
                                               HandleDebuggerObject object,
                                               HandleId id,
-                                              MutableHandleValue result) {
-  RootedObject referent(cx, object->referent());
-  Debugger* dbg = object->owner();
-
-  // Enter the debuggee compartment and rewrap all input value for that
-  // compartment. (Rewrapping always takes place in the destination
-  // compartment.)
-  Maybe<AutoRealm> ar;
-  EnterDebuggeeObjectRealm(cx, ar, referent);
-  if (!cx->compartment()->wrap(cx, &referent)) {
-    return false;
-  }
-  cx->markId(id);
-
-  LeaveDebuggeeNoExecute nnx(cx);
-
-  bool ok = GetProperty(cx, referent, referent, id, result);
-
-  return dbg->receiveCompletionValue(ar, ok, result, result);
-}
-
-/* static */ bool DebuggerObject::setProperty(JSContext* cx,
-                                              HandleDebuggerObject object,
-                                              HandleId id, HandleValue value_,
+                                              HandleValue receiver_,
                                               MutableHandleValue result) {
   RootedObject referent(cx, object->referent());
   Debugger* dbg = object->owner();
 
   // Unwrap Debugger.Objects. This happens in the debugger's compartment since
   // that is where any exceptions must be reported.
-  RootedValue value(cx, value_);
-  if (!dbg->unwrapDebuggeeValue(cx, &value)) {
+  RootedValue receiver(cx, receiver_);
+  if (!dbg->unwrapDebuggeeValue(cx, &receiver)) {
     return false;
   }
 
@@ -11246,14 +11244,49 @@ double DebuggerObject::promiseTimeToResolution() const {
   Maybe<AutoRealm> ar;
   EnterDebuggeeObjectRealm(cx, ar, referent);
   if (!cx->compartment()->wrap(cx, &referent) ||
-      !cx->compartment()->wrap(cx, &value)) {
+      !cx->compartment()->wrap(cx, &receiver)) {
     return false;
   }
   cx->markId(id);
 
   LeaveDebuggeeNoExecute nnx(cx);
 
-  RootedValue receiver(cx, ObjectValue(*referent));
+  bool ok = GetProperty(cx, referent, receiver, id, result);
+
+  return dbg->receiveCompletionValue(ar, ok, result, result);
+}
+
+/* static */ bool DebuggerObject::setProperty(JSContext* cx,
+                                              HandleDebuggerObject object,
+                                              HandleId id, HandleValue value_,
+                                              HandleValue receiver_,
+                                              MutableHandleValue result) {
+  RootedObject referent(cx, object->referent());
+  Debugger* dbg = object->owner();
+
+  // Unwrap Debugger.Objects. This happens in the debugger's compartment since
+  // that is where any exceptions must be reported.
+  RootedValue value(cx, value_);
+  RootedValue receiver(cx, receiver_);
+  if (!dbg->unwrapDebuggeeValue(cx, &value) ||
+      !dbg->unwrapDebuggeeValue(cx, &receiver)) {
+    return false;
+  }
+
+  // Enter the debuggee compartment and rewrap all input value for that
+  // compartment. (Rewrapping always takes place in the destination
+  // compartment.)
+  Maybe<AutoRealm> ar;
+  EnterDebuggeeObjectRealm(cx, ar, referent);
+  if (!cx->compartment()->wrap(cx, &referent) ||
+      !cx->compartment()->wrap(cx, &value) ||
+      !cx->compartment()->wrap(cx, &receiver)) {
+    return false;
+  }
+  cx->markId(id);
+
+  LeaveDebuggeeNoExecute nnx(cx);
+
   ObjectOpResult opResult;
   bool ok = SetProperty(cx, referent, id, value, receiver, opResult);
 
@@ -11442,9 +11475,9 @@ double DebuggerObject::promiseTimeToResolution() const {
   }
 
   // Don't allow unwrapping to create a D.O whose referent is in an
-  // invisible-to-Debugger global. (If our referent is a *wrapper* to such,
-  // and the wrapper is in a visible realm, that's fine.)
-  if (unwrapped->deprecatedRealm()->creationOptions().invisibleToDebugger()) {
+  // invisible-to-Debugger compartment. (If our referent is a *wrapper* to such,
+  // and the wrapper is in a visible compartment, that's fine.)
+  if (unwrapped->compartment()->invisibleToDebugger()) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_DEBUG_INVISIBLE_COMPARTMENT);
     return false;

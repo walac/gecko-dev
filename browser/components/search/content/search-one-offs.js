@@ -558,8 +558,8 @@ class SearchOneOffs {
       // Make the top-level menu button.
       let button = document.createXULElement("toolbarbutton");
       list.appendChild(button);
-      button.classList.add("addengine-item", "badged-button");
-      button.setAttribute("class", "addengine-menu-button");
+      button.classList.add("addengine-menu-button", "addengine-item",
+                           "badged-button");
       button.setAttribute("type", "menu");
       button.setAttribute("label",
         this.bundle.GetStringFromName("cmd_addFoundEngineMenu"));
@@ -1219,6 +1219,7 @@ class SearchOneOffs {
     let target = event.originalTarget;
     // Prevent the context menu from appearing except on the one off buttons.
     if (!target.classList.contains("searchbar-engine-one-off-item") ||
+        target.classList.contains("search-setting-button-compact") ||
         target.classList.contains("dummy")) {
       event.preventDefault();
       return;

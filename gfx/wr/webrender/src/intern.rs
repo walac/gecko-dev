@@ -3,12 +3,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use api::{LayoutPrimitiveInfo, LayoutRect};
+use api::VoidPtrToSizeFn;
 use internal_types::FastHashMap;
 use profiler::ResourceProfileCounter;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::{mem, ops, u64};
+use std::os::raw::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use util::VecHelper;
 
@@ -126,6 +128,10 @@ struct Item<T> {
     data: T,
 }
 
+pub trait InternDebug {
+    fn on_interned(&self, _uid: ItemUid) {}
+}
+
 /// The data store lives in the frame builder thread. It
 /// contains a free-list of items for fast access.
 #[cfg_attr(feature = "capture", derive(Serialize))]
@@ -178,6 +184,11 @@ impl<S, T, M> DataStore<S, T, M> where S: Debug, T: From<S>, M: Debug
         profile_counter.set(self.items.len(), per_item_size * self.items.len());
 
         debug_assert!(data_iter.next().is_none());
+    }
+
+    /// Reports CPU heap usage.
+    pub fn malloc_size_of(&self, op: VoidPtrToSizeFn) -> usize {
+        unsafe { op(self.items.as_ptr() as *const c_void) }
     }
 }
 
@@ -252,7 +263,7 @@ where
 
 impl<S, D, M> Interner<S, D, M>
 where
-    S: Eq + Hash + Clone + Debug,
+    S: Eq + Hash + Clone + Debug + InternDebug,
     M: Copy + Debug
 {
     /// Intern a data structure, and return a handle to
@@ -308,6 +319,9 @@ where
             uid: ItemUid::next_uid(),
             _marker: PhantomData,
         };
+
+        #[cfg(debug_assertions)]
+        data.on_interned(handle.uid);
 
         // Store this handle so the next time it is
         // interned, it gets re-used.
@@ -367,6 +381,17 @@ where
         self.current_epoch = Epoch(self.current_epoch.0 + 1);
 
         updates
+    }
+
+    /// Reports CPU heap usage.
+    pub fn malloc_size_of(&self, op: VoidPtrToSizeFn, eop: VoidPtrToSizeFn) -> usize {
+        let mut bytes = 0;
+        unsafe {
+            bytes += op(self.local_data.as_ptr() as *const c_void);
+            bytes += self.map.values().next()
+                .map_or(0, |v| eop(v as *const _ as *const c_void));
+        }
+        bytes
     }
 }
 

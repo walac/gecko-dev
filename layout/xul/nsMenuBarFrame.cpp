@@ -12,7 +12,7 @@
 #include "mozilla/ComputedStyle.h"
 #include "nsCSSRendering.h"
 #include "nsNameSpaceManager.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsGkAtoms.h"
 #include "nsMenuFrame.h"
 #include "nsMenuPopupFrame.h"
@@ -44,7 +44,7 @@ nsIFrame* NS_NewMenuBarFrame(nsIPresShell* aPresShell, ComputedStyle* aStyle) {
 NS_IMPL_FRAMEARENA_HELPERS(nsMenuBarFrame)
 
 NS_QUERYFRAME_HEAD(nsMenuBarFrame)
-NS_QUERYFRAME_ENTRY(nsMenuBarFrame)
+  NS_QUERYFRAME_ENTRY(nsMenuBarFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsBoxFrame)
 
 //

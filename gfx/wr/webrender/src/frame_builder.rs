@@ -12,7 +12,8 @@ use gpu_cache::GpuCache;
 use gpu_types::{PrimitiveHeaders, TransformPalette, UvRectKind, ZBufferIdGenerator};
 use hit_test::{HitTester, HitTestingRun};
 use internal_types::{FastHashMap, PlaneSplitter};
-use picture::{PictureSurface, PictureUpdateState, SurfaceInfo, ROOT_SURFACE_INDEX, SurfaceIndex, TileDescriptor};
+use picture::{PictureSurface, PictureUpdateState, SurfaceInfo, ROOT_SURFACE_INDEX, SurfaceIndex};
+use picture::{TileCacheUpdateState, RetainedTiles};
 use prim_store::{PrimitiveStore, SpaceMapper, PictureIndex, PrimitiveDebugId, PrimitiveScratchBuffer};
 #[cfg(feature = "replay")]
 use prim_store::{PrimitiveStoreStats};
@@ -25,9 +26,7 @@ use segment::SegmentBuilder;
 use spatial_node::SpatialNode;
 use std::{f32, mem};
 use std::sync::Arc;
-use texture_cache::TextureCacheHandle;
-use tiling::{Frame, RenderPass, RenderPassKind, RenderTargetContext};
-use tiling::{SpecialRenderPasses};
+use tiling::{Frame, RenderPass, RenderPassKind, RenderTargetContext, RenderTarget};
 
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -64,7 +63,7 @@ pub struct FrameBuilder {
     root_pic_index: PictureIndex,
     /// Cache of surface tiles from the previous frame builder
     /// that can optionally be consumed by this frame builder.
-    pending_retained_tiles: FastHashMap<TileDescriptor, TextureCacheHandle>,
+    pending_retained_tiles: RetainedTiles,
     pub prim_store: PrimitiveStore,
     pub clip_store: ClipStore,
     pub hit_testing_runs: Vec<HitTestingRun>,
@@ -86,7 +85,6 @@ pub struct FrameBuildingState<'a> {
     pub clip_store: &'a mut ClipStore,
     pub resource_cache: &'a mut ResourceCache,
     pub gpu_cache: &'a mut GpuCache,
-    pub special_render_passes: &'a mut SpecialRenderPasses,
     pub transforms: &'a mut TransformPalette,
     pub segment_builder: SegmentBuilder,
     pub surfaces: &'a mut Vec<SurfaceInfo>,
@@ -149,7 +147,7 @@ impl FrameBuilder {
             window_size: DeviceIntSize::zero(),
             background_color: None,
             root_pic_index: PictureIndex(0),
-            pending_retained_tiles: FastHashMap::default(),
+            pending_retained_tiles: RetainedTiles::new(),
             config: FrameBuilderConfig {
                 default_font_render_mode: FontRenderMode::Mono,
                 dual_source_blending_is_enabled: true,
@@ -165,9 +163,9 @@ impl FrameBuilder {
     /// first time a new frame builder creates a frame.
     pub fn set_retained_tiles(
         &mut self,
-        retained_tiles: FastHashMap<TileDescriptor, TextureCacheHandle>,
+        retained_tiles: RetainedTiles,
     ) {
-        debug_assert!(self.pending_retained_tiles.is_empty());
+        debug_assert!(self.pending_retained_tiles.tiles.is_empty());
         self.pending_retained_tiles = retained_tiles;
     }
 
@@ -185,7 +183,7 @@ impl FrameBuilder {
             screen_rect,
             background_color,
             window_size,
-            pending_retained_tiles: FastHashMap::default(),
+            pending_retained_tiles: RetainedTiles::new(),
             config: flattener.config,
         }
     }
@@ -194,7 +192,7 @@ impl FrameBuilder {
     /// a frame builder is replaced with a newly built scene.
     pub fn destroy(
         self,
-        retained_tiles: &mut FastHashMap<TileDescriptor, TextureCacheHandle>,
+        retained_tiles: &mut RetainedTiles,
     ) {
         self.prim_store.destroy(
             retained_tiles,
@@ -210,7 +208,6 @@ impl FrameBuilder {
         resource_cache: &mut ResourceCache,
         gpu_cache: &mut GpuCache,
         render_tasks: &mut RenderTaskTree,
-        special_render_passes: &mut SpecialRenderPasses,
         profile_counters: &mut FrameProfileCounters,
         device_pixel_scale: DevicePixelScale,
         scene_properties: &SceneProperties,
@@ -259,7 +256,7 @@ impl FrameBuilder {
         let mut pic_update_state = PictureUpdateState::new(surfaces);
         let mut retained_tiles = mem::replace(
             &mut self.pending_retained_tiles,
-            FastHashMap::default(),
+            RetainedTiles::new(),
         );
 
         // The first major pass of building a frame is to walk the picture
@@ -273,20 +270,26 @@ impl FrameBuilder {
             self.root_pic_index,
             &mut pic_update_state,
             &frame_context,
-            resource_cache,
             gpu_cache,
             resources,
             &self.clip_store,
-            &mut retained_tiles,
         );
 
-        // If we had any retained tiles from the last scene that were not picked
-        // up by the new frame, then just discard them eagerly.
-        // TODO(gw): Maybe it's worth keeping them around for a bit longer in
-        //           some cases?
-        for (_, handle) in retained_tiles.drain() {
-            resource_cache.texture_cache.mark_unused(&handle);
-        }
+        // Update the state of any picture tile caches. This is a no-op on most
+        // frames (it only does work the first time a new scene is built, or if
+        // the tile-relative transform dependencies have changed).
+        let mut tile_cache_state = TileCacheUpdateState::new();
+        self.prim_store.update_tile_cache(
+            self.root_pic_index,
+            &mut tile_cache_state,
+            &frame_context,
+            resource_cache,
+            resources,
+            &self.clip_store,
+            &pic_update_state.surfaces,
+            gpu_cache,
+            &mut retained_tiles,
+        );
 
         let mut frame_state = FrameBuildingState {
             render_tasks,
@@ -294,7 +297,6 @@ impl FrameBuilder {
             clip_store: &mut self.clip_store,
             resource_cache,
             gpu_cache,
-            special_render_passes,
             transforms: transform_palette,
             segment_builder: SegmentBuilder::new(),
             surfaces: pic_update_state.surfaces,
@@ -311,6 +313,7 @@ impl FrameBuilder {
                 true,
                 &mut frame_state,
                 &frame_context,
+                screen_world_rect,
             )
             .unwrap();
 
@@ -345,7 +348,6 @@ impl FrameBuilder {
             UvRectKind::Rect,
             root_spatial_node_index,
             None,
-            Vec::new(),
         );
 
         let render_task_id = frame_state.render_tasks.add(root_render_task);
@@ -393,12 +395,12 @@ impl FrameBuilder {
             scene_properties,
             Some(&mut transform_palette),
         );
+        self.clip_store.clear_old_instances();
 
         let mut render_tasks = RenderTaskTree::new(stamp.frame_id());
         let mut surfaces = Vec::new();
 
         let screen_size = self.screen_rect.size.to_i32();
-        let mut special_render_passes = SpecialRenderPasses::new(&screen_size);
 
         let main_render_task_id = self.build_layer_screen_rects_and_cull_layers(
             clip_scroll_tree,
@@ -406,7 +408,6 @@ impl FrameBuilder {
             resource_cache,
             gpu_cache,
             &mut render_tasks,
-            &mut special_render_passes,
             &mut profile_counters,
             device_pixel_scale,
             scene_properties,
@@ -420,29 +421,34 @@ impl FrameBuilder {
                                                        &mut render_tasks,
                                                        texture_cache_profile);
 
-        let mut passes = vec![
-            special_render_passes.alpha_glyph_pass,
-            special_render_passes.color_glyph_pass,
-        ];
+        let mut passes = vec![];
+
+        // Add passes as required for our cached render tasks.
+        if !render_tasks.cacheable_render_tasks.is_empty() {
+            passes.push(RenderPass::new_off_screen(screen_size));
+            for cacheable_render_task in &render_tasks.cacheable_render_tasks {
+                render_tasks.assign_to_passes(
+                    *cacheable_render_task,
+                    0,
+                    screen_size,
+                    &mut passes,
+                );
+            }
+            passes.reverse();
+        }
 
         if let Some(main_render_task_id) = main_render_task_id {
-            let mut required_pass_count = 0;
-            render_tasks.max_depth(main_render_task_id, 0, &mut required_pass_count);
-            assert_ne!(required_pass_count, 0);
-
-            // Do the allocations now, assigning each tile's tasks to a render
-            // pass and target as required.
-            for _ in 0 .. required_pass_count - 1 {
-                passes.push(RenderPass::new_off_screen(screen_size));
-            }
+            let passes_start = passes.len();
             passes.push(RenderPass::new_main_framebuffer(screen_size));
-
             render_tasks.assign_to_passes(
                 main_render_task_id,
-                required_pass_count - 1,
-                &mut passes[2..],
+                passes_start,
+                screen_size,
+                &mut passes,
             );
+            passes[passes_start..].reverse();
         }
+
 
         let mut deferred_resolves = vec![];
         let mut has_texture_cache_tasks = false;
@@ -475,8 +481,14 @@ impl FrameBuilder {
                 &mut z_generator,
             );
 
-            if let RenderPassKind::OffScreen { ref texture_cache, .. } = pass.kind {
-                has_texture_cache_tasks |= !texture_cache.is_empty();
+            match pass.kind {
+                RenderPassKind::MainFramebuffer(ref color) => {
+                    has_texture_cache_tasks |= color.must_be_drawn();
+                }
+                RenderPassKind::OffScreen { ref texture_cache, ref color, .. } => {
+                    has_texture_cache_tasks |= !texture_cache.is_empty();
+                    has_texture_cache_tasks |= color.must_be_drawn();
+                }
             }
         }
 

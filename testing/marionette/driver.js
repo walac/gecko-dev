@@ -62,8 +62,6 @@ const {
   IdlePromise,
   PollPromise,
   TimedPromise,
-  waitForEvent,
-  waitForObserverTopic,
 } = ChromeUtils.import("chrome://marionette/content/sync.js", {});
 
 XPCOMUtils.defineLazyGetter(this, "logger", Log.get);
@@ -108,12 +106,13 @@ const globalMessageManager = Services.mm;
  *
  * @class GeckoDriver
  *
+ * @param {string} appId
+ *     Unique identifier of the application.
  * @param {MarionetteServer} server
  *     The instance of Marionette server.
  */
-this.GeckoDriver = function(server) {
-  this.appId = Services.appinfo.ID;
-  this.appName = Services.appinfo.name.toLowerCase();
+this.GeckoDriver = function(appId, server) {
+  this.appId = appId;
   this._server = server;
 
   this.sessionID = null;
@@ -855,9 +854,6 @@ GeckoDriver.prototype.getContext = function() {
  * @param {Array.<(string|boolean|number|object|WebElement)>} args
  *     Arguments exposed to the script in <code>arguments</code>.
  *     The array items must be serialisable to the WebDriver protocol.
- * @param {number=} scriptTimeout
- *     Duration in milliseconds of when to interrupt and abort the
- *     script evaluation.
  * @param {string=} sandbox
  *     Name of the sandbox to evaluate the script in.  The sandbox is
  *     cached for later re-use on the same Window object if
@@ -879,8 +875,8 @@ GeckoDriver.prototype.getContext = function() {
  *     JavaScript notion of null or undefined.
  *
  * @throws {ScriptTimeoutError}
- *     If the script was interrupted due to reaching the
- *     <var>scriptTimeout</var> or default timeout.
+ *     If the script was interrupted due to reaching the session's
+ *     script timeout.
  * @throws {JavaScriptError}
  *     If an {@link Error} was thrown whilst evaluating the script.
  */
@@ -889,7 +885,6 @@ GeckoDriver.prototype.executeScript = async function(cmd) {
   let opts = {
     script: cmd.parameters.script,
     args: cmd.parameters.args,
-    timeout: cmd.parameters.scriptTimeout,
     sandboxName: cmd.parameters.sandbox,
     newSandbox: cmd.parameters.newSandbox,
     file: cmd.parameters.filename,
@@ -924,9 +919,6 @@ GeckoDriver.prototype.executeScript = async function(cmd) {
  * @param {Array.<(string|boolean|number|object|WebElement)>} args
  *     Arguments exposed to the script in <code>arguments</code>.
  *     The array items must be serialisable to the WebDriver protocol.
- * @param {number} scriptTimeout
- *     Duration in milliseconds of when to interrupt and abort the
- *     script evaluation.
  * @param {string=} sandbox
  *     Name of the sandbox to evaluate the script in.  The sandbox is
  *     cached for later re-use on the same Window object if
@@ -948,8 +940,8 @@ GeckoDriver.prototype.executeScript = async function(cmd) {
  *     JavaScript notion of null or undefined.
  *
  * @throws {ScriptTimeoutError}
- *     If the script was interrupted due to reaching the
- *     <var>scriptTimeout</var> or default timeout.
+ *     If the script was interrupted due to reaching the session's
+ *     script timeout.
  * @throws {JavaScriptError}
  *     If an Error was thrown whilst evaluating the script.
  */
@@ -958,7 +950,6 @@ GeckoDriver.prototype.executeAsyncScript = async function(cmd) {
   let opts = {
     script: cmd.parameters.script,
     args: cmd.parameters.args,
-    timeout: cmd.parameters.scriptTimeout,
     sandboxName: cmd.parameters.sandbox,
     newSandbox: cmd.parameters.newSandbox,
     file: cmd.parameters.filename,
@@ -973,7 +964,6 @@ GeckoDriver.prototype.execute_ = async function(
     script,
     args = [],
     {
-      timeout = null,
       sandboxName = null,
       newSandbox = false,
       file = "",
@@ -981,16 +971,11 @@ GeckoDriver.prototype.execute_ = async function(
       async = false,
     } = {}) {
 
-  if (typeof timeout == "undefined" || timeout === null) {
-    timeout = this.timeouts.script;
-  }
-
   assert.open(this.getCurrentWindow());
   await this._handleUserPrompts();
 
   assert.string(script, pprint`Expected "script" to be a string: ${script}`);
   assert.array(args, pprint`Expected script args to be an array: ${args}`);
-  assert.positiveInteger(timeout, pprint`Expected script timeout to be a positive integer: ${timeout}`);
   if (sandboxName !== null) {
     assert.string(sandboxName, pprint`Expected sandbox name to be a string: ${sandboxName}`);
   }
@@ -999,7 +984,7 @@ GeckoDriver.prototype.execute_ = async function(
   assert.number(line, pprint`Expected line to be a number: ${line}`);
 
   let opts = {
-    timeout,
+    timeout: this.timeouts.script,
     sandboxName,
     newSandbox,
     file,
@@ -1024,7 +1009,6 @@ GeckoDriver.prototype.execute_ = async function(
 
     case Context.Chrome:
       let sb = this.sandboxes.get(sandboxName, newSandbox);
-      opts.timeout = timeout;
       let wargs = evaluate.fromJSON(args, this.curBrowser.seenEls, sb.window);
       res = await evaluate.sandbox(sb, script, wargs, opts);
       els = this.curBrowser.seenEls;
@@ -1308,7 +1292,6 @@ GeckoDriver.prototype.getIdForBrowser = function(browser) {
   if (browser === null) {
     return null;
   }
-
   let permKey = browser.permanentKey;
   if (this._browserIds.has(permKey)) {
     return this._browserIds.get(permKey);
@@ -2725,73 +2708,6 @@ GeckoDriver.prototype.deleteCookie = async function(cmd) {
 };
 
 /**
- * Open a new top-level browsing context.
- *
- * @param {string=} type
- *     Optional type of the new top-level browsing context. Can be one of
- *     `tab` or `window`.
- * @param {boolean=} focus
- *     Optional flag if the new top-level browsing context should be opened
- *     in foreground (focused) or background (not focused).
- *
- * @return {Object.<string, string>}
- *     Handle and type of the new browsing context.
- */
-GeckoDriver.prototype.newWindow = async function(cmd) {
-  assert.open(this.getCurrentWindow(Context.Content));
-  await this._handleUserPrompts();
-
-  let focus = false;
-  if (typeof cmd.parameters.focus != "undefined") {
-    focus = assert.boolean(cmd.parameters.focus,
-        pprint`Expected "focus" to be a boolean, got ${cmd.parameters.focus}`);
-  }
-
-  let type;
-  if (typeof cmd.parameters.type != "undefined") {
-    type = assert.string(cmd.parameters.type,
-        pprint`Expected "type" to be a string, got ${cmd.parameters.type}`);
-  }
-
-  let types = ["tab", "window"];
-  switch (this.appName) {
-    case "firefox":
-      if (typeof type == "undefined" || !types.includes(type)) {
-        type = "window";
-      }
-      break;
-    case "fennec":
-      if (typeof type == "undefined" || !types.includes(type)) {
-        type = "tab";
-      }
-      break;
-  }
-
-  let contentBrowser;
-
-  switch (type) {
-    case "tab":
-      let tab = await this.curBrowser.openTab(focus);
-      contentBrowser = browser.getBrowserForTab(tab);
-      break;
-
-    default:
-      let win = await this.curBrowser.openBrowserWindow(focus);
-      contentBrowser = browser.getTabBrowser(win).selectedBrowser;
-  }
-
-  // Even with the framescript registered, the browser might not be known to
-  // the parent process yet. Wait until it is available.
-  // TODO: Fix by using `Browser:Init` or equivalent on bug 1311041
-  let windowId = await new PollPromise((resolve, reject) => {
-    let id = this.getIdForBrowser(contentBrowser);
-    this.windowHandles.includes(id) ? resolve(id) : reject();
-  });
-
-  return {"handle": windowId.toString(), type};
-};
-
-/**
  * Close the currently selected tab/window.
  *
  * With multiple open tabs present the currently selected tab will
@@ -3170,14 +3086,16 @@ GeckoDriver.prototype.dismissDialog = async function() {
   let win = assert.open(this.getCurrentWindow());
   this._checkIfAlertIsPresent();
 
-  let dialogClosed = waitForEvent(win, "DOMModalDialogClosed");
+  await new Promise(resolve => {
+    win.addEventListener("DOMModalDialogClosed", async () => {
+      await new IdlePromise(win);
+      this.dialog = null;
+      resolve();
+    }, {once: true});
 
-  let {button0, button1} = this.dialog.ui;
-  (button1 ? button1 : button0).click();
-
-  await dialogClosed;
-
-  this.dialog = null;
+    let {button0, button1} = this.dialog.ui;
+    (button1 ? button1 : button0).click();
+  });
 };
 
 /**
@@ -3188,14 +3106,16 @@ GeckoDriver.prototype.acceptDialog = async function() {
   let win = assert.open(this.getCurrentWindow());
   this._checkIfAlertIsPresent();
 
-  let dialogClosed = waitForEvent(win, "DOMModalDialogClosed");
+  await new Promise(resolve => {
+    win.addEventListener("DOMModalDialogClosed", async () => {
+      await new IdlePromise(win);
+      this.dialog = null;
+      resolve();
+    }, {once: true});
 
-  let {button0} = this.dialog.ui;
-  button0.click();
-
-  await dialogClosed;
-
-  this.dialog = null;
+    let {button0} = this.dialog.ui;
+    button0.click();
+  });
 };
 
 /**
@@ -3366,10 +3286,15 @@ GeckoDriver.prototype.quit = async function(cmd) {
   this.deleteSession();
 
   // delay response until the application is about to quit
-  let quitApplication = waitForObserverTopic("quit-application");
+  let quitApplication = new Promise(resolve => {
+    Services.obs.addObserver(
+        (subject, topic, data) => resolve(data),
+        "quit-application");
+  });
+
   Services.startup.quit(mode);
 
-  return {cause: (await quitApplication).data};
+  return {cause: await quitApplication};
 };
 
 GeckoDriver.prototype.installAddon = function(cmd) {
@@ -3631,7 +3556,6 @@ GeckoDriver.prototype.commands = {
   "WebDriver:MaximizeWindow": GeckoDriver.prototype.maximizeWindow,
   "WebDriver:Navigate": GeckoDriver.prototype.get,
   "WebDriver:NewSession": GeckoDriver.prototype.newSession,
-  "WebDriver:NewWindow": GeckoDriver.prototype.newWindow,
   "WebDriver:PerformActions": GeckoDriver.prototype.performActions,
   "WebDriver:Refresh":  GeckoDriver.prototype.refresh,
   "WebDriver:ReleaseActions": GeckoDriver.prototype.releaseActions,

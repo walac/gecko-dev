@@ -40,7 +40,7 @@
 #include "nsContentUtils.h"
 #include "nsIAsyncInputStream.h"
 #include "nsIBFCacheEntry.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsIEventTarget.h"
 #include "nsIFileStreams.h"
 #include "nsNetCID.h"
@@ -2076,7 +2076,7 @@ mozilla::ipc::IPCResult BackgroundDatabaseChild::RecvVersionChange(
 
     // Anything in the bfcache has to be evicted and then we have to close the
     // database also.
-    if (nsCOMPtr<nsIDocument> doc = owner->GetExtantDoc()) {
+    if (nsCOMPtr<Document> doc = owner->GetExtantDoc()) {
       if (nsCOMPtr<nsIBFCacheEntry> bfCacheEntry = doc->GetBFCacheEntry()) {
         bfCacheEntry->RemoveFromBFCacheSync();
         shouldAbortAndClose = true;
@@ -3544,6 +3544,8 @@ mozilla::ipc::IPCResult BackgroundCursorChild::RecvResponse(
   RefPtr<IDBCursor> cursor;
   mStrongCursor.swap(cursor);
 
+  RefPtr<IDBTransaction> transaction = mTransaction;
+
   switch (aResponse.type()) {
     case CursorResponse::Tnsresult:
       HandleResponse(aResponse.get_nsresult());
@@ -3573,7 +3575,7 @@ mozilla::ipc::IPCResult BackgroundCursorChild::RecvResponse(
       MOZ_CRASH("Should never get here!");
   }
 
-  mTransaction->OnRequestFinished(/* aActorDestroyedNormally */ true);
+  transaction->OnRequestFinished(/* aActorDestroyedNormally */ true);
 
   return IPC_OK();
 }

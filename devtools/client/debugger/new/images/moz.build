@@ -20,8 +20,6 @@ DevToolsModules(
     'folder.svg',
     'help.svg',
     'javascript.svg',
-    'next-circle.svg',
-    'next.svg',
     'pause.svg',
     'prettyPrint.svg',
     'react.svg',
@@ -32,4 +30,5 @@ DevToolsModules(
     'tab.svg',
     'typescript.svg',
     'vuejs.svg',
+    'worker.svg',
 )

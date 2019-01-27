@@ -1603,7 +1603,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleVisibility {
   uint8_t mImageRendering;   // NS_STYLE_IMAGE_RENDERING_*
   uint8_t mWritingMode;      // NS_STYLE_WRITING_MODE_*
   uint8_t mTextOrientation;  // NS_STYLE_TEXT_ORIENTATION_MIXED_*
-  uint8_t mColorAdjust;      // NS_STYLE_COLOR_ADJUST_ECONOMY_*
+  mozilla::StyleColorAdjust mColorAdjust;
 
   bool IsVisible() const { return (mVisible == NS_STYLE_VISIBILITY_VISIBLE); }
 
@@ -1902,11 +1902,11 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
   mozilla::StyleBreakWithin mBreakInside;
   mozilla::StyleBreakBetween mBreakBefore;
   mozilla::StyleBreakBetween mBreakAfter;
-  uint8_t mOverflowX;              // NS_STYLE_OVERFLOW_*
-  uint8_t mOverflowY;              // NS_STYLE_OVERFLOW_*
-  uint8_t mOverflowClipBoxBlock;   // NS_STYLE_OVERFLOW_CLIP_BOX_*
-  uint8_t mOverflowClipBoxInline;  // NS_STYLE_OVERFLOW_CLIP_BOX_*
-  uint8_t mResize;                 // NS_STYLE_RESIZE_*
+  mozilla::StyleOverflow mOverflowX;
+  mozilla::StyleOverflow mOverflowY;
+  mozilla::StyleOverflowClipBox mOverflowClipBoxBlock;
+  mozilla::StyleOverflowClipBox mOverflowClipBoxInline;
+  mozilla::StyleResize mResize;
   mozilla::StyleOrient mOrient;
   uint8_t mIsolation;           // NS_STYLE_ISOLATION_*
   uint8_t mTopLayer;            // NS_STYLE_TOP_LAYER_*
@@ -1922,8 +1922,8 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
   uint8_t mScrollBehavior;  // NS_STYLE_SCROLL_BEHAVIOR_*
   mozilla::StyleOverscrollBehavior mOverscrollBehaviorX;
   mozilla::StyleOverscrollBehavior mOverscrollBehaviorY;
-  uint8_t mScrollSnapTypeX;  // NS_STYLE_SCROLL_SNAP_TYPE_*
-  uint8_t mScrollSnapTypeY;  // NS_STYLE_SCROLL_SNAP_TYPE_*
+  mozilla::StyleScrollSnapType mScrollSnapTypeX;
+  mozilla::StyleScrollSnapType mScrollSnapTypeY;
   nsStyleCoord mScrollSnapPointsX;
   nsStyleCoord mScrollSnapPointsY;
   mozilla::Position mScrollSnapDestination;
@@ -2137,9 +2137,9 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
 
   bool IsScrollableOverflow() const {
     // mOverflowX and mOverflowY always match when one of them is
-    // NS_STYLE_OVERFLOW_VISIBLE or NS_STYLE_OVERFLOW_CLIP.
-    return mOverflowX != NS_STYLE_OVERFLOW_VISIBLE &&
-           mOverflowX != NS_STYLE_OVERFLOW_CLIP;
+    // Visible or MozHiddenUnscrollable.
+    return mOverflowX != mozilla::StyleOverflow::Visible &&
+           mOverflowX != mozilla::StyleOverflow::MozHiddenUnscrollable;
   }
 
   bool IsContainPaint() const {

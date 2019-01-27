@@ -52,6 +52,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
+#ifdef XP_LINUX
+#include <sys/prctl.h>
+#endif
 
 #include "jsapi.h"
 #include "jsfriendapi.h"
@@ -64,7 +67,9 @@
 #include "shellmoduleloader.out.h"
 
 #include "builtin/Array.h"
+#include "builtin/MapObject.h"
 #include "builtin/ModuleObject.h"
+#include "builtin/Promise.h"
 #include "builtin/RegExp.h"
 #include "builtin/TestingFunctions.h"
 #if defined(JS_BUILD_BINAST)
@@ -79,15 +84,18 @@
 #include "jit/JitcodeMap.h"
 #include "jit/JitRealm.h"
 #include "jit/shared/CodeGenerator-shared.h"
+#include "js/BuildId.h"  // JS::BuildIdCharVector, JS::SetProcessBuildIdOp
 #include "js/CharacterEncoding.h"
 #include "js/CompilationAndEvaluation.h"
 #include "js/CompileOptions.h"
 #include "js/Debug.h"
+#include "js/Equality.h"  // JS::SameValue
 #include "js/GCVector.h"
 #include "js/Initialization.h"
 #include "js/JSON.h"
 #include "js/MemoryFunctions.h"
 #include "js/Printf.h"
+#include "js/PropertySpec.h"
 #include "js/SourceText.h"
 #include "js/StableStringChars.h"
 #include "js/StructuredClone.h"
@@ -489,6 +497,7 @@ static bool wasmForceCranelift = false;
 #ifdef ENABLE_WASM_GC
 static bool enableWasmGc = false;
 #endif
+static bool enableWasmVerbose = false;
 static bool enableTestWasmAwaitTier2 = false;
 static bool enableAsyncStacks = false;
 static bool enableStreams = false;
@@ -597,14 +606,16 @@ extern MOZ_EXPORT void add_history(char* line);
 
 ShellContext::ShellContext(JSContext* cx)
     : isWorker(false),
+      lastWarningEnabled(false),
+      trackUnhandledRejections(true),
       timeoutInterval(-1.0),
       startTime(PRMJ_Now()),
       serviceInterrupt(false),
       haveInterruptFunc(false),
       interruptFunc(cx, NullValue()),
-      lastWarningEnabled(false),
       lastWarning(cx, NullValue()),
       promiseRejectionTrackerCallback(cx, NullValue()),
+      unhandledRejectedPromises(cx),
       watchdogLock(mutexid::ShellContextWatchdog),
       exitCode(0),
       quitting(false),
@@ -1032,9 +1043,74 @@ static bool DrainJobQueue(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool GlobalOfFirstJobInQueue(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (cx->jobQueue->empty()) {
+    JS_ReportErrorASCII(cx, "Job queue is empty");
+    return false;
+  }
+
+  RootedObject job(cx, cx->jobQueue->front());
+  RootedObject global(cx, &job->nonCCWGlobal());
+  if (!cx->compartment()->wrap(cx, &global)) {
+    return false;
+  }
+
+  args.rval().setObject(*global);
+  return true;
+}
+
+static bool TrackUnhandledRejections(JSContext* cx, JS::HandleObject promise,
+                                     JS::PromiseRejectionHandlingState state) {
+  ShellContext* sc = GetShellContext(cx);
+  if (!sc->trackUnhandledRejections) {
+    return true;
+  }
+
+  if (!sc->unhandledRejectedPromises) {
+    sc->unhandledRejectedPromises = SetObject::create(cx);
+    if (!sc->unhandledRejectedPromises) {
+      return false;
+    }
+  }
+
+  RootedValue promiseVal(cx, ObjectValue(*promise));
+
+  Maybe<AutoRealm> ar;
+  if (cx->realm() != sc->unhandledRejectedPromises->realm()) {
+    ar.emplace(cx, sc->unhandledRejectedPromises);
+    if (!cx->compartment()->wrap(cx, &promiseVal)) {
+      return false;
+    }
+  }
+
+  switch (state) {
+    case JS::PromiseRejectionHandlingState::Unhandled:
+      if (!SetObject::add(cx, sc->unhandledRejectedPromises, promiseVal)) {
+        return false;
+      }
+      break;
+    case JS::PromiseRejectionHandlingState::Handled:
+      bool deleted = false;
+      if (!SetObject::delete_(cx, sc->unhandledRejectedPromises, promiseVal,
+                              &deleted)) {
+        return false;
+      }
+      MOZ_ASSERT(deleted);
+      break;
+  }
+
+  return true;
+}
+
 static void ForwardingPromiseRejectionTrackerCallback(
     JSContext* cx, JS::HandleObject promise,
     JS::PromiseRejectionHandlingState state, void* data) {
+  if (!TrackUnhandledRejections(cx, promise, state)) {
+    return;
+  }
+
   RootedValue callback(cx,
                        GetShellContext(cx)->promiseRejectionTrackerCallback);
   if (callback.isNull()) {
@@ -1070,8 +1146,6 @@ static bool SetPromiseRejectionTrackerCallback(JSContext* cx, unsigned argc,
   }
 
   GetShellContext(cx)->promiseRejectionTrackerCallback = args[0];
-  JS::SetPromiseRejectionTrackerCallback(
-      cx, ForwardingPromiseRejectionTrackerCallback);
 
   args.rval().setUndefined();
   return true;
@@ -1080,9 +1154,7 @@ static bool SetPromiseRejectionTrackerCallback(JSContext* cx, unsigned argc,
 static bool BoundToAsyncStack(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  RootedFunction function(cx, (&GetFunctionNativeReserved(&args.callee(), 0)
-                                    .toObject()
-                                    .as<JSFunction>()));
+  RootedValue function(cx, GetFunctionNativeReserved(&args.callee(), 0));
   RootedObject options(
       cx, &GetFunctionNativeReserved(&args.callee(), 1).toObject());
 
@@ -1526,6 +1598,16 @@ static bool AddPromiseReactions(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   return JS::AddPromiseReactions(cx, promise, onResolve, onReject);
+}
+
+static bool IgnoreUnhandledRejections(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  ShellContext* sc = GetShellContext(cx);
+  sc->trackUnhandledRejections = false;
+
+  args.rval().setUndefined();
+  return true;
 }
 
 static bool Options(JSContext* cx, unsigned argc, Value* vp) {
@@ -2698,7 +2780,7 @@ static bool AssertEq(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   bool same;
-  if (!JS_SameValue(cx, args[0], args[1], &same)) {
+  if (!JS::SameValue(cx, args[0], args[1], &same)) {
     return false;
   }
   if (!same) {
@@ -3044,8 +3126,8 @@ static const char* TryNoteName(JSTryNoteKind kind) {
       return "loop";
     case JSTRY_FOR_OF_ITERCLOSE:
       return "for-of-iterclose";
-    case JSTRY_DESTRUCTURING_ITERCLOSE:
-      return "dstr-iterclose";
+    case JSTRY_DESTRUCTURING:
+      return "destructuring";
   }
 
   MOZ_CRASH("Bad JSTryNoteKind");
@@ -4508,9 +4590,7 @@ static bool Elapsed(JSContext* cx, unsigned argc, Value* vp) {
 
 static bool Compile(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  if (args.length() < 1) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "compile", "0", "s");
+  if (!args.requireAtLeast(cx, "compile", 1)) {
     return false;
   }
   if (!args[0].isString()) {
@@ -4564,9 +4644,7 @@ static ShellCompartmentPrivate* EnsureShellCompartmentPrivate(JSContext* cx) {
 
 static bool ParseModule(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  if (args.length() == 0) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "parseModule", "0", "s");
+  if (!args.requireAtLeast(cx, "parseModule", 1)) {
     return false;
   }
 
@@ -4624,10 +4702,7 @@ static bool ParseModule(JSContext* cx, unsigned argc, Value* vp) {
 
 static bool SetModuleLoadHook(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  if (args.length() != 1) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "setModuleLoadHook", "0",
-                              "s");
+  if (!args.requireAtLeast(cx, "setModuleLoadHook", 1)) {
     return false;
   }
 
@@ -4646,10 +4721,7 @@ static bool SetModuleLoadHook(JSContext* cx, unsigned argc, Value* vp) {
 
 static bool SetModuleResolveHook(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  if (args.length() != 1) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "setModuleResolveHook",
-                              "0", "s");
+  if (!args.requireAtLeast(cx, "setModuleResolveHook", 1)) {
     return false;
   }
 
@@ -4697,10 +4769,7 @@ static JSObject* ShellModuleResolveHook(JSContext* cx,
 
 static bool SetModuleMetadataHook(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  if (args.length() != 1) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "setModuleMetadataHook",
-                              "0", "s");
+  if (!args.requireAtLeast(cx, "setModuleMetadataHook", 1)) {
     return false;
   }
 
@@ -4746,10 +4815,7 @@ static bool ReportArgumentTypeError(JSContext* cx, HandleValue value,
 static bool ShellSetModulePrivate(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (args.length() != 2) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "setModulePrivate", "0",
-                              "s");
+  if (!args.requireAtLeast(cx, "setModulePrivate", 2)) {
     return false;
   }
 
@@ -4765,10 +4831,7 @@ static bool ShellSetModulePrivate(JSContext* cx, unsigned argc, Value* vp) {
 static bool ShellGetModulePrivate(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (args.length() != 1) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "getModulePrivate", "0",
-                              "s");
+  if (!args.requireAtLeast(cx, "getModulePrivate", 1)) {
     return false;
   }
 
@@ -4783,10 +4846,7 @@ static bool ShellGetModulePrivate(JSContext* cx, unsigned argc, Value* vp) {
 static bool SetModuleDynamicImportHook(JSContext* cx, unsigned argc,
                                        Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  if (args.length() != 1) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED,
-                              "setModuleDynamicImportHook", "0", "s");
+  if (!args.requireAtLeast(cx, "setModuleDynamicImportHook", 1)) {
     return false;
   }
 
@@ -4805,10 +4865,7 @@ static bool SetModuleDynamicImportHook(JSContext* cx, unsigned argc,
 
 static bool FinishDynamicModuleImport(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  if (args.length() != 3) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED,
-                              "finishDynamicModuleImport", "0", "s");
+  if (!args.requireAtLeast(cx, "finishDynamicModuleImport", 3)) {
     return false;
   }
 
@@ -4828,10 +4885,7 @@ static bool FinishDynamicModuleImport(JSContext* cx, unsigned argc, Value* vp) {
 
 static bool AbortDynamicModuleImport(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  if (args.length() != 4) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED,
-                              "abortDynamicModuleImport", "0", "s");
+  if (!args.requireAtLeast(cx, "abortDynamicModuleImport", 4)) {
     return false;
   }
 
@@ -4926,9 +4980,7 @@ static bool ParseBinASTData(JSContext* cx, uint8_t* buf_data,
 static bool BinParse(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (args.length() < 1) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "parse", "0", "s");
+  if (!args.requireAtLeast(cx, "parseBin", 1)) {
     return false;
   }
 
@@ -4957,8 +5009,6 @@ static bool BinParse(JSContext* cx, unsigned argc, Value* vp) {
 
   // Extract argument 2: Options.
 
-  bool useMultipart = true;
-
   if (args.length() >= 2) {
     if (!args[1].isObject()) {
       const char* typeName = InformalValueTypeName(args[1]);
@@ -4973,20 +5023,14 @@ static bool BinParse(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
 
-    if (optionFormat.isUndefined()) {
-      // By default, `useMultipart` is `true`.
-      useMultipart = true;
-    } else if (optionFormat.isString()) {
+    if (!optionFormat.isUndefined()) {
       RootedLinearString linearFormat(
           cx, optionFormat.toString()->ensureLinear(cx));
       if (!linearFormat) {
         return false;
       }
-      if (StringEqualsAscii(linearFormat, "multipart")) {
-        useMultipart = true;
-      } else if (StringEqualsAscii(linearFormat, "simple")) {
-        useMultipart = false;
-      } else {
+      // Currently not used, reserved for future.
+      if (!StringEqualsAscii(linearFormat, "multipart")) {
         UniqueChars printable = JS_EncodeStringToUTF8(cx, linearFormat);
         if (!printable) {
           return false;
@@ -4994,8 +5038,7 @@ static bool BinParse(JSContext* cx, unsigned argc, Value* vp) {
 
         JS_ReportErrorUTF8(
             cx,
-            "Unknown value for option `format`, expected 'multipart' or "
-            "'simple', got %s",
+            "Unknown value for option `format`, expected 'multipart', got %s",
             printable.get());
         return false;
       }
@@ -5022,9 +5065,7 @@ static bool BinParse(JSContext* cx, unsigned argc, Value* vp) {
   Directives directives(false);
   GlobalSharedContext globalsc(cx, ScopeKind::Global, directives, false);
 
-  auto parseFunc = useMultipart
-                       ? ParseBinASTData<frontend::BinTokenReaderMultipart>
-                       : ParseBinASTData<frontend::BinTokenReaderTester>;
+  auto parseFunc = ParseBinASTData<frontend::BinTokenReaderMultipart>;
   if (!parseFunc(cx, buf_data, buf_length, &globalsc, usedNames, options,
                  sourceObj)) {
     return false;
@@ -5041,9 +5082,7 @@ static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
 
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (args.length() < 1) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "parse", "0", "s");
+  if (!args.requireAtLeast(cx, "parse", 1)) {
     return false;
   }
   if (!args[0].isString()) {
@@ -5170,9 +5209,7 @@ static bool SyntaxParse(JSContext* cx, unsigned argc, Value* vp) {
 
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (args.length() < 1) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "parse", "0", "s");
+  if (!args.requireAtLeast(cx, "syntaxParse", 1)) {
     return false;
   }
   if (!args[0].isString()) {
@@ -5242,10 +5279,7 @@ static bool OffThreadCompileScript(JSContext* cx, unsigned argc, Value* vp) {
 
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (args.length() < 1) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "offThreadCompileScript",
-                              "0", "s");
+  if (!args.requireAtLeast(cx, "offThreadCompileScript", 1)) {
     return false;
   }
   if (!args[0].isString()) {
@@ -5453,10 +5487,7 @@ static bool OffThreadDecodeScript(JSContext* cx, unsigned argc, Value* vp) {
 
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (args.length() < 1) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "offThreadDecodeScript",
-                              "0", "s");
+  if (!args.requireAtLeast(cx, "offThreadDecodeScript", 1)) {
     return false;
   }
   if (!args[0].isObject() || !CacheEntry_isCacheEntry(&args[0].toObject())) {
@@ -6227,6 +6258,15 @@ static bool NewGlobal(JSContext* cx, unsigned argc, Value* vp) {
                           "same compartment");
       return false;
     }
+
+    // Debugger visibility is per-compartment, not per-realm, so make sure the
+    // requested visibility matches the existing compartment's.
+    if (creationOptions.invisibleToDebugger() != comp->invisibleToDebugger()) {
+      JS_ReportErrorASCII(cx,
+                          "All the realms in a compartment must have "
+                          "the same debugger visibility");
+      return false;
+    }
   }
 
   RootedObject global(cx, NewGlobalObject(cx, options, principals));
@@ -6269,7 +6309,7 @@ static bool NukeAllCCWs(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  NukeCrossCompartmentWrappers(cx, AllCompartments(), cx->compartment(),
+  NukeCrossCompartmentWrappers(cx, AllCompartments(), cx->realm(),
                                NukeWindowReferences, NukeAllReferences);
   args.rval().setUndefined();
   return true;
@@ -7622,6 +7662,9 @@ static bool DumpScopeChain(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
     script = JSFunction::getOrCreateScript(cx, fun);
+    if (!script) {
+      return false;
+    }
   } else {
     script = obj->as<ModuleObject>().maybeScript();
     if (!script) {
@@ -7715,13 +7758,6 @@ static bool AddMarkObservers(JSContext* cx, unsigned argc, Value* vp) {
     JS_ReportErrorASCII(cx, "argument must be an Array of objects");
     return false;
   }
-
-#ifdef ENABLE_WASM_GC
-  if (gc::GCRuntime::temporaryAbortIfWasmGc(cx)) {
-    JS_ReportErrorASCII(cx, "API temporarily unavailable under wasm gc");
-    return false;
-  }
-#endif
 
   // WeakCaches are not swept during a minor GC. To prevent nursery-allocated
   // contents from having the mark bits be deceptively black until the second
@@ -8530,7 +8566,7 @@ JS_FN_HELP("parseBin", BinParse, 1, 0,
 
     JS_FN_HELP("nukeAllCCWs", NukeAllCCWs, 0, 0,
 "nukeAllCCWs()",
-"  Like nukeCCW, but for all CrossCompartmentWrappers targeting the current compartment."),
+"  Like nukeCCW, but for all CrossCompartmentWrappers targeting the current realm."),
 
     JS_FN_HELP("recomputeWrappers", RecomputeWrappers, 2, 0,
 "recomputeWrappers([src, [target]])",
@@ -8549,6 +8585,12 @@ JS_FN_HELP("parseBin", BinParse, 1, 0,
     JS_FN_HELP("addPromiseReactions", AddPromiseReactions, 3, 0,
 "addPromiseReactions(promise, onResolve, onReject)",
 "  Calls the JS::AddPromiseReactions JSAPI function with the given arguments."),
+
+    JS_FN_HELP("ignoreUnhandledRejections", IgnoreUnhandledRejections, 0, 0,
+"ignoreUnhandledRejections()",
+"  By default, js shell tracks unhandled promise rejections and reports\n"
+"  them at the end of the exectuion.  If a testcase isn't interested\n"
+"  in those rejections, call this to stop tracking and reporting."),
 
     JS_FN_HELP("getMaxArgs", GetMaxArgs, 0, 0,
 "getMaxArgs()",
@@ -8663,6 +8705,11 @@ JS_FN_HELP("parseBin", BinParse, 1, 0,
     JS_FN_HELP("enqueueJob", EnqueueJob, 1, 0,
 "enqueueJob(fn)",
 "  Enqueue 'fn' on the shell's job queue."),
+
+    JS_FN_HELP("globalOfFirstJobInQueue", GlobalOfFirstJobInQueue, 0, 0,
+"globalOfFirstJobInQueue()",
+"  Returns the global of the first item in the job queue. Throws an exception\n"
+"  if the queue is empty.\n"),
 
     JS_FN_HELP("drainJobQueue", DrainJobQueue, 0, 0,
 "drainJobQueue()",
@@ -10137,6 +10184,7 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
   enableWasmGc = enableWasmGc && !wasmForceCranelift;
 #endif
 #endif
+  enableWasmVerbose = op.getBoolOption("wasm-verbose");
   enableTestWasmAwaitTier2 = op.getBoolOption("test-wasm-await-tier2");
   enableAsyncStacks = !op.getBoolOption("no-async-stacks");
   enableStreams = !op.getBoolOption("no-streams");
@@ -10157,6 +10205,7 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
 #ifdef ENABLE_WASM_GC
       .setWasmGc(enableWasmGc)
 #endif
+      .setWasmVerbose(enableWasmVerbose)
       .setTestWasmAwaitTier2(enableTestWasmAwaitTier2)
       .setNativeRegExp(enableNativeRegExp)
       .setAsyncStack(enableAsyncStacks);
@@ -10483,6 +10532,7 @@ static void SetWorkerContextOptions(JSContext* cx) {
 #ifdef ENABLE_WASM_GC
       .setWasmGc(enableWasmGc)
 #endif
+      .setWasmVerbose(enableWasmVerbose)
       .setTestWasmAwaitTier2(enableTestWasmAwaitTier2)
       .setNativeRegExp(enableNativeRegExp);
 
@@ -10501,6 +10551,104 @@ static void SetWorkerContextOptions(JSContext* cx) {
 #endif
 
   JS_SetNativeStackQuota(cx, gMaxStackSize);
+}
+
+static MOZ_MUST_USE bool PrintUnhandledRejection(
+    JSContext* cx, Handle<PromiseObject*> promise) {
+  RootedValue reason(cx, promise->reason());
+  RootedObject site(cx, promise->resolutionSite());
+
+  RootedString str(cx, JS_ValueToSource(cx, reason));
+  if (!str) {
+    return false;
+  }
+
+  UniqueChars utf8chars = JS_EncodeStringToUTF8(cx, str);
+  if (!utf8chars) {
+    return false;
+  }
+
+  FILE* fp = ErrorFilePointer();
+  fprintf(fp, "Unhandled rejection: %s\n", utf8chars.get());
+
+  if (!site) {
+    fputs("(no stack trace available)\n", stderr);
+    return true;
+  }
+
+  JSPrincipals* principals = cx->realm()->principals();
+  RootedString stackStr(cx);
+  if (!BuildStackString(cx, principals, site, &stackStr, 2)) {
+    return false;
+  }
+
+  UniqueChars stack = JS_EncodeStringToUTF8(cx, stackStr);
+  if (!stack) {
+    return false;
+  }
+
+  fputs("Stack:\n", fp);
+  fputs(stack.get(), fp);
+
+  return true;
+}
+
+static MOZ_MUST_USE bool ReportUnhandledRejections(JSContext* cx) {
+  ShellContext* sc = GetShellContext(cx);
+  if (!sc->trackUnhandledRejections) {
+    return true;
+  }
+
+  if (!sc->unhandledRejectedPromises) {
+    return true;
+  }
+
+  AutoRealm ar(cx, sc->unhandledRejectedPromises);
+
+  if (!SetObject::size(cx, sc->unhandledRejectedPromises)) {
+    return true;
+  }
+
+  sc->exitCode = EXITCODE_RUNTIME_ERROR;
+
+  RootedValue iter(cx);
+  if (!SetObject::iterator(cx, SetObject::IteratorKind::Values,
+                           sc->unhandledRejectedPromises, &iter)) {
+    return false;
+  }
+
+  Rooted<SetIteratorObject*> iterObj(cx,
+                                     &iter.toObject().as<SetIteratorObject>());
+  RootedArrayObject resultObj(
+      cx, &SetIteratorObject::createResult(cx)->as<ArrayObject>());
+  if (!resultObj) {
+    return false;
+  }
+
+  while (true) {
+    bool done = SetIteratorObject::next(iterObj, resultObj, cx);
+    if (done) {
+      break;
+    }
+
+    RootedObject obj(cx, &resultObj->getDenseElement(0).toObject());
+    obj = CheckedUnwrap(obj);
+    if (!obj) {
+      return false;
+    }
+
+    Handle<PromiseObject*> promise = obj.as<PromiseObject>();
+
+    AutoRealm ar2(cx, promise);
+
+    if (!PrintUnhandledRejection(cx, promise)) {
+      return false;
+    }
+  }
+
+  sc->unhandledRejectedPromises = nullptr;
+
+  return true;
 }
 
 static int Shell(JSContext* cx, OptionParser* op, char** envp) {
@@ -10563,6 +10711,14 @@ static int Shell(JSContext* cx, OptionParser* op, char** envp) {
    */
   if (!GetShellContext(cx)->quitting) {
     js::RunJobs(cx);
+  }
+
+  // Only if there's no other error, report unhandled rejections.
+  if (!result && !sc->exitCode) {
+    if (!ReportUnhandledRejections(cx)) {
+      FILE* fp = ErrorFilePointer();
+      fputs("Error while printing unhandled rejection\n", fp);
+    }
   }
 
   if (sc->exitCode) {
@@ -10771,9 +10927,11 @@ int main(int argc, char** argv, char** envp) {
       || !op.addBoolOption('\0', "wasm-force-cranelift",
                            "Enable wasm Cranelift compiler")
 #endif
-      || !op.addBoolOption('\0', "test-wasm-await-tier2",
-                           "Forcibly activate tiering and block "
-                           "instantiation on completion of tier2")
+      || !op.addBoolOption('\0', "wasm-verbose",
+                           "Enable WebAssembly verbose logging") ||
+      !op.addBoolOption('\0', "test-wasm-await-tier2",
+                        "Forcibly activate tiering and block "
+                        "instantiation on completion of tier2")
 #ifdef ENABLE_WASM_GC
       || !op.addBoolOption('\0', "wasm-gc", "Enable wasm GC features")
 #else
@@ -10984,6 +11142,16 @@ int main(int argc, char** argv, char** envp) {
     return EXIT_SUCCESS;
   }
 
+  /*
+   * Allow dumping on Linux with the fuzzing flag set, even when running with
+   * the suid/sgid flag set on the shell.
+   */
+#ifdef XP_LINUX
+  if (op.getBoolOption("fuzzing-safe")) {
+    prctl(PR_SET_DUMPABLE, 1);
+  }
+#endif
+
 #ifdef DEBUG
   /*
    * Process OOM options as early as possible so that we can observe as many
@@ -11087,6 +11255,9 @@ int main(int argc, char** argv, char** envp) {
     js_delete(bufferStreamState);
   });
   JS::InitConsumeStreamCallback(cx, ConsumeBufferSource, ReportStreamError);
+
+  JS::SetPromiseRejectionTrackerCallback(
+      cx, ForwardingPromiseRejectionTrackerCallback);
 
   JS_SetNativeStackQuota(cx, gMaxStackSize);
 

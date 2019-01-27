@@ -19,7 +19,7 @@
 #include "nsIPresShell.h"
 #include "nsPresContext.h"
 #include "nsIContent.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsIFrame.h"
 #include "nsAtom.h"
 #include "nsNameSpaceManager.h"
@@ -3810,7 +3810,7 @@ bool
 nsNativeThemeCocoa::CreateWebRenderCommandsForWidget(mozilla::wr::DisplayListBuilder& aBuilder,
                                                      mozilla::wr::IpcResourceUpdateQueue& aResources,
                                                      const mozilla::layers::StackingContextHelper& aSc,
-                                                     mozilla::layers::WebRenderLayerManager* aManager,
+                                                     mozilla::layers::RenderRootStateManager* aManager,
                                                      nsIFrame* aFrame,
                                                      StyleAppearance aAppearance,
                                                      const nsRect& aRect)

@@ -7,23 +7,29 @@
 const {
   ADB_ADDON_STATUS_UPDATED,
   DEBUG_TARGET_COLLAPSIBILITY_UPDATED,
+  MULTI_E10S_UPDATED,
   NETWORK_LOCATIONS_UPDATED,
   PAGE_SELECTED,
+  TEMPORARY_EXTENSION_INSTALL_FAILURE,
+  TEMPORARY_EXTENSION_INSTALL_SUCCESS,
   USB_RUNTIMES_SCAN_START,
   USB_RUNTIMES_SCAN_SUCCESS,
 } = require("../constants");
 
 function UiState(locations = [], debugTargetCollapsibilities = {},
-                 networkEnabled = false, wifiEnabled = false, showSystemAddons = false) {
+                 networkEnabled = false, wifiEnabled = false,
+                 showSystemAddons = false, isMultiE10s = false) {
   return {
     adbAddonStatus: null,
     debugTargetCollapsibilities,
+    isMultiE10s,
     isScanningUsb: false,
     networkEnabled,
     networkLocations: locations,
     selectedPage: null,
     selectedRuntime: null,
     showSystemAddons,
+    temporaryInstallError: null,
     wifiEnabled,
   };
 }
@@ -40,6 +46,11 @@ function uiReducer(state = UiState(), action) {
       const debugTargetCollapsibilities = new Map(state.debugTargetCollapsibilities);
       debugTargetCollapsibilities.set(key, isCollapsed);
       return Object.assign({}, state, { debugTargetCollapsibilities });
+    }
+
+    case MULTI_E10S_UPDATED: {
+      const { isMultiE10s } = action;
+      return Object.assign({}, state, { isMultiE10s });
     }
 
     case NETWORK_LOCATIONS_UPDATED: {
@@ -59,6 +70,15 @@ function uiReducer(state = UiState(), action) {
 
     case USB_RUNTIMES_SCAN_SUCCESS: {
       return Object.assign({}, state, { isScanningUsb: false });
+    }
+
+    case TEMPORARY_EXTENSION_INSTALL_SUCCESS: {
+      return Object.assign({}, state, { temporaryInstallError: null });
+    }
+
+    case TEMPORARY_EXTENSION_INSTALL_FAILURE: {
+      const { error } = action;
+      return Object.assign({}, state, { temporaryInstallError: error.message });
     }
 
     default:

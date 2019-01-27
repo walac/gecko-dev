@@ -51,8 +51,11 @@ class HttpChannelSecurityWarningReporter : public nsISupports {
  public:
   virtual MOZ_MUST_USE nsresult ReportSecurityMessage(
       const nsAString &aMessageTag, const nsAString &aMessageCategory) = 0;
-  virtual nsresult LogBlockedCORSRequest(const nsAString &aMessage,
-                                         const nsACString &aCategory) = 0;
+  virtual MOZ_MUST_USE nsresult LogBlockedCORSRequest(
+      const nsAString &aMessage, const nsACString &aCategory) = 0;
+  virtual MOZ_MUST_USE nsresult
+  LogMimeTypeMismatch(const nsACString &aMessageName, bool aWarning,
+                      const nsAString &aURL, const nsAString &aContentType) = 0;
 };
 
 //-----------------------------------------------------------------------------
@@ -199,6 +202,9 @@ class nsHttpChannel final : public HttpBaseChannel,
       const nsAString &aMessageTag, const nsAString &aMessageCategory) override;
   NS_IMETHOD LogBlockedCORSRequest(const nsAString &aMessage,
                                    const nsACString &aCategory) override;
+  NS_IMETHOD LogMimeTypeMismatch(const nsACString &aMessageName, bool aWarning,
+                                 const nsAString &aURL,
+                                 const nsAString &aContentType) override;
 
   void SetWarningReporter(HttpChannelSecurityWarningReporter *aReporter);
   HttpChannelSecurityWarningReporter *GetWarningReporter();
@@ -462,7 +468,8 @@ class nsHttpChannel final : public HttpBaseChannel,
 
   inline static bool DoNotRender3xxBody(nsresult rv) {
     return rv == NS_ERROR_REDIRECT_LOOP || rv == NS_ERROR_CORRUPTED_CONTENT ||
-           rv == NS_ERROR_UNKNOWN_PROTOCOL || rv == NS_ERROR_MALFORMED_URI;
+           rv == NS_ERROR_UNKNOWN_PROTOCOL || rv == NS_ERROR_MALFORMED_URI ||
+           rv == NS_ERROR_PORT_ACCESS_NOT_ALLOWED;
   }
 
   // Report net vs cache time telemetry

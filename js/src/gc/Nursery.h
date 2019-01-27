@@ -59,6 +59,7 @@ namespace gc {
 class AutoMaybeStartBackgroundAllocation;
 class AutoTraceSession;
 struct Cell;
+class GCSchedulingTunables;
 class MinorCollectionTracer;
 class RelocationOverlay;
 struct TenureCountCache;
@@ -241,6 +242,21 @@ class Nursery {
    * MaxNurseryBufferSize.
    */
   void* allocateBufferSameLocation(JSObject* obj, size_t nbytes);
+
+  /* Allocate a zero-initialized buffer for a given zone, using the nursery if
+   * possible. If the buffer isn't allocated in the nursery, the given arena is
+   * used.
+   */
+  void* allocateZeroedBuffer(JS::Zone* zone, size_t nbytes,
+                             arena_id_t arena = js::MallocArena);
+
+  /*
+   * Allocate a zero-initialized buffer for a given object, using the nursery if
+   * possible and obj is in the nursery. If the buffer isn't allocated in the
+   * nursery, the given arena is used.
+   */
+  void* allocateZeroedBuffer(JSObject* obj, size_t nbytes,
+                             arena_id_t arena = js::MallocArena);
 
   /* Resize an existing object buffer. */
   void* reallocateBuffer(JSObject* obj, void* oldBuffer, size_t oldBytes,
@@ -547,6 +563,8 @@ class Nursery {
 
   JSRuntime* runtime() const { return runtime_; }
   gcstats::Statistics& stats() const;
+
+  const js::gc::GCSchedulingTunables& tunables() const;
 
   /* Common internal allocator function. */
   void* allocate(size_t size);

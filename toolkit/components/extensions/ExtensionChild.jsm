@@ -26,16 +26,12 @@ XPCOMUtils.defineLazyServiceGetter(this, "finalizationService",
 XPCOMUtils.defineLazyModuleGetters(this, {
   ExtensionContent: "resource://gre/modules/ExtensionContent.jsm",
   ExtensionPageChild: "resource://gre/modules/ExtensionPageChild.jsm",
+  ExtensionProcessScript: "resource://gre/modules/ExtensionProcessScript.jsm",
   MessageChannel: "resource://gre/modules/MessageChannel.jsm",
   NativeApp: "resource://gre/modules/NativeMessaging.jsm",
   PerformanceCounters: "resource://gre/modules/PerformanceCounters.jsm",
   PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
 });
-
-XPCOMUtils.defineLazyGetter(
-  this, "processScript",
-  () => Cc["@mozilla.org/webextensions/extension-process-script;1"]
-          .getService().wrappedJSObject);
 
 // We're using the pref to avoid loading PerformanceCounters.jsm for nothing.
 XPCOMUtils.defineLazyPreferenceGetter(this, "gTimingEnabled",
@@ -712,12 +708,20 @@ class BrowserExtensionContent extends EventEmitter {
     return this._manifest;
   }
 
+  get privateBrowsingAllowed() {
+    return this.policy.privateBrowsingAllowed;
+  }
+
+  canAccessWindow(window) {
+    return this.policy.canAccessWindow(window);
+  }
+
   getAPIManager() {
     let apiManagers = [ExtensionPageChild.apiManager];
 
     if (this.dependencies) {
       for (let id of this.dependencies) {
-        let extension = processScript.getExtensionChild(id);
+        let extension = ExtensionProcessScript.getExtensionChild(id);
         if (extension) {
           apiManagers.push(extension.experimentAPIManager);
         }

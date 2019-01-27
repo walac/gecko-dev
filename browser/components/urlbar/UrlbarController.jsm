@@ -15,59 +15,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 });
 
 /**
- * QueryContext defines a user's autocomplete input from within the Address Bar.
- * It supplements it with details of how the search results should be obtained
- * and what they consist of.
- */
-class QueryContext {
-  /**
-   * Constructs the QueryContext instance.
-   *
-   * @param {object} options
-   *   The initial options for QueryContext.
-   * @param {string} options.searchString
-   *   The string the user entered in autocomplete. Could be the empty string
-   *   in the case of the user opening the popup via the mouse.
-   * @param {number} options.lastKey
-   *   The last key the user entered (as a key code). Could be null if the search
-   *   was started via the mouse.
-   * @param {boolean} options.isPrivate
-   *   Set to true if this query was started from a private browsing window.
-   * @param {number} options.maxResults
-   *   The maximum number of results that will be displayed for this query.
-   * @param {boolean} [options.autoFill]
-   *   Whether or not to include autofill results. Optional, as this is normally
-   *   set by the AddressBarController.
-   */
-  constructor(options = {}) {
-    this._checkRequiredOptions(options, [
-      "searchString",
-      "lastKey",
-      "maxResults",
-      "isPrivate",
-    ]);
-
-    this.autoFill = !!options.autoFill;
-  }
-
-  /**
-   * Checks the required options, saving them as it goes.
-   *
-   * @param {object} options The options object to check.
-   * @param {array} optionNames The names of the options to check for.
-   * @throws {Error} Throws if there is a missing option.
-   */
-  _checkRequiredOptions(options, optionNames) {
-    for (let optionName of optionNames) {
-      if (!(optionName in options)) {
-        throw new Error(`Missing or empty ${optionName} provided to QueryContext`);
-      }
-      this[optionName] = options[optionName];
-    }
-  }
-}
-
-/**
  * The address bar controller handles queries from the address bar, obtains
  * results and returns them to the UI for display.
  *
@@ -133,12 +80,16 @@ class UrlbarController {
    * @param {QueryContext} queryContext The query details.
    */
   async startQuery(queryContext) {
+    // Cancel any running query.
+    if (this._lastQueryContext) {
+      this.cancelQuery(this._lastQueryContext);
+    }
+    this._lastQueryContext = queryContext;
+
     queryContext.autoFill = UrlbarPrefs.get("autoFill");
 
     this._notify("onQueryStarted", queryContext);
-
     await this.manager.startQuery(queryContext, this);
-
     this._notify("onQueryFinished", queryContext);
   }
 
@@ -149,8 +100,10 @@ class UrlbarController {
    * @param {QueryContext} queryContext The query details.
    */
   cancelQuery(queryContext) {
+    if (queryContext === this._lastQueryContext) {
+      delete this._lastQueryContext;
+    }
     this.manager.cancelQuery(queryContext);
-
     this._notify("onQueryCancelled", queryContext);
   }
 
@@ -212,6 +165,10 @@ class UrlbarController {
     }
 
     switch (event.keyCode) {
+      case KeyEvent.DOM_VK_ESCAPE:
+        this.input.handleRevert();
+        event.preventDefault();
+        break;
       case KeyEvent.DOM_VK_RETURN:
         if (AppConstants.platform == "macosx" &&
             event.metaKey) {
@@ -222,20 +179,22 @@ class UrlbarController {
         // TODO: We should have an input bufferrer so that we can use search results
         // if appropriate.
         this.input.handleCommand(event);
-        return;
-      case KeyEvent.DOM_VK_TAB:
-        this.view.selectNextItem({ reverse: event.shiftKey });
-        event.preventDefault();
         break;
-      case KeyEvent.DOM_VK_DOWN:
-        if (!event.ctrlKey && !event.altKey) {
-          this.view.selectNextItem();
+      case KeyEvent.DOM_VK_TAB:
+        if (this.view.isOpen) {
+          this.view.selectNextItem({ reverse: event.shiftKey });
           event.preventDefault();
         }
         break;
+      case KeyEvent.DOM_VK_DOWN:
       case KeyEvent.DOM_VK_UP:
         if (!event.ctrlKey && !event.altKey) {
-          this.view.selectNextItem({ reverse: true });
+          if (this.view.isOpen) {
+            this.view.selectNextItem({
+              reverse: event.keyCode == KeyEvent.DOM_VK_UP });
+          } else {
+            this.input.startQuery();
+          }
           event.preventDefault();
         }
         break;

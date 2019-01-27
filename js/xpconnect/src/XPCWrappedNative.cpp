@@ -6,6 +6,14 @@
 
 /* Wrapper object for reflecting native xpcom objects into JavaScript. */
 
+#if (__GNUC__ && __linux__ && __PPC64__ && _LITTLE_ENDIAN)
+// Stack protection generates incorrect code currently with gcc on ppc64le
+// (bug 1512162).
+#define MOZ_GCC_STACK_PROTECTOR_DISABLED 1  // removed at end of file
+#pragma GCC push_options
+#pragma GCC optimize("no-stack-protector")
+#endif
+
 #include "xpcprivate.h"
 #include "mozilla/jsipc/CrossProcessObjectWrappers.h"
 #include "nsWrapperCacheInlines.h"
@@ -183,7 +191,7 @@ nsresult XPCWrappedNative::WrapNewGlobal(xpcObjectHelper& nativeHelper,
   if (!global) {
     return NS_ERROR_FAILURE;
   }
-  XPCWrappedNativeScope* scope = RealmPrivate::Get(global)->scope;
+  XPCWrappedNativeScope* scope = CompartmentPrivate::Get(global)->scope;
 
   // Immediately enter the global's realm, so that everything else we
   // create ends up there.
@@ -342,7 +350,7 @@ nsresult XPCWrappedNative::GetNewOrUsed(xpcObjectHelper& helper,
                      getter_AddRefs(scrWrapper));
   }
 
-  RootedObject parent(cx, Scope->GetGlobalJSObject());
+  RootedObject parent(cx, Scope->GetGlobalForWrappedNatives());
 
   mozilla::Maybe<JSAutoRealm> ar;
 
@@ -979,9 +987,6 @@ nsresult XPCWrappedNative::InitTearOff(XPCWrappedNativeTearOff* aTearOff,
   // into an infinite loop.
   // see: http://bugzilla.mozilla.org/show_bug.cgi?id=96725
 
-  // The code in this block also does a check for the double wrapped
-  // nsIPropertyBag case.
-
   nsCOMPtr<nsIXPConnectWrappedJS> wrappedJS(do_QueryInterface(qiResult));
   if (wrappedJS) {
     RootedObject jso(cx, wrappedJS->GetJSObject());
@@ -1000,32 +1005,6 @@ nsresult XPCWrappedNative::InitTearOff(XPCWrappedNativeTearOff* aTearOff,
 
       aTearOff->SetInterface(nullptr);
       return NS_OK;
-    }
-
-    // Decide whether or not to expose nsIPropertyBag to calling
-    // JS code in the double wrapped case.
-    //
-    // Our rule here is that when JSObjects are double wrapped and
-    // exposed to other JSObjects then the nsIPropertyBag interface
-    // is only exposed on an 'opt-in' basis; i.e. if the underlying
-    // JSObject wants other JSObjects to be able to see this interface
-    // then it must implement QueryInterface and not throw an exception
-    // when asked for nsIPropertyBag. It need not actually *implement*
-    // nsIPropertyBag - xpconnect will do that work.
-
-    if (iid->Equals(NS_GET_IID(nsIPropertyBag)) && jso) {
-      RootedObject jsoGlobal(cx, wrappedJS->GetJSObjectGlobal());
-      RefPtr<nsXPCWrappedJSClass> clasp =
-          nsXPCWrappedJSClass::GetNewOrUsed(cx, *iid);
-      if (clasp) {
-        RootedObject answer(
-            cx, clasp->CallQueryInterfaceOnJSObject(cx, jso, jsoGlobal, *iid));
-
-        if (!answer) {
-          aTearOff->SetInterface(nullptr);
-          return NS_ERROR_NO_INTERFACE;
-        }
-      }
     }
   }
 
@@ -1847,4 +1826,11 @@ static void DEBUG_CheckClassInfoClaims(XPCWrappedNative* wrapper) {
     }
   }
 }
+#endif
+
+#if (MOZ_GCC_STACK_PROTECTOR_DISABLED)
+// Reenable stack protection in following modules, if we disabled it
+// (bug 1512162).
+#pragma GCC pop_options
+#undef MOZ_GCC_STACK_PROTECTOR_DISABLED
 #endif

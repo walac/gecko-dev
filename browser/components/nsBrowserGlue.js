@@ -202,16 +202,6 @@ let ACTORS = {
     },
   },
 
-  PageMetadata: {
-    child: {
-      module: "resource:///actors/PageMetadataChild.jsm",
-      messages: [
-        "PageMetadata:GetPageData",
-        "PageMetadata:GetMicroformats",
-      ],
-    },
-  },
-
   PageStyle: {
     child: {
       module: "resource:///actors/PageStyleChild.jsm",
@@ -403,7 +393,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   DateTimePickerParent: "resource://gre/modules/DateTimePickerParent.jsm",
   Discovery: "resource:///modules/Discovery.jsm",
   ExtensionsUI: "resource:///modules/ExtensionsUI.jsm",
-  Feeds: "resource:///modules/Feeds.jsm",
   FileSource: "resource://gre/modules/L10nRegistry.jsm",
   FormValidationHandler: "resource:///modules/FormValidationHandler.jsm",
   FxAccounts: "resource://gre/modules/FxAccounts.jsm",
@@ -532,7 +521,6 @@ const listeners = {
     "RemoteLogins:removeLogin": ["LoginManagerParent"],
     "RemoteLogins:insecureLoginFormPresent": ["LoginManagerParent"],
     // PLEASE KEEP THIS LIST IN SYNC WITH THE MOBILE LISTENERS IN BrowserCLH.js
-    "WCCR:registerProtocolHandler": ["Feeds"],
     "rtcpeer:CancelRequest": ["webrtcUI"],
     "rtcpeer:Request": ["webrtcUI"],
     "webrtc:CancelRequest": ["webrtcUI"],
@@ -1466,7 +1454,6 @@ BrowserGlue.prototype = {
     AboutPrivateBrowsingHandler.uninit();
     AutoCompletePopup.uninit();
     DateTimePickerParent.uninit();
-    SaveToPocket.uninit();
 
     // Browser errors are only collected on Nightly, but telemetry for
     // them is collected on all channels.
@@ -1833,13 +1820,13 @@ BrowserGlue.prototype = {
       let tabSubstring = gTabbrowserBundle.GetStringFromName("tabs.closeWarningMultipleWindowsTabSnippet");
       tabSubstring = PluralForm.get(pagecount, tabSubstring).replace(/#1/, pagecount);
 
-      let stringID = sessionWillBeRestored ? "tabs.closeWarningMultipleWindowsSessionRestore"
+      let stringID = sessionWillBeRestored ? "tabs.closeWarningMultipleWindowsSessionRestore2"
                                            : "tabs.closeWarningMultipleWindows";
       let windowString = gTabbrowserBundle.GetStringFromName(stringID);
       windowString = PluralForm.get(windowcount, windowString).replace(/#1/, windowcount);
       warningMessage = windowString.replace(/%(?:1\$)?S/i, tabSubstring);
     } else {
-      let stringID = sessionWillBeRestored ? "tabs.closeWarningMultipleSessionRestore"
+      let stringID = sessionWillBeRestored ? "tabs.closeWarningMultipleSessionRestore2"
                                            : "tabs.closeWarningMultiple";
       warningMessage = gTabbrowserBundle.GetStringFromName(stringID);
       warningMessage = PluralForm.get(pagecount, warningMessage).replace("#1", pagecount);
@@ -1877,7 +1864,7 @@ BrowserGlue.prototype = {
              getService(Ci.nsIUpdateManager);
     try {
       // If the updates.xml file is deleted then getUpdateAt will throw.
-      var update = um.getUpdateAt(0).QueryInterface(Ci.nsIPropertyBag);
+      var update = um.getUpdateAt(0).QueryInterface(Ci.nsIWritablePropertyBag);
     } catch (e) {
       // This should never happen.
       Cu.reportError("Unable to find update: " + e);
@@ -3182,9 +3169,6 @@ const ContentPermissionIntegration = {
       }
       case "midi": {
         return new PermissionUI.MIDIPermissionPrompt(request);
-      }
-      case "autoplay-media": {
-        return new PermissionUI.AutoplayPermissionPrompt(request);
       }
       case "storage-access": {
         return new PermissionUI.StorageAccessPermissionPrompt(request);

@@ -164,8 +164,6 @@
 @RESPATH@/components/ConsoleAPIStorage.js
 @RESPATH@/components/BrowserElementParent.manifest
 @RESPATH@/components/BrowserElementParent.js
-@RESPATH@/components/FeedProcessor.manifest
-@RESPATH@/components/FeedProcessor.js
 @RESPATH@/components/UAOverridesBootstrapper.js
 @RESPATH@/components/UAOverridesBootstrapper.manifest
 @RESPATH@/components/WellKnownOpportunisticUtils.js
@@ -175,8 +173,6 @@
 @BINPATH@/components/nsDNSServiceDiscovery.manifest
 @BINPATH@/components/nsDNSServiceDiscovery.js
 #endif
-@RESPATH@/browser/components/BrowserFeeds.manifest
-@RESPATH@/browser/components/WebContentConverter.js
 @RESPATH@/browser/components/BrowserComponents.manifest
 @RESPATH@/browser/components/nsBrowserContentHandler.js
 @RESPATH@/browser/components/nsBrowserGlue.js
@@ -184,6 +180,10 @@
 @RESPATH@/browser/components/devtools-startup.js
 @RESPATH@/browser/components/aboutdebugging-registration.js
 @RESPATH@/browser/components/aboutdebugging.manifest
+#ifdef NIGHTLY_BUILD
+@RESPATH@/browser/components/aboutdebugging-new-registration.js
+@RESPATH@/browser/components/aboutdebugging-new.manifest
+#endif
 @RESPATH@/browser/components/aboutdevtools-registration.js
 @RESPATH@/browser/components/aboutdevtools.manifest
 @RESPATH@/browser/components/aboutdevtoolstoolbox-registration.js
@@ -193,6 +193,7 @@
 @RESPATH@/browser/components/EnterprisePolicies.js
 @RESPATH@/browser/components/EnterprisePoliciesContent.js
 @RESPATH@/browser/components/EnterprisePolicies.manifest
+@RESPATH@/browser/components/WebProtocolHandlerRegistrar.js
 @RESPATH@/components/Downloads.manifest
 @RESPATH@/components/DownloadLegacy.js
 @RESPATH@/components/PageThumbsComponents.manifest
@@ -358,7 +359,6 @@
 
 ; [Extensions]
 @RESPATH@/components/extensions-toolkit.manifest
-@RESPATH@/components/extension-process-script.js
 @RESPATH@/browser/components/extensions-browser.manifest
 
 ; [Normandy]

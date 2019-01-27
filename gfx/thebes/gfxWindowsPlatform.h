@@ -7,7 +7,7 @@
 #define GFX_WINDOWS_PLATFORM_H
 
 /**
- * XXX to get CAIRO_HAS_D2D_SURFACE, CAIRO_HAS_DWRITE_FONT
+ * XXX to get CAIRO_HAS_DWRITE_FONT
  * and cairo_win32_scaled_font_select_font
  */
 #include "cairo-win32.h"
@@ -104,6 +104,9 @@ class gfxWindowsPlatform : public gfxPlatform {
   static gfxWindowsPlatform* GetPlatform() {
     return (gfxWindowsPlatform*)gfxPlatform::GetPlatform();
   }
+
+  virtual void EnsureDevicesInitialized() override;
+  virtual bool DevicesInitialized() override;
 
   virtual gfxPlatformFontList* CreatePlatformFontList() override;
 
@@ -259,6 +262,7 @@ class gfxWindowsPlatform : public gfxPlatform {
   DWRITE_MEASURING_MODE mMeasuringMode;
 
   RefPtr<mozilla::layers::ReadbackManagerD3D11> mD3D11ReadbackManager;
+  bool mInitializedDevices = false;
 };
 
 #endif /* GFX_WINDOWS_PLATFORM_H */

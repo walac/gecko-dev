@@ -6,6 +6,7 @@
 #include "mozilla/ArrayUtils.h"
 
 #include "mozilla/Logging.h"
+#include "mozilla/Unused.h"
 
 #include <unistd.h>
 #include <math.h>
@@ -3403,7 +3404,8 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
   if (![self window] ||
       ([[self window] isKindOfClass:[BaseWindow class]] &&
-       ![(BaseWindow*)[self window] isVisibleOrBeingShown])) {
+       ![(BaseWindow*)[self window] isVisibleOrBeingShown] &&
+       ![(BaseWindow*)[self window] isMiniaturized])) {
     // Before the window is shown, our GL context's front FBO is not
     // framebuffer complete, so we refuse to render.
     return false;
@@ -6256,8 +6258,8 @@ provideDataForType:(NSString*)aType
           // Now request the kFilePromiseMime data, which will invoke the data
           // provider. If successful, the file will have been created.
           nsCOMPtr<nsISupports> fileDataPrimitive;
-          item->GetTransferData(kFilePromiseMime,
-                                getter_AddRefs(fileDataPrimitive));
+          Unused << item->GetTransferData(kFilePromiseMime,
+                                          getter_AddRefs(fileDataPrimitive));
         }
         CFRelease(urlRef);
         CFRelease(pboardRef);

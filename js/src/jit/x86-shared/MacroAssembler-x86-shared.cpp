@@ -599,9 +599,9 @@ void MacroAssembler::call(const Address& addr) {
   Assembler::call(Operand(addr.base, addr.offset));
 }
 
-void MacroAssembler::call(wasm::SymbolicAddress target) {
+CodeOffset MacroAssembler::call(wasm::SymbolicAddress target) {
   mov(target, eax);
-  Assembler::call(eax);
+  return Assembler::call(eax);
 }
 
 void MacroAssembler::call(ImmWord target) { Assembler::call(target); }
@@ -1174,11 +1174,11 @@ static void AtomicFetchOp(MacroAssembler& masm,
 
   switch (Scalar::byteSize(arrayType)) {
     case 1:
-      CheckBytereg(value);
       CheckBytereg(output);
       switch (op) {
         case AtomicFetchAddOp:
         case AtomicFetchSubOp:
+          CheckBytereg(value);  // But not for the bitwise ops
           SetupValue(masm, op, value, output);
           if (access) masm.append(*access, masm.size());
           masm.lock_xaddb(output, Operand(mem));

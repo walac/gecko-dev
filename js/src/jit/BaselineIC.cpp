@@ -1748,7 +1748,8 @@ static bool DoTypeUpdateFallback(JSContext* cx, BaselineFrame* frame,
         addType = false;
       }
     } else {
-      MOZ_ASSERT(type == ReferenceType::TYPE_OBJECT);
+      MOZ_ASSERT(type == ReferenceType::TYPE_OBJECT ||
+                 type == ReferenceType::TYPE_WASM_ANYREF);
 
       // Ignore null values being written here. Null is included
       // implicitly in type information for this property. Note that
@@ -2219,7 +2220,7 @@ static bool DoSetElemFallback(JSContext* cx, BaselineFrame* frame,
              op == JSOP_INITELEM || op == JSOP_INITHIDDENELEM ||
              op == JSOP_INITELEM_ARRAY || op == JSOP_INITELEM_INC);
 
-  RootedObject obj(cx, ToObjectFromStackForPropertyAccess(cx, objv, index));
+  RootedObject obj(cx, ToObjectFromStack(cx, objv));
   if (!obj) {
     return false;
   }
@@ -3008,7 +3009,7 @@ static bool DoSetPropFallback(JSContext* cx, BaselineFrame* frame,
   }
   RootedId id(cx, NameToId(name));
 
-  RootedObject obj(cx, ToObjectFromStackForPropertyAccess(cx, lhs, id));
+  RootedObject obj(cx, ToObjectFromStack(cx, lhs));
   if (!obj) {
     return false;
   }
@@ -3378,6 +3379,11 @@ static bool GetTemplateObjectForNative(JSContext* cx, HandleFunction target,
 
   if (native == js::intrinsic_NewStringIterator) {
     res.set(NewStringIteratorObject(cx, TenuredObject));
+    return !!res;
+  }
+
+  if (native == js::intrinsic_NewRegExpStringIterator) {
+    res.set(NewRegExpStringIteratorObject(cx, TenuredObject));
     return !!res;
   }
 

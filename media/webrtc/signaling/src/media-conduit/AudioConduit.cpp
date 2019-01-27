@@ -174,15 +174,6 @@ bool WebrtcAudioConduit::GetRecvPacketTypeStats(
   return mRecvChannelProxy->GetRTCPPacketTypeCounters(*aPacketCounts);
 }
 
-bool WebrtcAudioConduit::GetAVStats(int32_t* jitterBufferDelayMs,
-                                    int32_t* playoutBufferDelayMs,
-                                    int32_t* avSyncOffsetMs) {
-  // Called from GetAudioFrame and from STS thread
-  mRecvChannelProxy->GetDelayEstimates(jitterBufferDelayMs,
-                                       playoutBufferDelayMs, avSyncOffsetMs);
-  return true;
-}
-
 bool WebrtcAudioConduit::GetRTPStats(unsigned int* jitterMs,
                                      unsigned int* cumulativeLost) {
   ASSERT_ON_THREAD(mStsThread);
@@ -191,15 +182,7 @@ bool WebrtcAudioConduit::GetRTPStats(unsigned int* jitterMs,
   return !mSendChannelProxy->GetRTPStatistics(*jitterMs, *cumulativeLost);
 }
 
-DOMHighResTimeStamp NTPtoDOMHighResTimeStamp(uint32_t ntpHigh,
-                                             uint32_t ntpLow) {
-  return (uint32_t(ntpHigh - webrtc::kNtpJan1970) +
-          double(ntpLow) / webrtc::kMagicNtpFractionalUnit) *
-         1000;
-}
-
-bool WebrtcAudioConduit::GetRTCPReceiverReport(DOMHighResTimeStamp* timestamp,
-                                               uint32_t* jitterMs,
+bool WebrtcAudioConduit::GetRTCPReceiverReport(uint32_t* jitterMs,
                                                uint32_t* packetsReceived,
                                                uint64_t* bytesReceived,
                                                uint32_t* cumulativeLost,
@@ -214,7 +197,6 @@ bool WebrtcAudioConduit::GetRTCPReceiverReport(DOMHighResTimeStamp* timestamp,
         &timestampTmp, jitterMs, cumulativeLost, packetsReceived, bytesReceived,
         &fractionLost, &rttMsTmp);
   }
-  *timestamp = static_cast<double>(timestampTmp);
   auto stats = mCall->Call()->GetStats();
   int64_t rtt = stats.rtt_ms;
 #ifdef DEBUG
@@ -234,8 +216,7 @@ bool WebrtcAudioConduit::GetRTCPReceiverReport(DOMHighResTimeStamp* timestamp,
   return res;
 }
 
-bool WebrtcAudioConduit::GetRTCPSenderReport(DOMHighResTimeStamp* timestamp,
-                                             unsigned int* packetsSent,
+bool WebrtcAudioConduit::GetRTCPSenderReport(unsigned int* packetsSent,
                                              uint64_t* bytesSent) {
   ASSERT_ON_THREAD(mStsThread);
   if (!mRecvChannelProxy) {
@@ -243,7 +224,6 @@ bool WebrtcAudioConduit::GetRTCPSenderReport(DOMHighResTimeStamp* timestamp,
   }
 
   webrtc::CallStatistics stats = mRecvChannelProxy->GetRTCPStatistics();
-  *timestamp = webrtc::Clock::GetRealTimeClock()->TimeInMilliseconds();
   *packetsSent = stats.rtcp_sender_packets_sent;
   *bytesSent = stats.rtcp_sender_octets_sent;
   return *packetsSent > 0 && *bytesSent > 0;
@@ -633,32 +613,6 @@ MediaConduitErrorCode WebrtcAudioConduit::GetAudioFrame(int16_t speechData[],
   lengthSamples = mAudioFrame.samples_per_channel_ * mAudioFrame.num_channels_;
   MOZ_RELEASE_ASSERT(lengthSamples <= lengthSamplesAllowed);
   PodCopy(speechData, mAudioFrame.data(), lengthSamples);
-
-  // Not #ifdef DEBUG or on a log module so we can use it for about:webrtc/etc
-  mSamples += lengthSamples;
-  if (mSamples >= mLastSyncLog + samplingFreqHz) {
-    int jitter_buffer_delay_ms;
-    int playout_buffer_delay_ms;
-    int avsync_offset_ms;
-    if (GetAVStats(&jitter_buffer_delay_ms, &playout_buffer_delay_ms,
-                   &avsync_offset_ms)) {
-      if (avsync_offset_ms < 0) {
-        Telemetry::Accumulate(Telemetry::WEBRTC_AVSYNC_WHEN_VIDEO_LAGS_AUDIO_MS,
-                              -avsync_offset_ms);
-      } else {
-        Telemetry::Accumulate(Telemetry::WEBRTC_AVSYNC_WHEN_AUDIO_LAGS_VIDEO_MS,
-                              avsync_offset_ms);
-      }
-      CSFLogDebug(LOGTAG,
-                  "A/V sync: sync delta: %dms, audio jitter delay %dms, "
-                  "playout delay %dms",
-                  avsync_offset_ms, jitter_buffer_delay_ms,
-                  playout_buffer_delay_ms);
-    } else {
-      CSFLogError(LOGTAG, "A/V sync: GetAVStats failed");
-    }
-    mLastSyncLog = mSamples;
-  }
 
   CSFLogDebug(LOGTAG, "%s GetAudioFrame:Got samples: length %d ", __FUNCTION__,
               lengthSamples);

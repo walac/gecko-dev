@@ -306,19 +306,6 @@ var PermissionPromptPrototype = {
                                         this.browser);
 
       if (state == SitePermissions.BLOCK) {
-        // If the request is blocked by a global setting then we record
-        // a flag that lasts for the duration of the current page load
-        // to notify the user that the permission has been blocked.
-        // Currently only applies to autoplay-media
-        if (state == SitePermissions.getDefault(this.permissionKey) &&
-            SitePermissions.showGloballyBlocked(this.permissionKey)) {
-          SitePermissions.set(this.principal.URI,
-                              this.permissionKey,
-                              state,
-                              SitePermissions.SCOPE_GLOBAL,
-                              this.browser);
-        }
-
         this.cancel();
         return;
       }
@@ -340,8 +327,6 @@ var PermissionPromptPrototype = {
                                         this.browser);
 
       if (state == SitePermissions.BLOCK) {
-        // TODO: Add support for showGloballyBlocked
-
         this.cancel();
         return;
       }
@@ -378,10 +363,8 @@ var PermissionPromptPrototype = {
                                   this.permissionKey,
                                   promptAction.action,
                                   scope);
-            } else if (promptAction.action == SitePermissions.BLOCK ||
-                       SitePermissions.permitTemporaryAllow(this.permissionKey)) {
-              // Temporarily store BLOCK permissions only unless permission object
-              // sets permitTemporaryAllow: true
+            } else if (promptAction.action == SitePermissions.BLOCK) {
+              // Temporarily store BLOCK permissions only
               // SitePermissions does not consider subframes when storing temporary
               // permissions on a tab, thus storing ALLOW could be exploited.
               SitePermissions.set(this.principal.URI,
@@ -841,90 +824,6 @@ MIDIPermissionPrompt.prototype = {
 
 PermissionUI.MIDIPermissionPrompt = MIDIPermissionPrompt;
 
-function AutoplayPermissionPrompt(request) {
-  this.request = request;
-}
-
-AutoplayPermissionPrompt.prototype = {
-  __proto__: PermissionPromptForRequestPrototype,
-
-  get permissionKey() {
-    return "autoplay-media";
-  },
-
-  get popupOptions() {
-    let learnMoreURL =
-      Services.urlFormatter.formatURLPref("app.support.baseURL") + "block-autoplay";
-    let checkbox = {show: !this.principal.URI.schemeIs("file")};
-    if (checkbox.show) {
-      checkbox.checked = true;
-      checkbox.label = PrivateBrowsingUtils.isWindowPrivate(this.browser.ownerGlobal) ?
-        gBrowserBundle.GetStringFromName("autoplay.remember-private") :
-        gBrowserBundle.GetStringFromName("autoplay.remember");
-    }
-    return {
-      checkbox,
-      learnMoreURL,
-      displayURI: false,
-      name: this.principal.URI.hostPort,
-    };
-  },
-
-  get notificationID() {
-    return "autoplay-media";
-  },
-
-  get anchorID() {
-    return "autoplay-media-notification-icon";
-  },
-
-  get message() {
-    if (this.principal.URI.schemeIs("file")) {
-      return gBrowserBundle.GetStringFromName("autoplay.messageWithFile");
-    }
-    return gBrowserBundle.formatStringFromName("autoplay.message", ["<>"], 1);
-  },
-
-  get promptActions() {
-    return [{
-        label: gBrowserBundle.GetStringFromName("autoplay.Allow2.label"),
-        accessKey: gBrowserBundle.GetStringFromName("autoplay.Allow2.accesskey"),
-        action: Ci.nsIPermissionManager.ALLOW_ACTION,
-      },
-      {
-        label: gBrowserBundle.GetStringFromName("autoplay.DontAllow.label"),
-        accessKey: gBrowserBundle.GetStringFromName("autoplay.DontAllow.accesskey"),
-        action: Ci.nsIPermissionManager.DENY_ACTION,
-    }];
-  },
-
-  onAfterShow() {
-    // Remove the event listener to prevent any leaks.
-    this.browser.removeEventListener(
-      "DOMAudioPlaybackStarted", this.handlePlaybackStart);
-  },
-
-  onBeforeShow() {
-    // Hide the prompt if the tab starts playing media.
-    this.handlePlaybackStart = () => {
-      let chromeWin = this.browser.ownerGlobal;
-      if (!chromeWin.PopupNotifications) {
-        return;
-      }
-      let notification = chromeWin.PopupNotifications.getNotification(
-        this.notificationID, this.browser);
-      if (notification) {
-        chromeWin.PopupNotifications.remove(notification);
-      }
-    };
-    this.browser.addEventListener(
-      "DOMAudioPlaybackStarted", this.handlePlaybackStart);
-    return true;
-  },
-};
-
-PermissionUI.AutoplayPermissionPrompt = AutoplayPermissionPrompt;
-
 function StorageAccessPermissionPrompt(request) {
   this.request = request;
 
@@ -1041,7 +940,7 @@ StorageAccessPermissionPrompt.prototype = {
     // session (but not to exceed 24 hours), or the value of the
     // dom.storage_access.max_concurrent_auto_grants preference, whichever is
     // higher.
-    return Math.max(Math.max(Math.floor(URICountListener.uniqueOriginsVisitedInPast24Hours / 100),
+    return Math.max(Math.max(Math.floor(URICountListener.uniqueDomainsVisitedInPast24Hours / 100),
                              this._maxConcurrentAutoGrants), 0);
   },
 

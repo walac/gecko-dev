@@ -33,7 +33,7 @@ nsDataHashtable<nsUint32HashKey, TouchManager::TouchInfo>*
   sCaptureTouchList = nullptr;
 }
 
-void TouchManager::Init(PresShell* aPresShell, nsIDocument* aDocument) {
+void TouchManager::Init(PresShell* aPresShell, Document* aDocument) {
   mPresShell = aPresShell;
   mDocument = aDocument;
 }
@@ -53,10 +53,10 @@ static nsIContent* GetNonAnonymousAncestor(EventTarget* aTarget) {
 }
 
 /*static*/ void TouchManager::EvictTouchPoint(RefPtr<Touch>& aTouch,
-                                              nsIDocument* aLimitToDocument) {
+                                              Document* aLimitToDocument) {
   nsCOMPtr<nsINode> node(do_QueryInterface(aTouch->mOriginalTarget));
   if (node) {
-    nsIDocument* doc = node->GetComposedDoc();
+    Document* doc = node->GetComposedDoc();
     if (doc && (!aLimitToDocument || aLimitToDocument == doc)) {
       nsIPresShell* presShell = doc->GetShell();
       if (presShell) {
@@ -175,7 +175,8 @@ void TouchManager::EvictTouches() {
 
     MOZ_ASSERT(touch->mOriginalTarget);
     nsCOMPtr<nsIContent> targetContent = do_QueryInterface(touch->GetTarget());
-    nsIFrame* targetFrame = targetContent->GetPrimaryFrame();
+    nsIFrame* targetFrame =
+        targetContent ? targetContent->GetPrimaryFrame() : nullptr;
     if (targetFrame && !anyTarget) {
       anyTarget = targetContent;
     } else {

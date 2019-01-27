@@ -50,6 +50,7 @@ include = [
   "ComputedTimingFunction",
   "Display",
   "DisplayMode",
+  "ExtremumLength",
   "FillRule",
   "FontDisplay",
   "FontFaceSourceListComponent",
@@ -59,5 +60,11 @@ include = [
   "PathCommand",
   "UnicodeRange",
   "UserSelect",
+  "Float",
+  "OverscrollBehavior",
+  "ScrollSnapType",
+  "OverflowClipBox",
+  "Resize",
+  "Overflow",
 ]
 item_types = ["enums", "structs", "typedefs"]

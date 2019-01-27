@@ -262,6 +262,15 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   void initFromBodyPosition(TokenPos bodyPosition);
 
+  /*
+   * Helper for reporting that we have insufficient args.  pluralizer
+   * should be "s" if requiredArgs is anything other than "1" and ""
+   * if requiredArgs is "1".
+   */
+  void reportNeedMoreArgsError(ParseNode* pn, const char* errorName,
+                               const char* requiredArgs, const char* pluralizer,
+                               const ListNode* argsList);
+
  public:
   BytecodeEmitter(BytecodeEmitter* parent, BCEParserHandle* parser,
                   SharedContext* sc, HandleScript script,
@@ -765,8 +774,8 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   }
 
   template <typename InnerEmitter>
-  MOZ_MUST_USE bool wrapWithDestructuringIteratorCloseTryNote(
-      int32_t iterDepth, InnerEmitter emitter);
+  MOZ_MUST_USE bool wrapWithDestructuringTryNote(int32_t iterDepth,
+                                                 InnerEmitter emitter);
 
   // Check if the value on top of the stack is "undefined". If so, replace
   // that value on the stack with the value defined by |defaultExpr|.

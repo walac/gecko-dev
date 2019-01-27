@@ -40,6 +40,7 @@
 #endif
 #include "vm/BytecodeUtil.h"
 #include "vm/Debugger.h"
+#include "vm/EqualityOperations.h"  // js::StrictlyEqual
 #include "vm/GeneratorObject.h"
 #include "vm/Iteration.h"
 #include "vm/JSAtom.h"
@@ -257,7 +258,7 @@ static bool SetPropertyOperation(JSContext* cx, JSOp op, HandleValue lval,
                                  HandleId id, HandleValue rval) {
   MOZ_ASSERT(op == JSOP_SETPROP || op == JSOP_STRICTSETPROP);
 
-  RootedObject obj(cx, ToObjectFromStackForPropertyAccess(cx, lval, id));
+  RootedObject obj(cx, ToObjectFromStack(cx, lval));
   if (!obj) {
     return false;
   }
@@ -863,199 +864,6 @@ bool js::HasInstance(JSContext* cx, HandleObject obj, HandleValue v, bool* bp) {
   return JS::InstanceofOperator(cx, obj, local, bp);
 }
 
-static inline bool EqualGivenSameType(JSContext* cx, HandleValue lval,
-                                      HandleValue rval, bool* equal) {
-  MOZ_ASSERT(SameType(lval, rval));
-
-  if (lval.isString()) {
-    return EqualStrings(cx, lval.toString(), rval.toString(), equal);
-  }
-  if (lval.isDouble()) {
-    *equal = (lval.toDouble() == rval.toDouble());
-    return true;
-  }
-#ifdef ENABLE_BIGINT
-  if (lval.isBigInt()) {
-    *equal = BigInt::equal(lval.toBigInt(), rval.toBigInt());
-    return true;
-  }
-#endif
-  if (lval.isGCThing()) {  // objects or symbols
-    *equal = (lval.toGCThing() == rval.toGCThing());
-    return true;
-  }
-  *equal = lval.get().payloadAsRawUint32() == rval.get().payloadAsRawUint32();
-  MOZ_ASSERT_IF(lval.isUndefined() || lval.isNull(), *equal);
-  return true;
-}
-
-static inline bool LooselyEqualBooleanAndOther(JSContext* cx, HandleValue lval,
-                                               HandleValue rval, bool* result) {
-  MOZ_ASSERT(!rval.isBoolean());
-  RootedValue lvalue(cx, Int32Value(lval.toBoolean() ? 1 : 0));
-
-  // The tail-call would end up in Step 3.
-  if (rval.isNumber()) {
-    *result = (lvalue.toNumber() == rval.toNumber());
-    return true;
-  }
-  // The tail-call would end up in Step 6.
-  if (rval.isString()) {
-    double num;
-    if (!StringToNumber(cx, rval.toString(), &num)) {
-      return false;
-    }
-    *result = (lvalue.toNumber() == num);
-    return true;
-  }
-
-  return LooselyEqual(cx, lvalue, rval, result);
-}
-
-// ES6 draft rev32 7.2.12 Abstract Equality Comparison
-bool js::LooselyEqual(JSContext* cx, HandleValue lval, HandleValue rval,
-                      bool* result) {
-  // Step 3.
-  if (SameType(lval, rval)) {
-    return EqualGivenSameType(cx, lval, rval, result);
-  }
-
-  // Handle int32 x double.
-  if (lval.isNumber() && rval.isNumber()) {
-    *result = (lval.toNumber() == rval.toNumber());
-    return true;
-  }
-
-  // Step 4. This a bit more complex, because of the undefined emulating object.
-  if (lval.isNullOrUndefined()) {
-    // We can return early here, because null | undefined is only equal to the
-    // same set.
-    *result = rval.isNullOrUndefined() ||
-              (rval.isObject() && EmulatesUndefined(&rval.toObject()));
-    return true;
-  }
-
-  // Step 5.
-  if (rval.isNullOrUndefined()) {
-    MOZ_ASSERT(!lval.isNullOrUndefined());
-    *result = lval.isObject() && EmulatesUndefined(&lval.toObject());
-    return true;
-  }
-
-  // Step 6.
-  if (lval.isNumber() && rval.isString()) {
-    double num;
-    if (!StringToNumber(cx, rval.toString(), &num)) {
-      return false;
-    }
-    *result = (lval.toNumber() == num);
-    return true;
-  }
-
-  // Step 7.
-  if (lval.isString() && rval.isNumber()) {
-    double num;
-    if (!StringToNumber(cx, lval.toString(), &num)) {
-      return false;
-    }
-    *result = (num == rval.toNumber());
-    return true;
-  }
-
-  // Step 8.
-  if (lval.isBoolean()) {
-    return LooselyEqualBooleanAndOther(cx, lval, rval, result);
-  }
-
-  // Step 9.
-  if (rval.isBoolean()) {
-    return LooselyEqualBooleanAndOther(cx, rval, lval, result);
-  }
-
-  // Step 10.
-  if ((lval.isString() || lval.isNumber() || lval.isSymbol()) &&
-      rval.isObject()) {
-    RootedValue rvalue(cx, rval);
-    if (!ToPrimitive(cx, &rvalue)) {
-      return false;
-    }
-    return LooselyEqual(cx, lval, rvalue, result);
-  }
-
-  // Step 11.
-  if (lval.isObject() &&
-      (rval.isString() || rval.isNumber() || rval.isSymbol())) {
-    RootedValue lvalue(cx, lval);
-    if (!ToPrimitive(cx, &lvalue)) {
-      return false;
-    }
-    return LooselyEqual(cx, lvalue, rval, result);
-  }
-
-#ifdef ENABLE_BIGINT
-  if (lval.isBigInt()) {
-    RootedBigInt lbi(cx, lval.toBigInt());
-    bool tmpResult;
-    JS_TRY_VAR_OR_RETURN_FALSE(cx, tmpResult,
-                               BigInt::looselyEqual(cx, lbi, rval));
-    *result = tmpResult;
-    return true;
-  }
-
-  if (rval.isBigInt()) {
-    RootedBigInt rbi(cx, rval.toBigInt());
-    bool tmpResult;
-    JS_TRY_VAR_OR_RETURN_FALSE(cx, tmpResult,
-                               BigInt::looselyEqual(cx, rbi, lval));
-    *result = tmpResult;
-    return true;
-  }
-#endif
-
-  // Step 12.
-  *result = false;
-  return true;
-}
-
-bool js::StrictlyEqual(JSContext* cx, HandleValue lval, HandleValue rval,
-                       bool* equal) {
-  if (SameType(lval, rval)) {
-    return EqualGivenSameType(cx, lval, rval, equal);
-  }
-
-  if (lval.isNumber() && rval.isNumber()) {
-    *equal = (lval.toNumber() == rval.toNumber());
-    return true;
-  }
-
-  *equal = false;
-  return true;
-}
-
-static inline bool IsNegativeZero(const Value& v) {
-  return v.isDouble() && mozilla::IsNegativeZero(v.toDouble());
-}
-
-static inline bool IsNaN(const Value& v) {
-  return v.isDouble() && mozilla::IsNaN(v.toDouble());
-}
-
-bool js::SameValue(JSContext* cx, HandleValue v1, HandleValue v2, bool* same) {
-  if (IsNegativeZero(v1)) {
-    *same = IsNegativeZero(v2);
-    return true;
-  }
-  if (IsNegativeZero(v2)) {
-    *same = false;
-    return true;
-  }
-  if (IsNaN(v1) && IsNaN(v2)) {
-    *same = true;
-    return true;
-  }
-  return StrictlyEqual(cx, v1, v2, same);
-}
-
 JSType js::TypeOfObject(JSObject* obj) {
   if (EmulatesUndefined(obj)) {
     return JSTYPE_UNDEFINED;
@@ -1265,9 +1073,9 @@ jsbytecode* js::UnwindEnvironmentToTryPc(JSScript* script,
   if (tn->kind == JSTRY_CATCH || tn->kind == JSTRY_FINALLY) {
     pc -= JSOP_TRY_LENGTH;
     MOZ_ASSERT(*pc == JSOP_TRY);
-  } else if (tn->kind == JSTRY_DESTRUCTURING_ITERCLOSE) {
-    pc -= JSOP_TRY_DESTRUCTURING_ITERCLOSE_LENGTH;
-    MOZ_ASSERT(*pc == JSOP_TRY_DESTRUCTURING_ITERCLOSE);
+  } else if (tn->kind == JSTRY_DESTRUCTURING) {
+    pc -= JSOP_TRY_DESTRUCTURING_LENGTH;
+    MOZ_ASSERT(*pc == JSOP_TRY_DESTRUCTURING);
   }
   return pc;
 }
@@ -1416,7 +1224,7 @@ static HandleErrorContinuation ProcessTryNotes(JSContext* cx,
         break;
       }
 
-      case JSTRY_DESTRUCTURING_ITERCLOSE: {
+      case JSTRY_DESTRUCTURING: {
         // See note above.
         if (inForOfIterClose) {
           break;
@@ -1583,11 +1391,11 @@ again:
 #define POP_COPY_TO(v) (v) = *--REGS.sp
 #define POP_RETURN_VALUE() REGS.fp()->setReturnValue(*--REGS.sp)
 
-#define FETCH_OBJECT(cx, n, obj, key)                             \
-  JS_BEGIN_MACRO                                                  \
-    HandleValue val = REGS.stackHandleAt(n);                      \
-    obj = ToObjectFromStackForPropertyAccess((cx), (val), (key)); \
-    if (!obj) goto error;                                         \
+#define FETCH_OBJECT(cx, n, obj)             \
+  JS_BEGIN_MACRO                             \
+    HandleValue val = REGS.stackHandleAt(n); \
+    obj = ToObjectFromStack((cx), (val));    \
+    if (!obj) goto error;                    \
   JS_END_MACRO
 
 /*
@@ -2215,7 +2023,7 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     /* Various 1-byte no-ops. */
     CASE(JSOP_NOP)
     CASE(JSOP_NOP_DESTRUCTURING)
-    CASE(JSOP_TRY_DESTRUCTURING_ITERCLOSE)
+    CASE(JSOP_TRY_DESTRUCTURING)
     CASE(JSOP_UNUSED151)
     CASE(JSOP_CONDSWITCH) {
       MOZ_ASSERT(CodeSpec[*REGS.pc].length == 1);
@@ -2648,14 +2456,16 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     }
     END_CASE(JSOP_NE)
 
-#define STRICT_EQUALITY_OP(OP, COND)                        \
-  JS_BEGIN_MACRO                                            \
-    HandleValue lval = REGS.stackHandleAt(-2);              \
-    HandleValue rval = REGS.stackHandleAt(-1);              \
-    bool equal;                                             \
-    if (!StrictlyEqual(cx, lval, rval, &equal)) goto error; \
-    (COND) = equal OP true;                                 \
-    REGS.sp--;                                              \
+#define STRICT_EQUALITY_OP(OP, COND)                  \
+  JS_BEGIN_MACRO                                      \
+    HandleValue lval = REGS.stackHandleAt(-2);        \
+    HandleValue rval = REGS.stackHandleAt(-1);        \
+    bool equal;                                       \
+    if (!js::StrictlyEqual(cx, lval, rval, &equal)) { \
+      goto error;                                     \
+    }                                                 \
+    (COND) = equal OP true;                           \
+    REGS.sp--;                                        \
   JS_END_MACRO
 
     CASE(JSOP_STRICTEQ) {
@@ -2886,7 +2696,7 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
                     "delprop and strictdelprop must be the same size");
       ReservedRooted<jsid> id(&rootId0, NameToId(script->getName(REGS.pc)));
       ReservedRooted<JSObject*> obj(&rootObject0);
-      FETCH_OBJECT(cx, -1, obj, id);
+      FETCH_OBJECT(cx, -1, obj);
 
       ObjectOpResult result;
       if (!DeleteProperty(cx, obj, id, result)) {
@@ -2907,8 +2717,9 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
                     "delelem and strictdelelem must be the same size");
       /* Fetch the left part and resolve it to a non-null object. */
       ReservedRooted<JSObject*> obj(&rootObject0);
+      FETCH_OBJECT(cx, -2, obj);
+
       ReservedRooted<Value> propval(&rootValue0, REGS.sp[-1]);
-      FETCH_OBJECT(cx, -2, obj, propval);
 
       ObjectOpResult result;
       ReservedRooted<jsid> id(&rootId0);
@@ -3174,8 +2985,7 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
                     "setelem and strictsetelem must be the same size");
       HandleValue receiver = REGS.stackHandleAt(-3);
       ReservedRooted<JSObject*> obj(&rootObject0);
-      obj = ToObjectFromStackForPropertyAccess(cx, receiver,
-                                               REGS.stackHandleAt(-2));
+      obj = ToObjectFromStack(cx, receiver);
       if (!obj) {
         goto error;
       }
@@ -4731,7 +4541,7 @@ bool js::GetProperty(JSContext* cx, HandleValue v, HandlePropertyName name,
   }
 
   RootedValue receiver(cx, v);
-  RootedObject obj(cx, ToObjectFromStackForPropertyAccess(cx, v, name));
+  RootedObject obj(cx, ToObjectFromStack(cx, v));
   if (!obj) {
     return false;
   }
@@ -4875,7 +4685,7 @@ bool js::GetAndClearException(JSContext* cx, MutableHandleValue res) {
 template <bool strict>
 bool js::DeletePropertyJit(JSContext* cx, HandleValue v,
                            HandlePropertyName name, bool* bp) {
-  RootedObject obj(cx, ToObjectFromStackForPropertyAccess(cx, v, name));
+  RootedObject obj(cx, ToObjectFromStack(cx, v));
   if (!obj) {
     return false;
   }
@@ -4905,7 +4715,7 @@ template bool js::DeletePropertyJit<false>(JSContext* cx, HandleValue val,
 template <bool strict>
 bool js::DeleteElementJit(JSContext* cx, HandleValue val, HandleValue index,
                           bool* bp) {
-  RootedObject obj(cx, ToObjectFromStackForPropertyAccess(cx, val, index));
+  RootedObject obj(cx, ToObjectFromStack(cx, val));
   if (!obj) {
     return false;
   }

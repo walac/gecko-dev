@@ -137,10 +137,8 @@ class CrossProcessCompositorBridgeParent final
   // Use DidCompositeLocked if you already hold a lock on
   // sIndirectLayerTreesLock; Otherwise use DidComposite, which would request
   // the lock automatically.
-  void DidCompositeLocked(LayersId aId, TimeStamp& aCompositeStart,
-                          TimeStamp& aCompositeEnd);
-  void DidComposite(LayersId aId, TimeStamp& aCompositeStart,
-                    TimeStamp& aCompositeEnd) override;
+  void DidCompositeLocked(LayersId aId, const VsyncId& aVsyncId,
+                          TimeStamp& aCompositeStart, TimeStamp& aCompositeEnd);
 
   PTextureParent* AllocPTextureParent(
       const SurfaceDescriptor& aSharedData, const ReadLockDescriptor& aReadLock,
@@ -172,6 +170,8 @@ class CrossProcessCompositorBridgeParent final
 
   void UpdatePaintTime(LayerTransactionParent* aLayerTree,
                        const TimeDuration& aPaintTime) override;
+  void RegisterPayload(LayerTransactionParent* aLayerTree,
+                       const InfallibleTArray<CompositionPayload>& aPayload) override;
 
   PWebRenderBridgeParent* AllocPWebRenderBridgeParent(
       const wr::PipelineId& aPipelineId,

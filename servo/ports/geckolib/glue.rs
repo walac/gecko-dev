@@ -30,7 +30,6 @@ use style::element_state::{DocumentState, ElementState};
 use style::error_reporting::{ContextualParseError, ParseErrorReporter};
 use style::font_metrics::{get_metrics_provider_for_product, FontMetricsProvider};
 use style::gecko::data::{GeckoStyleSheet, PerDocumentStyleData, PerDocumentStyleDataImpl};
-use style::gecko::global_style_data::{GlobalStyleData, GLOBAL_STYLE_DATA, STYLE_THREAD_POOL};
 use style::gecko::restyle_damage::GeckoRestyleDamage;
 use style::gecko::selector_parser::{NonTSPseudoClass, PseudoElement};
 use style::gecko::traversal::RecalcStyleOnly;
@@ -131,7 +130,6 @@ use style::gecko_bindings::structs::nsCSSPropertyID;
 use style::gecko_bindings::structs::nsCSSValueSharedList;
 use style::gecko_bindings::structs::nsChangeHint;
 use style::gecko_bindings::structs::nsCompatibility;
-use style::gecko_bindings::structs::nsIDocument;
 use style::gecko_bindings::structs::nsRestyleHint;
 use style::gecko_bindings::structs::nsStyleTransformMatrix::MatrixTransformOperator;
 use style::gecko_bindings::structs::nsTArray;
@@ -148,9 +146,6 @@ use style::gecko_bindings::structs::Loader;
 use style::gecko_bindings::structs::LoaderReusableStyleSheets;
 use style::gecko_bindings::structs::MallocSizeOf as GeckoMallocSizeOf;
 use style::gecko_bindings::structs::OriginFlags;
-use style::gecko_bindings::structs::OriginFlags_Author;
-use style::gecko_bindings::structs::OriginFlags_User;
-use style::gecko_bindings::structs::OriginFlags_UserAgent;
 use style::gecko_bindings::structs::PropertyValuePair;
 use style::gecko_bindings::structs::RawGeckoGfxMatrix4x4;
 use style::gecko_bindings::structs::RawServoFontFaceRule;
@@ -172,6 +167,7 @@ use style::gecko_bindings::sugar::ownership::{FFIArcHelpers, HasArcFFI, HasFFI};
 use style::gecko_bindings::sugar::ownership::{HasSimpleFFI, Strong};
 use style::gecko_bindings::sugar::refptr::RefPtr;
 use style::gecko_properties;
+use style::global_style_data::{GlobalStyleData, GLOBAL_STYLE_DATA, STYLE_THREAD_POOL};
 use style::invalidation::element::restyle_hints;
 use style::media_queries::MediaList;
 use style::parser::{self, Parse, ParserContext};
@@ -1764,13 +1760,16 @@ pub extern "C" fn Servo_StyleSheet_SizeOfIncludingThis(
 #[no_mangle]
 pub extern "C" fn Servo_StyleSheet_GetOrigin(sheet: RawServoStyleSheetContentsBorrowed) -> u8 {
     let origin = match StylesheetContents::as_arc(&sheet).origin {
-        Origin::UserAgent => OriginFlags_UserAgent,
-        Origin::User => OriginFlags_User,
-        Origin::Author => OriginFlags_Author,
+        Origin::UserAgent => OriginFlags::UserAgent,
+        Origin::User => OriginFlags::User,
+        Origin::Author => OriginFlags::Author,
     };
     // We'd like to return `OriginFlags` here, but bindgen bitfield enums don't
     // work as return values with the Linux 32-bit ABI at the moment because
-    // they wrap the value in a struct, so for now just unwrap it.
+    // they wrap the value in a struct (and bindgen doesn't have support for
+    // repr(transparent), so for now just unwrap it.
+    //
+    // See https://github.com/rust-lang/rust-bindgen/issues/1474
     origin.0
 }
 
@@ -3591,7 +3590,7 @@ pub unsafe extern "C" fn Servo_StyleSet_CompatModeChanged(raw_data: RawServoStyl
         .device()
         .pres_context()
         .mDocument
-        .raw::<nsIDocument>();
+        .mRawPtr;
     data.stylist
         .set_quirks_mode(QuirksMode::from(doc.mCompatMode));
 }
@@ -4464,46 +4463,49 @@ pub extern "C" fn Servo_DeclarationBlock_SetPixelValue(
 ) {
     use style::properties::longhands::border_spacing::SpecifiedValue as BorderSpacing;
     use style::properties::{LonghandId, PropertyDeclaration};
+    use style::values::generics::NonNegative;
     use style::values::generics::length::MozLength;
-    use style::values::specified::length::{LengthOrPercentage, NoCalcLength, NonNegativeLength};
+    use style::values::specified::length::{NoCalcLength, NonNegativeLength, NonNegativeLengthPercentage};
+    use style::values::specified::length::{LengthPercentageOrAuto, LengthPercentage};
     use style::values::specified::{BorderCornerRadius, BorderSideWidth};
 
     let long = get_longhand_from_id!(property);
     let nocalc = NoCalcLength::from_px(value);
-
+    let lp = LengthPercentage::Length(nocalc);
+    let lp_or_auto = LengthPercentageOrAuto::LengthPercentage(lp.clone());
     let prop = match_wrap_declared! { long,
-        Height => MozLength::LengthOrPercentageOrAuto(nocalc.into()),
-        Width => MozLength::LengthOrPercentageOrAuto(nocalc.into()),
+        Height => MozLength::LengthPercentageOrAuto(lp_or_auto),
+        Width => MozLength::LengthPercentageOrAuto(lp_or_auto),
         BorderTopWidth => BorderSideWidth::Length(nocalc.into()),
         BorderRightWidth => BorderSideWidth::Length(nocalc.into()),
         BorderBottomWidth => BorderSideWidth::Length(nocalc.into()),
         BorderLeftWidth => BorderSideWidth::Length(nocalc.into()),
-        MarginTop => nocalc.into(),
-        MarginRight => nocalc.into(),
-        MarginBottom => nocalc.into(),
-        MarginLeft => nocalc.into(),
-        PaddingTop => nocalc.into(),
-        PaddingRight => nocalc.into(),
-        PaddingBottom => nocalc.into(),
-        PaddingLeft => nocalc.into(),
+        MarginTop => lp_or_auto,
+        MarginRight => lp_or_auto,
+        MarginBottom => lp_or_auto,
+        MarginLeft => lp_or_auto,
+        PaddingTop => NonNegative(lp),
+        PaddingRight => NonNegative(lp),
+        PaddingBottom => NonNegative(lp),
+        PaddingLeft => NonNegative(lp),
         BorderSpacing => {
             let v = NonNegativeLength::from(nocalc);
             Box::new(BorderSpacing::new(v.clone(), v))
         },
         BorderTopLeftRadius => {
-            let length = LengthOrPercentage::from(nocalc);
+            let length = NonNegativeLengthPercentage::from(nocalc);
             Box::new(BorderCornerRadius::new(length.clone(), length))
         },
         BorderTopRightRadius => {
-            let length = LengthOrPercentage::from(nocalc);
+            let length = NonNegativeLengthPercentage::from(nocalc);
             Box::new(BorderCornerRadius::new(length.clone(), length))
         },
         BorderBottomLeftRadius => {
-            let length = LengthOrPercentage::from(nocalc);
+            let length = NonNegativeLengthPercentage::from(nocalc);
             Box::new(BorderCornerRadius::new(length.clone(), length))
         },
         BorderBottomRightRadius => {
-            let length = LengthOrPercentage::from(nocalc);
+            let length = NonNegativeLengthPercentage::from(nocalc);
             Box::new(BorderCornerRadius::new(length.clone(), length))
         },
     };
@@ -4523,7 +4525,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetLengthValue(
     use style::properties::{LonghandId, PropertyDeclaration};
     use style::values::generics::length::MozLength;
     use style::values::specified::length::{AbsoluteLength, FontRelativeLength};
-    use style::values::specified::length::{LengthOrPercentage, NoCalcLength};
+    use style::values::specified::length::{LengthPercentage, LengthPercentageOrAuto, NoCalcLength};
 
     let long = get_longhand_from_id!(property);
     let nocalc = match unit {
@@ -4548,8 +4550,10 @@ pub extern "C" fn Servo_DeclarationBlock_SetLengthValue(
     };
 
     let prop = match_wrap_declared! { long,
-        Width => MozLength::LengthOrPercentageOrAuto(nocalc.into()),
-        FontSize => LengthOrPercentage::from(nocalc).into(),
+        Width => MozLength::LengthPercentageOrAuto(LengthPercentageOrAuto::LengthPercentage(
+                LengthPercentage::Length(nocalc)
+        )),
+        FontSize => LengthPercentage::from(nocalc).into(),
         MozScriptMinSize => MozScriptMinSize(nocalc),
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
@@ -4588,19 +4592,21 @@ pub extern "C" fn Servo_DeclarationBlock_SetPercentValue(
     use style::properties::{LonghandId, PropertyDeclaration};
     use style::values::computed::Percentage;
     use style::values::generics::length::MozLength;
-    use style::values::specified::length::LengthOrPercentage;
+    use style::values::specified::length::{LengthPercentageOrAuto, LengthPercentage};
 
     let long = get_longhand_from_id!(property);
     let pc = Percentage(value);
+    let lp_or_auto =
+        LengthPercentageOrAuto::LengthPercentage(LengthPercentage::Percentage(pc));
 
     let prop = match_wrap_declared! { long,
-        Height => MozLength::LengthOrPercentageOrAuto(pc.into()),
-        Width => MozLength::LengthOrPercentageOrAuto(pc.into()),
-        MarginTop => pc.into(),
-        MarginRight => pc.into(),
-        MarginBottom => pc.into(),
-        MarginLeft => pc.into(),
-        FontSize => LengthOrPercentage::from(pc).into(),
+        Height => MozLength::LengthPercentageOrAuto(lp_or_auto),
+        Width => MozLength::LengthPercentageOrAuto(lp_or_auto),
+        MarginTop => lp_or_auto,
+        MarginRight => lp_or_auto,
+        MarginBottom => lp_or_auto,
+        MarginLeft => lp_or_auto,
+        FontSize => LengthPercentage::from(pc).into(),
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
         decls.push(prop, Importance::Normal);
@@ -4613,10 +4619,10 @@ pub extern "C" fn Servo_DeclarationBlock_SetAutoValue(
     property: nsCSSPropertyID,
 ) {
     use style::properties::{LonghandId, PropertyDeclaration};
-    use style::values::specified::{LengthOrPercentageOrAuto, MozLength};
+    use style::values::specified::{LengthPercentageOrAuto, MozLength};
 
     let long = get_longhand_from_id!(property);
-    let auto = LengthOrPercentageOrAuto::Auto;
+    let auto = LengthPercentageOrAuto::Auto;
 
     let prop = match_wrap_declared! { long,
         Height => MozLength::auto(),

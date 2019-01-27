@@ -13,10 +13,19 @@ ChromeUtils.import("resource://gre/modules/UpdateTelemetry.jsm");
 ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 XPCOMUtils.defineLazyGlobalGetters(this, ["DOMParser", "XMLHttpRequest"]);
 
+XPCOMUtils.defineLazyModuleGetters(this, {
+  AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
+  CertUtils: "resource://gre/modules/CertUtils.jsm",
+  ctypes: "resource://gre/modules/ctypes.jsm",
+  DeferredTask: "resource://gre/modules/DeferredTask.jsm",
+  OS: "resource://gre/modules/osfile.jsm",
+  UpdateUtils: "resource://gre/modules/UpdateUtils.jsm",
+  WindowsRegistry: "resource://gre/modules/WindowsRegistry.jsm",
+});
+
 const UPDATESERVICE_CID = Components.ID("{B3C290A6-3943-4B89-8BBE-C01EB7B3B311}");
 
 const PREF_APP_UPDATE_ALTWINDOWTYPE        = "app.update.altwindowtype";
-const PREF_APP_UPDATE_BACKGROUNDINTERVAL   = "app.update.download.backgroundInterval";
 const PREF_APP_UPDATE_BACKGROUNDERRORS     = "app.update.backgroundErrors";
 const PREF_APP_UPDATE_BACKGROUNDMAXERRORS  = "app.update.backgroundMaxErrors";
 const PREF_APP_UPDATE_CANCELATIONS         = "app.update.cancelations";
@@ -79,7 +88,7 @@ const STATE_SUCCEEDED       = "succeeded";
 const STATE_DOWNLOAD_FAILED = "download-failed";
 const STATE_FAILED          = "failed";
 
-// The values below used by this code are from common/errors.h
+// The values below used by this code are from common/updatererrors.h
 const WRITE_ERROR                          = 7;
 const ELEVATION_CANCELED                   = 9;
 const SERVICE_UPDATER_COULD_NOT_BE_STARTED = 24;
@@ -141,7 +150,7 @@ const SERVICE_ERRORS = [SERVICE_UPDATER_COULD_NOT_BE_STARTED,
                         SERVICE_COULD_NOT_IMPERSONATE];
 
 // Error codes 80 through 99 are reserved for nsUpdateService.js and are not
-// defined in common/errors.h
+// defined in common/updatererrors.h
 const ERR_OLDER_VERSION_OR_SAME_BUILD      = 90;
 const ERR_UPDATE_STATE_NONE                = 91;
 const ERR_CHANNEL_CHANGE                   = 92;
@@ -156,8 +165,6 @@ const NETWORK_ERROR_OFFLINE             = 111;
 const HTTP_ERROR_OFFSET                 = 1000;
 
 const DOWNLOAD_CHUNK_SIZE           = 300000; // bytes
-const DOWNLOAD_BACKGROUND_INTERVAL  = 600; // seconds
-const DOWNLOAD_FOREGROUND_INTERVAL  = 0;
 
 const UPDATE_WINDOW_NAME      = "Update:Wizard";
 
@@ -193,16 +200,6 @@ var gUpdateMutexHandle = null;
 // The permissions of the update directory should be fixed no more than once per
 // session
 var gUpdateDirPermissionFixAttempted = false;
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
-  CertUtils: "resource://gre/modules/CertUtils.jsm",
-  ctypes: "resource://gre/modules/ctypes.jsm",
-  DeferredTask: "resource://gre/modules/DeferredTask.jsm",
-  OS: "resource://gre/modules/osfile.jsm",
-  UpdateUtils: "resource://gre/modules/UpdateUtils.jsm",
-  WindowsRegistry: "resource://gre/modules/WindowsRegistry.jsm",
-});
 
 XPCOMUtils.defineLazyGetter(this, "gLogEnabled", function aus_gLogEnabled() {
   return Services.prefs.getBoolPref(PREF_APP_UPDATE_LOG, false);
@@ -1189,9 +1186,20 @@ function handleCriticalWriteResult(wroteSuccessfully, path) {
  */
 function UpdatePatch(patch) {
   this._properties = {};
-  for (var i = 0; i < patch.attributes.length; ++i) {
+  this.errorCode = 0;
+  this.state = STATE_NONE;
+
+  for (let i = 0; i < patch.attributes.length; ++i) {
     var attr = patch.attributes.item(i);
+    // If an undefined value is saved to the xml file it will be a string when
+    // it is read from the xml file.
+    if (attr.value == "undefined") {
+      continue;
+    }
     switch (attr.name) {
+      case "xmlns":
+        // Don't save the XML namespace.
+        break;
       case "selected":
         this.selected = attr.value == "true";
         break;
@@ -1200,9 +1208,27 @@ function UpdatePatch(patch) {
           LOG("UpdatePatch:init - 0-sized patch!");
           throw Cr.NS_ERROR_ILLEGAL_VALUE;
         }
-        // fall through
-      default:
         this[attr.name] = attr.value;
+        break;
+      case "errorCode":
+        if (attr.value) {
+          let val = parseInt(attr.value);
+          // This will evaluate to false if the value is 0 but that's ok since
+          // this.errorCode is set to the default of 0 above.
+          if (val) {
+            this.errorCode = val;
+          }
+        }
+        break;
+      case "finalURL":
+      case "state":
+      case "type":
+      case "URL":
+        this[attr.name] = attr.value;
+        break;
+      default:
+        // Set nsIPropertyBag properties that were read from the xml file.
+        this.setProperty(attr.name, attr.value);
         break;
     }
   }
@@ -1213,6 +1239,9 @@ UpdatePatch.prototype = {
    */
   serialize: function UpdatePatch_serialize(updates) {
     var patch = updates.createElementNS(URI_UPDATE_NS, "patch");
+    patch.setAttribute("size", this.size);
+    patch.setAttribute("type", this.type);
+    patch.setAttribute("URL", this.URL);
     // Don't write an errorCode if it evaluates to false since 0 is the same as
     // no error code.
     if (this.errorCode) {
@@ -1222,27 +1251,21 @@ UpdatePatch.prototype = {
     if (this.finalURL) {
       patch.setAttribute("finalURL", this.finalURL);
     }
+    // The selected patch is the only patch that should have this attribute.
     if (this.selected) {
       patch.setAttribute("selected", this.selected);
     }
-    patch.setAttribute("size", this.size);
-    patch.setAttribute("state", this.state);
-    patch.setAttribute("type", this.type);
-    patch.setAttribute("URL", this.URL);
-
-    for (let p in this._properties) {
-      if (this._properties[p].present) {
-        patch.setAttribute(p, this._properties[p].data);
-      }
+    if (this.state != STATE_NONE) {
+      patch.setAttribute("state", this.state);
     }
 
+    for (let [name, value] of Object.entries(this._properties)) {
+      if (value.present) {
+        patch.setAttribute(name, value.data);
+      }
+    }
     return patch;
   },
-
-  /**
-   * A hash of custom properties
-   */
-  _properties: null,
 
   /**
    * See nsIWritablePropertyBag.idl
@@ -1255,59 +1278,53 @@ UpdatePatch.prototype = {
    * See nsIWritablePropertyBag.idl
    */
   deleteProperty: function UpdatePatch_deleteProperty(name) {
-    if (name in this._properties)
+    if (name in this._properties) {
       this._properties[name].present = false;
-    else
+    } else {
       throw Cr.NS_ERROR_FAILURE;
+    }
   },
 
   /**
    * See nsIPropertyBag.idl
+   *
+   * Note: this only contains the nsIPropertyBag name / value pairs and not the
+   *       nsIUpdatePatch name / value pairs.
    */
   get enumerator() {
     return this.enumerate();
   },
 
   * enumerate() {
-    for (var p in this._properties) {
-      let prop = this.properties[p].data;
-      if (prop) {
-        yield prop;
+    // An nsISupportsInterfacePointer is used so creating an array using
+    // Array.from will retain the QueryInterface for nsIProperty.
+    let ip = Cc["@mozilla.org/supports-interface-pointer;1"].
+             createInstance(Ci.nsISupportsInterfacePointer);
+    let qi = ChromeUtils.generateQI([Ci.nsIProperty]);
+    for (let [name, value] of Object.entries(this._properties)) {
+      if (value.present) {
+        // The nsIPropertyBag enumerator returns a nsISimpleEnumerator whose
+        // elements are nsIProperty objects. Calling QueryInterface for
+        // nsIProperty on the object doesn't return to the caller an object that
+        // is already queried to nsIProperty but do it just in case it is fixed
+        // at some point.
+        ip.data = {name, value: value.data, QueryInterface: qi};
+        yield ip.data.QueryInterface(Ci.nsIProperty);
       }
     }
   },
 
   /**
    * See nsIPropertyBag.idl
+   *
    * Note: returns null instead of throwing when the property doesn't exist to
    *       simplify code and to silence warnings in debug builds.
    */
   getProperty: function UpdatePatch_getProperty(name) {
-    if (name in this._properties &&
-        this._properties[name].present) {
+    if (name in this._properties && this._properties[name].present) {
       return this._properties[name].data;
     }
     return null;
-  },
-
-  /**
-   * See nsIUpdateService.idl
-   */
-  get errorCode() {
-    return this._properties.errorCode || 0;
-  },
-  set errorCode(val) {
-    this._properties.errorCode = val;
-  },
-
-  /**
-   * See nsIUpdateService.idl
-   */
-  get state() {
-    return this._properties.state || STATE_NONE;
-  },
-  set state(val) {
-    this._properties.state = val;
   },
 
   QueryInterface: ChromeUtils.generateQI([Ci.nsIUpdatePatch,
@@ -1324,14 +1341,12 @@ UpdatePatch.prototype = {
  * @constructor
  */
 function Update(update) {
-  this._properties = {};
   this._patches = [];
+  this._properties = {};
   this.isCompleteUpdate = false;
-  this.unsupported = false;
   this.channel = "default";
   this.promptWaitTime = Services.prefs.getIntPref(PREF_APP_UPDATE_PROMPTWAITTIME, 43200);
-  this.backgroundInterval = Services.prefs.getIntPref(PREF_APP_UPDATE_BACKGROUNDINTERVAL,
-                                                      DOWNLOAD_BACKGROUND_INTERVAL);
+  this.unsupported = false;
 
   // Null <update>, assume this is a message container and do no
   // further initialization
@@ -1339,7 +1354,6 @@ function Update(update) {
     return;
   }
 
-  let patch;
   for (let i = 0; i < update.childNodes.length; ++i) {
     let patchElement = update.childNodes.item(i);
     if (patchElement.nodeType != patchElement.ELEMENT_NODE ||
@@ -1347,6 +1361,7 @@ function Update(update) {
       continue;
     }
 
+    let patch;
     try {
       patch = new UpdatePatch(patchElement);
     } catch (e) {
@@ -1363,13 +1378,17 @@ function Update(update) {
   // installDate attribute this will be replaced with that value if it doesn't
   // equal 0.
   this.installDate = (new Date()).getTime();
+  this.patchCount = this._patches.length;
 
   for (let i = 0; i < update.attributes.length; ++i) {
-    var attr = update.attributes.item(i);
-    if (attr.value == "undefined") {
+    let attr = update.attributes.item(i);
+    if (attr.name == "xmlns" || attr.value == "undefined") {
+      // Don't save the XML namespace or undefined values.
+      // If an undefined value is saved to the xml file it will be a string when
+      // it is read from the xml file.
       continue;
     } else if (attr.name == "detailsURL") {
-      this._detailsURL = attr.value;
+      this.detailsURL = attr.value;
     } else if (attr.name == "installDate" && attr.value) {
       let val = parseInt(attr.value);
       if (val) {
@@ -1378,7 +1397,10 @@ function Update(update) {
     } else if (attr.name == "errorCode" && attr.value) {
       let val = parseInt(attr.value);
       if (val) {
-        this.errorCode = val;
+        // Set the value of |_errorCode| instead of |errorCode| since
+        // selectedPatch won't be available at this point and normally the
+        // nsIUpdatePatch will provide the errorCode.
+        this._errorCode = val;
       }
     } else if (attr.name == "isCompleteUpdate") {
       this.isCompleteUpdate = attr.value == "true";
@@ -1386,33 +1408,45 @@ function Update(update) {
       if (!isNaN(attr.value)) {
         this.promptWaitTime = parseInt(attr.value);
       }
-    } else if (attr.name == "backgroundInterval") {
-      if (!isNaN(attr.value)) {
-        this.backgroundInterval = parseInt(attr.value);
-      }
     } else if (attr.name == "unsupported") {
       this.unsupported = attr.value == "true";
     } else {
-      this[attr.name] = attr.value;
-
       switch (attr.name) {
         case "appVersion":
         case "buildID":
         case "channel":
         case "displayVersion":
+        case "elevationFailure":
         case "name":
         case "previousAppVersion":
         case "serviceURL":
         case "statusText":
         case "type":
+          this[attr.name] = attr.value;
           break;
         default:
-          // Save custom attributes when serializing to the local xml file but
-          // don't use this method for the expected attributes which are already
-          // handled in serialize.
+          // Set nsIPropertyBag properties that were read from the xml file.
           this.setProperty(attr.name, attr.value);
           break;
       }
+    }
+  }
+
+  if (!this.previousAppVersion) {
+    this.previousAppVersion = Services.appinfo.version;
+  }
+
+  if (!this.elevationFailure) {
+    this.elevationFailure = false;
+  }
+
+  if (!this.detailsURL) {
+    try {
+      // Try using a default details URL supplied by the distribution
+      // if the update XML does not supply one.
+      this.detailsURL = Services.urlFormatter.formatURLPref(PREF_APP_UPDATE_URL_DETAILS);
+    } catch (e) {
+      this.detailsURL = "";
     }
   }
 
@@ -1420,30 +1454,16 @@ function Update(update) {
     this.displayVersion = this.appVersion;
   }
 
-  // Don't allow the background download interval to be greater than 10 minutes.
-  this.backgroundInterval = Math.min(this.backgroundInterval, 600);
-
-  // The Update Name is either the string provided by the <update> element, or
-  // the string: "<App Name> <Update App Version>"
-  var name = "";
-  if (update.hasAttribute("name")) {
-    name = update.getAttribute("name");
-  } else {
-    var brandBundle = Services.strings.createBundle(URI_BRAND_PROPERTIES);
-    var appName = brandBundle.GetStringFromName("brandShortName");
-    name = gUpdateBundle.formatStringFromName("updateName",
-                                              [appName, this.displayVersion], 2);
+  if (!this.name) {
+    // When the update doesn't provide a name fallback to using
+    // "<App Name> <Update App Version>"
+    let brandBundle = Services.strings.createBundle(URI_BRAND_PROPERTIES);
+    let appName = brandBundle.GetStringFromName("brandShortName");
+    this.name = gUpdateBundle.formatStringFromName("updateName",
+                                                   [appName, this.displayVersion], 2);
   }
-  this.name = name;
 }
 Update.prototype = {
-  /**
-   * See nsIUpdateService.idl
-   */
-  get patchCount() {
-    return this._patches.length;
-  },
-
   /**
    * See nsIUpdateService.idl
    */
@@ -1495,26 +1515,12 @@ Update.prototype = {
    * See nsIUpdateService.idl
    */
   get selectedPatch() {
-    for (var i = 0; i < this.patchCount; ++i) {
-      if (this._patches[i].selected)
+    for (let i = 0; i < this.patchCount; ++i) {
+      if (this._patches[i].selected) {
         return this._patches[i];
-    }
-    return null;
-  },
-
-  /**
-   * See nsIUpdateService.idl
-   */
-  get detailsURL() {
-    if (!this._detailsURL) {
-      try {
-        // Try using a default details URL supplied by the distribution
-        // if the update XML does not supply one.
-        return Services.urlFormatter.formatURLPref(PREF_APP_UPDATE_URL_DETAILS);
-      } catch (e) {
       }
     }
-    return this._detailsURL || "";
+    return null;
   },
 
   /**
@@ -1526,36 +1532,33 @@ Update.prototype = {
     if (!this.appVersion) {
       return null;
     }
-    var update = updates.createElementNS(URI_UPDATE_NS, "update");
+    let update = updates.createElementNS(URI_UPDATE_NS, "update");
     update.setAttribute("appVersion", this.appVersion);
-    update.setAttribute("backgroundInterval", this.backgroundInterval);
     update.setAttribute("buildID", this.buildID);
     update.setAttribute("channel", this.channel);
+    update.setAttribute("detailsURL", this.detailsURL);
     update.setAttribute("displayVersion", this.displayVersion);
     update.setAttribute("installDate", this.installDate);
     update.setAttribute("isCompleteUpdate", this.isCompleteUpdate);
     update.setAttribute("name", this.name);
+    update.setAttribute("previousAppVersion", this.previousAppVersion);
     update.setAttribute("promptWaitTime", this.promptWaitTime);
     update.setAttribute("serviceURL", this.serviceURL);
     update.setAttribute("type", this.type);
 
-    if (this.detailsURL) {
-      update.setAttribute("detailsURL", this.detailsURL);
-    }
-    if (this.previousAppVersion) {
-      update.setAttribute("previousAppVersion", this.previousAppVersion);
-    }
     if (this.statusText) {
       update.setAttribute("statusText", this.statusText);
     }
     if (this.unsupported) {
       update.setAttribute("unsupported", this.unsupported);
     }
-    updates.documentElement.appendChild(update);
+    if (this.elevationFailure) {
+      update.setAttribute("elevationFailure", this.elevationFailure);
+    }
 
-    for (let p in this._properties) {
-      if (this._properties[p].present) {
-        update.setAttribute(p, this._properties[p].data);
+    for (let [name, value] of Object.entries(this._properties)) {
+      if (value.present) {
+        update.setAttribute(name, value.data);
       }
     }
 
@@ -1563,13 +1566,9 @@ Update.prototype = {
       update.appendChild(this.getPatchAt(i).serialize(updates));
     }
 
+    updates.documentElement.appendChild(update);
     return update;
   },
-
-  /**
-   * A hash of custom properties
-   */
-  _properties: null,
 
   /**
    * See nsIWritablePropertyBag.idl
@@ -1582,24 +1581,38 @@ Update.prototype = {
    * See nsIWritablePropertyBag.idl
    */
   deleteProperty: function Update_deleteProperty(name) {
-    if (name in this._properties)
+    if (name in this._properties) {
       this._properties[name].present = false;
-    else
+    } else {
       throw Cr.NS_ERROR_FAILURE;
+    }
   },
 
   /**
    * See nsIPropertyBag.idl
+   *
+   * Note: this only contains the nsIPropertyBag name value / pairs and not the
+   *       nsIUpdate name / value pairs.
    */
   get enumerator() {
     return this.enumerate();
   },
 
   * enumerate() {
-    for (var p in this._properties) {
-      let prop = this.properties[p].data;
-      if (prop) {
-        yield prop;
+    // An nsISupportsInterfacePointer is used so creating an array using
+    // Array.from will retain the QueryInterface for nsIProperty.
+    let ip = Cc["@mozilla.org/supports-interface-pointer;1"].
+             createInstance(Ci.nsISupportsInterfacePointer);
+    let qi = ChromeUtils.generateQI([Ci.nsIProperty]);
+    for (let [name, value] of Object.entries(this._properties)) {
+      if (value.present) {
+        // The nsIPropertyBag enumerator returns a nsISimpleEnumerator whose
+        // elements are nsIProperty objects. Calling QueryInterface for
+        // nsIProperty on the object doesn't return to the caller an object that
+        // is already queried to nsIProperty but do it just in case it is fixed
+        // at some point.
+        ip.data = {name, value: value.data, QueryInterface: qi};
+        yield ip.data.QueryInterface(Ci.nsIProperty);
       }
     }
   },
@@ -1624,8 +1637,9 @@ Update.prototype = {
 const UpdateServiceFactory = {
   _instance: null,
   createInstance(outer, iid) {
-    if (outer != null)
+    if (outer != null) {
       throw Cr.NS_ERROR_NO_AGGREGATION;
+    }
     return this._instance == null ? this._instance = new UpdateService() :
                                     this._instance;
   },
@@ -2568,8 +2582,6 @@ UpdateService.prototype = {
       }
       this._downloader.cancel();
     }
-    // Set the previous application version prior to downloading the update.
-    update.previousAppVersion = Services.appinfo.version;
     this._downloader = new Downloader(background, this);
     return this._downloader.downloadUpdate(update);
   },
@@ -3552,9 +3564,9 @@ Downloader.prototype = {
 
     let patchFile = getUpdatesDir().clone();
     patchFile.append(FILE_UPDATE_MAR);
-    update.QueryInterface(Ci.nsIPropertyBag);
-    let interval = this.background ? update.getProperty("backgroundInterval")
-                                   : DOWNLOAD_FOREGROUND_INTERVAL;
+
+    // The interval is 0 since there is no need to throttle downloads.
+    let interval = 0;
 
     LOG("Downloader:downloadUpdate - url: " + this._patch.URL + ", path: " +
         patchFile.path + ", interval: " + interval);
@@ -3903,6 +3915,7 @@ Downloader.prototype = {
         // downloading) and if at any point this was a foreground download
         // notify the user about the error. If the update was a background
         // update there is no notification since the user won't be expecting it.
+        this._update.QueryInterface(Ci.nsIWritablePropertyBag);
         if (!Services.wm.getMostRecentWindow(UPDATE_WINDOW_NAME) &&
             this._update.getProperty("foregroundDownload") == "true") {
           let prompter = Cc["@mozilla.org/updates/update-prompt;1"].

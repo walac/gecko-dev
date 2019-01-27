@@ -161,9 +161,9 @@ var FormDataInternal = {
         continue;
       }
 
-      // We do not want to collect credit card numbers.
+      // We do not want to collect credit card numbers or past/current password fields.
       if (ChromeUtils.getClassName(node) === "HTMLInputElement") {
-        if (CreditCard.isValidNumber(node.value)) {
+        if (CreditCard.isValidNumber(node.value) || node.hasBeenTypePassword) {
           continue;
         }
       }
@@ -385,8 +385,10 @@ var FormDataInternal = {
    * @param node (DOMNode)
    */
   fireInputEvent(node) {
+    // "inputType" value hasn't been decided for session restor:
+    // https://github.com/w3c/input-events/issues/30#issuecomment-438693664
     let event = node.isInputEventTarget ?
-      new node.ownerGlobal.InputEvent("input", {bubbles: true}) :
+      new node.ownerGlobal.InputEvent("input", {bubbles: true, inputType: ""}) :
       new node.ownerGlobal.Event("input", {bubbles: true});
     node.dispatchEvent(event);
   },

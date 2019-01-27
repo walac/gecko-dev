@@ -9,8 +9,8 @@ const USB_RUNTIME_ID = "test-runtime-id";
 const USB_RUNTIME_DEVICE_NAME = "test device name";
 const USB_RUNTIME_APP_NAME = "TestUsbApp";
 
-/* import-globals-from head-mocks.js */
-Services.scriptloader.loadSubScript(CHROME_URL_ROOT + "head-mocks.js", this);
+/* import-globals-from helper-mocks.js */
+Services.scriptloader.loadSubScript(CHROME_URL_ROOT + "helper-mocks.js", this);
 
 // Test that addons are displayed and updated for USB runtimes when expected.
 add_task(async function() {
@@ -78,7 +78,7 @@ async function testAddonsOnMockedRemoteClient(remoteClient, firefoxClient, docum
   // when the new tab was processed.
   info("Wait until the tab target for 'http://some.random/url.com' appears");
   const testTab = { outerWindowID: 0, url: "http://some.random/url.com" };
-  remoteClient.listTabs = () => ({ tabs: [testTab] });
+  remoteClient.listTabs = () => [testTab];
   remoteClient._eventEmitter.emit("tabListChanged");
   await waitUntil(() => findDebugTargetByText("http://some.random/url.com", document));
 

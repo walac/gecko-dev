@@ -180,8 +180,10 @@ Phase Statistics::lookupChildPhase(PhaseKind phaseKind) const {
     }
   }
 
-  MOZ_RELEASE_ASSERT(phase != Phase::NONE,
-                     "Requested child phase not found under current phase");
+  if (phase == Phase::NONE) {
+      MOZ_CRASH_UNSAFE_PRINTF("Child phase kind %u not found under current phase kind %u",
+                              unsigned(phaseKind), unsigned(currentPhaseKind()));
+  }
 
   return phase;
 }
@@ -981,7 +983,11 @@ void Statistics::endGC() {
                         !zoneStats.isFullCollection());
   TimeDuration markTotal = SumPhase(PhaseKind::MARK, phaseTimes);
   TimeDuration markRootsTotal = SumPhase(PhaseKind::MARK_ROOTS, phaseTimes);
-  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_MS, t(markTotal));
+  double markTime = t(markTotal);
+  size_t markCount = runtime->gc.marker.getMarkCount();
+  double markRate = markCount / markTime;
+  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_MS, markTime);
+  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_RATE, markRate);
   runtime->addTelemetry(JS_TELEMETRY_GC_SWEEP_MS, t(phaseTimes[Phase::SWEEP]));
   if (runtime->gc.isCompactingGc()) {
     runtime->addTelemetry(JS_TELEMETRY_GC_COMPACT_MS,

@@ -33,6 +33,7 @@
 #include "mozilla/Likely.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/MemoryTelemetry.h"
 #include "mozilla/ModuleUtils.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/PoisonIOInterposer.h"
@@ -105,6 +106,7 @@ using mozilla::Telemetry::TelemetryIOInterposeObserver;
 using Telemetry::Common::AutoHashtable;
 using Telemetry::Common::GetCurrentProduct;
 using Telemetry::Common::SetCurrentProduct;
+using Telemetry::Common::StringHashSet;
 using Telemetry::Common::SupportedProduct;
 using Telemetry::Common::ToJSString;
 
@@ -1733,6 +1735,77 @@ TelemetryImpl::SetEventRecordingEnabled(const nsACString& aCategory,
 NS_IMETHODIMP
 TelemetryImpl::FlushBatchedChildTelemetry() {
   TelemetryIPCAccumulator::IPCTimerFired(nullptr, nullptr);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TelemetryImpl::EarlyInit() {
+  Unused << MemoryTelemetry::Get();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TelemetryImpl::DelayedInit() {
+  MemoryTelemetry::Get().DelayedInit();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TelemetryImpl::Shutdown() {
+  MemoryTelemetry::Get().Shutdown();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TelemetryImpl::GatherMemory(JSContext* aCx, Promise** aResult) {
+  ErrorResult rv;
+  RefPtr<Promise> promise = Promise::Create(xpc::CurrentNativeGlobal(aCx), rv);
+  if (rv.Failed()) {
+    return rv.StealNSResult();
+  }
+
+  MemoryTelemetry::Get().GatherReports(
+      [promise]() { promise->MaybeResolve(JS::UndefinedHandleValue); });
+
+  promise.forget(aResult);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TelemetryImpl::GetAllStores(JSContext* aCx, JS::MutableHandleValue aResult) {
+  StringHashSet stores;
+  nsresult rv;
+
+  rv = TelemetryHistogram::GetAllStores(stores);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+  rv = TelemetryScalar::GetAllStores(stores);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  JS::AutoValueVector allStores(aCx);
+  if (!allStores.reserve(stores.Count())) {
+    return NS_ERROR_FAILURE;
+  }
+
+  for (auto iter = stores.Iter(); !iter.Done(); iter.Next()) {
+    auto& value = iter.Get()->GetKey();
+    JS::RootedValue store(aCx);
+
+    store.setString(ToJSString(aCx, value));
+    if (!allStores.append(store)) {
+      return NS_ERROR_FAILURE;
+    }
+  }
+
+  JS::Rooted<JSObject*> rarray(aCx, JS_NewArrayObject(aCx, allStores));
+  if (rarray == nullptr) {
+    return NS_ERROR_FAILURE;
+  }
+  aResult.setObject(*rarray);
+
   return NS_OK;
 }
 

@@ -389,22 +389,18 @@ void CrossProcessCompositorBridgeParent::ShadowLayersUpdated(
       static_cast<uint32_t>(
           (endTime - aInfo.transactionStart()).ToMilliseconds()));
 
-  aLayerTree->SetPendingTransactionId(aInfo.id(), aInfo.refreshStart(),
-                                      aInfo.transactionStart(), aInfo.url(),
-                                      aInfo.fwdTime());
-}
-
-void CrossProcessCompositorBridgeParent::DidComposite(
-    LayersId aId, TimeStamp& aCompositeStart, TimeStamp& aCompositeEnd) {
-  MonitorAutoLock lock(*sIndirectLayerTreesLock);
-  DidCompositeLocked(aId, aCompositeStart, aCompositeEnd);
+  aLayerTree->SetPendingTransactionId(
+      aInfo.id(), aInfo.vsyncId(), aInfo.vsyncStart(), aInfo.refreshStart(),
+      aInfo.transactionStart(), endTime, aInfo.url(), aInfo.fwdTime());
 }
 
 void CrossProcessCompositorBridgeParent::DidCompositeLocked(
-    LayersId aId, TimeStamp& aCompositeStart, TimeStamp& aCompositeEnd) {
+    LayersId aId, const VsyncId& aVsyncId, TimeStamp& aCompositeStart,
+    TimeStamp& aCompositeEnd) {
   sIndirectLayerTreesLock->AssertCurrentThreadOwns();
   if (LayerTransactionParent* layerTree = sIndirectLayerTrees[aId].mLayerTree) {
-    TransactionId transactionId = layerTree->FlushTransactionId(aCompositeEnd);
+    TransactionId transactionId =
+        layerTree->FlushTransactionId(aVsyncId, aCompositeEnd);
     if (transactionId.IsValid()) {
       Unused << SendDidComposite(aId, transactionId, aCompositeStart,
                                  aCompositeEnd);
@@ -627,6 +623,21 @@ void CrossProcessCompositorBridgeParent::UpdatePaintTime(
   }
 
   state->mParent->UpdatePaintTime(aLayerTree, aPaintTime);
+}
+
+void CrossProcessCompositorBridgeParent::RegisterPayload(
+    LayerTransactionParent* aLayerTree,
+    const InfallibleTArray<CompositionPayload>& aPayload) {
+  LayersId id = aLayerTree->GetId();
+  MOZ_ASSERT(id.IsValid());
+
+  CompositorBridgeParent::LayerTreeState* state =
+      CompositorBridgeParent::GetIndirectShadowTree(id);
+  if (!state || !state->mParent) {
+    return;
+  }
+
+  state->mParent->RegisterPayload(aLayerTree, aPayload);
 }
 
 void CrossProcessCompositorBridgeParent::ObserveLayersUpdate(

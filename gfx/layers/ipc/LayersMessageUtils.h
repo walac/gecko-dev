@@ -24,6 +24,7 @@
 #include "mozilla/layers/LayersTypes.h"
 #include "mozilla/layers/RefCountedShmem.h"
 #include "mozilla/layers/RepaintRequest.h"
+#include "VsyncSource.h"
 #include "mozilla/Move.h"
 
 #include <stdint.h>
@@ -38,9 +39,28 @@ template <>
 struct ParamTraits<mozilla::layers::LayersId>
     : public PlainOldDataSerializer<mozilla::layers::LayersId> {};
 
+template <typename T>
+struct ParamTraits<mozilla::layers::BaseTransactionId<T>>
+    : public PlainOldDataSerializer<mozilla::layers::BaseTransactionId<T>> {};
+
 template <>
-struct ParamTraits<mozilla::layers::TransactionId>
-    : public PlainOldDataSerializer<mozilla::layers::TransactionId> {};
+struct ParamTraits<mozilla::VsyncId>
+    : public PlainOldDataSerializer<mozilla::VsyncId> {};
+
+template <>
+struct ParamTraits<mozilla::VsyncEvent> {
+  typedef mozilla::VsyncEvent paramType;
+
+  static void Write(Message* msg, const paramType& param) {
+    WriteParam(msg, param.mId);
+    WriteParam(msg, param.mTime);
+  }
+  static bool Read(const Message* msg, PickleIterator* iter,
+                   paramType* result) {
+    return ReadParam(msg, iter, &result->mId) &&
+           ReadParam(msg, iter, &result->mTime);
+  }
+};
 
 template <>
 struct ParamTraits<mozilla::layers::LayersObserverEpoch>
@@ -58,6 +78,12 @@ struct ParamTraits<mozilla::layers::ScaleMode>
     : public ContiguousEnumSerializerInclusive<
           mozilla::layers::ScaleMode, mozilla::layers::ScaleMode::SCALE_NONE,
           mozilla::layers::kHighestScaleMode> {};
+
+template <>
+struct ParamTraits<mozilla::StyleScrollSnapType>
+    : public ContiguousEnumSerializerInclusive<
+          mozilla::StyleScrollSnapType, mozilla::StyleScrollSnapType::None,
+          mozilla::StyleScrollSnapType::Proximity> {};
 
 template <>
 struct ParamTraits<mozilla::layers::TextureFlags>
@@ -686,6 +712,29 @@ struct ParamTraits<mozilla::layers::SimpleLayerAttributes>
 template <>
 struct ParamTraits<mozilla::layers::ScrollUpdateInfo>
     : public PlainOldDataSerializer<mozilla::layers::ScrollUpdateInfo> {};
+ 
+template <>
+struct ParamTraits<mozilla::layers::CompositionPayloadType>
+    : public ContiguousEnumSerializerInclusive<
+          mozilla::layers::CompositionPayloadType,
+          mozilla::layers::CompositionPayloadType::eKeyPress,
+          mozilla::layers::kHighestCompositionPayloadType> {};
+
+template <>
+struct ParamTraits<mozilla::layers::CompositionPayload>
+{
+  typedef mozilla::layers::CompositionPayload paramType;
+
+  static void Write(Message* aMsg, const paramType& aParam) {
+    WriteParam(aMsg, aParam.mType);
+    WriteParam(aMsg, aParam.mTimeStamp);
+  }
+
+  static bool Read(const Message* aMsg, PickleIterator* aIter, paramType* aResult) {
+    return ReadParam(aMsg, aIter, &aResult->mType) &&
+           ReadParam(aMsg, aIter, &aResult->mTimeStamp);
+  }
+};
 
 } /* namespace IPC */
 

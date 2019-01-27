@@ -300,10 +300,7 @@ uint64_t Zone::gcNumber() {
 
 js::jit::JitZone* Zone::createJitZone(JSContext* cx) {
   MOZ_ASSERT(!jitZone_);
-
-  if (!cx->runtime()->getJitRuntime(cx)) {
-    return nullptr;
-  }
+  MOZ_ASSERT(cx->runtime()->hasJitRuntime());
 
   UniquePtr<jit::JitZone> jitZone(cx->new_<js::jit::JitZone>());
   if (!jitZone) {
@@ -336,6 +333,9 @@ bool Zone::canCollect() {
 }
 
 void Zone::notifyObservingDebuggers() {
+  MOZ_ASSERT(JS::RuntimeHeapIsCollecting(),
+             "This method should be called during GC.");
+
   JSRuntime* rt = runtimeFromMainThread();
   JSContext* cx = rt->mainContextFromOwnThread();
 
@@ -352,7 +352,8 @@ void Zone::notifyObservingDebuggers() {
 
     for (GlobalObject::DebuggerVector::Range r = dbgs->all(); !r.empty();
          r.popFront()) {
-      if (!r.front()->debuggeeIsBeingCollected(rt->gc.majorGCCount())) {
+      if (!r.front().unbarrieredGet()->debuggeeIsBeingCollected(
+              rt->gc.majorGCCount())) {
 #ifdef DEBUG
         fprintf(stderr,
                 "OOM while notifying observing Debuggers of a GC: The "
@@ -463,12 +464,13 @@ void Zone::traceAtomCache(JSTracer* trc) {
   }
 }
 
-void* Zone::onOutOfMemory(js::AllocFunction allocFunc, size_t nbytes,
-                          void* reallocPtr) {
+void* Zone::onOutOfMemory(js::AllocFunction allocFunc, arena_id_t arena,
+                          size_t nbytes, void* reallocPtr) {
   if (!js::CurrentThreadCanAccessRuntime(runtime_)) {
     return nullptr;
   }
-  return runtimeFromMainThread()->onOutOfMemory(allocFunc, nbytes, reallocPtr);
+  return runtimeFromMainThread()->onOutOfMemory(allocFunc, arena, nbytes,
+                                                reallocPtr);
 }
 
 void Zone::reportAllocationOverflow() { js::ReportAllocationOverflow(nullptr); }

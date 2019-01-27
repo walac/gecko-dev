@@ -9,6 +9,7 @@
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/Nullable.h"
 #include "mozilla/dom/WebExtensionPolicyBinding.h"
+#include "mozilla/dom/WindowProxyHolder.h"
 #include "mozilla/extensions/MatchPattern.h"
 
 #include "jspubtd.h"
@@ -121,6 +122,15 @@ class WebExtensionPolicy final : public nsISupports,
   bool Active() const { return mActive; }
   void SetActive(bool aActive, ErrorResult& aRv);
 
+  bool PrivateBrowsingAllowed() const { return mPrivateBrowsingAllowed; }
+  void SetPrivateBrowsingAllowed(bool aPrivateBrowsingAllowed) {
+    mPrivateBrowsingAllowed = aPrivateBrowsingAllowed;
+  };
+
+  bool CanAccessContext(nsILoadContext* aContext) const;
+
+  bool CanAccessWindow(const dom::WindowProxyHolder& aWindow) const;
+
   static void GetActiveExtensions(
       dom::GlobalObject& aGlobal,
       nsTArray<RefPtr<WebExtensionPolicy>>& aResults);
@@ -172,6 +182,8 @@ class WebExtensionPolicy final : public nsISupports,
   RefPtr<AtomSet> mPermissions;
   RefPtr<MatchPatternSet> mHostPermissions;
   MatchGlobSet mWebAccessiblePaths;
+
+  bool mPrivateBrowsingAllowed = false;
 
   dom::Nullable<nsTArray<nsString>> mBackgroundScripts;
 

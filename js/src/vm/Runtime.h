@@ -30,6 +30,7 @@
 #include "gc/GCRuntime.h"
 #include "gc/Tracer.h"
 #include "irregexp/RegExpStack.h"
+#include "js/BuildId.h"  // JS::BuildIdOp
 #include "js/Debug.h"
 #include "js/GCVector.h"
 #include "js/HashTable.h"
@@ -562,12 +563,8 @@ struct JSRuntime : public js::MallocProvider<JSRuntime> {
   JSFunction* getUnclonedSelfHostedFunction(JSContext* cx,
                                             js::HandlePropertyName name);
 
-  js::jit::JitRuntime* createJitRuntime(JSContext* cx);
-
  public:
-  js::jit::JitRuntime* getJitRuntime(JSContext* cx) {
-    return jitRuntime_ ? jitRuntime_.ref() : createJitRuntime(cx);
-  }
+  MOZ_MUST_USE bool createJitRuntime(JSContext* cx);
   js::jit::JitRuntime* jitRuntime() const { return jitRuntime_.ref(); }
   bool hasJitRuntime() const { return !!jitRuntime_; }
 
@@ -837,13 +834,14 @@ struct JSRuntime : public js::MallocProvider<JSRuntime> {
    *
    * The function must be called outside the GC lock.
    */
-  JS_FRIEND_API void* onOutOfMemory(js::AllocFunction allocator, size_t nbytes,
+  JS_FRIEND_API void* onOutOfMemory(js::AllocFunction allocator,
+                                    arena_id_t arena, size_t nbytes,
                                     void* reallocPtr = nullptr,
                                     JSContext* maybecx = nullptr);
 
   /*  onOutOfMemory but can call OnLargeAllocationFailure. */
   JS_FRIEND_API void* onOutOfMemoryCanGC(js::AllocFunction allocator,
-                                         size_t nbytes,
+                                         arena_id_t arena, size_t nbytes,
                                          void* reallocPtr = nullptr);
 
   static const unsigned LARGE_ALLOCATION = 25 * 1024 * 1024;
@@ -978,6 +976,9 @@ struct JSRuntime : public js::MallocProvider<JSRuntime> {
   // HostImportModuleDynamically. This is also used to enable/disable dynamic
   // module import and can accessed by off-thread parsing.
   mozilla::Atomic<JS::ModuleDynamicImportHook> moduleDynamicImportHook;
+
+  // A hook called on script finalization.
+  js::MainThreadData<JS::ScriptPrivateFinalizeHook> scriptPrivateFinalizeHook;
 
  public:
 #if defined(JS_BUILD_BINAST)

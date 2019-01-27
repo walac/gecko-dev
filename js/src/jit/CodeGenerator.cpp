@@ -47,6 +47,7 @@
 #include "util/Unicode.h"
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
+#include "vm/EqualityOperations.h"  // js::SameValue
 #include "vm/MatchPairs.h"
 #include "vm/RegExpObject.h"
 #include "vm/RegExpStatics.h"
@@ -6212,6 +6213,13 @@ static const VMFunction NewStringIteratorObjectInfo =
     FunctionInfo<NewStringIteratorObjectFn>(NewStringIteratorObject,
                                             "NewStringIteratorObject");
 
+typedef RegExpStringIteratorObject* (*NewRegExpStringIteratorObjectFn)(
+    JSContext*, NewObjectKind);
+
+static const VMFunction NewRegExpStringIteratorObjectInfo =
+    FunctionInfo<NewRegExpStringIteratorObjectFn>(
+        NewRegExpStringIteratorObject, "NewRegExpStringIteratorObject");
+
 void CodeGenerator::visitNewIterator(LNewIterator* lir) {
   Register objReg = ToRegister(lir->output());
   Register tempReg = ToRegister(lir->temp());
@@ -6224,6 +6232,10 @@ void CodeGenerator::visitNewIterator(LNewIterator* lir) {
       break;
     case MNewIterator::StringIterator:
       ool = oolCallVM(NewStringIteratorObjectInfo, lir,
+                      ArgList(Imm32(GenericObject)), StoreRegisterTo(objReg));
+      break;
+    case MNewIterator::RegExpStringIterator:
+      ool = oolCallVM(NewRegExpStringIteratorObjectInfo, lir,
                       ArgList(Imm32(GenericObject)), StoreRegisterTo(objReg));
       break;
     default:
@@ -11637,7 +11649,7 @@ class OutOfLineSwitch : public OutOfLineCodeBase<CodeGenerator> {
       MOZ_CRASH("NYI: SwitchTableType::Inline");
 #endif
     } else {
-#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)
+#if defined(JS_CODEGEN_ARM)
       MOZ_CRASH("NYI: SwitchTableType::OutOfLine");
 #else
       masm.mov(start(), temp);
@@ -11672,7 +11684,7 @@ void CodeGenerator::visitOutOfLineSwitch(
     OutOfLineSwitch<tableType>* jumpTable) {
   jumpTable->setOutOfLine();
   if (tableType == SwitchTableType::OutOfLine) {
-#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)
+#if defined(JS_CODEGEN_ARM)
     MOZ_CRASH("NYI: SwitchTableType::OutOfLine");
 #elif defined(JS_CODEGEN_NONE)
     MOZ_CRASH();
@@ -11718,7 +11730,7 @@ void CodeGenerator::visitLoadElementFromStateV(LLoadElementFromStateV* lir) {
   Label join;
 
   // Jump to the code which is loading the element, based on its index.
-#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)
+#if defined(JS_CODEGEN_ARM)
   auto* jumpTable =
       new (alloc()) OutOfLineSwitch<SwitchTableType::Inline>(alloc());
 #else
@@ -11727,7 +11739,7 @@ void CodeGenerator::visitLoadElementFromStateV(LLoadElementFromStateV* lir) {
 #endif
 
   {
-#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)
+#if defined(JS_CODEGEN_ARM)
     // Inhibit pools within the following sequence because we are indexing into
     // a pc relative table. The region will have one instruction for ma_ldr, one
     // for breakpoint, and each table case takes one word.
@@ -13608,17 +13620,11 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
   bool profilingEnabled = isProfilerInstrumentationEnabled();
   WasmInstanceObject* instObj = lir->mir()->instanceObject();
 
-  bool wasmGcEnabled = false;
-#ifdef ENABLE_WASM_GC
-  wasmGcEnabled = gen->options.wasmGcEnabled();
-#endif
-
   Register scratch = ToRegister(lir->temp());
 
   uint32_t callOffset;
   GenerateDirectCallFromJit(masm, funcExport, instObj->instance(), stackArgs,
-                            profilingEnabled, wasmGcEnabled, scratch,
-                            &callOffset);
+                            profilingEnabled, scratch, &callOffset);
 
   // Add the instance object to the constant pool, so it is transferred to
   // the owning IonScript and so that it gets traced as long as the IonScript

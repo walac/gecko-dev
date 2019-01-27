@@ -20,14 +20,11 @@ DIRS += [
     'locales',
     'node-properties',
     'performance',
-    'performance-new',
     'platform',
     'protocol',
-    'pretty-fast',
     'qrcode',
     'screenshot',
     'security',
-    'sourcemap',
     'sprintfjs',
     'specs',
     'transport',
@@ -76,7 +73,6 @@ DevToolsModules(
     'task.js',
     'ThreadSafeDevToolsUtils.js',
     'throttle.js',
-    'wasm-source-map.js',
 )
 
 with Files('**'):

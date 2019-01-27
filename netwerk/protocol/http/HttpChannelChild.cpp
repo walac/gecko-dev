@@ -22,13 +22,13 @@
 #include "mozilla/ipc/IPCStreamUtils.h"
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/HttpChannelChild.h"
+#include "mozilla/net/UrlClassifierCommon.h"
 
 #include "AltDataOutputStreamChild.h"
 #include "CookieServiceChild.h"
 #include "HttpBackgroundChannelChild.h"
 #include "nsCOMPtr.h"
 #include "nsISupportsPrimitives.h"
-#include "nsChannelClassifier.h"
 #include "nsContentPolicyUtils.h"
 #include "nsDOMNavigationTiming.h"
 #include "nsGlobalWindow.h"
@@ -49,11 +49,12 @@
 #include "InterceptedChannel.h"
 #include "mozIThirdPartyUtil.h"
 #include "nsContentSecurityManager.h"
-#include "nsIDeprecationWarner.h"
 #include "nsICompressConvStats.h"
-#include "nsIDocument.h"
+#include "nsIDeprecationWarner.h"
+#include "mozilla/dom/Document.h"
 #include "nsIDOMWindowUtils.h"
 #include "nsIEventTarget.h"
+#include "nsIScriptError.h"
 #include "nsRedirectHistoryEntry.h"
 #include "nsSocketTransportService2.h"
 #include "nsStreamUtils.h"
@@ -546,8 +547,11 @@ void HttpChannelChild::OnStartRequest(
     mResponseHead = new nsHttpResponseHead(responseHead);
 
   if (!securityInfoSerialization.IsEmpty()) {
-    NS_DeserializeObject(securityInfoSerialization,
-                         getter_AddRefs(mSecurityInfo));
+    nsresult rv = NS_DeserializeObject(securityInfoSerialization,
+                                       getter_AddRefs(mSecurityInfo));
+    MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv),
+                          "Deserializing security info should not fail");
+    Unused << rv;  // So we don't get an unused error in release builds.
   }
 
   ipc::MergeParentLoadInfoForwarder(loadInfoForwarder, mLoadInfo);
@@ -1199,7 +1203,7 @@ void HttpChannelChild::DoOnStopRequest(nsIRequest* aRequest,
     rv = GetMatchedFullHash(fullhash);
     NS_ENSURE_SUCCESS_VOID(rv);
 
-    nsChannelClassifier::SetBlockedContent(this, aChannelStatus, list, provider,
+    UrlClassifierCommon::SetBlockedContent(this, aChannelStatus, list, provider,
                                            fullhash);
   }
 
@@ -1666,8 +1670,10 @@ void HttpChannelChild::Redirect1Begin(
                               kCacheUnknown, &mTransactionTimings, uri);
 
   if (!securityInfoSerialization.IsEmpty()) {
-    NS_DeserializeObject(securityInfoSerialization,
-                         getter_AddRefs(mSecurityInfo));
+    rv = NS_DeserializeObject(securityInfoSerialization,
+                              getter_AddRefs(mSecurityInfo));
+    MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv),
+                          "Deserializing security info should not fail");
   }
 
   nsCOMPtr<nsIChannel> newChannel;
@@ -1804,9 +1810,9 @@ void HttpChannelChild::ProcessNotifyTrackingProtectionDisabled() {
   nsCOMPtr<nsIEventTarget> neckoTarget = GetNeckoTarget();
   neckoTarget->Dispatch(
       NS_NewRunnableFunction(
-          "nsChannelClassifier::NotifyTrackingProtectionDisabled",
+          "UrlClassifierCommon::NotifyTrackingProtectionDisabled",
           [self]() {
-            nsChannelClassifier::NotifyTrackingProtectionDisabled(self);
+            UrlClassifierCommon::NotifyTrackingProtectionDisabled(self);
           }),
       NS_DISPATCH_NORMAL);
 }
@@ -1819,7 +1825,7 @@ void HttpChannelChild::ProcessNotifyCookieAllowed() {
   nsCOMPtr<nsIEventTarget> neckoTarget = GetNeckoTarget();
   neckoTarget->Dispatch(
       NS_NewRunnableFunction(
-          "nsChannelClassifier::NotifyBlockingDecision",
+          "UrlClassifierCommon::NotifyBlockingDecision",
           [self]() {
             AntiTrackingCommon::NotifyBlockingDecision(
                 self, AntiTrackingCommon::BlockingDecision::eAllow, 0);
@@ -1836,7 +1842,7 @@ void HttpChannelChild::ProcessNotifyTrackingCookieBlocked(
   RefPtr<HttpChannelChild> self = this;
   nsCOMPtr<nsIEventTarget> neckoTarget = GetNeckoTarget();
   neckoTarget->Dispatch(
-      NS_NewRunnableFunction("nsChannelClassifier::NotifyTrackingCookieBlocked",
+      NS_NewRunnableFunction("AntiTrackingCommon::NotifyBlockingDecision",
                              [self, aRejectedReason]() {
                                AntiTrackingCommon::NotifyBlockingDecision(
                                    self,
@@ -1854,6 +1860,15 @@ void HttpChannelChild::ProcessNotifyTrackingResource(bool aIsThirdParty) {
   MOZ_ASSERT(OnSocketThread());
 
   SetIsTrackingResource(aIsThirdParty);
+}
+
+void HttpChannelChild::ProcessNotifyFlashPluginStateChanged(
+    nsIHttpChannel::FlashPluginState aState) {
+  LOG(("HttpChannelChild::ProcessNotifyFlashPluginStateChanged [this=%p]\n",
+       this));
+  MOZ_ASSERT(OnSocketThread());
+
+  SetFlashPluginState(aState);
 }
 
 void HttpChannelChild::FlushedForDiversion() {
@@ -2602,7 +2617,7 @@ nsresult HttpChannelChild::ContinueAsyncOpen() {
   TimeStamp navigationStartTimeStamp;
   if (tabChild) {
     MOZ_ASSERT(tabChild->WebNavigation());
-    nsCOMPtr<nsIDocument> document = tabChild->GetDocument();
+    RefPtr<Document> document = tabChild->GetDocument();
     if (document) {
       contentWindowId = document->InnerWindowID();
       nsDOMNavigationTiming* navigationTiming = document->GetNavigationTiming();
@@ -3777,6 +3792,33 @@ HttpChannelChild::LogBlockedCORSRequest(const nsAString& aMessage,
     nsCORSListenerProxy::LogBlockedCORSRequest(innerWindowID, privateBrowsing,
                                                aMessage, aCategory);
   }
+  return NS_OK;
+}
+
+mozilla::ipc::IPCResult HttpChannelChild::RecvLogMimeTypeMismatch(
+    const nsCString& aMessageName, const bool& aWarning, const nsString& aURL,
+    const nsString& aContentType) {
+  Unused << LogMimeTypeMismatch(aMessageName, aWarning, aURL, aContentType);
+  return IPC_OK();
+}
+
+NS_IMETHODIMP
+HttpChannelChild::LogMimeTypeMismatch(const nsACString& aMessageName,
+                                      bool aWarning, const nsAString& aURL,
+                                      const nsAString& aContentType) {
+  RefPtr<Document> doc;
+  if (mLoadInfo) {
+    mLoadInfo->GetLoadingDocument(getter_AddRefs(doc));
+  }
+
+  nsAutoString url(aURL);
+  nsAutoString contentType(aContentType);
+  const char16_t* params[] = { url.get(), contentType.get() };
+  nsContentUtils::ReportToConsole(
+      aWarning ? nsIScriptError::warningFlag : nsIScriptError::errorFlag,
+      NS_LITERAL_CSTRING("MIMEMISMATCH"), doc,
+      nsContentUtils::eSECURITY_PROPERTIES, nsCString(aMessageName).get(),
+      params, ArrayLength(params));
   return NS_OK;
 }
 

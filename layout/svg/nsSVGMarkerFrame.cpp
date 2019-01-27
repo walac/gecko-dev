@@ -104,7 +104,7 @@ void nsSVGMarkerFrame::PaintMark(gfxContext& aContext,
     return;
   }
 
-  const nsSVGViewBoxRect viewBox = marker->GetViewBoxRect();
+  const SVGViewBoxRect viewBox = marker->GetViewBoxRect();
 
   if (viewBox.width <= 0.0f || viewBox.height <= 0.0f) {
     // We must disable rendering if the viewBox width or height are zero.
@@ -143,7 +143,9 @@ SVGBBox nsSVGMarkerFrame::GetMarkBBoxContribution(
   // If the flag is set when we get here, it means this marker frame
   // has already been used in calculating the current mark bbox, and
   // the document has a marker reference loop.
-  if (mInUse) return bbox;
+  if (mInUse) {
+    return bbox;
+  }
 
   AutoMarkerReferencer markerRef(this, aMarkedFrame);
 
@@ -152,7 +154,7 @@ SVGBBox nsSVGMarkerFrame::GetMarkBBoxContribution(
     return bbox;
   }
 
-  const nsSVGViewBoxRect viewBox = content->GetViewBoxRect();
+  const SVGViewBoxRect viewBox = content->GetViewBoxRect();
 
   if (viewBox.width <= 0.0f || viewBox.height <= 0.0f) {
     return bbox;
@@ -197,7 +199,7 @@ nsSVGMarkerFrame::AutoMarkerReferencer::AutoMarkerReferencer(
   mFrame->mMarkedFrame = aMarkedFrame;
 
   SVGViewportElement* ctx =
-      static_cast<nsSVGElement*>(aMarkedFrame->GetContent())->GetCtx();
+      static_cast<SVGElement*>(aMarkedFrame->GetContent())->GetCtx();
   mFrame->SetParentCoordCtxProvider(ctx);
 }
 

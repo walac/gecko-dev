@@ -55,13 +55,13 @@
 #include "mozilla/Sprintf.h"
 
 #ifdef XP_WIN
-// We need to undef the MS macro for nsIDocument::CreateEvent
+// We need to undef the MS macro for Document::CreateEvent
 #ifdef CreateEvent
 #undef CreateEvent
 #endif
 #endif  // XP_WIN
 
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsGlobalWindow.h"
 #include "nsDOMDataChannel.h"
 #include "mozilla/dom/Location.h"
@@ -107,7 +107,7 @@
 
 #ifdef XP_WIN
 // We need to undef the MS macro again in case the windows include file
-// got imported after we included nsIDocument.h
+// got imported after we included mozilla/dom/Document.h
 #ifdef CreateEvent
 #undef CreateEvent
 #endif
@@ -287,7 +287,7 @@ bool IsPrivateBrowsing(nsPIDOMWindowInner* aWindow) {
     return false;
   }
 
-  nsIDocument* doc = aWindow->GetExtantDoc();
+  Document* doc = aWindow->GetExtantDoc();
   if (!doc) {
     return false;
   }
@@ -423,13 +423,12 @@ nsresult PeerConnectionImpl::Initialize(PeerConnectionObserver& aObserver,
 
   nsAutoCString locationCStr;
 
-  if (RefPtr<Location> location = mWindow->GetLocation()) {
-    nsAutoString locationAStr;
-    res = location->ToString(locationAStr);
-    NS_ENSURE_SUCCESS(res, res);
+  RefPtr<Location> location = mWindow->Location();
+  nsAutoString locationAStr;
+  res = location->ToString(locationAStr);
+  NS_ENSURE_SUCCESS(res, res);
 
-    CopyUTF16toUTF8(locationAStr, locationCStr);
-  }
+  CopyUTF16toUTF8(locationAStr, locationCStr);
 
   SprintfLiteral(temp, "%" PRIu64 " (id=%" PRIu64 " url=%s)",
                  static_cast<uint64_t>(timestamp),
@@ -1684,7 +1683,7 @@ PeerConnectionImpl::SetPeerIdentity(const nsAString& aPeerIdentity) {
     }
   } else {
     mPeerIdentity = new PeerIdentity(aPeerIdentity);
-    nsIDocument* doc = GetWindow()->GetExtantDoc();
+    Document* doc = GetWindow()->GetExtantDoc();
     if (!doc) {
       CSFLogInfo(LOGTAG, "Can't update principal on streams; document gone");
       return NS_ERROR_FAILURE;
@@ -1710,7 +1709,7 @@ nsresult PeerConnectionImpl::OnAlpnNegotiated(const std::string& aAlpn) {
   // Besides, this is only used to say if we have been connected ever.
   if (!*mPrivacyRequested) {
     // Neither side wants privacy
-    nsIDocument* doc = GetWindow()->GetExtantDoc();
+    Document* doc = GetWindow()->GetExtantDoc();
     if (!doc) {
       CSFLogInfo(LOGTAG, "Can't update principal on streams; document gone");
       return NS_ERROR_FAILURE;
@@ -1722,7 +1721,7 @@ nsresult PeerConnectionImpl::OnAlpnNegotiated(const std::string& aAlpn) {
 }
 
 void PeerConnectionImpl::PrincipalChanged(MediaStreamTrack* aTrack) {
-  nsIDocument* doc = GetWindow()->GetExtantDoc();
+  Document* doc = GetWindow()->GetExtantDoc();
   if (doc) {
     mMedia->UpdateSinkIdentity_m(aTrack, doc->NodePrincipal(), mPeerIdentity);
   } else {
@@ -1920,7 +1919,7 @@ OwningNonNull<dom::MediaStreamTrack> PeerConnectionImpl::CreateReceiveTrack(
   // data (audio/video samples) accessible to the receiving page. We're
   // only certain that privacy hasn't been requested if we're connected.
   nsCOMPtr<nsIPrincipal> principal;
-  nsIDocument* doc = GetWindow()->GetExtantDoc();
+  Document* doc = GetWindow()->GetExtantDoc();
   MOZ_ASSERT(doc);
   if (mPrivacyRequested.isSome() && !*mPrivacyRequested) {
     principal = doc->NodePrincipal();
@@ -2217,7 +2216,7 @@ bool PeerConnectionImpl::PluginCrash(uint32_t aPluginID,
   CSFLogError(LOGTAG, "%s: Our plugin %llu crashed", __FUNCTION__,
               static_cast<unsigned long long>(aPluginID));
 
-  nsCOMPtr<nsIDocument> doc = mWindow->GetExtantDoc();
+  RefPtr<Document> doc = mWindow->GetExtantDoc();
   if (!doc) {
     NS_WARNING("Couldn't get document for PluginCrashed event!");
     return true;
@@ -2805,27 +2804,26 @@ RefPtr<RTCStatsQueryPromise> PeerConnectionImpl::ExecuteStatsQuery_s(
           // First, fill in remote stat with rtcp receiver data, if present.
           // ReceiverReports have less information than SenderReports,
           // so fill in what we can.
-          DOMHighResTimeStamp timestamp;
           uint32_t jitterMs;
           uint32_t packetsReceived;
           uint64_t bytesReceived;
           uint32_t packetsLost;
           int32_t rtt;
-          if (mp.Conduit()->GetRTCPReceiverReport(
-                  &timestamp, &jitterMs, &packetsReceived, &bytesReceived,
-                  &packetsLost, &rtt)) {
+          if (mp.Conduit()->GetRTCPReceiverReport(&jitterMs, &packetsReceived,
+                                                  &bytesReceived, &packetsLost,
+                                                  &rtt)) {
             remoteId = NS_LITERAL_STRING("outbound_rtcp_") + idstr;
             RTCInboundRTPStreamStats s;
-            s.mTimestamp.Construct(timestamp);
+            // TODO Bug 1496533 - use reception time not query time
+            s.mTimestamp.Construct(query->now);
             s.mId.Construct(remoteId);
-            s.mType.Construct(RTCStatsType::Inbound_rtp);
+            s.mType.Construct(RTCStatsType::Remote_inbound_rtp);
             ssrc.apply([&s](uint32_t aSsrc) { s.mSsrc.Construct(aSsrc); });
             s.mMediaType.Construct(
                 kind);  // mediaType is the old name for kind.
             s.mKind.Construct(kind);
             s.mJitter.Construct(double(jitterMs) / 1000);
-            s.mRemoteId.Construct(localId);
-            s.mIsRemote = true;
+            s.mLocalId.Construct(localId);
             s.mPacketsReceived.Construct(packetsReceived);
             s.mBytesReceived.Construct(bytesReceived);
             s.mPacketsLost.Construct(packetsLost);
@@ -2839,6 +2837,7 @@ RefPtr<RTCStatsQueryPromise> PeerConnectionImpl::ExecuteStatsQuery_s(
         // Then, fill in local side (with cross-link to remote only if present)
         {
           RTCOutboundRTPStreamStats s;
+          // TODO Bug 1496533 - use reception time not query time
           s.mTimestamp.Construct(query->now);
           s.mId.Construct(localId);
           s.mType.Construct(RTCStatsType::Outbound_rtp);
@@ -2846,7 +2845,6 @@ RefPtr<RTCStatsQueryPromise> PeerConnectionImpl::ExecuteStatsQuery_s(
           s.mMediaType.Construct(kind);  // mediaType is the old name for kind.
           s.mKind.Construct(kind);
           s.mRemoteId.Construct(remoteId);
-          s.mIsRemote = false;
           s.mPacketsSent.Construct(mp.RtpPacketsSent());
           s.mBytesSent.Construct(mp.RtpBytesSent());
 
@@ -2895,22 +2893,20 @@ RefPtr<RTCStatsQueryPromise> PeerConnectionImpl::ExecuteStatsQuery_s(
         }
         {
           // First, fill in remote stat with rtcp sender data, if present.
-          DOMHighResTimeStamp timestamp;
           uint32_t packetsSent;
           uint64_t bytesSent;
-          if (mp.Conduit()->GetRTCPSenderReport(&timestamp, &packetsSent,
-                                                &bytesSent)) {
+          if (mp.Conduit()->GetRTCPSenderReport(&packetsSent, &bytesSent)) {
             remoteId = NS_LITERAL_STRING("inbound_rtcp_") + idstr;
             RTCOutboundRTPStreamStats s;
-            s.mTimestamp.Construct(timestamp);
+            // TODO Bug 1496533 - use reception time not query time
+            s.mTimestamp.Construct(query->now);
             s.mId.Construct(remoteId);
-            s.mType.Construct(RTCStatsType::Outbound_rtp);
+            s.mType.Construct(RTCStatsType::Remote_outbound_rtp);
             ssrc.apply([&s](uint32_t aSsrc) { s.mSsrc.Construct(aSsrc); });
             s.mMediaType.Construct(
                 kind);  // mediaType is the old name for kind.
             s.mKind.Construct(kind);
-            s.mRemoteId.Construct(localId);
-            s.mIsRemote = true;
+            s.mLocalId.Construct(localId);
             s.mPacketsSent.Construct(packetsSent);
             s.mBytesSent.Construct(bytesSent);
             query->report->mOutboundRTPStreamStats.Value().AppendElement(
@@ -2933,20 +2929,9 @@ RefPtr<RTCStatsQueryPromise> PeerConnectionImpl::ExecuteStatsQuery_s(
         if (remoteId.Length()) {
           s.mRemoteId.Construct(remoteId);
         }
-        s.mIsRemote = false;
         s.mPacketsReceived.Construct(mp.RtpPacketsReceived());
         s.mBytesReceived.Construct(mp.RtpBytesReceived());
 
-        if (query->internalStats && isAudio) {
-          int32_t jitterBufferDelay;
-          int32_t playoutBufferDelay;
-          int32_t avSyncDelta;
-          if (mp.Conduit()->GetAVStats(&jitterBufferDelay, &playoutBufferDelay,
-                                       &avSyncDelta)) {
-            s.mMozJitterBufferDelay.Construct(jitterBufferDelay);
-            s.mMozAvSyncDelay.Construct(avSyncDelta);
-          }
-        }
         // Fill in packet type statistics
         webrtc::RtcpPacketTypeCounter counters;
         if (mp.Conduit()->GetRecvPacketTypeStats(&counters)) {

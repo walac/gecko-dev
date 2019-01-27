@@ -524,7 +524,6 @@ STATIC_ATOMS = [
     Atom("infinity", "infinity"),
     Atom("inherits", "inherits"),
     Atom("inheritOverflow", "inherit-overflow"),
-    Atom("inheritScrollBehavior", "inherit-scroll-behavior"),
     Atom("inheritstyle", "inheritstyle"),
     Atom("initial_scale", "initial-scale"),
     Atom("input", "input"),
@@ -672,7 +671,6 @@ STATIC_ATOMS = [
     Atom("mozTableRemoveColumn", "mozTableRemoveColumn"),
     Atom("moz_opaque", "moz-opaque"),
     Atom("moz_action_hint", "mozactionhint"),
-    Atom("x_moz_errormessage", "x-moz-errormessage"),
     Atom("multicol", "multicol"),
     Atom("multiple", "multiple"),
     Atom("muted", "muted"),
@@ -928,6 +926,8 @@ STATIC_ATOMS = [
     Atom("otherwise", "otherwise"),
     Atom("output", "output"),
     Atom("overflow", "overflow"),
+    Atom("overflowBlock", "overflow-block"),
+    Atom("overflowInline", "overflow-inline"),
     Atom("overlay", "overlay"),
     Atom("p", "p"),
     Atom("pack", "pack"),
@@ -1882,6 +1882,10 @@ STATIC_ATOMS = [
 
     # MediaDevices device change event
     Atom("ondevicechange", "ondevicechange"),
+
+    # Internal Visual Viewport events
+    Atom("onmozvisualresize", "onmozvisualresize"),
+    Atom("onmozvisualscroll", "onmozvisualscroll"),
 
     # WebExtensions
     Atom("moz_extension", "moz-extension"),

@@ -9,7 +9,7 @@
           xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
           xmlns:xbl="http://www.mozilla.org/xbl">
 
-  <binding id="tabbrowser-arrowscrollbox" extends="chrome://global/content/bindings/scrollbox.xml#arrowscrollbox-clicktoscroll">
+  <binding id="tabbrowser-arrowscrollbox" extends="chrome://global/content/bindings/scrollbox.xml#arrowscrollbox">
     <implementation>
       <!-- Override scrollbox.xml method, since our scrollbox's children are
            inherited from the binding parent -->
@@ -34,7 +34,7 @@
         // - for vertical orientation
         // - corresponding to an overflow event that we ignored
         let tabs = document.getBindingParent(this);
-        if (event.originalTarget != this._scrollbox ||
+        if (event.originalTarget != this.scrollbox ||
             event.detail == 0 ||
             !tabs.hasAttribute("overflow")) {
           return;
@@ -56,7 +56,7 @@
         // Ignore overflow events:
         // - from nested scrollable elements
         // - for vertical orientation
-        if (event.originalTarget != this._scrollbox ||
+        if (event.originalTarget != this.scrollbox ||
             event.detail == 0) {
           return;
         }
@@ -634,7 +634,7 @@
           let leftMovingTabScreenX = movingTabs[0].boxObject.screenX;
           let translateX = screenX - draggedTab._dragData.screenX;
           if (!pinned) {
-            translateX += this.arrowScrollbox._scrollbox.scrollLeft - draggedTab._dragData.scrollX;
+            translateX += this.arrowScrollbox.scrollbox.scrollLeft - draggedTab._dragData.scrollX;
           }
           let leftBound = leftTab.boxObject.screenX - leftMovingTabScreenX;
           let rightBound = (rightTab.boxObject.screenX + rightTab.boxObject.width) -
@@ -931,42 +931,62 @@
       <method name="_notifyBackgroundTab">
         <parameter name="aTab"/>
         <body><![CDATA[
-          if (aTab.pinned || aTab.hidden)
+          if (aTab.pinned || aTab.hidden || this.getAttribute("overflow") != "true")
             return;
 
-          var scrollRect = this.arrowScrollbox.scrollClientRect;
-          var tab = aTab.getBoundingClientRect();
+          this._lastTabToScrollIntoView = aTab;
+          if (!this._backgroundTabScrollPromise) {
+            this._backgroundTabScrollPromise = window.promiseDocumentFlushed(() => {
+              let lastTabRect = this._lastTabToScrollIntoView.getBoundingClientRect();
+              let selectedTab = this.selectedItem;
+              if (selectedTab.pinned) {
+                selectedTab = null;
+              } else {
+                selectedTab = selectedTab.getBoundingClientRect();
+                selectedTab = {left: selectedTab.left, right: selectedTab.right};
+              }
+              return [
+                this._lastTabToScrollIntoView,
+                this.arrowScrollbox.scrollClientRect,
+                {left: lastTabRect.left, right: lastTabRect.right},
+                selectedTab,
+              ];
+            }).then(([tabUsed, scrollRect, tabRect, selectedRect]) => {
+              // First off, remove the promise so we can re-enter if necessary.
+              delete this._backgroundTabScrollPromise;
+              // Then, if the layout info isn't for the last-scrolled-to-tab, re-run
+              // the code above to get layout info for *that* tab, and don't do
+              // anything here, as we really just want to run this for the last-opened tab.
+              if (this._lastTabToScrollIntoView != tabUsed) {
+                this._notifyBackgroundTab(this._lastTabToScrollIntoView);
+                return;
+              }
+              delete this._lastTabToScrollIntoView;
+              // Is the new tab already completely visible?
+              if (scrollRect.left <= tabRect.left && tabRect.right <= scrollRect.right)
+                return;
 
-          // DOMRect left/right properties are immutable.
-          tab = {left: tab.left, right: tab.right};
+              if (this.arrowScrollbox.smoothScroll) {
+                // Can we make both the new tab and the selected tab completely visible?
+                if (!selectedRect ||
+                    Math.max(tabRect.right - selectedRect.left, selectedRect.right - tabRect.left) <=
+                      scrollRect.width) {
+                  this.arrowScrollbox.ensureElementIsVisible(aTab);
+                  return;
+                }
 
-          // Is the new tab already completely visible?
-          if (scrollRect.left <= tab.left && tab.right <= scrollRect.right)
-            return;
+                this.arrowScrollbox.scrollByPixels(RTL_UI ?
+                                                     selectedRect.right - scrollRect.right :
+                                                     selectedRect.left - scrollRect.left);
+              }
 
-          if (this.arrowScrollbox.smoothScroll) {
-            let selectedTab = this.selectedItem;
-            let selected = !selectedTab.pinned &&
-                           selectedTab.getBoundingClientRect();
-
-            // Can we make both the new tab and the selected tab completely visible?
-            if (!selected ||
-                Math.max(tab.right - selected.left, selected.right - tab.left) <=
-                  scrollRect.width) {
-              this.arrowScrollbox.ensureElementIsVisible(aTab);
-              return;
-            }
-
-            this.arrowScrollbox.scrollByPixels(RTL_UI ?
-                                                 selected.right - scrollRect.right :
-                                                 selected.left - scrollRect.left);
-          }
-
-          if (!this._animateElement.hasAttribute("highlight")) {
-            this._animateElement.setAttribute("highlight", "true");
-            setTimeout(function(ele) {
-              ele.removeAttribute("highlight");
-            }, 150, this._animateElement);
+              if (!this._animateElement.hasAttribute("highlight")) {
+                this._animateElement.setAttribute("highlight", "true");
+                setTimeout(function(ele) {
+                  ele.removeAttribute("highlight");
+                }, 150, this._animateElement);
+              }
+            });
           }
         ]]></body>
       </method>
@@ -1116,7 +1136,6 @@
 
           // Starting from the tabs element, find the next sibling that:
           // - isn't hidden; and
-          // - isn't one of the titlebar placeholder elements; and
           // - isn't the all-tabs button.
           // If it's the new tab button, consider the new tab button adjacent to the tabs.
           // If the new tab button is marked as adjacent and the tabstrip doesn't
@@ -1127,7 +1146,6 @@
           do {
             sib = unwrap(wrap(sib).nextElementSibling);
           } while (sib && (sib.hidden ||
-                           sib.getAttribute("skipintoolbarset") == "true" ||
                            sib.id == "alltabs-button"));
 
           const kAttr = "hasadjacentnewtabbutton";
@@ -1537,7 +1555,7 @@
         tab._dragData = {
           offsetX: event.screenX - window.screenX - tabOffsetX,
           offsetY: event.screenY - window.screenY,
-          scrollX: this.arrowScrollbox._scrollbox.scrollLeft,
+          scrollX: this.arrowScrollbox.scrollbox.scrollLeft,
           screenX: event.screenX,
           movingTabs: (tab.multiselected ? gBrowser.selectedTabs : [tab])
                       .filter(t => t.pinned == tab.pinned),
@@ -2345,7 +2363,9 @@
 
         if (this.selected) {
           this.style.MozUserFocus = "ignore";
-        } else if (this.mOverCloseButton || this._overPlayingIcon) {
+        } else if (event.originalTarget.classList.contains("tab-close-button") ||
+                   event.originalTarget.classList.contains("tab-icon-sound") ||
+                   event.originalTarget.classList.contains("tab-icon-overlay")) {
             // Prevent tabbox.xml from selecting the tab.
             event.stopPropagation();
         }
@@ -2400,8 +2420,9 @@
         }
 
         if (gBrowser.multiSelectedTabsCount > 0 &&
-          !this.mOverCloseButton &&
-          !this._overPlayingIcon) {
+            !event.originalTarget.classList.contains("tab-close-button") &&
+            !event.originalTarget.classList.contains("tab-icon-sound") &&
+            !event.originalTarget.classList.contains("tab-icon-overlay")) {
           // Tabs were previously multi-selected and user clicks on a tab
           // without holding Ctrl/Cmd Key
 
@@ -2412,7 +2433,10 @@
           gBrowser.clearMultiSelectedTabs(updatePositionalAttr);
         }
 
-        if (this._overPlayingIcon) {
+        if (event.originalTarget.classList.contains("tab-icon-sound") ||
+            (event.originalTarget.classList.contains("tab-icon-overlay") &&
+             (event.originalTarget.hasAttribute("soundplaying") ||
+              event.originalTarget.hasAttribute("muted")))) {
           if (this.multiselected) {
             gBrowser.toggleMuteAudioOnMultiSelectedTabs(this);
           } else {
@@ -2446,7 +2470,8 @@
         if (tabContainer._closeTabByDblclick &&
             this._selectedOnFirstMouseDown &&
             this.selected &&
-            !this._overPlayingIcon) {
+            !(event.originalTarget.classList.contains("tab-icon-sound") ||
+              event.originalTarget.classList.contains("tab-icon-overlay"))) {
           gBrowser.removeTab(this, {
             animate: true,
             byMouse: event.mozInputSource == MouseEvent.MOZ_SOURCE_MOUSE,

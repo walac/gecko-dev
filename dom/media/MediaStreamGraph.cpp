@@ -2353,8 +2353,7 @@ void MediaStream::RunAfterPendingUpdates(
     Message(MediaStream* aStream, already_AddRefed<nsIRunnable> aRunnable)
         : ControlMessage(aStream), mRunnable(aRunnable) {}
     void Run() override {
-      mStream->Graph()->DispatchToMainThreadAfterStreamStateUpdate(
-          mRunnable.forget());
+      mStream->Graph()->DispatchToMainThreadStableState(mRunnable.forget());
     }
     void RunDuringShutdown() override {
       // Don't run mRunnable now as it may call AppendMessage() which would
@@ -2544,10 +2543,6 @@ bool SourceMediaStream::PullNewData(GraphTime aDesiredUpToTime) {
   // the stream at all.
   StreamTime t = GraphTimeToStreamTime(aDesiredUpToTime);
   StreamTime current = mTracks.GetEarliestTrackEnd();
-  LOG(LogLevel::Verbose,
-      ("%p: Calling NotifyPull aStream=%p t=%f current end=%f", GraphImpl(),
-       this, GraphImpl()->MediaTimeToSeconds(t),
-       GraphImpl()->MediaTimeToSeconds(current)));
   for (const TrackData& track : mUpdateTracks) {
     if (!track.mPullingEnabled) {
       continue;
@@ -2559,6 +2554,10 @@ bool SourceMediaStream::PullNewData(GraphTime aDesiredUpToTime) {
     if (t <= current) {
       continue;
     }
+    LOG(LogLevel::Verbose,
+        ("%p: Calling NotifyPull stream=%p track=%d t=%f current end=%f",
+         GraphImpl(), this, track.mID, GraphImpl()->MediaTimeToSeconds(t),
+         GraphImpl()->MediaTimeToSeconds(current)));
     MutexAutoUnlock unlock(mMutex);
     for (TrackBound<MediaStreamTrackListener>& l : mTrackListeners) {
       if (l.mTrackID == track.mID) {
@@ -3025,8 +3024,7 @@ RefPtr<GenericPromise> MediaInputPort::BlockSourceTrackId(
     void Run() override {
       mPort->BlockSourceTrackIdImpl(mTrackId, mBlockingMode);
       if (mRunnable) {
-        mStream->Graph()->DispatchToMainThreadAfterStreamStateUpdate(
-            mRunnable.forget());
+        mStream->Graph()->DispatchToMainThreadStableState(mRunnable.forget());
       }
     }
     void RunDuringShutdown() override { Run(); }
@@ -3816,7 +3814,7 @@ already_AddRefed<MediaInputPort> MediaStreamGraphImpl::ConnectToCaptureStream(
   return nullptr;
 }
 
-void MediaStreamGraph::DispatchToMainThreadAfterStreamStateUpdate(
+void MediaStreamGraph::DispatchToMainThreadStableState(
     already_AddRefed<nsIRunnable> aRunnable) {
   AssertOnGraphThreadOrNotRunning();
   *static_cast<MediaStreamGraphImpl*>(this)

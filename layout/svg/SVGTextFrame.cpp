@@ -2795,8 +2795,8 @@ void SVGTextDrawPathCallbacks::StrokeGeometry() {
           MOZ_ASSERT(false, "Our nsTextFrame's parent's content should be SVG");
           return;
         }
-        nsSVGElement* svgOwner =
-            static_cast<nsSVGElement*>(mFrame->GetParent()->GetContent());
+        SVGElement* svgOwner =
+            static_cast<SVGElement*>(mFrame->GetParent()->GetContent());
 
         // Apply any stroke-specific transform
         gfxMatrix outerSVGToUser;
@@ -2904,7 +2904,7 @@ void nsDisplaySVGText::Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) {
 // nsQueryFrame methods
 
 NS_QUERYFRAME_HEAD(SVGTextFrame)
-NS_QUERYFRAME_ENTRY(SVGTextFrame)
+  NS_QUERYFRAME_ENTRY(SVGTextFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsSVGDisplayContainerFrame)
 
 // ---------------------------------------------------------------------
@@ -2949,7 +2949,9 @@ void SVGTextFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
 nsresult SVGTextFrame::AttributeChanged(int32_t aNameSpaceID,
                                         nsAtom* aAttribute, int32_t aModType) {
-  if (aNameSpaceID != kNameSpaceID_None) return NS_OK;
+  if (aNameSpaceID != kNameSpaceID_None) {
+    return NS_OK;
+  }
 
   if (aAttribute == nsGkAtoms::transform) {
     // We don't invalidate for transform changes (the layers code does that).
@@ -4245,7 +4247,7 @@ bool SVGTextFrame::ResolvePositionsForNode(nsIContent* aContent,
     MOZ_ASSERT(aContent->IsSVGElement());
 
     // We have a text content element that can have x/y/dx/dy/rotate attributes.
-    nsSVGElement* element = static_cast<nsSVGElement*>(aContent);
+    SVGElement* element = static_cast<SVGElement*>(aContent);
 
     // Get x, y, dx, dy.
     SVGUserUnitList x, y, dx, dy;
@@ -4486,7 +4488,9 @@ enum TextAnchorSide { eAnchorLeft, eAnchorMiddle, eAnchorRight };
 static TextAnchorSide ConvertLogicalTextAnchorToPhysical(uint8_t aTextAnchor,
                                                          bool aIsRightToLeft) {
   NS_ASSERTION(aTextAnchor <= 3, "unexpected value for aTextAnchor");
-  if (!aIsRightToLeft) return TextAnchorSide(aTextAnchor);
+  if (!aIsRightToLeft) {
+    return TextAnchorSide(aTextAnchor);
+  }
   return TextAnchorSide(2 - aTextAnchor);
 }
 
@@ -5002,7 +5006,7 @@ bool SVGTextFrame::ShouldRenderAsPath(nsTextFrame* aFrame,
 
   // Text has a stroke.
   if (style->HasStroke() &&
-      SVGContentUtils::CoordToFloat(static_cast<nsSVGElement*>(GetContent()),
+      SVGContentUtils::CoordToFloat(static_cast<SVGElement*>(GetContent()),
                                     style->mStrokeWidth) > 0) {
     return true;
   }
@@ -5053,7 +5057,9 @@ void SVGTextFrame::MaybeResolveBidiForAnonymousBlockChild() {
 
 void SVGTextFrame::MaybeReflowAnonymousBlockChild() {
   nsIFrame* kid = PrincipalChildList().FirstChild();
-  if (!kid) return;
+  if (!kid) {
+    return;
+  }
 
   NS_ASSERTION(!(kid->GetStateBits() & NS_FRAME_IN_REFLOW),
                "should not be in reflow when about to reflow again");
@@ -5101,7 +5107,9 @@ void SVGTextFrame::DoReflow() {
 
   nsPresContext* presContext = PresContext();
   nsIFrame* kid = PrincipalChildList().FirstChild();
-  if (!kid) return;
+  if (!kid) {
+    return;
+  }
 
   RefPtr<gfxContext> renderingContext =
       presContext->PresShell()->CreateReferenceRenderingContext();

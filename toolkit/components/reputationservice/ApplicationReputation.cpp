@@ -483,6 +483,7 @@ static const char* const kBinaryFileExtensions[] = {
     ".com",        // Windows executable
     ".command",    // Mac script
     ".cpgz",       // Mac archive
+    ".cpi",        // Control Panel Item. Executable used for adding icons to Control Panel
     //".cpio",
     ".cpl",         // Windows executable
     ".crt",         // Windows signed certificate
@@ -491,6 +492,7 @@ static const char* const kBinaryFileExtensions[] = {
     ".dart",        // Mac disk image
     ".dc42",        // Apple DiskCopy Image
     ".deb",         // Linux package
+    ".desktop",     // A shortcut that runs other files
     ".dex",         // Android
     ".dhtml",       // HTML
     ".dhtm",        // HTML

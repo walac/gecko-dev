@@ -98,7 +98,7 @@
 #include "nsIX509Cert.h"
 #include "ScopedNSSTypes.h"
 #include "nsIDeprecationWarner.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsICompressConvStats.h"
 #include "nsCORSListenerProxy.h"
 #include "nsISocketProvider.h"
@@ -122,6 +122,7 @@
 #include "mozilla/dom/PromiseNativeHandler.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/ServiceWorkerUtils.h"
+#include "mozilla/net/AsyncUrlChannelClassifier.h"
 
 #ifdef MOZ_TASK_TRACER
 #include "GeckoTaskTracer.h"
@@ -399,6 +400,17 @@ nsHttpChannel::LogBlockedCORSRequest(const nsAString &aMessage,
                                      const nsACString &aCategory) {
   if (mWarningReporter) {
     return mWarningReporter->LogBlockedCORSRequest(aMessage, aCategory);
+  }
+  return NS_ERROR_UNEXPECTED;
+}
+
+NS_IMETHODIMP
+nsHttpChannel::LogMimeTypeMismatch(const nsACString &aMessageName,
+                                   bool aWarning, const nsAString &aURL,
+                                   const nsAString &aContentType) {
+  if (mWarningReporter) {
+    return mWarningReporter->LogMimeTypeMismatch(aMessageName, aWarning, aURL,
+                                                 aContentType);
   }
   return NS_ERROR_UNEXPECTED;
 }
@@ -1203,24 +1215,23 @@ nsresult nsHttpChannel::SetupTransaction() {
   return rv;
 }
 
-// Helper Function to report messages to the console when loading
-// a resource was blocked due to a MIME type mismatch.
-void ReportTypeBlocking(nsIURI *aURI, nsILoadInfo *aLoadInfo,
-                        const char *aMessageName) {
-  NS_ConvertUTF8toUTF16 specUTF16(aURI->GetSpecOrDefault());
-  const char16_t *params[] = {specUTF16.get()};
-  nsCOMPtr<nsIDocument> doc;
-  if (aLoadInfo) {
-    aLoadInfo->GetLoadingDocument(getter_AddRefs(doc));
-  }
-  nsContentUtils::ReportToConsole(nsIScriptError::errorFlag,
-                                  NS_LITERAL_CSTRING("MIMEMISMATCH"), doc,
-                                  nsContentUtils::eSECURITY_PROPERTIES,
-                                  aMessageName, params, ArrayLength(params));
+enum class Report { Error, Warning };
+
+// Helper Function to report messages to the console when the loaded
+// script had a wrong MIME type.
+void ReportMimeTypeMismatch(nsHttpChannel *aChannel, const char *aMessageName,
+                            nsIURI *aURI, const nsACString &aContentType,
+                            Report report) {
+  NS_ConvertUTF8toUTF16 spec(aURI->GetSpecOrDefault());
+  NS_ConvertUTF8toUTF16 contentType(aContentType);
+
+  aChannel->LogMimeTypeMismatch(nsCString(aMessageName),
+                                report == Report::Warning, spec, contentType);
 }
 
 // Check and potentially enforce X-Content-Type-Options: nosniff
-nsresult ProcessXCTO(nsIURI *aURI, nsHttpResponseHead *aResponseHead,
+nsresult ProcessXCTO(nsHttpChannel *aChannel, nsIURI *aURI,
+                     nsHttpResponseHead *aResponseHead,
                      nsILoadInfo *aLoadInfo) {
   if (!aURI || !aResponseHead || !aLoadInfo) {
     // if there is no uri, no response head or no loadInfo, then there is
@@ -1256,7 +1267,7 @@ nsresult ProcessXCTO(nsIURI *aURI, nsHttpResponseHead *aResponseHead,
     // e.g. sending 'nosnif' instead of 'nosniff', let's log a warning.
     NS_ConvertUTF8toUTF16 char16_header(contentTypeOptionsHeader);
     const char16_t *params[] = {char16_header.get()};
-    nsCOMPtr<nsIDocument> doc;
+    RefPtr<Document> doc;
     aLoadInfo->GetLoadingDocument(getter_AddRefs(doc));
     nsContentUtils::ReportToConsole(
         nsIScriptError::warningFlag, NS_LITERAL_CSTRING("XCTO"), doc,
@@ -1275,7 +1286,8 @@ nsresult ProcessXCTO(nsIURI *aURI, nsHttpResponseHead *aResponseHead,
     if (contentType.EqualsLiteral(TEXT_CSS)) {
       return NS_OK;
     }
-    ReportTypeBlocking(aURI, aLoadInfo, "MimeTypeMismatch");
+    ReportMimeTypeMismatch(aChannel, "MimeTypeMismatch2", aURI, contentType,
+                           Report::Error);
     return NS_ERROR_CORRUPTED_CONTENT;
   }
 
@@ -1285,14 +1297,16 @@ nsresult ProcessXCTO(nsIURI *aURI, nsHttpResponseHead *aResponseHead,
             NS_ConvertUTF8toUTF16(contentType))) {
       return NS_OK;
     }
-    ReportTypeBlocking(aURI, aLoadInfo, "MimeTypeMismatch");
+    ReportMimeTypeMismatch(aChannel, "MimeTypeMismatch2", aURI, contentType,
+                           Report::Error);
     return NS_ERROR_CORRUPTED_CONTENT;
   }
   return NS_OK;
 }
 
 // Ensure that a load of type script has correct MIME type
-nsresult EnsureMIMEOfScript(nsIURI *aURI, nsHttpResponseHead *aResponseHead,
+nsresult EnsureMIMEOfScript(nsHttpChannel *aChannel, nsIURI *aURI,
+                            nsHttpResponseHead *aResponseHead,
                             nsILoadInfo *aLoadInfo) {
   if (!aURI || !aResponseHead || !aLoadInfo) {
     // if there is no uri, no response head or no loadInfo, then there is
@@ -1313,8 +1327,33 @@ nsresult EnsureMIMEOfScript(nsIURI *aURI, nsHttpResponseHead *aResponseHead,
   if (nsContentUtils::IsJavascriptMIMEType(typeString)) {
     // script load has type script
     AccumulateCategorical(
-        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::javaScript);
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::javaScript);
     return NS_OK;
+  }
+
+  switch (aLoadInfo->InternalContentPolicyType()) {
+    case nsIContentPolicy::TYPE_SCRIPT:
+    case nsIContentPolicy::TYPE_INTERNAL_SCRIPT:
+    case nsIContentPolicy::TYPE_INTERNAL_SCRIPT_PRELOAD:
+      AccumulateCategorical(
+          Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::script_load);
+      break;
+    case nsIContentPolicy::TYPE_INTERNAL_WORKER:
+    case nsIContentPolicy::TYPE_INTERNAL_SHARED_WORKER:
+      AccumulateCategorical(
+          Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::worker_load);
+      break;
+    case nsIContentPolicy::TYPE_INTERNAL_SERVICE_WORKER:
+      AccumulateCategorical(
+          Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::serviceworker_load);
+      break;
+    case nsIContentPolicy::TYPE_INTERNAL_WORKER_IMPORT_SCRIPTS:
+      AccumulateCategorical(
+          Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::importScript_load);
+      break;
+    default:
+      MOZ_ASSERT_UNREACHABLE("unexpected script type");
+      break;
   }
 
   nsCOMPtr<nsIURI> requestURI;
@@ -1326,7 +1365,7 @@ nsresult EnsureMIMEOfScript(nsIURI *aURI, nsHttpResponseHead *aResponseHead,
   if (NS_SUCCEEDED(rv)) {
     // same origin
     AccumulateCategorical(
-        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::same_origin);
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::same_origin);
   } else {
     bool cors = false;
     nsAutoCString corsOrigin;
@@ -1352,11 +1391,11 @@ nsresult EnsureMIMEOfScript(nsIURI *aURI, nsHttpResponseHead *aResponseHead,
     if (cors) {
       // cors origin
       AccumulateCategorical(
-          Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::CORS_origin);
+          Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::CORS_origin);
     } else {
       // cross origin
       AccumulateCategorical(
-          Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::cross_origin);
+          Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::cross_origin);
     }
   }
 
@@ -1364,22 +1403,22 @@ nsresult EnsureMIMEOfScript(nsIURI *aURI, nsHttpResponseHead *aResponseHead,
   if (StringBeginsWith(contentType, NS_LITERAL_CSTRING("image/"))) {
     // script load has type image
     AccumulateCategorical(
-        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::image);
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::image);
     block = true;
   } else if (StringBeginsWith(contentType, NS_LITERAL_CSTRING("audio/"))) {
     // script load has type audio
     AccumulateCategorical(
-        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::audio);
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::audio);
     block = true;
   } else if (StringBeginsWith(contentType, NS_LITERAL_CSTRING("video/"))) {
     // script load has type video
     AccumulateCategorical(
-        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::video);
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::video);
     block = true;
   } else if (StringBeginsWith(contentType, NS_LITERAL_CSTRING("text/csv"))) {
     // script load has type text/csv
     AccumulateCategorical(
-        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::text_csv);
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::text_csv);
     block = true;
   }
 
@@ -1399,21 +1438,22 @@ nsresult EnsureMIMEOfScript(nsIURI *aURI, nsHttpResponseHead *aResponseHead,
       return NS_OK;
     }
 
-    ReportTypeBlocking(aURI, aLoadInfo, "BlockScriptWithWrongMimeType");
+    ReportMimeTypeMismatch(aChannel, "BlockScriptWithWrongMimeType2", aURI,
+                           contentType, Report::Error);
     return NS_ERROR_CORRUPTED_CONTENT;
   }
 
   if (StringBeginsWith(contentType, NS_LITERAL_CSTRING("text/plain"))) {
     // script load has type text/plain
     AccumulateCategorical(
-        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::text_plain);
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::text_plain);
     return NS_OK;
   }
 
   if (StringBeginsWith(contentType, NS_LITERAL_CSTRING("text/xml"))) {
     // script load has type text/xml
     AccumulateCategorical(
-        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::text_xml);
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::text_xml);
     return NS_OK;
   }
 
@@ -1421,35 +1461,75 @@ nsresult EnsureMIMEOfScript(nsIURI *aURI, nsHttpResponseHead *aResponseHead,
                        NS_LITERAL_CSTRING("application/octet-stream"))) {
     // script load has type application/octet-stream
     AccumulateCategorical(
-        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::app_octet_stream);
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::app_octet_stream);
     return NS_OK;
   }
 
   if (StringBeginsWith(contentType, NS_LITERAL_CSTRING("application/xml"))) {
     // script load has type application/xml
     AccumulateCategorical(
-        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::app_xml);
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::app_xml);
+    return NS_OK;
+  }
+
+  if (StringBeginsWith(contentType, NS_LITERAL_CSTRING("application/json"))) {
+    // script load has type application/json
+    AccumulateCategorical(
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::app_json);
+    return NS_OK;
+  }
+
+  if (StringBeginsWith(contentType, NS_LITERAL_CSTRING("text/json"))) {
+    // script load has type text/json
+    AccumulateCategorical(
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::text_json);
     return NS_OK;
   }
 
   if (StringBeginsWith(contentType, NS_LITERAL_CSTRING("text/html"))) {
     // script load has type text/html
     AccumulateCategorical(
-        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::text_html);
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::text_html);
     return NS_OK;
   }
 
   if (contentType.IsEmpty()) {
     // script load has no type
     AccumulateCategorical(
-        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::empty);
+        Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::empty);
     return NS_OK;
   }
 
   // script load has unknown type
   AccumulateCategorical(
-      Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_2::unknown);
+      Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::unknown);
   return NS_OK;
+}
+
+// Warn when a load of type script uses a wrong MIME type and
+// wasn't blocked by EnsureMIMEOfScript or ProcessXCTO.
+void WarnWrongMIMEOfScript(nsHttpChannel *aChannel, nsIURI *aURI,
+                           nsHttpResponseHead *aResponseHead,
+                           nsILoadInfo *aLoadInfo) {
+  if (!aURI || !aResponseHead || !aLoadInfo) {
+    // If there is no uri, no response head or no loadInfo, then there is
+    // nothing to do.
+    return;
+  }
+
+  if (aLoadInfo->GetExternalContentPolicyType() !=
+      nsIContentPolicy::TYPE_SCRIPT) {
+    // If this is not a script load, then there is nothing to do.
+    return;
+  }
+
+  nsAutoCString contentType;
+  aResponseHead->ContentType(contentType);
+  NS_ConvertUTF8toUTF16 typeString(contentType);
+  if (!nsContentUtils::IsJavascriptMIMEType(typeString)) {
+    ReportMimeTypeMismatch(aChannel, "WarnScriptWithWrongMimeType", aURI,
+                           contentType, Report::Warning);
+  }
 }
 
 nsresult nsHttpChannel::CallOnStartRequest() {
@@ -1492,11 +1572,13 @@ nsresult nsHttpChannel::CallOnStartRequest() {
     mOnStartRequestCalled = true;
   });
 
-  nsresult rv = EnsureMIMEOfScript(mURI, mResponseHead, mLoadInfo);
+  nsresult rv = EnsureMIMEOfScript(this, mURI, mResponseHead, mLoadInfo);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = ProcessXCTO(mURI, mResponseHead, mLoadInfo);
+  rv = ProcessXCTO(this, mURI, mResponseHead, mLoadInfo);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  WarnWrongMIMEOfScript(this, mURI, mResponseHead, mLoadInfo);
 
   // Allow consumers to override our content type
   if (mLoadFlags & LOAD_CALL_CONTENT_SNIFFERS) {
@@ -2132,7 +2214,7 @@ nsresult nsHttpChannel::ProcessResponse() {
                           mConnectionInfo->EndToEndSSL());
   }
 
-  if (gHttpHandler->IsTelemetryEnabled()) {
+  if (Telemetry::CanRecordPrereleaseData()) {
     // how often do we see something like Alt-Svc: "443:quic,p=1"
     nsAutoCString alt_service;
     Unused << mResponseHead->GetHeader(nsHttp::Alternate_Service, alt_service);
@@ -2501,7 +2583,7 @@ nsresult nsHttpChannel::ContinueProcessResponse2(nsresult rv) {
     }
   }
 
-  if (gHttpHandler->IsTelemetryEnabled()) {
+  if (Telemetry::CanRecordPrereleaseData()) {
     CacheDisposition cacheDisposition;
     if (!mDidReval) {
       cacheDisposition = kCacheMissed;
@@ -5617,6 +5699,7 @@ nsresult nsHttpChannel::ContinueProcessRedirection(nsresult rv) {
   } else {
     rv = mRedirectChannel->AsyncOpen(mListener, mListenerContext);
   }
+  LOG(("  new channel AsyncOpen returned %" PRIX32, static_cast<uint32_t>(rv)));
   NS_ENSURE_SUCCESS(rv, rv);
 
   // close down this channel
@@ -6350,15 +6433,13 @@ nsresult nsHttpChannel::BeginConnect() {
     return ContinueBeginConnectWithResult();
   }
 
-  // We are about to do a sync lookup to check if the URI is a
+  // We are about to do an async lookup to check if the URI is a
   // tracker. If yes, this channel will be canceled by channel classifier.
   // Chances are the lookup is not needed so CheckIsTrackerWithLocalTable()
   // will return an error and then we can BeginConnectActual() right away.
-  RefPtr<nsChannelClassifier> channelClassifier =
-      GetOrCreateChannelClassifier();
   RefPtr<nsHttpChannel> self = this;
   bool willCallback = NS_SUCCEEDED(
-      channelClassifier->CheckIsTrackerWithLocalTable([self]() -> void {
+      AsyncUrlChannelClassifier::CheckChannel(this, [self]() -> void {
         nsresult rv = self->BeginConnectActual();
         if (NS_FAILED(rv)) {
           // Since this error is thrown asynchronously so that the caller
@@ -8837,12 +8918,12 @@ void nsHttpChannel::MaybeWarnAboutAppCache() {
   nsCOMPtr<nsIDeprecationWarner> warner;
   GetCallback(warner);
   if (warner) {
-    warner->IssueWarning(nsIDocument::eAppCache, false);
+    warner->IssueWarning(Document::eAppCache, false);
     // When the page is insecure and the API is still enabled
     // provide an additional warning for developers of removal
     if (!IsHTTPS() &&
         Preferences::GetBool("browser.cache.offline.insecure.enable")) {
-      warner->IssueWarning(nsIDocument::eAppCacheInsecure, true);
+      warner->IssueWarning(Document::eAppCacheInsecure, true);
     }
   }
 }

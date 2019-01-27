@@ -25,7 +25,7 @@
 #include "nsIObserverService.h"
 #include "nsIDebug2.h"
 #include "nsIDocShell.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsIRunnable.h"
 #include "nsIPlatformInfo.h"
 #include "nsPIDOMWindow.h"
@@ -42,6 +42,7 @@
 #include "nsCycleCollectionNoteRootCallback.h"
 #include "nsCycleCollector.h"
 #include "jsapi.h"
+#include "js/BuildId.h"  // JS::BuildIdCharVector, JS::SetProcessBuildIdOp
 #include "js/MemoryFunctions.h"
 #include "js/MemoryMetrics.h"
 #include "js/UbiNode.h"
@@ -183,19 +184,20 @@ class AsyncFreeSnowWhite : public Runnable {
 namespace xpc {
 
 CompartmentPrivate::CompartmentPrivate(JS::Compartment* c,
+                                       XPCWrappedNativeScope* scope,
                                        mozilla::BasePrincipal* origin,
                                        const SiteIdentifier& site)
     : originInfo(origin, site),
+      scope(scope),
       wantXrays(false),
       allowWaivers(true),
       isWebExtensionContentScript(false),
       allowCPOWs(false),
       isContentXBLCompartment(false),
       isUAWidgetCompartment(false),
-      isSandboxCompartment(false),
+      hasExclusiveExpandos(false),
       universalXPConnectEnabled(false),
-      forcePermissiveCOWs(false),
-      wasNuked(false),
+      wasShutdown(false),
       mWrappedJSMap(JSObject2WrappedJSMap::newMap(XPC_JS_MAP_LENGTH)) {
   MOZ_COUNT_CTOR(xpc::CompartmentPrivate);
   mozilla::PodArrayZero(wrapperDenialWarnings);
@@ -207,11 +209,44 @@ CompartmentPrivate::~CompartmentPrivate() {
 }
 
 void CompartmentPrivate::SystemIsBeingShutDown() {
-  mWrappedJSMap->ShutdownMarker();
+  // We may call this multiple times when the compartment contains more than one
+  // realm.
+  if (!wasShutdown) {
+    mWrappedJSMap->ShutdownMarker();
+    wasShutdown = true;
+  }
 }
 
-RealmPrivate::RealmPrivate(JS::Realm* realm)
-    : scriptability(realm), scope(nullptr) {}
+RealmPrivate::RealmPrivate(JS::Realm* realm) : scriptability(realm) {}
+
+/* static */ void RealmPrivate::Init(HandleObject aGlobal,
+                                     const SiteIdentifier& aSite) {
+  MOZ_ASSERT(aGlobal);
+  DebugOnly<const js::Class*> clasp = js::GetObjectClass(aGlobal);
+  MOZ_ASSERT(clasp->flags &
+                 (JSCLASS_PRIVATE_IS_NSISUPPORTS | JSCLASS_HAS_PRIVATE) ||
+             dom::IsDOMClass(clasp));
+
+  Realm* realm = GetObjectRealmOrNull(aGlobal);
+
+  // Create the realm private.
+  RealmPrivate* realmPriv = new RealmPrivate(realm);
+  MOZ_ASSERT(!GetRealmPrivate(realm));
+  SetRealmPrivate(realm, realmPriv);
+
+  nsIPrincipal* principal = GetRealmPrincipal(realm);
+  Compartment* c = js::GetObjectCompartment(aGlobal);
+
+  // Create the compartment private if needed.
+  if (CompartmentPrivate* priv = CompartmentPrivate::Get(c)) {
+    MOZ_ASSERT(priv->originInfo.IsSameOrigin(principal));
+  } else {
+    auto* scope = new XPCWrappedNativeScope(c, aGlobal);
+    priv =
+        new CompartmentPrivate(c, scope, BasePrincipal::Cast(principal), aSite);
+    JS_SetCompartmentPrivate(c, priv);
+  }
+}
 
 static bool TryParseLocationURICandidate(
     const nsACString& uristr, RealmPrivate::LocationHint aLocationHint,
@@ -378,6 +413,49 @@ static bool PrincipalImmuneToScriptPolicy(nsIPrincipal* aPrincipal) {
   return false;
 }
 
+void RealmPrivate::RegisterStackFrame(JSStackFrameBase* aFrame) {
+  mJSStackFrames.PutEntry(aFrame);
+}
+
+void RealmPrivate::UnregisterStackFrame(JSStackFrameBase* aFrame) {
+  mJSStackFrames.RemoveEntry(aFrame);
+}
+
+void RealmPrivate::NukeJSStackFrames() {
+  for (auto iter = mJSStackFrames.Iter(); !iter.Done(); iter.Next()) {
+    iter.Get()->GetKey()->Clear();
+  }
+
+  mJSStackFrames.Clear();
+}
+
+void RegisterJSStackFrame(JS::Realm* aRealm, JSStackFrameBase* aStackFrame) {
+  RealmPrivate* realmPrivate = RealmPrivate::Get(aRealm);
+  if (!realmPrivate) {
+    return;
+  }
+
+  realmPrivate->RegisterStackFrame(aStackFrame);
+}
+
+void UnregisterJSStackFrame(JS::Realm* aRealm, JSStackFrameBase* aStackFrame) {
+  RealmPrivate* realmPrivate = RealmPrivate::Get(aRealm);
+  if (!realmPrivate) {
+    return;
+  }
+
+  realmPrivate->UnregisterStackFrame(aStackFrame);
+}
+
+void NukeJSStackFrames(JS::Realm* aRealm) {
+  RealmPrivate* realmPrivate = RealmPrivate::Get(aRealm);
+  if (!realmPrivate) {
+    return;
+  }
+
+  realmPrivate->NukeJSStackFrames();
+}
+
 Scriptability::Scriptability(JS::Realm* realm)
     : mScriptBlocks(0),
       mDocShellAllowsScript(true),
@@ -452,14 +530,6 @@ bool IsInUAWidgetScope(JSObject* obj) {
   return IsUAWidgetCompartment(js::GetObjectCompartment(obj));
 }
 
-bool IsInSandboxCompartment(JSObject* obj) {
-  JS::Compartment* comp = js::GetObjectCompartment(obj);
-
-  // We always eagerly create compartment privates for sandbox compartments.
-  CompartmentPrivate* priv = CompartmentPrivate::Get(comp);
-  return priv && priv->isSandboxCompartment;
-}
-
 bool CompartmentOriginInfo::MightBeWebContent() const {
   // Compartments with principals that are either the system principal or an
   // expanded principal are definitely not web content.
@@ -519,8 +589,8 @@ bool EnableUniversalXPConnect(JSContext* cx) {
   // The Components object normally isn't defined for unprivileged web content,
   // but we define it when UniversalXPConnect is enabled to support legacy
   // tests.
-  Realm* realm = GetCurrentRealmOrNull(cx);
-  XPCWrappedNativeScope* scope = RealmPrivate::Get(realm)->scope;
+  Compartment* comp = js::GetContextCompartment(cx);
+  XPCWrappedNativeScope* scope = CompartmentPrivate::Get(comp)->scope;
   if (!scope) {
     return true;
   }
@@ -590,36 +660,26 @@ nsGlobalWindowInner* CurrentWindowOrNull(JSContext* cx) {
   return glob ? WindowOrNull(glob) : nullptr;
 }
 
-// Nukes all wrappers into or out of the given compartment, and prevents new
-// wrappers from being created. Additionally marks the compartment as
+// Nukes all wrappers into or out of the given realm, and prevents new
+// wrappers from being created. Additionally marks the realm as
 // unscriptable after wrappers have been nuked.
 //
-// Note: This should *only* be called for browser or extension compartments.
+// Note: This should *only* be called for browser or extension realms.
 // Wrappers between web compartments must never be cut in web-observable
 // ways.
-void NukeAllWrappersForCompartment(
-    JSContext* cx, JS::Compartment* compartment,
+void NukeAllWrappersForRealm(
+    JSContext* cx, JS::Realm* realm,
     js::NukeReferencesToWindow nukeReferencesToWindow) {
-  // First, nuke all wrappers into or out of the target compartment. Once
-  // the compartment is marked as nuked, WrapperFactory will refuse to
-  // create new live wrappers for it, in either direction. This means that
-  // we need to be sure that we don't have any existing cross-compartment
-  // wrappers which may be replaced with dead wrappers during unrelated
-  // wrapper recomputation *before* we set that bit.
-  js::NukeCrossCompartmentWrappers(cx, js::AllCompartments(), compartment,
+  // We do the following:
+  // * Nuke all wrappers into the realm.
+  // * Nuke all wrappers out of the realm's compartment, once we have nuked all
+  //   realms in it.
+  js::NukeCrossCompartmentWrappers(cx, js::AllCompartments(), realm,
                                    nukeReferencesToWindow,
                                    js::NukeAllReferences);
 
-  // At this point, we should cross-compartment wrappers for the nuked
-  // compartment. Set the wasNuked bit so WrapperFactory will return a
-  // DeadObjectProxy when asked to create a new wrapper for it, and mark as
-  // unscriptable.
-  xpc::CompartmentPrivate::Get(compartment)->wasNuked = true;
-
-  auto blockScriptability = [](JSContext*, void*, Handle<Realm*> realm) {
-    xpc::RealmPrivate::Get(realm)->scriptability.Block();
-  };
-  JS::IterateRealmsInCompartment(cx, compartment, nullptr, blockScriptability);
+  // Mark the realm as unscriptable.
+  xpc::RealmPrivate::Get(realm)->scriptability.Block();
 }
 
 }  // namespace xpc
@@ -910,6 +970,7 @@ void XPCJSRuntime::CustomGCCallback(JSGCStatus status) {
 }
 
 void CompartmentPrivate::UpdateWeakPointersAfterGC() {
+  mRemoteProxies.sweep();
   mWrappedJSMap->UpdateWeakPointersAfterGC();
 }
 
@@ -1200,6 +1261,16 @@ static int64_t JSMainRuntimeGCHeapDistinguishedAmount() {
 static int64_t JSMainRuntimeTemporaryPeakDistinguishedAmount() {
   JSContext* cx = danger::GetJSContext();
   return JS::PeakSizeOfTemporary(cx);
+}
+
+static int64_t JSMainRuntimeCompartmentsSystemDistinguishedAmount() {
+  JSContext* cx = danger::GetJSContext();
+  return JS::SystemCompartmentCount(cx);
+}
+
+static int64_t JSMainRuntimeCompartmentsUserDistinguishedAmount() {
+  JSContext* cx = XPCJSContext::Get()->Context();
+  return JS::UserCompartmentCount(cx);
 }
 
 static int64_t JSMainRuntimeRealmsSystemDistinguishedAmount() {
@@ -2120,7 +2191,7 @@ class OrphanReporter : public JS::ObjectPrivateVisitor {
     }
 
     nsWindowSizes sizes(mState);
-    nsIDocument::AddSizeOfNodeTree(*orphanTree, sizes);
+    mozilla::dom::Document::AddSizeOfNodeTree(*orphanTree, sizes);
 
     // We combine the node size with nsStyleSizes here. It's not ideal, but it's
     // hard to get the style structs measurements out to nsWindowMemoryReporter.
@@ -2289,7 +2360,7 @@ void JSReporter::CollectReports(WindowPaths* windowPaths,
       xpcrt->GetMultiCompartmentWrappedJSMap()->SizeOfWrappedJS(JSMallocSizeOf);
 
   XPCWrappedNativeScope::ScopeSizeInfo sizeInfo(JSMallocSizeOf);
-  XPCWrappedNativeScope::AddSizeOfAllScopesIncludingThis(&sizeInfo);
+  XPCWrappedNativeScope::AddSizeOfAllScopesIncludingThis(cx, &sizeInfo);
 
   mozJSComponentLoader* loader = mozJSComponentLoader::Get();
   size_t jsComponentLoaderSize =
@@ -2667,6 +2738,9 @@ static void AccumulateTelemetryCallback(int id, uint32_t sample,
     case JS_TELEMETRY_GC_NURSERY_PROMOTION_RATE:
       Telemetry::Accumulate(Telemetry::GC_NURSERY_PROMOTION_RATE, sample);
       break;
+    case JS_TELEMETRY_GC_MARK_RATE:
+      Telemetry::Accumulate(Telemetry::GC_MARK_RATE, sample);
+      break;
     default:
       MOZ_ASSERT_UNREACHABLE("Unexpected JS_TELEMETRY id");
   }
@@ -2790,7 +2864,8 @@ static nsresult ReadSourceFromFilename(JSContext* cx, const char* filename,
   }
 
   rv = ScriptLoader::ConvertToUTF16(scriptChannel, buf.get(), rawLen,
-                                    EmptyString(), nullptr, *src, *len);
+                                    NS_LITERAL_STRING("UTF-8"), nullptr, *src,
+                                    *len);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!*src) {
@@ -2980,6 +3055,10 @@ void XPCJSRuntime::Initialize(JSContext* cx) {
       JSMainRuntimeGCHeapDistinguishedAmount);
   RegisterJSMainRuntimeTemporaryPeakDistinguishedAmount(
       JSMainRuntimeTemporaryPeakDistinguishedAmount);
+  RegisterJSMainRuntimeCompartmentsSystemDistinguishedAmount(
+      JSMainRuntimeCompartmentsSystemDistinguishedAmount);
+  RegisterJSMainRuntimeCompartmentsUserDistinguishedAmount(
+      JSMainRuntimeCompartmentsUserDistinguishedAmount);
   RegisterJSMainRuntimeRealmsSystemDistinguishedAmount(
       JSMainRuntimeRealmsSystemDistinguishedAmount);
   RegisterJSMainRuntimeRealmsUserDistinguishedAmount(

@@ -47,6 +47,7 @@
 #include "js/Debug.h"
 #include "js/HashTable.h"
 #include "js/LocaleSensitive.h"
+#include "js/PropertySpec.h"
 #include "js/SourceText.h"
 #include "js/StableStringChars.h"
 #include "js/StructuredClone.h"
@@ -199,6 +200,15 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
   value = BooleanValue(false);
 #endif
   if (!JS_SetProperty(cx, info, "x64", value)) {
+    return false;
+  }
+
+#ifdef JS_CODEGEN_ARM
+  value = BooleanValue(true);
+#else
+  value = BooleanValue(false);
+#endif
+  if (!JS_SetProperty(cx, info, "arm", value)) {
     return false;
   }
 
@@ -1064,11 +1074,6 @@ static bool ScheduleGC(JSContext* cx, unsigned argc, Value* vp) {
 static bool SelectForGC(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (gc::GCRuntime::temporaryAbortIfWasmGc(cx)) {
-    JS_ReportErrorASCII(cx, "API temporarily unavailable under wasm gc");
-    return false;
-  }
-
   /*
    * The selectedForMarking set is intended to be manually marked at slice
    * start to detect missing pre-barriers. It is invalid for nursery things
@@ -1883,7 +1888,8 @@ bool RunIterativeFailureTest(JSContext* cx,
       // iteration. Our GC is triggered by GC allocations and not by
       // number of compartments or zones, so these won't normally get
       // cleaned up. The check here stops some tests running out of
-      // memory.
+      // memory. ("Gentlemen, you can't fight in here! This is the
+      // War oom!")
       if (CountCompartments(cx) > compartmentCount + 100) {
         JS_GC(cx);
         compartmentCount = CountCompartments(cx);
@@ -1904,9 +1910,14 @@ bool RunIterativeFailureTest(JSContext* cx,
     } while (failureWasSimulated);
 
     if (params.verbose) {
-      fprintf(stderr, "  finished after %d iterations\n", iteration - 2);
+      fprintf(stderr, "  finished after %d iterations\n", iteration - 1);
       if (!exception.isUndefined()) {
         RootedString str(cx, JS::ToString(cx, exception));
+        if (!str) {
+          fprintf(stderr,
+                  "  error while trying to print exception, giving up\n");
+          return false;
+        }
         UniqueChars bytes(JS_EncodeStringToLatin1(cx, str));
         if (!bytes) {
           return false;
@@ -3409,8 +3420,8 @@ static bool ThrowOutOfMemory(JSContext* cx, unsigned argc, Value* vp) {
 static bool ReportLargeAllocationFailure(JSContext* cx, unsigned argc,
                                          Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  void* buf = cx->runtime()->onOutOfMemoryCanGC(AllocFunction::Malloc,
-                                                JSRuntime::LARGE_ALLOCATION);
+  void* buf = cx->runtime()->onOutOfMemoryCanGC(
+      AllocFunction::Malloc, js::MallocArena, JSRuntime::LARGE_ALLOCATION);
   js_free(buf);
   args.rval().setUndefined();
   return true;
@@ -3539,9 +3550,7 @@ struct FindPathHandler {
 
 static bool FindPath(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  if (argc < 2) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, NULL, JSMSG_MORE_ARGS_NEEDED,
-                              "findPath", "1", "");
+  if (!args.requireAtLeast(cx, "findPath", 2)) {
     return false;
   }
 
@@ -5702,17 +5711,33 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "  This is also disabled when --fuzzing-safe is specified.\n"
 "  Alternatively an object can be passed to set the following options:\n"
 "    expectExceptionOnFailure: bool - as described above.\n"
-"    keepFailing: bool - continue to fail after first simulated failure.\n"),
+"    keepFailing: bool - continue to fail after first simulated failure.\n"
+"\n"
+"  WARNING: By design, oomTest assumes the test-function follows the same\n"
+"  code path each time it is called, right up to the point where OOM occurs.\n"
+"  If on iteration 70 it finishes and caches a unit of work that saves 65\n"
+"  allocations the next time we run, then the subsequent 65 allocation\n"
+"  points will go untested.\n"
+"\n"
+"  Things in this category include lazy parsing and baseline compilation,\n"
+"  so it is very easy to accidentally write an oomTest that only tests one\n"
+"  or the other of those, and not the functionality you meant to test!\n"
+"  To avoid lazy parsing, call the test function once first before passing\n"
+"  it to oomTest. The jits can be disabled via the test harness.\n"),
 
     JS_FN_HELP("stackTest", StackTest, 0, 0,
 "stackTest(function, [expectExceptionOnFailure = true])",
 "  This function behaves exactly like oomTest with the difference that\n"
 "  instead of simulating regular OOM conditions, it simulates the engine\n"
-"  running out of stack space (failing recursion check)."),
+"  running out of stack space (failing recursion check).\n"
+"\n"
+"  See the WARNING in help('oomTest').\n"),
 
     JS_FN_HELP("interruptTest", InterruptTest, 0, 0,
 "interruptTest(function)",
-"  This function simulates interrupts similar to how oomTest simulates OOM conditions."),
+"  This function simulates interrupts similar to how oomTest simulates OOM conditions."
+"\n"
+"  See the WARNING in help('oomTest').\n"),
 
 #endif // defined(DEBUG) || defined(JS_OOM_BREAKPOINT)
 

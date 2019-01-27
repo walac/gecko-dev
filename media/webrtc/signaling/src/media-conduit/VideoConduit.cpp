@@ -1159,14 +1159,6 @@ bool WebrtcVideoConduit::GetVideoDecoderStats(double* framerateMean,
   return true;
 }
 
-bool WebrtcVideoConduit::GetAVStats(int32_t* jitterBufferDelayMs,
-                                    int32_t* playoutBufferDelayMs,
-                                    int32_t* avSyncOffsetMs) {
-  ASSERT_ON_THREAD(mStsThread);
-
-  return false;
-}
-
 bool WebrtcVideoConduit::GetRTPStats(uint32_t* jitterMs,
                                      uint32_t* packetsLost) {
   ASSERT_ON_THREAD(mStsThread);
@@ -1182,8 +1174,7 @@ bool WebrtcVideoConduit::GetRTPStats(uint32_t* jitterMs,
   return true;
 }
 
-bool WebrtcVideoConduit::GetRTCPReceiverReport(DOMHighResTimeStamp* timestamp,
-                                               uint32_t* jitterMs,
+bool WebrtcVideoConduit::GetRTCPReceiverReport(uint32_t* jitterMs,
                                                uint32_t* packetsReceived,
                                                uint64_t* bytesReceived,
                                                uint32_t* cumulativeLost,
@@ -1202,15 +1193,10 @@ bool WebrtcVideoConduit::GetRTCPReceiverReport(DOMHighResTimeStamp* timestamp,
   *bytesReceived = mSendStreamStats.BytesReceived();
   *cumulativeLost = mSendStreamStats.PacketsLost();
   *rttMs = mCallStats.RttMs();
-  // Note: timestamp is not correct per the spec... should be time the rtcp
-  // was received (remote) or sent (local)
-  *timestamp = webrtc::Clock::GetRealTimeClock()->TimeInMilliseconds();
-
   return true;
 }
 
-bool WebrtcVideoConduit::GetRTCPSenderReport(DOMHighResTimeStamp* timestamp,
-                                             unsigned int* packetsSent,
+bool WebrtcVideoConduit::GetRTCPSenderReport(unsigned int* packetsSent,
                                              uint64_t* bytesSent) {
   ASSERT_ON_THREAD(mStsThread);
 
@@ -1220,7 +1206,6 @@ bool WebrtcVideoConduit::GetRTCPSenderReport(DOMHighResTimeStamp* timestamp,
     return false;
   }
 
-  *timestamp = webrtc::Clock::GetRealTimeClock()->TimeInMilliseconds();
   *packetsSent = mRecvStreamStats.PacketsSent();
   *bytesSent = mRecvStreamStats.BytesSent();
   return true;

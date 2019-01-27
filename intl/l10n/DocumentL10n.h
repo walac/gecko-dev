@@ -14,7 +14,7 @@
 #include "nsIDOMEventListener.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsWrapperCache.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsINode.h"
 #include "mozIDOMLocalization.h"
 #include "mozilla/dom/Promise.h"
@@ -23,6 +23,7 @@
 namespace mozilla {
 namespace dom {
 
+class Document;
 class Element;
 struct L10nKey;
 
@@ -43,13 +44,13 @@ class PromiseResolver final : public PromiseNativeHandler {
 enum class DocumentL10nState { Initialized = 0, InitialTranslationTriggered };
 
 /**
- * This class maintains localization status of the nsDocument.
+ * This class maintains localization status of the document.
  *
- * The nsDocument will initialize it lazily when a link with a
- * localization resource is added to the document.
+ * The document will initialize it lazily when a link with a localization
+ * resource is added to the document.
  *
  * Once initialized, DocumentL10n relays all API methods to an
- * instance of mozIDOMLocalization and maintaines a single promise
+ * instance of mozIDOMLocalization and maintains a single promise
  * which gets resolved the first time the document gets translated.
  */
 class DocumentL10n final : public nsIDOMEventListener, public nsWrapperCache {
@@ -59,13 +60,13 @@ class DocumentL10n final : public nsIDOMEventListener, public nsWrapperCache {
   NS_DECL_NSIDOMEVENTLISTENER
 
  public:
-  explicit DocumentL10n(nsIDocument* aDocument);
+  explicit DocumentL10n(Document* aDocument);
   bool Init(nsTArray<nsString>& aResourceIds);
 
  protected:
   virtual ~DocumentL10n();
 
-  nsCOMPtr<nsIDocument> mDocument;
+  RefPtr<Document> mDocument;
   RefPtr<Promise> mReady;
   DocumentL10nState mState;
   nsCOMPtr<mozIDOMLocalization> mDOMLocalization;
@@ -73,7 +74,7 @@ class DocumentL10n final : public nsIDOMEventListener, public nsWrapperCache {
   already_AddRefed<Promise> MaybeWrapPromise(Promise* aPromise);
 
  public:
-  nsIDocument* GetParentObject() const { return mDocument; };
+  Document* GetParentObject() const { return mDocument; };
 
   virtual JSObject* WrapObject(JSContext* aCx,
                                JS::Handle<JSObject*> aGivenProto) override;

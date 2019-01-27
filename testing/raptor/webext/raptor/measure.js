@@ -7,31 +7,41 @@ var perfData = window.performance;
 var gRetryCounter = 0;
 
 // measure hero element; must exist inside test page;
+// supported on: Firefox, Chromium, Geckoview
 // default only; this is set via control server settings json
 var getHero = false;
 var heroesToCapture = [];
 
-// measure firefox time-to-first-non-blank-paint
+// measure time-to-first-non-blank-paint
+// supported on: Firefox, Geckoview
 // note: this browser pref must be enabled:
 // dom.performance.time_to_non_blank_paint.enabled = True
 // default only; this is set via control server settings json
 var getFNBPaint = false;
 
-// measure firefox domContentFlushed
+// measure domContentFlushed
+// supported on: Firefox, Geckoview
 // note: this browser pref must be enabled:
 // dom.performance.time_to_dom_content_flushed.enabled = True
 // default only; this is set via control server settings json
 var getDCF = false;
 
-// measure firefox TTFI
+// measure TTFI
+// supported on: Firefox, Geckoview
 // note: this browser pref must be enabled:
 // dom.performance.time_to_first_interactive.enabled = True
 // default only; this is set via control server settings json
 var getTTFI = false;
 
-// measure google's first-contentful-paint
+// measure first-contentful-paint
+// supported on: Chromium
 // default only; this is set via control server settings json
 var getFCP = false;
+
+// measure loadtime
+// supported on: Firefox, Chromium, Geckoview
+// default only; this is set via control server settings json
+var getLoadTime = false;
 
 // performance.timing measurement used as 'starttime'
 var startMeasure = "fetchStart";
@@ -101,6 +111,14 @@ function setup(settings) {
       measureTTFI();
     }
   }
+
+  if (settings.measure.loadtime !== undefined) {
+    getLoadTime = settings.measure.loadtime;
+    if (getLoadTime) {
+      console.log("will be measuring loadtime");
+      measureLoadTime();
+    }
+  }
 }
 
 function measureHero() {
@@ -116,13 +134,13 @@ function measureHero() {
         // mark the time now as when hero element received
         perfData.mark(heroFound);
         console.log("found hero:" + heroFound);
+        var resultType = "hero:" + heroFound;
         // calculcate result: performance.timing.fetchStart - time when we got hero element
         perfData.measure(name = resultType,
                          startMark = startMeasure,
                          endMark = heroFound);
         var perfResult = perfData.getEntriesByName(resultType);
         var _result = Math.round(perfResult[0].duration);
-        var resultType = "hero:" + heroFound;
         sendResult(resultType, _result);
         perfData.clearMarks();
         perfData.clearMeasures();
@@ -249,6 +267,29 @@ function measureFCP() {
       window.setTimeout(measureFCP, 100);
     } else {
       console.log("\nunable to get a value for time-to-fcp after " + gRetryCounter + " retries\n");
+    }
+  }
+}
+
+function measureLoadTime() {
+  var x = window.performance.timing.loadEventStart;
+
+  if (typeof(x) == "undefined") {
+    console.log("ERROR: loadEventStart is undefined");
+    return;
+  }
+  if (x > 0) {
+    console.log("got loadEventStart: " + x);
+    gRetryCounter = 0;
+    var startTime = perfData.timing.fetchStart;
+    sendResult("loadtime", x - startTime);
+  } else {
+    gRetryCounter += 1;
+    if (gRetryCounter <= 40 * (1000 / 200)) {
+      console.log("\loadEventStart is not yet available (0), retry number " + gRetryCounter + "...\n");
+      window.setTimeout(measureLoadTime, 100);
+    } else {
+      console.log("\nunable to get a value for loadEventStart after " + gRetryCounter + " retries\n");
     }
   }
 }

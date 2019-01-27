@@ -142,14 +142,6 @@ enum class StyleGeometryBox : uint8_t {
                           // background-clip only.
 };
 
-// float
-// https://developer.mozilla.org/en-US/docs/Web/CSS/float
-enum class StyleFloat : uint8_t {
-  None,
-  Left,
-  Right,
-};
-
 // float-edge
 enum class StyleFloatEdge : uint8_t {
   ContentBox,
@@ -525,16 +517,25 @@ enum class StyleGridTrackBreadth : uint8_t {
 #define NS_MATHML_DISPLAYSTYLE_BLOCK 1
 
 // See nsStylePosition::mWidth, mMinWidth, mMaxWidth
-#define NS_STYLE_WIDTH_MAX_CONTENT 0
-#define NS_STYLE_WIDTH_MIN_CONTENT 1
-#define NS_STYLE_WIDTH_FIT_CONTENT 2
-#define NS_STYLE_WIDTH_AVAILABLE 3
+#define NS_STYLE_WIDTH_MAX_CONTENT \
+  ((uint8_t)mozilla::StyleExtremumLength::MaxContent)
+#define NS_STYLE_WIDTH_MIN_CONTENT \
+  ((uint8_t)mozilla::StyleExtremumLength::MinContent)
+#define NS_STYLE_WIDTH_FIT_CONTENT \
+  ((uint8_t)mozilla::StyleExtremumLength::MozFitContent)
+#define NS_STYLE_WIDTH_AVAILABLE \
+  ((uint8_t)mozilla::StyleExtremumLength::MozAvailable)
 // The 'content' keyword is only valid for 'flex-basis' (not for 'width').  But
 // aside from that, the 'flex-basis' property accepts exactly the same values
 // as 'width'. So I'm listing this one 'flex-basis'-specific enumerated value
 // alongside the 'width' ones, to be sure we don't accidentally overload this
 // numeric value with two different meanings if new 'width' keywords are added.
 #define NS_STYLE_FLEX_BASIS_CONTENT 4
+static_assert(NS_STYLE_FLEX_BASIS_CONTENT != NS_STYLE_WIDTH_MAX_CONTENT &&
+                  NS_STYLE_FLEX_BASIS_CONTENT != NS_STYLE_WIDTH_MIN_CONTENT &&
+                  NS_STYLE_FLEX_BASIS_CONTENT != NS_STYLE_WIDTH_FIT_CONTENT &&
+                  NS_STYLE_FLEX_BASIS_CONTENT != NS_STYLE_WIDTH_AVAILABLE,
+              "Should use different enum value for flex basis content");
 
 // See nsStyleDisplay.mPosition
 #define NS_STYLE_POSITION_STATIC 0
@@ -564,19 +565,6 @@ enum class StyleGridTrackBreadth : uint8_t {
 #define NS_STYLE_FRAME_AUTO 6
 #define NS_STYLE_FRAME_SCROLL 7
 #define NS_STYLE_FRAME_NOSCROLL 8
-
-// See nsStyleDisplay.mOverflow{X,Y}
-#define NS_STYLE_OVERFLOW_VISIBLE 0
-#define NS_STYLE_OVERFLOW_HIDDEN 1
-#define NS_STYLE_OVERFLOW_SCROLL 2
-#define NS_STYLE_OVERFLOW_AUTO 3
-#define NS_STYLE_OVERFLOW_CLIP 4
-#define NS_STYLE_OVERFLOW_SCROLLBARS_HORIZONTAL 5
-#define NS_STYLE_OVERFLOW_SCROLLBARS_VERTICAL 6
-
-// See nsStyleDisplay.mOverflowClipBox
-#define NS_STYLE_OVERFLOW_CLIP_BOX_PADDING_BOX 0
-#define NS_STYLE_OVERFLOW_CLIP_BOX_CONTENT_BOX 1
 
 // See nsStyleList
 #define NS_STYLE_LIST_STYLE_CUSTOM -1  // for @counter-style
@@ -635,12 +623,6 @@ enum class StyleGridTrackBreadth : uint8_t {
 #define NS_STYLE_OBJECT_FIT_COVER 2
 #define NS_STYLE_OBJECT_FIT_NONE 3
 #define NS_STYLE_OBJECT_FIT_SCALE_DOWN 4
-
-// See nsStyleDisplay
-#define NS_STYLE_RESIZE_NONE 0
-#define NS_STYLE_RESIZE_BOTH 1
-#define NS_STYLE_RESIZE_HORIZONTAL 2
-#define NS_STYLE_RESIZE_VERTICAL 3
 
 // See nsStyleText
 #define NS_STYLE_TEXT_ALIGN_START 0
@@ -952,8 +934,10 @@ enum class StyleTextRendering : uint8_t {
 };
 
 // color-adjust
-#define NS_STYLE_COLOR_ADJUST_ECONOMY 0
-#define NS_STYLE_COLOR_ADJUST_EXACT 1
+enum class StyleColorAdjust : uint8_t {
+  Economy = 0,
+  Exact = 1,
+};
 
 // color-interpolation and color-interpolation-filters
 #define NS_STYLE_COLOR_INTERPOLATION_AUTO 0
@@ -1023,18 +1007,6 @@ enum class StyleTextRendering : uint8_t {
 // See nsStyleDisplay::mScrollBehavior
 #define NS_STYLE_SCROLL_BEHAVIOR_AUTO 0
 #define NS_STYLE_SCROLL_BEHAVIOR_SMOOTH 1
-
-// See nsStyleDisplay::mOverscrollBehavior{X,Y}
-enum class StyleOverscrollBehavior : uint8_t {
-  Auto = 0,
-  Contain,
-  None,
-};
-
-// See nsStyleDisplay::mScrollSnapType{X,Y}
-#define NS_STYLE_SCROLL_SNAP_TYPE_NONE 0
-#define NS_STYLE_SCROLL_SNAP_TYPE_MANDATORY 1
-#define NS_STYLE_SCROLL_SNAP_TYPE_PROXIMITY 2
 
 }  // namespace mozilla
 

@@ -8,7 +8,7 @@
 //! See the comment at the top of the `renderer` module for a description of
 //! how these two pieces interact.
 
-use api::{ApiMsg, BuiltDisplayList, ClearCache, DebugCommand};
+use api::{ApiMsg, BuiltDisplayList, ClearCache, DebugCommand, DebugFlags};
 #[cfg(feature = "debugger")]
 use api::{BuiltDisplayListIter, SpecificDisplayItem};
 use api::{DevicePixelScale, DeviceIntPoint, DeviceIntRect, DeviceIntSize};
@@ -17,7 +17,7 @@ use api::{IdNamespace, LayoutPoint, PipelineId, RenderNotifier, SceneMsg, Scroll
 use api::{MemoryReport, VoidPtrToSizeFn};
 use api::{ScrollLocation, ScrollNodeState, TransactionMsg, ResourceUpdate, BlobImageKey};
 use api::{NotificationRequest, Checkpoint};
-use api::channel::{MsgReceiver, Payload};
+use api::channel::{MsgReceiver, MsgSender, Payload};
 #[cfg(feature = "capture")]
 use api::CaptureBits;
 #[cfg(feature = "replay")]
@@ -30,9 +30,14 @@ use frame_builder::{FrameBuilder, FrameBuilderConfig};
 use gpu_cache::GpuCache;
 use hit_test::{HitTest, HitTester};
 use internal_types::{DebugOutput, FastHashMap, FastHashSet, RenderedDocument, ResultMsg};
+use picture::RetainedTiles;
 use prim_store::{PrimitiveDataStore, PrimitiveScratchBuffer, PrimitiveInstance};
 use prim_store::{PrimitiveInstanceKind, PrimTemplateCommonData};
+use prim_store::borders::{ImageBorderDataStore, NormalBorderDataStore};
 use prim_store::gradient::{LinearGradientDataStore, RadialGradientDataStore};
+use prim_store::image::{ImageDataStore, YuvImageDataStore};
+use prim_store::line_dec::LineDecorationDataStore;
+use prim_store::picture::PictureDataStore;
 use prim_store::text_run::TextRunDataStore;
 use profiler::{BackendProfileCounters, IpcProfileCounters, ResourceProfileCounters};
 use record::ApiRecordingReceiver;
@@ -204,9 +209,15 @@ pub struct FrameResources {
     /// Currently active / available primitives. Kept in sync with the
     /// primitive interner in the scene builder, per document.
     pub prim_data_store: PrimitiveDataStore,
+    pub image_data_store: ImageDataStore,
+    pub image_border_data_store: ImageBorderDataStore,
+    pub line_decoration_data_store: LineDecorationDataStore,
     pub linear_grad_data_store: LinearGradientDataStore,
+    pub normal_border_data_store: NormalBorderDataStore,
+    pub picture_data_store: PictureDataStore,
     pub radial_grad_data_store: RadialGradientDataStore,
     pub text_run_data_store: TextRunDataStore,
+    pub yuv_image_data_store: YuvImageDataStore,
 }
 
 impl FrameResources {
@@ -215,22 +226,36 @@ impl FrameResources {
         prim_inst: &PrimitiveInstance
     ) -> &PrimTemplateCommonData {
         match prim_inst.kind {
-            PrimitiveInstanceKind::Picture { data_handle, .. } |
-            PrimitiveInstanceKind::LineDecoration { data_handle, .. } |
-            PrimitiveInstanceKind::NormalBorder { data_handle, .. } |
-            PrimitiveInstanceKind::ImageBorder { data_handle, .. } |
             PrimitiveInstanceKind::Rectangle { data_handle, .. } |
-            PrimitiveInstanceKind::YuvImage { data_handle, .. } |
-            PrimitiveInstanceKind::Image { data_handle, .. } |
             PrimitiveInstanceKind::Clear { data_handle, .. } => {
                 let prim_data = &self.prim_data_store[data_handle];
+                &prim_data.common
+            }
+            PrimitiveInstanceKind::Image { data_handle, .. } => {
+                let prim_data = &self.image_data_store[data_handle];
+                &prim_data.common
+            }
+            PrimitiveInstanceKind::ImageBorder { data_handle, .. } => {
+                let prim_data = &self.image_border_data_store[data_handle];
+                &prim_data.common
+            }
+            PrimitiveInstanceKind::LineDecoration { data_handle, .. } => {
+                let prim_data = &self.line_decoration_data_store[data_handle];
                 &prim_data.common
             }
             PrimitiveInstanceKind::LinearGradient { data_handle, .. } => {
                 let prim_data = &self.linear_grad_data_store[data_handle];
                 &prim_data.common
             }
-            PrimitiveInstanceKind::RadialGradient { data_handle, .. } =>{
+            PrimitiveInstanceKind::NormalBorder { data_handle, .. } => {
+                let prim_data = &self.normal_border_data_store[data_handle];
+                &prim_data.common
+            }
+            PrimitiveInstanceKind::Picture { data_handle, .. } => {
+                let prim_data = &self.picture_data_store[data_handle];
+                &prim_data.common
+            }
+            PrimitiveInstanceKind::RadialGradient { data_handle, .. } => {
                 let prim_data = &self.radial_grad_data_store[data_handle];
                 &prim_data.common
             }
@@ -238,7 +263,20 @@ impl FrameResources {
                 let prim_data = &self.text_run_data_store[data_handle];
                 &prim_data.common
             }
+            PrimitiveInstanceKind::YuvImage { data_handle, .. } => {
+                let prim_data = &self.yuv_image_data_store[data_handle];
+                &prim_data.common
+            }
         }
+    }
+
+    /// Reports CPU heap usage.
+    fn report_memory(&self, op: VoidPtrToSizeFn, r: &mut MemoryReport) {
+        r.data_stores += self.clip_data_store.malloc_size_of(op);
+        r.data_stores += self.prim_data_store.malloc_size_of(op);
+        r.data_stores += self.linear_grad_data_store.malloc_size_of(op);
+        r.data_stores += self.radial_grad_data_store.malloc_size_of(op);
+        r.data_stores += self.text_run_data_store.malloc_size_of(op);
     }
 }
 
@@ -548,7 +586,7 @@ impl Document {
         // Give the old frame builder a chance to destroy any resources.
         // Right now, all this does is build a hash map of any cached
         // surface tiles, that can be provided to the next frame builder.
-        let mut retained_tiles = FastHashMap::default();
+        let mut retained_tiles = RetainedTiles::new();
         if let Some(frame_builder) = self.frame_builder.take() {
             frame_builder.destroy(
                 &mut retained_tiles,
@@ -621,6 +659,7 @@ pub struct RenderBackend {
     recorder: Option<Box<ApiRecordingReceiver>>,
     sampler: Option<Box<AsyncPropertySampler + Send>>,
     size_of_op: Option<VoidPtrToSizeFn>,
+    debug_flags: DebugFlags,
     namespace_alloc_by_client: bool,
 }
 
@@ -639,6 +678,7 @@ impl RenderBackend {
         recorder: Option<Box<ApiRecordingReceiver>>,
         sampler: Option<Box<AsyncPropertySampler + Send>>,
         size_of_op: Option<VoidPtrToSizeFn>,
+        debug_flags: DebugFlags,
         namespace_alloc_by_client: bool,
     ) -> RenderBackend {
         RenderBackend {
@@ -658,6 +698,7 @@ impl RenderBackend {
             recorder,
             sampler,
             size_of_op,
+            debug_flags,
             namespace_alloc_by_client,
         }
     }
@@ -817,8 +858,8 @@ impl RenderBackend {
                         self.resource_cache.add_rasterized_blob_images(
                             replace(&mut txn.rasterized_blobs, Vec::new())
                         );
-                        if let Some(rasterizer) = txn.blob_rasterizer.take() {
-                            self.resource_cache.set_blob_rasterizer(rasterizer);
+                        if let Some((rasterizer, epoch)) = txn.blob_rasterizer.take() {
+                            self.resource_cache.set_blob_rasterizer(rasterizer, epoch);
                         }
 
                         self.update_document(
@@ -967,6 +1008,8 @@ impl RenderBackend {
                 // recently used resources.
                 self.resource_cache.clear(ClearCache::all());
 
+                self.gpu_cache.clear();
+
                 let pending_update = self.resource_cache.pending_updates();
                 let msg = ResultMsg::UpdateResources {
                     updates: pending_update,
@@ -976,7 +1019,7 @@ impl RenderBackend {
                 self.notifier.wake_up();
             }
             ApiMsg::ReportMemory(tx) => {
-                tx.send(self.report_memory()).unwrap();
+                self.report_memory(tx);
             }
             ApiMsg::DebugCommand(option) => {
                 let msg = match option {
@@ -992,10 +1035,6 @@ impl RenderBackend {
 
                         // We don't want to forward this message to the renderer.
                         return true;
-                    }
-                    DebugCommand::EnableGpuCacheDebug(enable) => {
-                        self.gpu_cache.set_debug(enable);
-                        ResultMsg::DebugCommand(option)
                     }
                     DebugCommand::FetchDocuments => {
                         let json = self.get_docs_for_debugger();
@@ -1069,6 +1108,23 @@ impl RenderBackend {
                     }
                     DebugCommand::SetFlags(flags) => {
                         self.resource_cache.set_debug_flags(flags);
+                        self.gpu_cache.set_debug_flags(flags);
+
+                        // If we're toggling on the GPU cache debug display, we
+                        // need to blow away the cache. This is because we only
+                        // send allocation/free notifications to the renderer
+                        // thread when the debug display is enabled, and thus
+                        // enabling it when the cache is partially populated will
+                        // give the renderer an incomplete view of the world.
+                        // And since we might as well drop all the debugging state
+                        // from the renderer when we disable the debug display,
+                        // we just clear the cache on toggle.
+                        let changed = self.debug_flags ^ flags;
+                        if changed.contains(DebugFlags::GPU_CACHE_DBG) {
+                            self.gpu_cache.clear();
+                        }
+                        self.debug_flags = flags;
+
                         ResultMsg::DebugCommand(option)
                     }
                     _ => ResultMsg::DebugCommand(option),
@@ -1120,6 +1176,13 @@ impl RenderBackend {
             &mut txn.resource_updates,
             &mut profile_counters.resources,
         );
+
+        // If we've been above the threshold for reclaiming GPU cache memory for
+        // long enough, drop it and rebuild it. This needs to be done before any
+        // updates for this frame are made.
+        if self.gpu_cache.should_reclaim_memory() {
+            self.gpu_cache.clear();
+        }
 
         for scene_msg in transaction_msg.scene_ops.drain(..) {
             let _timer = profile_counters.total_time.timer();
@@ -1220,9 +1283,29 @@ impl RenderBackend {
                 updates.prim_updates,
                 &mut profile_counters.intern.prims,
             );
+            doc.resources.image_data_store.apply_updates(
+                updates.image_updates,
+                &mut profile_counters.intern.images,
+            );
+            doc.resources.image_border_data_store.apply_updates(
+                updates.image_border_updates,
+                &mut profile_counters.intern.image_borders,
+            );
+            doc.resources.line_decoration_data_store.apply_updates(
+                updates.line_decoration_updates,
+                &mut profile_counters.intern.line_decs,
+            );
             doc.resources.linear_grad_data_store.apply_updates(
                 updates.linear_grad_updates,
                 &mut profile_counters.intern.linear_gradients,
+            );
+            doc.resources.normal_border_data_store.apply_updates(
+                updates.normal_border_updates,
+                &mut profile_counters.intern.normal_borders,
+            );
+            doc.resources.picture_data_store.apply_updates(
+                updates.picture_updates,
+                &mut profile_counters.intern.pictures,
             );
             doc.resources.radial_grad_data_store.apply_updates(
                 updates.radial_grad_updates,
@@ -1231,6 +1314,10 @@ impl RenderBackend {
             doc.resources.text_run_data_store.apply_updates(
                 updates.text_run_updates,
                 &mut profile_counters.intern.text_runs,
+            );
+            doc.resources.yuv_image_data_store.apply_updates(
+                updates.yuv_image_updates,
+                &mut profile_counters.intern.yuv_images,
             );
         }
 
@@ -1440,7 +1527,7 @@ impl RenderBackend {
         serde_json::to_string(&debug_root).unwrap()
     }
 
-    fn report_memory(&self) -> MemoryReport {
+    fn report_memory(&self, tx: MsgSender<MemoryReport>) {
         let mut report = MemoryReport::default();
         let op = self.size_of_op.unwrap();
         report.gpu_cache_metadata = self.gpu_cache.malloc_size_of(op);
@@ -1450,11 +1537,16 @@ impl RenderBackend {
             }
             report.hit_testers +=
                 doc.hit_tester.as_ref().map_or(0, |ht| ht.malloc_size_of(op));
+
+            doc.resources.report_memory(op, &mut report)
         }
 
         report += self.resource_cache.report_memory(op);
 
-        report
+        // Send a message to report memory on the scene-builder thread, which
+        // will add its report to this one and send the result back to the original
+        // thread waiting on the request.
+        self.scene_tx.send(SceneBuilderRequest::ReportMemory(report, tx)).unwrap();
     }
 }
 
@@ -1507,6 +1599,8 @@ impl ToDebugString for SpecificDisplayItem {
             SpecificDisplayItem::StickyFrame(..) => String::from("sticky_frame"),
             SpecificDisplayItem::Text(..) => String::from("text"),
             SpecificDisplayItem::YuvImage(..) => String::from("yuv_image"),
+            SpecificDisplayItem::PushCacheMarker(..) => String::from("push_cache_marker"),
+            SpecificDisplayItem::PopCacheMarker => String::from("pop_cache_marker"),
         }
     }
 }
@@ -1709,4 +1803,3 @@ impl RenderBackend {
         }
     }
 }
-

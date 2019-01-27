@@ -232,6 +232,7 @@ class AbstractFramePtr {
   inline JSScript* script() const;
   inline wasm::Instance* wasmInstance() const;
   inline GlobalObject* global() const;
+  inline bool hasGlobal(const GlobalObject* global) const;
   inline JSFunction* callee() const;
   inline Value calleev() const;
   inline Value& thisArgument() const;
@@ -1050,7 +1051,7 @@ namespace js {
 
 /*****************************************************************************/
 
-// SavedFrame caching to minimize stack walking.
+// [SMDOC] LiveSavedFrameCache: SavedFrame caching to minimize stack walking
 //
 // Since each SavedFrame object includes a 'parent' pointer to the SavedFrame
 // for its caller, if we could easily find the right SavedFrame for a given
@@ -1882,6 +1883,10 @@ class JitFrameIter {
   void operator++();
 
   JS::Realm* realm() const;
+
+  // Returns the address of the next instruction that will execute in this
+  // frame, once control returns to this frame.
+  uint8_t* resumePCinCurrentFrame() const;
 
   // Operations which have an effect only on JIT frames.
   void skipNonScriptedJSFrames();

@@ -14,6 +14,7 @@
 #include "ds/TraceableFifo.h"
 #include "js/CharacterEncoding.h"
 #include "js/GCVector.h"
+#include "js/Promise.h"
 #include "js/Result.h"
 #include "js/Utility.h"
 #include "js/Vector.h"
@@ -164,12 +165,12 @@ struct JSContext : public JS::RootingContext,
   }
 
   void* onOutOfMemory(js::AllocFunction allocFunc, size_t nbytes,
-                      void* reallocPtr = nullptr) {
+                      arena_id_t arena, void* reallocPtr = nullptr) {
     if (helperThread()) {
       addPendingOutOfMemory();
       return nullptr;
     }
-    return runtime_->onOutOfMemory(allocFunc, nbytes, reallocPtr, this);
+    return runtime_->onOutOfMemory(allocFunc, arena, nbytes, reallocPtr, this);
   }
 
   /* Clear the pending exception (if any) due to OOM. */
@@ -191,7 +192,7 @@ struct JSContext : public JS::RootingContext,
       return nullptr;
     }
     p = static_cast<T*>(
-        runtime()->onOutOfMemoryCanGC(js::AllocFunction::Calloc, bytes));
+        runtime()->onOutOfMemoryCanGC(js::AllocFunction::Calloc, arena, bytes));
     if (!p) {
       return nullptr;
     }
@@ -890,8 +891,8 @@ struct JSContext : public JS::RootingContext,
   js::ThreadData<uintptr_t> jitStackLimitNoInterrupt;
 
   // Promise callbacks.
-  js::ThreadData<JSGetIncumbentGlobalCallback> getIncumbentGlobalCallback;
-  js::ThreadData<JSEnqueuePromiseJobCallback> enqueuePromiseJobCallback;
+  js::ThreadData<JS::GetIncumbentGlobalCallback> getIncumbentGlobalCallback;
+  js::ThreadData<JS::EnqueuePromiseJobCallback> enqueuePromiseJobCallback;
   js::ThreadData<void*> enqueuePromiseJobCallbackData;
 
   // Queue of pending jobs as described in ES2016 section 8.4.
@@ -902,7 +903,7 @@ struct JSContext : public JS::RootingContext,
   js::ThreadData<bool> stopDrainingJobQueue;
   js::ThreadData<bool> canSkipEnqueuingJobs;
 
-  js::ThreadData<JSPromiseRejectionTrackerCallback>
+  js::ThreadData<JS::PromiseRejectionTrackerCallback>
       promiseRejectionTrackerCallback;
   js::ThreadData<void*> promiseRejectionTrackerCallbackData;
 
@@ -1062,13 +1063,7 @@ extern void ReportIsNotDefined(JSContext* cx, HandleId id);
 /*
  * Report an attempt to access the property of a null or undefined value (v).
  */
-extern void ReportIsNullOrUndefinedForPropertyAccess(JSContext* cx,
-                                                     HandleValue v,
-                                                     bool reportScanStack);
-extern void ReportIsNullOrUndefinedForPropertyAccess(JSContext* cx,
-                                                     HandleValue v,
-                                                     HandleId key,
-                                                     bool reportScanStack);
+extern void ReportIsNullOrUndefined(JSContext* cx, int spindex, HandleValue v);
 
 extern void ReportMissingArg(JSContext* cx, js::HandleValue v, unsigned arg);
 

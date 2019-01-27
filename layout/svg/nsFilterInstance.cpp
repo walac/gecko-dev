@@ -49,7 +49,7 @@ FilterDescription nsFilterInstance::GetFilterDescription(
 
 static UniquePtr<UserSpaceMetrics> UserSpaceMetricsForFrame(nsIFrame* aFrame) {
   if (aFrame->GetContent()->IsSVGElement()) {
-    nsSVGElement* element = static_cast<nsSVGElement*>(aFrame->GetContent());
+    SVGElement* element = static_cast<SVGElement*>(aFrame->GetContent());
     return MakeUnique<SVGElementMetrics>(element);
   }
   return MakeUnique<NonSVGFrameUserSpaceMetrics>(aFrame);
@@ -723,7 +723,9 @@ nsRect nsFilterInstance::ComputeSourceNeededRect() {
 
 nsIntRect nsFilterInstance::OutputFilterSpaceBounds() const {
   uint32_t numPrimitives = mFilterDescription.mPrimitives.Length();
-  if (numPrimitives <= 0) return nsIntRect();
+  if (numPrimitives <= 0) {
+    return nsIntRect();
+  }
 
   return mFilterDescription.mPrimitives[numPrimitives - 1].PrimitiveSubregion();
 }

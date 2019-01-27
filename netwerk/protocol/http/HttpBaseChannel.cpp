@@ -168,6 +168,7 @@ HttpBaseChannel::HttpBaseChannel()
       mCanceled(false),
       mIsFirstPartyTrackingResource(false),
       mIsThirdPartyTrackingResource(false),
+      mFlashPluginState(nsIHttpChannel::FlashPluginUnknown),
       mLoadFlags(LOAD_NORMAL),
       mCaps(0),
       mClassOfService(0),
@@ -317,6 +318,12 @@ void HttpBaseChannel::SetIsTrackingResource(bool aIsThirdParty) {
     MOZ_ASSERT(!mIsThirdPartyTrackingResource);
     mIsFirstPartyTrackingResource = true;
   }
+}
+
+void HttpBaseChannel::SetFlashPluginState(
+    nsIHttpChannel::FlashPluginState aState) {
+  LOG(("HttpBaseChannel::SetFlashPluginState %p", this));
+  mFlashPluginState = aState;
 }
 
 nsresult HttpBaseChannel::Init(nsIURI* aURI, uint32_t aCaps,
@@ -1243,7 +1250,7 @@ HttpBaseChannel::DoApplyContentConversions(nsIStreamListener* aNextListener,
       }
 
       LOG(("converter removed '%s' content-encoding\n", val));
-      if (gHttpHandler->IsTelemetryEnabled()) {
+      if (Telemetry::CanRecordPrereleaseData()) {
         int mode = 0;
         if (from.EqualsLiteral("gzip") || from.EqualsLiteral("x-gzip")) {
           mode = 1;
@@ -1482,6 +1489,13 @@ NS_IMETHODIMP
 HttpBaseChannel::GetIsThirdPartyTrackingResource(bool* aIsTrackingResource) {
   MOZ_ASSERT(!(mIsFirstPartyTrackingResource && mIsThirdPartyTrackingResource));
   *aIsTrackingResource = mIsThirdPartyTrackingResource;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+HttpBaseChannel::GetFlashPluginState(nsIHttpChannel::FlashPluginState* aState) {
+  uint32_t flashPluginState = mFlashPluginState;
+  *aState = (nsIHttpChannel::FlashPluginState)flashPluginState;
   return NS_OK;
 }
 
@@ -2984,7 +2998,7 @@ void HttpBaseChannel::FlushReportsToConsoleForServiceWorkerScope(
   mReportCollector->FlushReportsToConsoleForServiceWorkerScope(aScope, aAction);
 }
 
-void HttpBaseChannel::FlushConsoleReports(nsIDocument* aDocument,
+void HttpBaseChannel::FlushConsoleReports(dom::Document* aDocument,
                                           ReportAction aAction) {
   mReportCollector->FlushConsoleReports(aDocument, aAction);
 }
@@ -3240,6 +3254,13 @@ void HttpBaseChannel::ReleaseListeners() {
 void HttpBaseChannel::DoNotifyListener() {
   LOG(("HttpBaseChannel::DoNotifyListener this=%p", this));
 
+  // In case nsHttpChannel::OnStartRequest wasn't called (e.g. due to flag
+  // LOAD_ONLY_IF_MODIFIED) we want to set mAfterOnStartRequestBegun to true
+  // before notifying listener.
+  if (!mAfterOnStartRequestBegun) {
+    mAfterOnStartRequestBegun = true;
+  }
+
   if (mListener) {
     MOZ_ASSERT(!mOnStartRequestCalled,
                "We should not call OnStartRequest twice");
@@ -3286,7 +3307,7 @@ void HttpBaseChannel::DoNotifyListener() {
     if (mLoadGroup) {
       FlushConsoleReports(mLoadGroup);
     } else if (mLoadInfo) {
-      nsCOMPtr<nsIDocument> doc;
+      RefPtr<dom::Document> doc;
       mLoadInfo->GetLoadingDocument(getter_AddRefs(doc));
       FlushConsoleReports(doc);
     }
@@ -4165,7 +4186,7 @@ mozilla::dom::PerformanceStorage* HttpBaseChannel::GetPerformanceStorage() {
     return performanceStorage;
   }
 
-  nsCOMPtr<nsIDocument> loadingDocument;
+  RefPtr<dom::Document> loadingDocument;
   mLoadInfo->GetLoadingDocument(getter_AddRefs(loadingDocument));
   if (!loadingDocument) {
     return nullptr;

@@ -521,6 +521,9 @@ parent:
 
     async SetHasBeforeUnload(bool aHasBeforeUnload);
 
+    async RegisterProtocolHandler(nsString scheme, nsIURI handlerURI, nsString title,
+                                  nsIURI documentURI);
+
 child:
     async NativeSynthesisResponse(uint64_t aObserverId, nsCString aResponse);
 
@@ -565,7 +568,7 @@ parent:
                             OptionalShmem visualData,
                             uint32_t stride, SurfaceFormat format,
                             LayoutDeviceIntRect dragRect,
-                            nsCString principalURISpec);
+                            Principal principal);
 
     // After a compositor reset, it is necessary to reconnect each layers ID to
     // the compositor of the widget that will render those layers. Note that
@@ -580,7 +583,8 @@ parent:
      *
      * @param aFirstPartyURI first party of the tab that is requesting access.
      */
-    async ShowCanvasPermissionPrompt(nsCString aFirstPartyURI);
+    async ShowCanvasPermissionPrompt(nsCString aFirstPartyURI,
+                                     bool aHideDoorHanger);
 
     sync SetSystemFont(nsCString aFontName);
     sync GetSystemFont() returns (nsCString retval);
@@ -711,7 +715,7 @@ child:
      * don't need support RealDragEvent with input priority.
      */
     async RealDragEvent(WidgetDragEvent aEvent, uint32_t aDragAction,
-                        uint32_t aDropEffect, nsCString aPrincipalURISpec);
+                        uint32_t aDropEffect, Principal aPrincipal);
 
     async PluginEvent(WidgetPluginEvent aEvent);
 

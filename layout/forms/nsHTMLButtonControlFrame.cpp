@@ -47,7 +47,7 @@ void nsHTMLButtonControlFrame::Init(nsIContent* aContent,
 }
 
 NS_QUERYFRAME_HEAD(nsHTMLButtonControlFrame)
-NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
+  NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 #ifdef ACCESSIBILITY
@@ -72,7 +72,7 @@ nsresult nsHTMLButtonControlFrame::HandleEvent(nsPresContext* aPresContext,
 }
 
 bool nsHTMLButtonControlFrame::ShouldClipPaintingToBorderBox() {
-  return IsInput() || StyleDisplay()->mOverflowX != NS_STYLE_OVERFLOW_VISIBLE;
+  return IsInput() || StyleDisplay()->mOverflowX != StyleOverflow::Visible;
 }
 
 void nsHTMLButtonControlFrame::BuildDisplayList(
@@ -96,24 +96,19 @@ void nsHTMLButtonControlFrame::BuildDisplayList(
 
   nsDisplayListCollection set(aBuilder);
 
-  // Do not allow the child subtree to receive events.
-  if (!isForEventDelivery || aBuilder->HitTestIsForVisibility()) {
-    DisplayListClipState::AutoSaveRestore clipState(aBuilder);
+  DisplayListClipState::AutoSaveRestore clipState(aBuilder);
 
-    if (ShouldClipPaintingToBorderBox()) {
-      nsMargin border = StyleBorder()->GetComputedBorder();
-      nsRect rect(aBuilder->ToReferenceFrame(this), GetSize());
-      rect.Deflate(border);
-      nscoord radii[8];
-      bool hasRadii = GetPaddingBoxBorderRadii(radii);
-      clipState.ClipContainingBlockDescendants(rect,
-                                               hasRadii ? radii : nullptr);
-    }
-
-    BuildDisplayListForChild(aBuilder, mFrames.FirstChild(), set,
-                             DISPLAY_CHILD_FORCE_PSEUDO_STACKING_CONTEXT);
-    // That should put the display items in set.Content()
+  if (ShouldClipPaintingToBorderBox()) {
+    nsMargin border = StyleBorder()->GetComputedBorder();
+    nsRect rect(aBuilder->ToReferenceFrame(this), GetSize());
+    rect.Deflate(border);
+    nscoord radii[8];
+    bool hasRadii = GetPaddingBoxBorderRadii(radii);
+    clipState.ClipContainingBlockDescendants(rect, hasRadii ? radii : nullptr);
   }
+
+  BuildDisplayListForChild(aBuilder, mFrames.FirstChild(), set,
+                           DISPLAY_CHILD_FORCE_PSEUDO_STACKING_CONTEXT);
 
   // Put the foreground outline and focus rects on top of the children
   set.Content()->AppendToTop(&onTop);

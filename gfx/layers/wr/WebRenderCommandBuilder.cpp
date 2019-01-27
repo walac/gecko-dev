@@ -13,6 +13,7 @@
 #include "mozilla/gfx/Types.h"
 #include "mozilla/layers/ClipManager.h"
 #include "mozilla/layers/ImageClient.h"
+#include "mozilla/layers/RenderRootStateManager.h"
 #include "mozilla/layers/WebRenderBridgeChild.h"
 #include "mozilla/layers/WebRenderLayerManager.h"
 #include "mozilla/layers/IpcResourceUpdateQueue.h"
@@ -179,7 +180,7 @@ static void DestroyBlobGroupDataProperty(nsTArray<BlobItemData*>* aArray) {
 static void TakeExternalSurfaces(
     WebRenderDrawEventRecorder* aRecorder,
     std::vector<RefPtr<SourceSurface>>& aExternalSurfaces,
-    WebRenderLayerManager* aManager, wr::IpcResourceUpdateQueue& aResources) {
+    RenderRootStateManager* aManager, wr::IpcResourceUpdateQueue& aResources) {
   aRecorder->TakeExternalSurfaces(aExternalSurfaces);
 
   for (auto& surface : aExternalSurfaces) {
@@ -206,7 +207,6 @@ struct Grouper {
         mClipManager(aClipManager) {}
 
   int32_t mAppUnitsPerDevPixel;
-  std::vector<nsDisplayItem*> mItemStack;
   nsDisplayListBuilder* mDisplayListBuilder;
   ClipManager& mClipManager;
   Matrix mTransform;
@@ -355,7 +355,7 @@ struct DIGroup {
     }
   }
 
-  void ClearImageKey(WebRenderLayerManager* aManager, bool aForce = false) {
+  void ClearImageKey(RenderRootStateManager* aManager, bool aForce = false) {
     if (mKey) {
       MOZ_RELEASE_ASSERT(aForce || mInvalidRect.IsEmpty());
       aManager->AddBlobImageKeyForDiscard(mKey.value());
@@ -714,7 +714,7 @@ struct DIGroup {
 
     bool empty = aStartItem == aEndItem;
     if (empty) {
-      ClearImageKey(aWrManager, true);
+      ClearImageKey(aWrManager->GetRenderRootStateManager(), true);
       return;
     }
 
@@ -725,7 +725,8 @@ struct DIGroup {
     //   Contains(paintBounds);?
     wr::OpacityType opacity = wr::OpacityType::HasAlphaChannel;
 
-    TakeExternalSurfaces(recorder, mExternalSurfaces, aWrManager, aResources);
+    TakeExternalSurfaces(recorder, mExternalSurfaces,
+                         aWrManager->GetRenderRootStateManager(), aResources);
     bool hasItems = recorder->Finish();
     GP("%d Finish\n", hasItems);
     Range<uint8_t> bytes((uint8_t*)recorder->mOutputStream.mData,
@@ -917,18 +918,17 @@ void Grouper::PaintContainerItem(DIGroup* aGroup, nsDisplayItem* aItem,
                                  const IntRect& aItemBounds,
                                  nsDisplayList* aChildren, gfxContext* aContext,
                                  WebRenderDrawEventRecorder* aRecorder) {
-  mItemStack.push_back(aItem);
   switch (aItem->GetType()) {
     case DisplayItemType::TYPE_TRANSFORM: {
       DisplayItemClip currentClip = aItem->GetClip();
 
-      gfx::Matrix matrix;
+      gfxContextMatrixAutoSaveRestore saveMatrix;
       if (currentClip.HasClip()) {
         aContext->Save();
         currentClip.ApplyTo(aContext, this->mAppUnitsPerDevPixel);
         aContext->GetDrawTarget()->FlushItem(aItemBounds);
       } else {
-        matrix = aContext->CurrentMatrix();
+        saveMatrix.SetContext(aContext);
       }
 
       auto transformItem = static_cast<nsDisplayTransform*>(aItem);
@@ -948,13 +948,11 @@ void Grouper::PaintContainerItem(DIGroup* aGroup, nsDisplayItem* aItem,
         aContext->Multiply(ThebesMatrix(trans2d));
         aGroup->PaintItemRange(this, aChildren->GetBottom(), nullptr, aContext,
                                aRecorder);
+      }
 
-        if (currentClip.HasClip()) {
-          aContext->Restore();
-          aContext->GetDrawTarget()->FlushItem(aItemBounds);
-        } else {
-          aContext->SetMatrix(matrix);
-        }
+      if (currentClip.HasClip()) {
+        aContext->Restore();
+        aContext->GetDrawTarget()->FlushItem(aItemBounds);
       }
       break;
     }
@@ -1041,7 +1039,7 @@ void Grouper::PaintContainerItem(DIGroup* aGroup, nsDisplayItem* aItem,
 
 class WebRenderGroupData : public WebRenderUserData {
  public:
-  explicit WebRenderGroupData(WebRenderLayerManager* aWRManager,
+  explicit WebRenderGroupData(RenderRootStateManager* aWRManager,
                               nsDisplayItem* aItem);
   virtual ~WebRenderGroupData();
 
@@ -1132,9 +1130,10 @@ void Grouper::ConstructGroups(nsDisplayListBuilder* aDisplayListBuilder,
       sIndent++;
       // Note: this call to CreateWebRenderCommands can recurse back into
       // this function.
+      RenderRootStateManager* manager =
+          aCommandBuilder->mManager->GetRenderRootStateManager();
       bool createdWRCommands = item->CreateWebRenderCommands(
-          aBuilder, aResources, aSc, aCommandBuilder->mManager,
-          mDisplayListBuilder);
+          aBuilder, aResources, aSc, manager, mDisplayListBuilder);
       sIndent--;
       MOZ_RELEASE_ASSERT(createdWRCommands,
                          "active transforms should always succeed at creating "
@@ -1165,7 +1164,8 @@ void Grouper::ConstructGroups(nsDisplayListBuilder* aDisplayListBuilder,
         // The group changed size
         GP("Inner group size change\n");
         groupData->mFollowingGroup.ClearItems();
-        groupData->mFollowingGroup.ClearImageKey(aCommandBuilder->mManager);
+        groupData->mFollowingGroup.ClearImageKey(
+            aCommandBuilder->mManager->GetRenderRootStateManager());
       }
       groupData->mFollowingGroup.mGroupBounds = currentGroup->mGroupBounds;
       groupData->mFollowingGroup.mAppUnitsPerDevPixel =
@@ -1302,6 +1302,10 @@ static mozilla::gfx::IntRect ScaleToOutsidePixelsOffset(
   return rect;
 }
 
+RenderRootStateManager* WebRenderCommandBuilder::GetRenderRootStateManager() {
+  return mManager->GetRenderRootStateManager();
+}
+
 void WebRenderCommandBuilder::DoGroupingForDisplayList(
     nsDisplayList* aList, nsDisplayItem* aWrappingItem,
     nsDisplayListBuilder* aDisplayListBuilder, const StackingContextHelper& aSc,
@@ -1362,7 +1366,7 @@ void WebRenderCommandBuilder::DoGroupingForDisplayList(
     }
 
     group.ClearItems();
-    group.ClearImageKey(mManager);
+    group.ClearImageKey(mManager->GetRenderRootStateManager());
   }
 
   ScrollableLayerGuid::ViewID scrollId = ScrollableLayerGuid::NULL_SCROLL_ID;
@@ -1440,8 +1444,8 @@ void WebRenderCommandBuilder::BuildWebRenderCommands(
       mZoomProp->id = AnimationHelper::GetNextCompositorAnimationsId();
     }
 
-    StackingContextHelper pageRootSc(sc, nullptr, aBuilder, aFilters,
-                                     LayoutDeviceRect(), nullptr,
+    StackingContextHelper pageRootSc(sc, nullptr, nullptr, nullptr, aBuilder,
+                                     aFilters, LayoutDeviceRect(), nullptr,
                                      mZoomProp.ptrOr(nullptr));
     if (ShouldDumpDisplayList(aDisplayListBuilder)) {
       mBuilderDumpIndex =
@@ -1543,6 +1547,13 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
       MOZ_ASSERT(item && itemType == item->GetType());
     }
 
+    if (mForEventsAndPluginsOnly &&
+        (itemType != DisplayItemType::TYPE_COMPOSITOR_HITTEST_INFO &&
+         itemType != DisplayItemType::TYPE_PLUGIN)) {
+      // Only process hit test info items or plugin items.
+      continue;
+    }
+
     bool forceNewLayerData = false;
     size_t layerCountBeforeRecursing = mLayerScrollData.size();
     if (apzEnabled) {
@@ -1596,6 +1607,13 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
         GP("attempting to enter the grouping code\n");
       }
 
+      AutoRestore<bool> restoreForEventsAndPluginsOnly(
+          mForEventsAndPluginsOnly);
+      if (itemType == DisplayItemType::TYPE_OPACITY &&
+          static_cast<nsDisplayOpacity*>(item)->ForEventsAndPluginsOnly()) {
+        mForEventsAndPluginsOnly = true;
+      }
+
       if (dumpEnabled) {
         std::stringstream ss;
         nsFrame::PrintDisplayItem(aDisplayListBuilder, item, ss,
@@ -1606,8 +1624,9 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
       // Note: this call to CreateWebRenderCommands can recurse back into
       // this function if the |item| is a wrapper for a sublist.
       item->SetPaintRect(item->GetBuildingRect());
+      RenderRootStateManager* manager = mManager->GetRenderRootStateManager();
       bool createdWRCommands = item->CreateWebRenderCommands(
-          aBuilder, aResources, aSc, mManager, aDisplayListBuilder);
+          aBuilder, aResources, aSc, manager, aDisplayListBuilder);
       if (!createdWRCommands) {
         PushItemAsImage(item, aBuilder, aResources, aSc, aDisplayListBuilder);
       }
@@ -1740,7 +1759,8 @@ bool WebRenderCommandBuilder::PushImage(
     nsDisplayItem* aItem, ImageContainer* aContainer,
     mozilla::wr::DisplayListBuilder& aBuilder,
     mozilla::wr::IpcResourceUpdateQueue& aResources,
-    const StackingContextHelper& aSc, const LayoutDeviceRect& aRect) {
+    const StackingContextHelper& aSc, const LayoutDeviceRect& aRect,
+    const LayoutDeviceRect& aClip) {
   mozilla::wr::ImageRendering rendering = wr::ToImageRendering(
       nsLayoutUtils::GetSamplingFilterForFrame(aItem->Frame()));
   gfx::IntSize size;
@@ -1757,7 +1777,8 @@ bool WebRenderCommandBuilder::PushImage(
   }
 
   auto r = wr::ToRoundedLayoutRect(aRect);
-  aBuilder.PushImage(r, r, !aItem->BackfaceIsHidden(), rendering, key.value());
+  auto c = wr::ToRoundedLayoutRect(aClip);
+  aBuilder.PushImage(r, c, !aItem->BackfaceIsHidden(), rendering, key.value());
 
   return true;
 }
@@ -1882,13 +1903,6 @@ static bool PaintItemByDrawTarget(nsDisplayItem* aItem, gfx::DrawTarget* aDT,
   MOZ_ASSERT(context);
 
   switch (aItem->GetType()) {
-    case DisplayItemType::TYPE_MASK:
-      context->SetMatrix(context->CurrentMatrix()
-                             .PreScale(aScale.width, aScale.height)
-                             .PreTranslate(-aOffset.x, -aOffset.y));
-      static_cast<nsDisplayMasksAndClipPaths*>(aItem)->PaintMask(
-          aDisplayListBuilder, context, &isInvalidated);
-      break;
     case DisplayItemType::TYPE_SVG_WRAPPER: {
       // XXX Why doesn't this need the scaling applied?
       context->SetMatrix(
@@ -1900,7 +1914,12 @@ static bool PaintItemByDrawTarget(nsDisplayItem* aItem, gfx::DrawTarget* aDT,
           });
       break;
     }
-
+    case DisplayItemType::TYPE_MASK: {
+      // We could handle this case with the same code as TYPE_FILTER, but it
+      // would be good to know what situations trigger it.
+      MOZ_RELEASE_ASSERT(0);
+      break;
+    }
     case DisplayItemType::TYPE_FILTER: {
       context->SetMatrix(context->CurrentMatrix()
                              .PreScale(aScale.width, aScale.height)
@@ -1997,8 +2016,6 @@ WebRenderCommandBuilder::GenerateFallbackData(
 
   gfx::Size scale = aSc.GetInheritedScale();
   gfx::Size oldScale = fallbackData->GetScale();
-  // This scale determination should probably be done using
-  // ChooseScaleAndSetTransform but for now we just fake it.
   // We tolerate slight changes in scale so that we don't, for example,
   // rerasterize on MotionMark
   bool differentScale = gfx::FuzzyEqual(scale.width, oldScale.width, 1e-6f) &&
@@ -2092,8 +2109,8 @@ WebRenderCommandBuilder::GenerateFallbackData(
           aItem, dt, offset, aDisplayListBuilder,
           fallbackData->mBasicLayerManager, scale, highlight);
       recorder->FlushItem(IntRect({0, 0}, dtSize.ToUnknownSize()));
-      TakeExternalSurfaces(recorder, fallbackData->mExternalSurfaces, mManager,
-                           aResources);
+      TakeExternalSurfaces(recorder, fallbackData->mExternalSurfaces,
+                           mManager->GetRenderRootStateManager(), aResources);
       recorder->Finish();
 
       if (isInvalidated) {
@@ -2175,21 +2192,152 @@ WebRenderCommandBuilder::GenerateFallbackData(
   return fallbackData.forget();
 }
 
+class WebRenderMaskData : public WebRenderUserData {
+ public:
+  explicit WebRenderMaskData(RenderRootStateManager* aManager,
+                             nsDisplayItem* aItem)
+      : WebRenderUserData(aManager, aItem),
+        mMaskStyle(nsStyleImageLayers::LayerType::Mask) {
+    MOZ_COUNT_CTOR(WebRenderMaskData);
+  }
+  virtual ~WebRenderMaskData() {
+    MOZ_COUNT_DTOR(WebRenderMaskData);
+    ClearImageKey();
+  }
+
+  void ClearImageKey() {
+    if (mBlobKey) {
+      mManager->AddBlobImageKeyForDiscard(mBlobKey.value());
+    }
+    mBlobKey.reset();
+  }
+
+  virtual UserDataType GetType() override { return UserDataType::eMask; }
+  static UserDataType Type() { return UserDataType::eMask; }
+
+  Maybe<wr::BlobImageKey> mBlobKey;
+  std::vector<RefPtr<gfx::ScaledFont>> mFonts;
+  std::vector<RefPtr<gfx::SourceSurface>> mExternalSurfaces;
+  LayerIntRect mItemRect;
+  nsPoint mMaskOffset;
+  nsStyleImageLayers mMaskStyle;
+  gfx::Size mScale;
+};
+
 Maybe<wr::WrImageMask> WebRenderCommandBuilder::BuildWrMaskImage(
-    nsDisplayItem* aItem, wr::DisplayListBuilder& aBuilder,
+    nsDisplayMasksAndClipPaths* aMaskItem, wr::DisplayListBuilder& aBuilder,
     wr::IpcResourceUpdateQueue& aResources, const StackingContextHelper& aSc,
     nsDisplayListBuilder* aDisplayListBuilder,
     const LayoutDeviceRect& aBounds) {
-  LayoutDeviceRect imageRect;
-  RefPtr<WebRenderFallbackData> fallbackData = GenerateFallbackData(
-      aItem, aBuilder, aResources, aSc, aDisplayListBuilder, imageRect);
-  if (!fallbackData) {
+  RefPtr<WebRenderMaskData> maskData =
+      CreateOrRecycleWebRenderUserData<WebRenderMaskData>(aMaskItem);
+
+  if (!maskData) {
     return Nothing();
   }
 
+  bool snap;
+  nsRect bounds = aMaskItem->GetBounds(aDisplayListBuilder, &snap);
+  if (bounds.IsEmpty()) {
+    return Nothing();
+  }
+
+  const int32_t appUnitsPerDevPixel =
+      aMaskItem->Frame()->PresContext()->AppUnitsPerDevPixel();
+
+  Size scale = aSc.GetInheritedScale();
+  Size oldScale = maskData->mScale;
+  // This scale determination should probably be done using
+  // ChooseScaleAndSetTransform but for now we just fake it.
+  // We tolerate slight changes in scale so that we don't, for example,
+  // rerasterize on MotionMark
+  bool sameScale = FuzzyEqual(scale.width, oldScale.width, 1e-6f) &&
+                   FuzzyEqual(scale.height, oldScale.height, 1e-6f);
+
+  LayerIntRect itemRect =
+      LayerIntRect::FromUnknownRect(bounds.ScaleToOutsidePixels(
+          scale.width, scale.height, appUnitsPerDevPixel));
+
+  LayoutDeviceToLayerScale2D layerScale(scale.width, scale.height);
+  LayoutDeviceRect imageRect = LayerRect(itemRect) / layerScale;
+
+  nsPoint maskOffset = aMaskItem->ToReferenceFrame() - bounds.TopLeft();
+
+  nsRect dirtyRect;
+  if (aMaskItem->IsInvalid(dirtyRect) ||
+      !itemRect.IsEqualInterior(maskData->mItemRect) ||
+      !(aMaskItem->Frame()->StyleSVGReset()->mMask == maskData->mMaskStyle) ||
+      maskOffset != maskData->mMaskOffset || !sameScale) {
+    IntSize size = itemRect.Size().ToUnknownSize();
+
+    std::vector<RefPtr<ScaledFont>> fonts;
+    RefPtr<WebRenderDrawEventRecorder> recorder =
+        MakeAndAddRef<WebRenderDrawEventRecorder>(
+            [&](MemStream& aStream,
+                std::vector<RefPtr<ScaledFont>>& aScaledFonts) {
+              size_t count = aScaledFonts.size();
+              aStream.write((const char*)&count, sizeof(count));
+
+              for (auto& scaled : aScaledFonts) {
+                BlobFont font = {mManager->WrBridge()->GetFontKeyForScaledFont(
+                                     scaled, &aResources),
+                                 scaled};
+                aStream.write((const char*)&font, sizeof(font));
+              }
+
+              fonts = std::move(aScaledFonts);
+            });
+
+    RefPtr<DrawTarget> dummyDt = Factory::CreateDrawTarget(
+        BackendType::SKIA, IntSize(1, 1), SurfaceFormat::A8);
+    RefPtr<DrawTarget> dt =
+        Factory::CreateRecordingDrawTarget(recorder, dummyDt, size);
+
+    RefPtr<gfxContext> context = gfxContext::CreateOrNull(dt);
+    MOZ_ASSERT(context);
+
+    context->SetMatrix(context->CurrentMatrix()
+                           .PreTranslate(-itemRect.x, -itemRect.y)
+                           .PreScale(scale.width, scale.height));
+
+    bool maskPainted = false;
+    bool paintFinished =
+        aMaskItem->PaintMask(aDisplayListBuilder, context, &maskPainted);
+    if (!maskPainted) {
+      return Nothing();
+    }
+
+    recorder->FlushItem(IntRect(0, 0, size.width, size.height));
+    TakeExternalSurfaces(recorder, maskData->mExternalSurfaces,
+                         mManager->GetRenderRootStateManager(),
+                         aResources);
+    recorder->Finish();
+
+    Range<uint8_t> bytes((uint8_t*)recorder->mOutputStream.mData,
+                         recorder->mOutputStream.mLength);
+    wr::BlobImageKey key =
+        wr::BlobImageKey{mManager->WrBridge()->GetNextImageKey()};
+    wr::ImageDescriptor descriptor(size, 0, dt->GetFormat(),
+                                   wr::OpacityType::HasAlphaChannel);
+    if (!aResources.AddBlobImage(key, descriptor,
+                                 bytes)) {  // visible area: ImageIntRect(0, 0,
+                                            // size.width, size.height)
+      return Nothing();
+    }
+    maskData->ClearImageKey();
+    maskData->mBlobKey = Some(key);
+    maskData->mFonts = fonts;
+    if (paintFinished) {
+      maskData->mItemRect = itemRect;
+      maskData->mMaskOffset = maskOffset;
+      maskData->mScale = scale;
+      maskData->mMaskStyle = aMaskItem->Frame()->StyleSVGReset()->mMask;
+    }
+  }
+
   wr::WrImageMask imageMask;
-  imageMask.image = fallbackData->GetImageKey().value();
-  imageMask.rect = wr::ToRoundedLayoutRect(imageRect);
+  imageMask.image = wr::AsImageKey(maskData->mBlobKey.value());
+  imageMask.rect = wr::ToLayoutRect(imageRect);
   imageMask.repeat = false;
   return Some(imageMask);
 }
@@ -2255,17 +2403,17 @@ void WebRenderCommandBuilder::ClearCachedResources() {
   MOZ_RELEASE_ASSERT(mWebRenderUserDatas.Count() == 0);
 }
 
-WebRenderGroupData::WebRenderGroupData(WebRenderLayerManager* aWRManager,
-                                       nsDisplayItem* aItem)
-    : WebRenderUserData(aWRManager, aItem) {
+WebRenderGroupData::WebRenderGroupData(
+    RenderRootStateManager* aRenderRootStateManager, nsDisplayItem* aItem)
+    : WebRenderUserData(aRenderRootStateManager, aItem) {
   MOZ_COUNT_CTOR(WebRenderGroupData);
 }
 
 WebRenderGroupData::~WebRenderGroupData() {
   MOZ_COUNT_DTOR(WebRenderGroupData);
   GP("Group data destruct\n");
-  mSubGroup.ClearImageKey(mWRManager, true);
-  mFollowingGroup.ClearImageKey(mWRManager, true);
+  mSubGroup.ClearImageKey(mManager, true);
+  mFollowingGroup.ClearImageKey(mManager, true);
 }
 
 }  // namespace layers

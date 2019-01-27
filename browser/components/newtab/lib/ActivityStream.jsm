@@ -29,6 +29,7 @@ const {TopSitesFeed} = ChromeUtils.import("resource://activity-stream/lib/TopSit
 const {TopStoriesFeed} = ChromeUtils.import("resource://activity-stream/lib/TopStoriesFeed.jsm", {});
 const {HighlightsFeed} = ChromeUtils.import("resource://activity-stream/lib/HighlightsFeed.jsm", {});
 const {ASRouterFeed} = ChromeUtils.import("resource://activity-stream/lib/ASRouterFeed.jsm", {});
+const {DiscoveryStreamFeed} = ChromeUtils.import("resource://activity-stream/lib/DiscoveryStreamFeed.jsm", {});
 
 const DEFAULT_SITES = new Map([
   // This first item is the global list fallback for any unexpected geos
@@ -192,6 +193,10 @@ const PREFS_CONFIG = new Map([
     title: "A comma-delimited list of search shortcuts that have previously been pinned",
     value: "",
   }],
+  ["improvesearch.handoffToAwesomebar", {
+    title: "Should the search box handoff to the Awesomebar?",
+    value: true,
+  }],
   ["asrouter.devtoolsEnabled", {
     title: "Are the asrouter devtools enabled?",
     value: false,
@@ -207,9 +212,19 @@ const PREFS_CONFIG = new Map([
       type: "local",
       localProvider: "OnboardingMessageProvider",
       enabled: true,
+      // Block specific messages from this local provider
+      exclude: ["RETURN_TO_AMO_1"],
     }),
   }],
   // See browser/app/profile/firefox.js for other ASR preferences. They must be defined there to enable roll-outs.
+  ["discoverystream.config", {
+    title: "Configuration for the new pocket new tab",
+    value: JSON.stringify({
+      enabled: false,
+      // This is currently an exmple layout used for dev purposes.
+      layout_endpoint: "https://getpocket.com/v3/newtab/layout?version=1&consumer_key=40249-e88c401e1b1f2242d9e441c4&layout_variant=dev-test-1",
+    }),
+  }],
 ]);
 
 // Array of each feed's FEEDS_CONFIG factory and values to add to PREFS_CONFIG
@@ -304,6 +319,12 @@ const FEEDS_DATA = [
     name: "asrouterfeed",
     factory: () => new ASRouterFeed(),
     title: "Handles AS Router messages, such as snippets and onboaridng",
+    value: true,
+  },
+  {
+    name: "discoverystreamfeed",
+    factory: () => new DiscoveryStreamFeed(),
+    title: "Handles new pocket ui for the new tab page",
     value: true,
   },
 ];

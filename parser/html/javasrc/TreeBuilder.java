@@ -3298,17 +3298,19 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                     }
             }
         }
-        String charset = null;
         if (start != -1) {
             if (end == -1) {
+              if (charsetState == CHARSET_UNQUOTED) {
                 end = buffer.length;
+              } else {
+                return null;
+              }
             }
-            charset = Portability.newStringFromBuffer(buffer, start, end
-                    - start
+            return Portability.newStringFromBuffer(buffer, start, end - start
                 // CPPONLY: , tb, false
             );
         }
-        return charset;
+        return null;
     }
 
     private void checkMetaCharset(HtmlAttributes attributes)
@@ -3357,6 +3359,7 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                     }
                 }
                 eltPos = currentPtr;
+                int origPos = currentPtr;
                 for (;;) {
                     if (eltPos == 0) {
                         assert fragment: "We can get this close to the root of the stack in foreign content only in the fragment case.";
@@ -3364,7 +3367,7 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                     }
                     if (stack[eltPos].name == name) {
                         while (currentPtr >= eltPos) {
-                            pop();
+                          popForeign(origPos);
                         }
                         break endtagloop;
                     }
@@ -5221,6 +5224,17 @@ public abstract class TreeBuilder<T> implements TokenHandler,
         currentPtr--;
         elementPopped(node.ns, node.popName, node.node);
         node.release(this);
+    }
+
+    private void popForeign(int origPos) throws SAXException {
+      StackNode<T> node = stack[currentPtr];
+      if (origPos != currentPtr) {
+        markMalformedIfScript(node.node);
+      }
+      assert debugOnlyClearLastStackSlot();
+      currentPtr--;
+      elementPopped(node.ns, node.popName, node.node);
+      node.release(this);
     }
 
     private void silentPop() throws SAXException {

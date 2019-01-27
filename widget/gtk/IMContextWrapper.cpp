@@ -271,10 +271,15 @@ class SelectionStyleProvider final {
                                   &selectionForegroundColor))) {
       double alpha =
           static_cast<double>(NS_GET_A(selectionForegroundColor)) / 0xFF;
-      style.AppendPrintf("color:rgba(%u,%u,%u,%f);",
+      style.AppendPrintf("color:rgba(%u,%u,%u,",
                          NS_GET_R(selectionForegroundColor),
                          NS_GET_G(selectionForegroundColor),
-                         NS_GET_B(selectionForegroundColor), alpha);
+                         NS_GET_B(selectionForegroundColor));
+      // We can't use AppendPrintf here, because it does locale-specific
+      // formatting of floating-point values.
+      style.AppendFloat(alpha);
+      style.AppendPrintf(");");
+
     }
     nscolor selectionBackgroundColor;
     if (NS_SUCCEEDED(
@@ -282,10 +287,12 @@ class SelectionStyleProvider final {
                                   &selectionBackgroundColor))) {
       double alpha =
           static_cast<double>(NS_GET_A(selectionBackgroundColor)) / 0xFF;
-      style.AppendPrintf("background-color:rgba(%u,%u,%u,%f);",
+      style.AppendPrintf("background-color:rgba(%u,%u,%u,",
                          NS_GET_R(selectionBackgroundColor),
                          NS_GET_G(selectionBackgroundColor),
-                         NS_GET_B(selectionBackgroundColor), alpha);
+                         NS_GET_B(selectionBackgroundColor));
+      style.AppendFloat(alpha);
+      style.AppendPrintf(");");
     }
     style.AppendLiteral("}");
     gtk_css_provider_load_from_data(mProvider, style.get(), -1, nullptr);
@@ -309,6 +316,7 @@ bool SelectionStyleProvider::sHasShutDown = false;
  ******************************************************************************/
 
 IMContextWrapper* IMContextWrapper::sLastFocusedContext = nullptr;
+guint16 IMContextWrapper::sWaitingSynthesizedKeyPressHardwareKeyCode = 0;
 bool IMContextWrapper::sUseSimpleContext;
 
 NS_IMPL_ISUPPORTS(IMContextWrapper, TextEventDispatcherListener,
@@ -838,6 +846,24 @@ KeyHandlingState IMContextWrapper::OnKeyEvent(
         // has already been handled by another process and it wasn't
         // used by IME.
         bool isHandlingAsyncEvent = !!(aEvent->state & IBUS_IGNORED_MASK);
+        if (!isHandlingAsyncEvent) {
+          // On some environments, IBUS_IGNORED_MASK flag is not set as
+          // expected.  In such case, we keep pusing all events into the queue.
+          // I.e., that causes eating a lot of memory until it's blurred.
+          // Therefore, we need to check whether there is same timestamp event
+          // in the queue.  This redundant cost should be low because in most
+          // causes, key events in the queue should be 2 or 4.
+          isHandlingAsyncEvent =
+              mPostingKeyEvents.IndexOf(aEvent) != GdkEventKeyQueue::NoIndex();
+          if (isHandlingAsyncEvent) {
+            MOZ_LOG(gGtkIMLog, LogLevel::Info,
+                    ("0x%p   OnKeyEvent(), aEvent->state does not have "
+                     "IBUS_IGNORED_MASK but "
+                     "same event in the queue.  So, assuming it's a "
+                     "synthesized event",
+                     this));
+          }
+        }
 
         // ibus won't send back key press events in a dead key sequcne.
         if (mMaybeInDeadKeySequence && aEvent->type == GDK_KEY_PRESS) {
@@ -866,10 +892,11 @@ KeyHandlingState IMContextWrapper::OnKeyEvent(
 
         if (isHandlingAsyncEvent) {
           MOZ_LOG(gGtkIMLog, LogLevel::Info,
-                  ("0x%p   OnKeyEvent(), aEvent->state has "
-                   "IBUS_IGNORED_MASK, so, it won't be handled "
-                   "asynchronously anymore. Removing posted events from "
-                   "the queue",
+                  ("0x%p   OnKeyEvent(), aEvent->state has IBUS_IGNORED_MASK "
+                   "or aEvent is in the "
+                   "posting event queue, so, it won't be handled "
+                   "asynchronously anymore. Removing "
+                   "the posted events from the queue",
                    this));
           maybeHandledAsynchronously = false;
           mPostingKeyEvents.RemoveEvent(aEvent);
@@ -885,6 +912,25 @@ KeyHandlingState IMContextWrapper::OnKeyEvent(
         // it wasn't used by IME.
         bool isHandlingAsyncEvent =
             !!(aEvent->state & FcitxKeyState_IgnoredMask);
+        if (!isHandlingAsyncEvent) {
+          // On some environments, FcitxKeyState_IgnoredMask flag *might* be not
+          // set as expected. If there were such cases, we'd keep pusing all
+          // events into the queue.  I.e., that would cause eating a lot of
+          // memory until it'd be blurred.  Therefore, we should check whether
+          // there is same timestamp event in the queue.  This redundant cost
+          // should be low because in most causes, key events in the queue
+          // should be 2 or 4.
+          isHandlingAsyncEvent =
+              mPostingKeyEvents.IndexOf(aEvent) != GdkEventKeyQueue::NoIndex();
+          if (isHandlingAsyncEvent) {
+            MOZ_LOG(gGtkIMLog, LogLevel::Info,
+                    ("0x%p   OnKeyEvent(), aEvent->state does not have "
+                     "FcitxKeyState_IgnoredMask "
+                     "but same event in the queue.  So, assuming it's a "
+                     "synthesized event",
+                     this));
+          }
+        }
 
         // fcitx won't send back key press events in a dead key sequcne.
         if (mMaybeInDeadKeySequence && aEvent->type == GDK_KEY_PRESS) {
@@ -910,9 +956,10 @@ KeyHandlingState IMContextWrapper::OnKeyEvent(
         if (isHandlingAsyncEvent) {
           MOZ_LOG(gGtkIMLog, LogLevel::Info,
                   ("0x%p   OnKeyEvent(), aEvent->state has "
-                   "FcitxKeyState_IgnoredMask, so, it won't be handled "
-                   "asynchronously anymore. Removing posted events from "
-                   "the queue",
+                   "FcitxKeyState_IgnoredMask or aEvent is in "
+                   "the posting event queue, so, it won't be handled "
+                   "asynchronously anymore. "
+                   "Removing the posted events from the queue",
                    this));
           maybeHandledAsynchronously = false;
           mPostingKeyEvents.RemoveEvent(aEvent);
@@ -942,6 +989,13 @@ KeyHandlingState IMContextWrapper::OnKeyEvent(
   mFallbackToKeyEvent = false;
   mProcessingKeyEvent = aEvent;
   gboolean isFiltered = gtk_im_context_filter_keypress(currentContext, aEvent);
+  if (aEvent->type == GDK_KEY_PRESS) {
+    if (isFiltered && maybeHandledAsynchronously) {
+      sWaitingSynthesizedKeyPressHardwareKeyCode = aEvent->hardware_keycode;
+    } else {
+      sWaitingSynthesizedKeyPressHardwareKeyCode = 0;
+    }
+  }
 
   // The caller of this shouldn't handle aEvent anymore if we've dispatched
   // composition events or modified content with other events.
@@ -1000,11 +1054,14 @@ KeyHandlingState IMContextWrapper::OnKeyEvent(
   MOZ_LOG(gGtkIMLog, LogLevel::Debug,
           ("0x%p   OnKeyEvent(), succeeded, filterThisEvent=%s "
            "(isFiltered=%s, mFallbackToKeyEvent=%s, "
-           "maybeHandledAsynchronously=%s), mCompositionState=%s, "
-           "mMaybeInDeadKeySequence=%s",
+           "maybeHandledAsynchronously=%s), mPostingKeyEvents.Length()=%zu, "
+           "mCompositionState=%s, mMaybeInDeadKeySequence=%s, "
+           "mKeyboardEventWasDispatched=%s, mKeyboardEventWasConsumed=%s",
            this, ToChar(filterThisEvent), ToChar(isFiltered),
            ToChar(mFallbackToKeyEvent), ToChar(maybeHandledAsynchronously),
-           GetCompositionStateName(), ToChar(mMaybeInDeadKeySequence)));
+           mPostingKeyEvents.Length(), GetCompositionStateName(),
+           ToChar(mMaybeInDeadKeySequence), ToChar(mKeyboardEventWasDispatched),
+           ToChar(mKeyboardEventWasConsumed)));
 
   if (filterThisEvent) {
     return KeyHandlingState::eHandled;
@@ -1314,6 +1371,7 @@ void IMContextWrapper::Focus() {
 
   // Forget all posted key events when focus is moved since they shouldn't
   // be fired in different editor.
+  sWaitingSynthesizedKeyPressHardwareKeyCode = 0;
   mPostingKeyEvents.Clear();
 
   gtk_im_context_focus_in(currentContext);
@@ -1886,8 +1944,9 @@ bool IMContextWrapper::MaybeDispatchKeyEventAsProcessedByIME(
     //      event is prevented since even on the other browsers, web
     //      applications cannot cancel the following composition event.
     //      Spec bug: https://github.com/w3c/uievents/issues/180
-    lastFocusedWindow->DispatchKeyDownOrKeyUpEvent(
-        sourceEvent, !mMaybeInDeadKeySequence, &mKeyboardEventWasConsumed);
+    KeymapWrapper::DispatchKeyDownOrKeyUpEvent(lastFocusedWindow, sourceEvent,
+                                               !mMaybeInDeadKeySequence,
+                                               &mKeyboardEventWasConsumed);
     MOZ_LOG(gGtkIMLog, LogLevel::Info,
             ("0x%p   MaybeDispatchKeyEventAsProcessedByIME(), keydown or keyup "
              "event is dispatched",
@@ -1952,8 +2011,8 @@ bool IMContextWrapper::MaybeDispatchKeyEventAsProcessedByIME(
                "aFollowingEvent=%s), dispatch fake eKeyDown event",
                this, ToChar(aFollowingEvent)));
 
-      lastFocusedWindow->DispatchKeyDownOrKeyUpEvent(
-          fakeKeyDownEvent, &mKeyboardEventWasConsumed);
+      KeymapWrapper::DispatchKeyDownOrKeyUpEvent(
+          lastFocusedWindow, fakeKeyDownEvent, &mKeyboardEventWasConsumed);
       MOZ_LOG(gGtkIMLog, LogLevel::Info,
               ("0x%p   MaybeDispatchKeyEventAsProcessedByIME(), "
                "fake keydown event is dispatched",

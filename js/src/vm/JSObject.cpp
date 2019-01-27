@@ -37,6 +37,8 @@
 #include "jit/BaselineJIT.h"
 #include "js/CharacterEncoding.h"
 #include "js/MemoryMetrics.h"
+#include "js/PropertyDescriptor.h"  // JS::FromPropertyDescriptor
+#include "js/PropertySpec.h"
 #include "js/Proxy.h"
 #include "js/UbiNode.h"
 #include "js/UniquePtr.h"
@@ -227,9 +229,7 @@ bool js::FromPropertyDescriptorToObject(JSContext* cx,
 bool js::GetFirstArgumentAsObject(JSContext* cx, const CallArgs& args,
                                   const char* method,
                                   MutableHandleObject objp) {
-  if (args.length() == 0) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, method, "0", "s");
+  if (!args.requireAtLeast(cx, method, 1)) {
     return false;
   }
 
@@ -3419,57 +3419,12 @@ JSObject* js::ToObjectSlow(JSContext* cx, JS::HandleValue val,
   MOZ_ASSERT(!val.isObject());
 
   if (val.isNullOrUndefined()) {
-    ReportIsNullOrUndefinedForPropertyAccess(cx, val, reportScanStack);
-    return nullptr;
-  }
-
-  return PrimitiveToObject(cx, val);
-}
-
-JSObject* js::ToObjectSlowForPropertyAccess(JSContext* cx, JS::HandleValue val,
-                                            HandleId key,
-                                            bool reportScanStack) {
-  MOZ_ASSERT(!val.isMagic());
-  MOZ_ASSERT(!val.isObject());
-
-  if (val.isNullOrUndefined()) {
-    ReportIsNullOrUndefinedForPropertyAccess(cx, val, key, reportScanStack);
-    return nullptr;
-  }
-
-  return PrimitiveToObject(cx, val);
-}
-
-JSObject* js::ToObjectSlowForPropertyAccess(JSContext* cx, JS::HandleValue val,
-                                            HandlePropertyName key,
-                                            bool reportScanStack) {
-  MOZ_ASSERT(!val.isMagic());
-  MOZ_ASSERT(!val.isObject());
-
-  if (val.isNullOrUndefined()) {
-    RootedId keyId(cx, NameToId(key));
-    ReportIsNullOrUndefinedForPropertyAccess(cx, val, keyId, reportScanStack);
-    return nullptr;
-  }
-
-  return PrimitiveToObject(cx, val);
-}
-
-JSObject* js::ToObjectSlowForPropertyAccess(JSContext* cx, JS::HandleValue val,
-                                            HandleValue keyValue,
-                                            bool reportScanStack) {
-  MOZ_ASSERT(!val.isMagic());
-  MOZ_ASSERT(!val.isObject());
-
-  if (val.isNullOrUndefined()) {
-    RootedId key(cx);
-    if (keyValue.isPrimitive()) {
-      if (!ValueToId<CanGC>(cx, keyValue, &key)) {
-        return nullptr;
-      }
-      ReportIsNullOrUndefinedForPropertyAccess(cx, val, key, reportScanStack);
+    if (reportScanStack) {
+      ReportIsNullOrUndefined(cx, JSDVG_SEARCH_STACK, val);
     } else {
-      ReportIsNullOrUndefinedForPropertyAccess(cx, val, reportScanStack);
+      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                JSMSG_CANT_CONVERT_TO,
+                                val.isNull() ? "null" : "undefined", "object");
     }
     return nullptr;
   }
@@ -4021,12 +3976,14 @@ js::gc::AllocKind JSObject::allocKindForTenure(
    * sure there is room for the array's fixed data when moving the array.
    */
   if (is<TypedArrayObject>() && !as<TypedArrayObject>().hasBuffer()) {
-    size_t nbytes = as<TypedArrayObject>().byteLength();
+    gc::AllocKind allocKind;
     if (as<TypedArrayObject>().hasInlineElements()) {
-      return GetBackgroundAllocKind(
-          TypedArrayObject::AllocKindForLazyBuffer(nbytes));
+      size_t nbytes = as<TypedArrayObject>().byteLength();
+      allocKind = TypedArrayObject::AllocKindForLazyBuffer(nbytes);
+    } else {
+      allocKind = GetGCObjectKind(getClass());
     }
-    return GetGCObjectKind(getClass());
+    return GetBackgroundAllocKind(allocKind);
   }
 
   // Proxies that are CrossCompartmentWrappers may be nursery allocated.

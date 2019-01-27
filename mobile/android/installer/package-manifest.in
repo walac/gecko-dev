@@ -112,8 +112,6 @@
 #endif
 @BINPATH@/components/BrowserElementParent.manifest
 @BINPATH@/components/BrowserElementParent.js
-@BINPATH@/components/FeedProcessor.manifest
-@BINPATH@/components/FeedProcessor.js
 @BINPATH@/components/UAOverridesBootstrapper.js
 @BINPATH@/components/UAOverridesBootstrapper.manifest
 @BINPATH@/components/WellKnownOpportunisticUtils.js
@@ -266,7 +264,6 @@
 ; [Extensions]
 @BINPATH@/components/extensions-toolkit.manifest
 @BINPATH@/components/extensions-mobile.manifest
-@BINPATH@/components/extension-process-script.js
 
 ; Features
 @BINPATH@/features/*

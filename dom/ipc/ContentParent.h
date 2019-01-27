@@ -223,7 +223,7 @@ class ContentParent final : public PContentParent,
 
     ContentParentIterator begin() {
       // Move the cursor to the first element that matches the policy.
-      while (mPolicy != eAll && mCurrent && !mCurrent->mIsAlive) {
+      while (mPolicy != eAll && mCurrent && !mCurrent->IsAlive()) {
         mCurrent = mCurrent->LinkedListElement<ContentParent>::getNext();
       }
 
@@ -237,7 +237,7 @@ class ContentParent final : public PContentParent,
       MOZ_ASSERT(mCurrent);
       do {
         mCurrent = mCurrent->LinkedListElement<ContentParent>::getNext();
-      } while (mPolicy != eAll && mCurrent && !mCurrent->mIsAlive);
+      } while (mPolicy != eAll && mCurrent && !mCurrent->IsAlive());
 
       return *this;
     }
@@ -360,8 +360,11 @@ class ContentParent final : public PContentParent,
 
   void UpdateCookieStatus(nsIChannel* aChannel);
 
-  bool IsAvailable() const { return mIsAvailable; }
+  bool IsLaunching() const {
+    return mLifecycleState == LifecycleState::LAUNCHING;
+  }
   bool IsAlive() const override;
+  bool IsDead() const { return mLifecycleState == LifecycleState::DEAD; }
 
   virtual bool IsForBrowser() const override { return mIsForBrowser; }
   virtual bool IsForJSPlugin() const override {
@@ -560,10 +563,12 @@ class ContentParent final : public PContentParent,
 
   // PURLClassifierLocalParent.
   virtual PURLClassifierLocalParent* AllocPURLClassifierLocalParent(
-      const URIParams& aURI, const nsCString& aTables) override;
+      const URIParams& aURI,
+      const nsTArray<IPCURLClassifierFeature>& aFeatures) override;
+
   virtual mozilla::ipc::IPCResult RecvPURLClassifierLocalConstructor(
       PURLClassifierLocalParent* aActor, const URIParams& aURI,
-      const nsCString& aTables) override;
+      nsTArray<IPCURLClassifierFeature>&& aFeatures) override;
 
   virtual PLoginReputationParent* AllocPLoginReputationParent(
       const URIParams& aURI) override;
@@ -587,10 +592,6 @@ class ContentParent final : public PContentParent,
 
   virtual bool DeallocPURLClassifierParent(
       PURLClassifierParent* aActor) override;
-
-  virtual mozilla::ipc::IPCResult RecvClassifyLocal(
-      const URIParams& aURI, const nsCString& aTables, nsresult* aRv,
-      nsTArray<nsCString>* aResults) override;
 
   // Use the PHangMonitor channel to ask the child to repaint a tab.
   void PaintTabWhileInterruptingJS(TabParent* aTabParent, bool aForceRepaint,
@@ -631,6 +632,16 @@ class ContentParent final : public PContentParent,
   virtual mozilla::ipc::IPCResult RecvSetOpenerBrowsingContext(
       const BrowsingContextId& aContextId,
       const BrowsingContextId& aOpenerContextId) override;
+
+  virtual mozilla::ipc::IPCResult RecvWindowClose(
+      const BrowsingContextId& aContextId, const bool& aTrustedCaller) override;
+  virtual mozilla::ipc::IPCResult RecvWindowFocus(
+      const BrowsingContextId& aContextId) override;
+  virtual mozilla::ipc::IPCResult RecvWindowBlur(
+      const BrowsingContextId& aContextId) override;
+  virtual mozilla::ipc::IPCResult RecvWindowPostMessage(
+      const BrowsingContextId& aContextId, const ClonedMessageData& aMessage,
+      const PostMessageData& aData) override;
 
  protected:
   void OnChannelConnected(int32_t pid) override;
@@ -992,6 +1003,9 @@ class ContentParent final : public PContentParent,
   virtual mozilla::ipc::IPCResult RecvOpenNotificationSettings(
       const IPC::Principal& aPrincipal) override;
 
+  virtual mozilla::ipc::IPCResult RecvNotificationEvent(
+      const nsString& aType, const NotificationEventData& aData) override;
+
   virtual mozilla::ipc::IPCResult RecvLoadURIExternal(
       const URIParams& uri, PBrowserParent* windowContext) override;
   virtual mozilla::ipc::IPCResult RecvExtProtocolChannelConnectParent(
@@ -1167,7 +1181,7 @@ class ContentParent final : public PContentParent,
   virtual mozilla::ipc::IPCResult RecvFirstPartyStorageAccessGrantedForOrigin(
       const Principal& aParentPrincipal, const Principal& aTrackingPrincipal,
       const nsCString& aTrackingOrigin, const nsCString& aGrantedOrigin,
-      const bool& aAnySite,
+      const int& aAllowMode,
       FirstPartyStorageAccessGrantedForOriginResolver&& aResolver) override;
 
   virtual mozilla::ipc::IPCResult RecvStoreUserInteractionAsPermission(
@@ -1240,13 +1254,19 @@ class ContentParent final : public PContentParent,
   // sequence.  Precisely, how many TabParents have called
   // NotifyTabDestroying() but not called NotifyTabDestroyed().
   int32_t mNumDestroyingTabs;
-  // True only while this process is in "good health" and may be used for
-  // new remote tabs.
-  bool mIsAvailable;
-  // True only while remote content is being actively used from this process.
-  // After mIsAlive goes to false, some previously scheduled IPC traffic may
-  // still pass through.
-  bool mIsAlive;
+
+  // The process starts in the LAUNCHING state, and transitions to
+  // ALIVE once it can accept IPC messages.  It remains ALIVE only
+  // while remote content is being actively used from this process.
+  // After the state becaomes DEAD, some previously scheduled IPC
+  // traffic may still pass through.
+  enum class LifecycleState : uint8_t {
+    LAUNCHING,
+    ALIVE,
+    DEAD,
+  };
+
+  LifecycleState mLifecycleState;
 
   bool mShuttingDown;
   bool mIsForBrowser;
@@ -1313,6 +1333,11 @@ class ContentParent final : public PContentParent,
   nsTArray<nsCString> mBlobURLs;
 
   UniquePtr<mozilla::ipc::CrashReporterHost> mCrashReporter;
+
+  // Collects any pref changes that occur during process launch (after
+  // the initial map is passed in command-line arguments) to be sent
+  // when the process can receive IPC messages.
+  nsTArray<Pref> mQueuedPrefs;
 
   static uint64_t sNextTabParentId;
   static nsDataHashtable<nsUint64HashKey, TabParent*> sNextTabParents;

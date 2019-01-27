@@ -13,6 +13,7 @@ const {
   ADB_ADDON_UNINSTALL_FAILURE,
   ADB_ADDON_STATUS_UPDATED,
   DEBUG_TARGET_COLLAPSIBILITY_UPDATED,
+  MULTI_E10S_UPDATED,
   NETWORK_LOCATIONS_UPDATED,
   PAGE_SELECTED,
   PAGE_TYPES,
@@ -79,7 +80,10 @@ function updateAdbAddonStatus(adbAddonStatus) {
 }
 
 function updateNetworkLocations(locations) {
-  return { type: NETWORK_LOCATIONS_UPDATED, locations };
+  return (dispatch, getState) => {
+    dispatch(Actions.updateNetworkRuntimes(locations));
+    dispatch({ type: NETWORK_LOCATIONS_UPDATED, locations });
+  };
 }
 
 function installAdbAddon() {
@@ -123,6 +127,12 @@ function scanUSBRuntimes() {
   };
 }
 
+function updateMultiE10sStatus(isMultiE10s) {
+  return (dispatch, getState) => {
+    dispatch({ type: MULTI_E10S_UPDATED, isMultiE10s});
+  };
+}
+
 module.exports = {
   addNetworkLocation,
   installAdbAddon,
@@ -132,5 +142,6 @@ module.exports = {
   uninstallAdbAddon,
   updateAdbAddonStatus,
   updateDebugTargetCollapsibility,
+  updateMultiE10sStatus,
   updateNetworkLocations,
 };

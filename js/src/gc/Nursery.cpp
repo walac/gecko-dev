@@ -456,6 +456,37 @@ void* js::Nursery::allocateBufferSameLocation(JSObject* obj, size_t nbytes) {
   return allocate(nbytes);
 }
 
+void* js::Nursery::allocateZeroedBuffer(
+    Zone* zone, size_t nbytes, arena_id_t arena /*= js::MallocArena*/) {
+  MOZ_ASSERT(nbytes > 0);
+
+  if (nbytes <= MaxNurseryBufferSize) {
+    void* buffer = allocate(nbytes);
+    if (buffer) {
+      memset(buffer, 0, nbytes);
+      return buffer;
+    }
+  }
+
+  void* buffer = zone->pod_calloc<uint8_t>(nbytes, arena);
+  if (buffer && !registerMallocedBuffer(buffer)) {
+    js_free(buffer);
+    return nullptr;
+  }
+  return buffer;
+}
+
+void* js::Nursery::allocateZeroedBuffer(
+    JSObject* obj, size_t nbytes, arena_id_t arena /*= js::MallocArena*/) {
+  MOZ_ASSERT(obj);
+  MOZ_ASSERT(nbytes > 0);
+
+  if (!IsInsideNursery(obj)) {
+    return obj->zone()->pod_calloc<uint8_t>(nbytes, arena);
+  }
+  return allocateZeroedBuffer(obj->zone(), nbytes, arena);
+}
+
 void* js::Nursery::reallocateBuffer(JSObject* obj, void* oldBuffer,
                                     size_t oldBytes, size_t newBytes) {
   if (!IsInsideNursery(obj)) {
@@ -693,8 +724,7 @@ inline void js::Nursery::endProfile(ProfileKey key) {
 }
 
 bool js::Nursery::needIdleTimeCollection() const {
-  uint32_t threshold =
-      runtime()->gc.tunables.nurseryFreeThresholdForIdleCollection();
+  uint32_t threshold = tunables().nurseryFreeThresholdForIdleCollection();
   return minorGCRequested() || freeSpace() < threshold;
 }
 
@@ -768,13 +798,15 @@ void js::Nursery::collect(JS::gcreason::Reason reason) {
   bool validPromotionRate;
   const float promotionRate = calcPromotionRate(&validPromotionRate);
   uint32_t pretenureCount = 0;
-  bool shouldPretenure = (validPromotionRate && promotionRate > 0.6) ||
-                         IsFullStoreBufferReason(reason);
+  bool shouldPretenure = tunables().attemptPretenuring() &&
+                         ((validPromotionRate &&
+                           promotionRate > tunables().pretenureThreshold()) ||
+                          IsFullStoreBufferReason(reason));
 
   if (shouldPretenure) {
     JSContext* cx = rt->mainContextFromOwnThread();
     for (auto& entry : tenureCounts.entries) {
-      if (entry.count >= 3000) {
+      if (entry.count >= tunables().pretenureGroupThreshold()) {
         ObjectGroup* group = entry.group;
         AutoRealm ar(cx, group);
         AutoSweepObjectGroup sweep(group);
@@ -822,7 +854,7 @@ void js::Nursery::collect(JS::gcreason::Reason reason) {
   // We ignore gcMaxBytes when allocating for minor collection. However, if we
   // overflowed, we disable the nursery. The next time we allocate, we'll fail
   // because gcBytes >= gcMaxBytes.
-  if (rt->gc.usage.gcBytes() >= rt->gc.tunables.gcMaxBytes()) {
+  if (rt->gc.usage.gcBytes() >= tunables().gcMaxBytes()) {
     disable();
   }
   // Disable the nursery if the user changed the configuration setting.  The
@@ -1178,8 +1210,7 @@ void js::Nursery::maybeResizeNursery(JS::gcreason::Reason reason) {
   }
 #endif
 
-  newMaxNurseryChunks =
-      runtime()->gc.tunables.gcMaxNurseryBytes() >> ChunkShift;
+  newMaxNurseryChunks = tunables().gcMaxNurseryBytes() >> ChunkShift;
   if (newMaxNurseryChunks != chunkCountLimit_) {
     chunkCountLimit_ = newMaxNurseryChunks;
     /* The configured maximum nursery size is changing */
@@ -1258,6 +1289,11 @@ uintptr_t js::Nursery::currentEnd() const {
 
 gcstats::Statistics& js::Nursery::stats() const {
   return runtime()->gc.stats();
+}
+
+MOZ_ALWAYS_INLINE const js::gc::GCSchedulingTunables& js::Nursery::tunables()
+    const {
+  return runtime()->gc.tunables;
 }
 
 void js::Nursery::sweepDictionaryModeObjects() {

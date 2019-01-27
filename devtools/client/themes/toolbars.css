@@ -5,9 +5,6 @@
 
 /* CSS Variables specific to the devtools toolbar that aren't defined by the themes */
 :root {
-  --magnifying-glass-image: url(chrome://devtools/skin/images/search.svg);
-  --filter-image: url(chrome://devtools/skin/images/filter.svg);
-  --tool-options-image: url(chrome://devtools/skin/images/tool-options.svg);
   --separator-block-margin: 4px;
   --separator-inline-margin: 1px;
 }
@@ -193,7 +190,7 @@
 #toggle-breakpoints[checked] > image,
 .event-tooltip-debugger-icon {
   -moz-context-properties: fill;
-  fill: var(--theme-toolbar-color);
+  fill: var(--theme-toolbar-icon-color);
 }
 
 .hidden-labels-box:not(.visible) > label,
@@ -220,8 +217,12 @@ splitter.devtools-horizontal-splitter,
   overflow: hidden;
   padding-inline-start: 2px !important;
   padding-inline-end: 10px !important;
-  fill: var(--theme-toolbar-photon-icon-color);
+  fill: var(--theme-toolbar-icon-color);
   -moz-context-properties: fill;
+}
+
+html[dir="rtl"] .devtools-dropdown-button {
+  background-position: left center !important;
 }
 
 .devtools-dropdown-button:not(:hover) {

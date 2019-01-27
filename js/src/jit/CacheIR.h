@@ -1907,6 +1907,7 @@ class MOZ_RAII TypeOfIRGenerator : public IRGenerator {
 
   bool tryAttachPrimitive(ValOperandId valId);
   bool tryAttachObject(ValOperandId valId);
+  void trackAttached(const char* name);
 
  public:
   TypeOfIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc,
@@ -2090,6 +2091,9 @@ inline ReferenceType ReferenceTypeFromSimpleTypeDescrKey(uint32_t key) {
   MOZ_ASSERT(!SimpleTypeDescrKeyIsScalar(key));
   return ReferenceType(key >> 1);
 }
+
+// Returns whether obj is a WindowProxy wrapping the script's global.
+extern bool IsWindowProxyForScriptGlobal(JSScript* script, JSObject* obj);
 
 }  // namespace jit
 }  // namespace js

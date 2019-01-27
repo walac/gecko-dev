@@ -32,10 +32,6 @@ extern crate atomic_refcell;
 extern crate bitflags;
 #[allow(unused_extern_crates)]
 extern crate byteorder;
-#[cfg(feature = "gecko")]
-#[macro_use]
-#[no_link]
-extern crate cfg_if;
 #[cfg(feature = "servo")]
 extern crate crossbeam_channel;
 #[macro_use]
@@ -133,6 +129,7 @@ pub mod font_metrics;
 #[cfg(feature = "gecko")]
 #[allow(unsafe_code)]
 pub mod gecko_bindings;
+pub mod global_style_data;
 pub mod hash;
 pub mod invalidation;
 #[allow(missing_docs)] // TODO.

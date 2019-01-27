@@ -114,7 +114,7 @@
   background-size: 16px, auto;
   -moz-context-properties: fill;
   fill: currentColor;
-  color: inherit;
+  color: inherit !important; /* !important overrides :hover and :active:hover colors from button.css on Mac and Linux */
 }
 
 .identity-popup-expander:-moz-locale-dir(ltr) {
@@ -161,8 +161,8 @@
 
 /* CONTENT */
 
+.identity-popup-content-blocking-empty-label,
 #tracking-protection-preferences-button > .toolbarbutton-text,
-.identity-popup-footer,
 .tracking-protection-button,
 #identity-popup-trackersView-strict-info > label,
 .identity-popup-cookiesView-list-header,
@@ -312,28 +312,6 @@
   margin-top: 1em;
 }
 
-.identity-popup-footer {
-  background-color: var(--arrowpanel-dimmed);
-}
-
-.identity-popup-footer > button {
-  -moz-appearance: none;
-  margin: 0;
-  border-top: 1px solid var(--panel-separator-color);
-  padding: 8px 20px;
-  /* !important overrides :hover and :active colors from button.css: */
-  color: inherit !important;
-}
-
-.identity-popup-footer > button:hover,
-.identity-popup-footer > button:focus {
-  background-color: var(--arrowpanel-dimmed);
-}
-
-.identity-popup-footer > button:hover:active {
-  background-color: var(--arrowpanel-dimmed-further);
-}
-
 #identity-popup-content-verifier ~ description {
   margin-top: 1em;
   color: var(--panel-disabled-color);
@@ -359,19 +337,6 @@ description#identity-popup-content-verifier,
 
 #identity-popup-breakageReportView-footer > button {
   flex: 1;
-}
-
-#identity-popup-breakageReportView-footer > button[default] {
-  color: white;
-  background-color: #0996f8;
-}
-
-#identity-popup-breakageReportView-footer > button[default]:hover {
-  background-color: #0675d3;
-}
-
-#identity-popup-breakageReportView-footer > button[default]:hover:active {
-  background-color: #0568ba;
 }
 
 #identity-popup-breakageReportView-heading,
@@ -437,6 +402,29 @@ description#identity-popup-content-verifier,
 #identity-popup-cookiesView,
 #identity-popup-trackersView {
   max-height: 600px;
+}
+
+#identity-popup-trackersView-list.empty {
+  -moz-box-align: center;
+  -moz-box-pack: center;
+}
+
+.identity-popup-content-blocking-empty-label {
+  margin-inline-start: 0;
+  color: var(--panel-disabled-color);
+}
+
+.identity-popup-content-blocking-trackersView-empty-image {
+  width: 48px;
+  height: 48px;
+  -moz-context-properties: fill, fill-opacity;
+  margin-bottom: 16px;
+}
+
+#identity-popup-cookiesView .identity-popup-content-blocking-empty-label {
+  margin-inline-start: 24px;
+  margin-top: 2px;
+  margin-bottom: 4px;
 }
 
 .identity-popup-cookiesView-list-header {
@@ -707,6 +695,10 @@ description#identity-popup-content-verifier,
   color: var(--panel-disabled-color);
 }
 
+#identity-popup-content-blocking-content[hasException] .identity-popup-content-blocking-category-state-label {
+  visibility: hidden;
+}
+
 .identity-popup-permission-remove-button {
   -moz-appearance: none;
   margin: 0;
@@ -715,7 +707,8 @@ description#identity-popup-content-verifier,
   min-width: 0;
   padding: 2px;
   background-color: transparent;
-  color: inherit;
+  /* !important overrides :hover and :active colors from button.css */
+  color: inherit !important;
   opacity: 0.6;
   margin-inline-start: 2px;
 }

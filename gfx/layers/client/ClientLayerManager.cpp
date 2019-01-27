@@ -681,6 +681,9 @@ void ClientLayerManager::ForwardTransaction(bool aScheduleComposite) {
   mLatestTransactionId =
       mTransactionIdAllocator->GetTransactionId(!mIsRepeatTransaction);
   TimeStamp refreshStart = mTransactionIdAllocator->GetTransactionStart();
+  if (!refreshStart) {
+    refreshStart = mTransactionStart;
+  }
 
   if (gfxPrefs::AlwaysPaint() && XRE_IsContentProcess()) {
     mForwarder->SendPaintTime(mLatestTransactionId, mLastPaintTime);
@@ -688,12 +691,17 @@ void ClientLayerManager::ForwardTransaction(bool aScheduleComposite) {
 
   // forward this transaction's changeset to our LayerManagerComposite
   bool sent = false;
-  bool ok = mForwarder->EndTransaction(mRegionToClear, mLatestTransactionId,
-                                       aScheduleComposite, mPaintSequenceNumber,
-                                       mIsRepeatTransaction, refreshStart,
-                                       mTransactionStart, mURL, &sent);
+  bool ok = mForwarder->EndTransaction(
+      mRegionToClear, mLatestTransactionId, aScheduleComposite,
+      mPaintSequenceNumber, mIsRepeatTransaction,
+      mTransactionIdAllocator->GetVsyncId(),
+      mTransactionIdAllocator->GetVsyncStart(), refreshStart, mTransactionStart,
+      mURL, &sent, mPayload);
+
   if (ok) {
     if (sent) {
+      // Our payload has now been dispatched.
+      mPayload.Clear();
       mNeedsComposite = false;
     }
   } else if (HasShadowManager()) {

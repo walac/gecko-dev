@@ -18,6 +18,7 @@
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
+#include "vm/JSScript-inl.h"
 #include "vm/TypeInference-inl.h"
 #include "vm/UnboxedObject-inl.h"
 
@@ -1111,12 +1112,51 @@ bool GetPropIRGenerator::tryAttachNative(HandleObject obj, ObjOperandId objId,
   MOZ_CRASH("Bad NativeGetPropCacheability");
 }
 
+bool js::jit::IsWindowProxyForScriptGlobal(JSScript* script, JSObject* obj) {
+  if (!IsWindowProxy(obj)) {
+    return false;
+  }
+
+  MOZ_ASSERT(obj->getClass() ==
+             script->runtimeFromMainThread()->maybeWindowProxyClass());
+
+  JSObject* window = ToWindowIfWindowProxy(obj);
+
+  // Ion relies on the WindowProxy's group changing (and the group getting
+  // marked as having unknown properties) on navigation. If we ever stop
+  // transplanting same-compartment WindowProxies, this assert will fail and we
+  // need to fix that code.
+  MOZ_ASSERT(window == &obj->nonCCWGlobal());
+
+  // This must be a WindowProxy for a global in this compartment. Else it would
+  // be a cross-compartment wrapper and IsWindowProxy returns false for
+  // those.
+  MOZ_ASSERT(script->compartment() == obj->compartment());
+
+  // Only optimize lookups on the WindowProxy for the current global. Other
+  // WindowProxies in the compartment may require security checks (based on
+  // mutable document.domain). See bug 1516775.
+  return window == &script->global();
+}
+
+// Guards objId is a WindowProxy for windowObj. Returns the window's operand id.
+static ObjOperandId GuardAndLoadWindowProxyWindow(CacheIRWriter& writer,
+                                                  ObjOperandId objId,
+                                                  GlobalObject* windowObj) {
+  // Note: update AddCacheIRGetPropFunction in BaselineInspector.cpp when making
+  // changes here.
+  writer.guardClass(objId, GuardClassKind::WindowProxy);
+  ObjOperandId windowObjId = writer.loadWrapperTarget(objId);
+  writer.guardSpecificObject(windowObjId, windowObj);
+  return windowObjId;
+}
+
 bool GetPropIRGenerator::tryAttachWindowProxy(HandleObject obj,
                                               ObjOperandId objId, HandleId id) {
   // Attach a stub when the receiver is a WindowProxy and we can do the lookup
   // on the Window (the global object).
 
-  if (!IsWindowProxy(obj)) {
+  if (!IsWindowProxyForScriptGlobal(script_, obj)) {
     return false;
   }
 
@@ -1126,14 +1166,8 @@ bool GetPropIRGenerator::tryAttachWindowProxy(HandleObject obj,
     return false;
   }
 
-  // This must be a WindowProxy for the current Window/global. Else it would
-  // be a cross-compartment wrapper and IsWindowProxy returns false for
-  // those.
-  MOZ_ASSERT(obj->getClass() == cx_->runtime()->maybeWindowProxyClass());
-  MOZ_ASSERT(ToWindowIfWindowProxy(obj) == cx_->global());
-
   // Now try to do the lookup on the Window (the current global).
-  HandleObject windowObj = cx_->global();
+  Handle<GlobalObject*> windowObj = cx_->global();
   RootedShape shape(cx_);
   RootedNativeObject holder(cx_);
   NativeGetPropCacheability type =
@@ -1145,9 +1179,8 @@ bool GetPropIRGenerator::tryAttachWindowProxy(HandleObject obj,
 
     case CanAttachReadSlot: {
       maybeEmitIdGuard(id);
-      writer.guardClass(objId, GuardClassKind::WindowProxy);
-
-      ObjOperandId windowObjId = writer.loadObject(windowObj);
+      ObjOperandId windowObjId =
+          GuardAndLoadWindowProxyWindow(writer, objId, windowObj);
       EmitReadSlotResult(writer, windowObj, holder, shape, windowObjId);
       EmitReadSlotReturn(writer, windowObj, holder, shape);
 
@@ -1177,8 +1210,8 @@ bool GetPropIRGenerator::tryAttachWindowProxy(HandleObject obj,
       // Guard the incoming object is a WindowProxy and inline a getter call
       // based on the Window object.
       maybeEmitIdGuard(id);
-      writer.guardClass(objId, GuardClassKind::WindowProxy);
-      ObjOperandId windowObjId = writer.loadObject(windowObj);
+      ObjOperandId windowObjId =
+          GuardAndLoadWindowProxyWindow(writer, objId, windowObj);
       EmitCallGetterResult(writer, windowObj, holder, shape, windowObjId,
                            mode_);
 
@@ -1225,7 +1258,6 @@ bool GetPropIRGenerator::tryAttachCrossCompartmentWrapper(HandleObject obj,
     return false;
   }
 
-  bool isWindowProxy = false;
   RootedShape shape(cx_);
   RootedNativeObject holder(cx_);
 
@@ -1233,16 +1265,6 @@ bool GetPropIRGenerator::tryAttachCrossCompartmentWrapper(HandleObject obj,
   // such as de-lazifying type info.
   {
     AutoRealm ar(cx_, unwrapped);
-
-    // The first CCW for iframes is almost always wrapping another WindowProxy
-    // so we optimize for that case as well.
-    isWindowProxy = IsWindowProxy(unwrapped);
-    if (isWindowProxy) {
-      MOZ_ASSERT(ToWindowIfWindowProxy(unwrapped) ==
-                 &unwrapped->nonCCWGlobal());
-      unwrapped = cx_->global();
-      MOZ_ASSERT(unwrapped);
-    }
 
     NativeGetPropCacheability canCache =
         CanAttachNativeGetProp(cx_, unwrapped, id, &holder, &shape, pc_,
@@ -1285,14 +1307,6 @@ bool GetPropIRGenerator::tryAttachCrossCompartmentWrapper(HandleObject obj,
                           unwrapped->compartment());
 
   ObjOperandId unwrappedId = wrapperTargetId;
-  if (isWindowProxy) {
-    // For the WindowProxy case also unwrap the inner window.
-    // We avoid loadObject, because storing cross compartment objects in
-    // stubs / JIT code is tricky.
-    writer.guardClass(wrapperTargetId, GuardClassKind::WindowProxy);
-    unwrappedId = writer.loadWrapperTarget(wrapperTargetId);
-  }
-
   EmitReadSlotResult<SlotReadType::CrossCompartment>(writer, unwrapped, holder,
                                                      shape, unwrappedId);
   EmitReadSlotReturn(writer, unwrapped, holder, shape, /* wrapResult = */ true);
@@ -3645,6 +3659,15 @@ bool SetPropIRGenerator::tryAttachTypedObjectProperty(HandleObject obj,
     return false;
   }
 
+  if (fieldDescr->is<ReferenceTypeDescr>() &&
+      fieldDescr->as<ReferenceTypeDescr>().type() ==
+          ReferenceType::TYPE_WASM_ANYREF) {
+    // TODO/AnyRef-boxing: we can probably do better, in particular, code
+    // that stores object pointers and null in an anyref slot should be able
+    // to get a fast path.
+    return false;
+  }
+
   uint32_t fieldOffset = structDescr->fieldOffset(fieldIndex);
   TypedThingLayout layout = GetTypedThingLayout(obj->getClass());
 
@@ -3677,6 +3700,8 @@ bool SetPropIRGenerator::tryAttachTypedObjectProperty(HandleObject obj,
     case ReferenceType::TYPE_STRING:
       writer.guardType(rhsId, JSVAL_TYPE_STRING);
       break;
+    case ReferenceType::TYPE_WASM_ANYREF:
+      MOZ_CRASH();
   }
 
   writer.storeTypedObjectReferenceProperty(objId, fieldOffset, layout, type,
@@ -4415,7 +4440,7 @@ bool SetPropIRGenerator::tryAttachWindowProxy(HandleObject obj,
   // Attach a stub when the receiver is a WindowProxy and we can do the set
   // on the Window (the global object).
 
-  if (!IsWindowProxy(obj)) {
+  if (!IsWindowProxyForScriptGlobal(script_, obj)) {
     return false;
   }
 
@@ -4424,12 +4449,6 @@ bool SetPropIRGenerator::tryAttachWindowProxy(HandleObject obj,
   if (mode_ == ICState::Mode::Megamorphic) {
     return false;
   }
-
-  // This must be a WindowProxy for the current Window/global. Else it would
-  // be a cross-compartment wrapper and IsWindowProxy returns false for
-  // those.
-  MOZ_ASSERT(obj->getClass() == cx_->runtime()->maybeWindowProxyClass());
-  MOZ_ASSERT(ToWindowIfWindowProxy(obj) == cx_->global());
 
   // Now try to do the set on the Window (the current global).
   Handle<GlobalObject*> windowObj = cx_->global();
@@ -4442,9 +4461,8 @@ bool SetPropIRGenerator::tryAttachWindowProxy(HandleObject obj,
 
   maybeEmitIdGuard(id);
 
-  writer.guardClass(objId, GuardClassKind::WindowProxy);
-  ObjOperandId windowObjId = writer.loadObject(windowObj);
-
+  ObjOperandId windowObjId =
+      GuardAndLoadWindowProxyWindow(writer, objId, windowObj);
   writer.guardShape(windowObjId, windowObj->lastProperty());
   writer.guardGroupForTypeBarrier(windowObjId, windowObj->group());
   typeCheckInfo_.set(windowObj->group(), id);
@@ -4748,6 +4766,14 @@ TypeOfIRGenerator::TypeOfIRGenerator(JSContext* cx, HandleScript script,
                                      HandleValue value)
     : IRGenerator(cx, script, pc, CacheKind::TypeOf, mode), val_(value) {}
 
+void TypeOfIRGenerator::trackAttached(const char* name) {
+#ifdef JS_CACHEIR_SPEW
+  if (const CacheIRSpewer::Guard& sp = CacheIRSpewer::Guard(*this, name)) {
+    sp.valueProperty("val", val_);
+  }
+#endif
+}
+
 bool TypeOfIRGenerator::tryAttachStub() {
   MOZ_ASSERT(cacheKind_ == CacheKind::TypeOf);
 
@@ -4776,7 +4802,7 @@ bool TypeOfIRGenerator::tryAttachPrimitive(ValOperandId valId) {
 
   writer.loadStringResult(TypeName(js::TypeOfValue(val_), cx_->names()));
   writer.returnFromIC();
-
+  trackAttached("Primitive");
   return true;
 }
 
@@ -4788,7 +4814,7 @@ bool TypeOfIRGenerator::tryAttachObject(ValOperandId valId) {
   ObjOperandId objId = writer.guardIsObject(valId);
   writer.loadTypeOfObjectResult(objId);
   writer.returnFromIC();
-
+  trackAttached("Object");
   return true;
 }
 

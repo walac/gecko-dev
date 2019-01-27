@@ -65,5 +65,18 @@ window.gActivityStreamPrerenderedState = {
     "isUserLoggedIn": null,
     "pocketCta": {},
     "waitingForSpoc": true
+  },
+  "DiscoveryStream": {
+    "config": {
+      "enabled": false,
+      "layout_endpoint": ""
+    },
+    "layout": [],
+    "lastUpdated": null,
+    "feeds": {}
+  },
+  "Search": {
+    "focus": false,
+    "hide": false
   }
 };

@@ -106,10 +106,21 @@ extern JS_FRIEND_API bool JS_IsDeadWrapper(JSObject* obj);
 extern JS_FRIEND_API JSObject* JS_NewDeadWrapper(
     JSContext* cx, JSObject* origObject = nullptr);
 
+namespace js {
+
 /**
- * Determine whether the given object is a ScriptSourceObject.
+ * Get the script private value associated with an object, if any.
+ *
+ * The private value is set with SetScriptPrivate() or SetModulePrivate() and is
+ * internally stored on the relevant ScriptSourceObject.
+ *
+ * This is used by the cycle collector to trace through
+ * ScriptSourceObjects. This allows private values to contain an nsISupports
+ * pointer and hence support references to cycle collected C++ objects.
  */
-extern JS_FRIEND_API bool JS_IsScriptSourceObject(JSObject* obj);
+JS_FRIEND_API JS::Value MaybeGetScriptPrivate(JSObject* object);
+
+}  // namespace js
 
 /*
  * Used by the cycle collector to trace through a shape or object group and
@@ -156,6 +167,7 @@ enum {
   JS_TELEMETRY_GC_NURSERY_BYTES,
   JS_TELEMETRY_GC_PRETENURE_COUNT,
   JS_TELEMETRY_GC_NURSERY_PROMOTION_RATE,
+  JS_TELEMETRY_GC_MARK_RATE,
   JS_TELEMETRY_PRIVILEGED_PARSER_COMPILE_LAZY_AFTER_MS,
   JS_TELEMETRY_WEB_PARSER_COMPILE_LAZY_AFTER_MS,
   JS_TELEMETRY_END
@@ -181,12 +193,17 @@ typedef void (*JSSetUseCounterCallback)(JSObject* obj, JSUseCounter counter);
 extern JS_FRIEND_API void JS_SetSetUseCounterCallback(
     JSContext* cx, JSSetUseCounterCallback callback);
 
-extern JS_FRIEND_API JSPrincipals* JS_GetCompartmentPrincipals(
+extern JS_FRIEND_API JSPrincipals* JS_DeprecatedGetCompartmentPrincipals(
     JS::Compartment* compartment);
 
 extern JS_FRIEND_API JSPrincipals* JS_GetScriptPrincipals(JSScript* script);
 
 namespace js {
+
+// Release-assert the compartment contains exactly one realm.
+extern JS_FRIEND_API void AssertCompartmentHasSingleRealm(
+    JS::Compartment* comp);
+
 extern JS_FRIEND_API JS::Realm* GetScriptRealm(JSScript* script);
 } /* namespace js */
 
@@ -491,15 +508,14 @@ extern JS_FRIEND_API bool AreGCGrayBitsValid(JSRuntime* rt);
 
 extern JS_FRIEND_API bool ZoneGlobalsAreAllGray(JS::Zone* zone);
 
-extern JS_FRIEND_API bool IsObjectZoneSweepingOrCompacting(JSObject* obj);
+extern JS_FRIEND_API bool IsCompartmentZoneSweepingOrCompacting(
+    JS::Compartment* comp);
 
 typedef void (*GCThingCallback)(void* closure, JS::GCCellPtr thing);
 
 extern JS_FRIEND_API void VisitGrayWrapperTargets(JS::Zone* zone,
                                                   GCThingCallback callback,
                                                   void* closure);
-
-extern JS_FRIEND_API JSObject* GetWeakmapKeyDelegate(JSObject* key);
 
 /**
  * Invoke cellCallback on every gray JSObject in the given zone.
@@ -531,6 +547,12 @@ SizeOfDataIfCDataObject(mozilla::MallocSizeOf mallocSizeOf, JSObject* obj);
 
 // Note: this returns nullptr iff |zone| is the atoms zone.
 extern JS_FRIEND_API JS::Realm* GetAnyRealmInZone(JS::Zone* zone);
+
+// Returns the first realm's global in a compartment. Note: this is not
+// guaranteed to always be the same realm because individual realms can be
+// collected by the GC.
+extern JS_FRIEND_API JSObject* GetFirstGlobalInCompartment(
+    JS::Compartment* comp);
 
 /*
  * Shadow declarations of JS internal structures, for access by inline access
@@ -1175,18 +1197,15 @@ struct SingleCompartment : public CompartmentFilter {
   virtual bool match(JS::Compartment* c) const override { return c == ours; }
 };
 
-struct CompartmentsWithPrincipals : public CompartmentFilter {
-  JSPrincipals* principals;
-  explicit CompartmentsWithPrincipals(JSPrincipals* p) : principals(p) {}
-  virtual bool match(JS::Compartment* c) const override {
-    return JS_GetCompartmentPrincipals(c) == principals;
-  }
-};
-
 extern JS_FRIEND_API bool NukeCrossCompartmentWrappers(
-    JSContext* cx, const CompartmentFilter& sourceFilter,
-    JS::Compartment* target, NukeReferencesToWindow nukeReferencesToWindow,
+    JSContext* cx, const CompartmentFilter& sourceFilter, JS::Realm* target,
+    NukeReferencesToWindow nukeReferencesToWindow,
     NukeReferencesFromTarget nukeReferencesFromTarget);
+
+extern JS_FRIEND_API bool AllowNewWrapper(JS::Compartment* target,
+                                          JSObject* obj);
+
+extern JS_FRIEND_API bool NukedObjectRealm(JSObject* obj);
 
 /* Specify information about DOMProxy proxies in the DOM, for use by ICs. */
 
@@ -1435,7 +1454,6 @@ static inline size_t byteSize(Type atype) {
     case Int64:
     case Float64:
       return 8;
-      return 16;
     default:
       MOZ_CRASH("invalid scalar type");
   }
@@ -2056,6 +2074,13 @@ class JSJitMethodCallArgs
   }
 
   JS::HandleValue get(unsigned i) const { return Base::get(i); }
+
+  bool requireAtLeast(JSContext* cx, const char* fnname,
+                      unsigned required) const {
+    // Can just forward to Base, since it only needs the length and we
+    // forward that already.
+    return Base::requireAtLeast(cx, fnname, required);
+  }
 };
 
 struct JSJitMethodCallArgsTraits {
@@ -2599,7 +2624,8 @@ extern JS_FRIEND_API JSObject* GetJSMEnvironmentOfScriptedCaller(JSContext* cx);
 // other embedding such as a Gecko FrameScript. Caller can check compartment.
 extern JS_FRIEND_API bool IsJSMEnvironment(JSObject* obj);
 
-#if defined(XP_WIN) && defined(_WIN64)
+// Matches the condition in js/src/jit/ProcessExecutableMemory.cpp
+#if defined(XP_WIN) && defined(HAVE_64BIT_BUILD) && defined(_M_X64)
 // Parameters use void* types to avoid #including windows.h. The return value of
 // this function is returned from the exception handler.
 typedef long (*JitExceptionHandler)(void* exceptionRecord,  // PEXECTION_RECORD

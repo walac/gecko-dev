@@ -15,7 +15,7 @@
 
 #include "nsContentUtils.h"
 
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
 #include "SVGObserverUtils.h"
 #include "nsPresContext.h"
@@ -108,7 +108,6 @@
 #include "nsGlobalWindow.h"
 #include "GLContext.h"
 #include "GLContextProvider.h"
-#include "SVGContentUtils.h"
 #include "nsIScreenManager.h"
 #include "nsFilterInstance.h"
 #include "nsSVGLength2.h"
@@ -117,11 +116,12 @@
 #include "Units.h"
 #include "CanvasUtils.h"
 #include "mozilla/CycleCollectedJSRuntime.h"
+#include "mozilla/ServoCSSParser.h"
 #include "mozilla/ServoStyleSet.h"
+#include "mozilla/SVGContentUtils.h"
 #include "mozilla/layers/CanvasClient.h"
 #include "mozilla/layers/WebRenderUserData.h"
 #include "mozilla/layers/WebRenderCanvasRenderer.h"
-#include "mozilla/ServoCSSParser.h"
 
 #undef free  // apparently defined by some windows header, clashing with a
              // free() method in SkTypes.h
@@ -1067,7 +1067,7 @@ JSObject* CanvasRenderingContext2D::WrapObject(
 
 bool CanvasRenderingContext2D::ParseColor(const nsAString& aString,
                                           nscolor* aColor) {
-  nsIDocument* document = mCanvasElement ? mCanvasElement->OwnerDoc() : nullptr;
+  Document* document = mCanvasElement ? mCanvasElement->OwnerDoc() : nullptr;
   css::Loader* loader = document ? document->CSSLoader() : nullptr;
 
   nsIPresShell* presShell = GetPresShell();
@@ -1262,9 +1262,11 @@ bool CanvasRenderingContext2D::AllowOpenGLCanvas() const {
   // canvas creation, but in that case the
   // HTMLCanvasElement::GetCompositorBackendType would return LAYERS_NONE
   // as well, so it wouldn't help much.
+  //
+  // XXX Disable SkiaGL on WebRender, since there is a case that R8G8B8X8
+  // is used, but WebRender does not support R8G8B8X8.
 
-  return (mCompositorBackend == LayersBackend::LAYERS_OPENGL ||
-          mCompositorBackend == LayersBackend::LAYERS_WR) &&
+  return (mCompositorBackend == LayersBackend::LAYERS_OPENGL) &&
          gfxPlatform::GetPlatform()->AllowOpenGLCanvas();
 }
 
@@ -2453,7 +2455,7 @@ void CanvasRenderingContext2D::SetShadowColor(const nsAString& aShadowColor) {
 
 static already_AddRefed<RawServoDeclarationBlock> CreateDeclarationForServo(
     nsCSSPropertyID aProperty, const nsAString& aPropertyValue,
-    nsIDocument* aDocument) {
+    Document* aDocument) {
   RefPtr<URLExtraData> data = new URLExtraData(
       aDocument->GetDocBaseURI(), aDocument->GetDocumentURI(),
       aDocument->NodePrincipal(), aDocument->GetReferrerPolicy());
@@ -2482,7 +2484,7 @@ static already_AddRefed<RawServoDeclarationBlock> CreateDeclarationForServo(
 }
 
 static already_AddRefed<RawServoDeclarationBlock> CreateFontDeclarationForServo(
-    const nsAString& aFont, nsIDocument* aDocument) {
+    const nsAString& aFont, Document* aDocument) {
   return CreateDeclarationForServo(eCSSProperty_font, aFont, aDocument);
 }
 
@@ -2545,8 +2547,7 @@ static already_AddRefed<ComputedStyle> GetFontStyleForServo(
 }
 
 static already_AddRefed<RawServoDeclarationBlock>
-CreateFilterDeclarationForServo(const nsAString& aFilter,
-                                nsIDocument* aDocument) {
+CreateFilterDeclarationForServo(const nsAString& aFilter, Document* aDocument) {
   return CreateDeclarationForServo(eCSSProperty_filter, aFilter, aDocument);
 }
 
@@ -3976,7 +3977,7 @@ nsresult CanvasRenderingContext2D::DrawOrMeasureText(
   nsCOMPtr<nsIPresShell> presShell = GetPresShell();
   if (!presShell) return NS_ERROR_FAILURE;
 
-  nsIDocument* document = presShell->GetDocument();
+  Document* document = presShell->GetDocument();
 
   // replace all the whitespace characters with U+0020 SPACE
   nsAutoString textToDraw(aRawText);
@@ -4358,7 +4359,7 @@ bool CanvasRenderingContext2D::IsPointInPath(JSContext* aCx, double aX,
 
   // Check for site-specific permission and return false if no permission.
   if (mCanvasElement) {
-    nsCOMPtr<nsIDocument> ownerDoc = mCanvasElement->OwnerDoc();
+    nsCOMPtr<Document> ownerDoc = mCanvasElement->OwnerDoc();
     if (!CanvasUtils::IsImageExtractionAllowed(ownerDoc, aCx,
                                                aSubjectPrincipal)) {
       return false;
@@ -4404,7 +4405,7 @@ bool CanvasRenderingContext2D::IsPointInStroke(
 
   // Check for site-specific permission and return false if no permission.
   if (mCanvasElement) {
-    nsCOMPtr<nsIDocument> ownerDoc = mCanvasElement->OwnerDoc();
+    nsCOMPtr<Document> ownerDoc = mCanvasElement->OwnerDoc();
     if (!CanvasUtils::IsImageExtractionAllowed(ownerDoc, aCx,
                                                aSubjectPrincipal)) {
       return false;
@@ -5257,7 +5258,7 @@ nsresult CanvasRenderingContext2D::GetImageDataArray(
   // internal uses).
   bool usePlaceholder = false;
   if (mCanvasElement) {
-    nsCOMPtr<nsIDocument> ownerDoc = mCanvasElement->OwnerDoc();
+    nsCOMPtr<Document> ownerDoc = mCanvasElement->OwnerDoc();
     usePlaceholder = !CanvasUtils::IsImageExtractionAllowed(ownerDoc, aCx,
                                                             aSubjectPrincipal);
   }

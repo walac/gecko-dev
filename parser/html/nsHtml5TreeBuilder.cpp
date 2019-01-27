@@ -2289,15 +2289,18 @@ nsHtml5String nsHtml5TreeBuilder::extractCharsetFromContent(
     }
   }
 charsetloop_end:;
-  nsHtml5String charset = nullptr;
   if (start != -1) {
     if (end == -1) {
-      end = buffer.length;
+      if (charsetState == CHARSET_UNQUOTED) {
+        end = buffer.length;
+      } else {
+        return nullptr;
+      }
     }
-    charset = nsHtml5Portability::newStringFromBuffer(buffer, start,
-                                                      end - start, tb, false);
+    return nsHtml5Portability::newStringFromBuffer(buffer, start, end - start,
+                                                   tb, false);
   }
-  return charset;
+  return nullptr;
 }
 
 void nsHtml5TreeBuilder::checkMetaCharset(nsHtml5HtmlAttributes* attributes) {
@@ -2346,6 +2349,7 @@ void nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName) {
         }
       }
       eltPos = currentPtr;
+      int32_t origPos = currentPtr;
       for (;;) {
         if (!eltPos) {
           MOZ_ASSERT(fragment,
@@ -2355,7 +2359,7 @@ void nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName) {
         }
         if (stack[eltPos]->name == name) {
           while (currentPtr >= eltPos) {
-            pop();
+            popForeign(origPos);
           }
           NS_HTML5_BREAK(endtagloop);
         }
@@ -4077,6 +4081,17 @@ void nsHtml5TreeBuilder::popTemplateMode() { templateModePtr--; }
 
 void nsHtml5TreeBuilder::pop() {
   nsHtml5StackNode* node = stack[currentPtr];
+  MOZ_ASSERT(debugOnlyClearLastStackSlot());
+  currentPtr--;
+  elementPopped(node->ns, node->popName, node->node);
+  node->release(this);
+}
+
+void nsHtml5TreeBuilder::popForeign(int32_t origPos) {
+  nsHtml5StackNode* node = stack[currentPtr];
+  if (origPos != currentPtr) {
+    markMalformedIfScript(node->node);
+  }
   MOZ_ASSERT(debugOnlyClearLastStackSlot());
   currentPtr--;
   elementPopped(node->ns, node->popName, node->node);

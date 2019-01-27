@@ -2578,7 +2578,8 @@ void DebugEnvironments::checkHashTablesAfterMovingGC() {
   for (MissingEnvironmentMap::Range r = missingEnvs.all(); !r.empty();
        r.popFront()) {
     CheckGCThingAfterMovingGC(r.front().key().scope());
-    CheckGCThingAfterMovingGC(r.front().value().get());
+    // Use unbarrieredGet() to prevent triggering read barrier while collecting.
+    CheckGCThingAfterMovingGC(r.front().value().unbarrieredGet());
   }
   for (LiveEnvironmentMap::Range r = liveEnvs.all(); !r.empty(); r.popFront()) {
     CheckGCThingAfterMovingGC(r.front().key());
@@ -3364,15 +3365,17 @@ ModuleObject* js::GetModuleObjectForScript(JSScript* script) {
 }
 
 Value js::FindScriptOrModulePrivateForScript(JSScript* script) {
-  while (script) {
-    ScriptSourceObject* sso = &script->scriptSourceUnwrap();
-    Value value = sso->getPrivate();
+  MOZ_ASSERT(script);
+  ScriptSourceObject* sso = script->sourceObject();
+  while (sso) {
+    Value value = sso->canonicalPrivate();
     if (!value.isUndefined()) {
       return value;
     }
 
-    MOZ_ASSERT(sso->introductionScript() != script);
-    script = sso->introductionScript();
+    ScriptSourceObject* parent = sso->unwrappedIntroductionSourceObject();
+    MOZ_ASSERT(parent != sso);
+    sso = parent;
   }
 
   return UndefinedValue();

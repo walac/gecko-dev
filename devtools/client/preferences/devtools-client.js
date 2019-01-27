@@ -56,6 +56,8 @@ pref("devtools.inspector.shapesHighlighter.enabled", true);
 pref("devtools.inspector.fonthighlighter.enabled", true);
 // Enable tracking of style changes and the Changes panel in the Inspector
 pref("devtools.inspector.changes.enabled", true);
+// Enable the new Rules View
+pref("devtools.inspector.new-rulesview.enabled", false);
 
 // Flexbox preferences
 pref("devtools.inspector.flexboxHighlighter.enabled", true);
@@ -276,9 +278,6 @@ pref("devtools.webconsole.sidebarToggle", false);
 
 // Enable CodeMirror in the JsTerm
 pref("devtools.webconsole.jsterm.codeMirror", true);
-
-// Enable console input reverse-search everywhere
-pref("devtools.webconsole.jsterm.reverse-search", true);
 
 // Disable the new performance recording panel by default
 pref("devtools.performance.new-panel-enabled", false);

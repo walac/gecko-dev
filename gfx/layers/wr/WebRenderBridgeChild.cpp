@@ -105,7 +105,9 @@ void WebRenderBridgeChild::EndTransaction(
     const wr::LayoutSize& aContentSize, wr::BuiltDisplayList& aDL,
     wr::IpcResourceUpdateQueue& aResources, const gfx::IntSize& aSize,
     TransactionId aTransactionId, const WebRenderScrollData& aScrollData,
-    bool aContainsSVGGroup, const mozilla::TimeStamp& aRefreshStartTime,
+    bool aContainsSVGGroup, const mozilla::VsyncId& aVsyncId,
+    const mozilla::TimeStamp& aVsyncStartTime,
+    const mozilla::TimeStamp& aRefreshStartTime,
     const mozilla::TimeStamp& aTxnStartTime, const nsCString& aTxnURL) {
   MOZ_ASSERT(!mDestroyed);
   MOZ_ASSERT(mIsInTransaction);
@@ -121,11 +123,12 @@ void WebRenderBridgeChild::EndTransaction(
   nsTArray<ipc::Shmem> largeShmems;
   aResources.Flush(resourceUpdates, smallShmems, largeShmems);
 
-  this->SendSetDisplayList(
-      aSize, mParentCommands, mDestroyedActors, GetFwdTransactionId(),
-      aTransactionId, aContentSize, dlData, aDL.dl_desc, aScrollData,
-      resourceUpdates, smallShmems, largeShmems, mIdNamespace,
-      aContainsSVGGroup, aRefreshStartTime, aTxnStartTime, aTxnURL, fwdTime);
+  this->SendSetDisplayList(aSize, mParentCommands, mDestroyedActors,
+                           GetFwdTransactionId(), aTransactionId, aContentSize,
+                           dlData, aDL.dl_desc, aScrollData, resourceUpdates,
+                           smallShmems, largeShmems, mIdNamespace,
+                           aContainsSVGGroup, aVsyncId, aVsyncStartTime,
+                           aRefreshStartTime, aTxnStartTime, aTxnURL, fwdTime);
 
   mParentCommands.Clear();
   mDestroyedActors.Clear();
@@ -136,6 +139,7 @@ void WebRenderBridgeChild::EndEmptyTransaction(
     const FocusTarget& aFocusTarget, const ScrollUpdatesMap& aUpdates,
     Maybe<wr::IpcResourceUpdateQueue>& aResources,
     uint32_t aPaintSequenceNumber, TransactionId aTransactionId,
+    const mozilla::VsyncId& aVsyncId, const mozilla::TimeStamp& aVsyncStartTime,
     const mozilla::TimeStamp& aRefreshStartTime,
     const mozilla::TimeStamp& aTxnStartTime, const nsCString& aTxnURL) {
   MOZ_ASSERT(!mDestroyed);
@@ -154,8 +158,8 @@ void WebRenderBridgeChild::EndEmptyTransaction(
   this->SendEmptyTransaction(
       aFocusTarget, aUpdates, aPaintSequenceNumber, mParentCommands,
       mDestroyedActors, GetFwdTransactionId(), aTransactionId, resourceUpdates,
-      smallShmems, largeShmems, mIdNamespace, aRefreshStartTime, aTxnStartTime,
-      aTxnURL, fwdTime);
+      smallShmems, largeShmems, mIdNamespace, aVsyncId, aVsyncStartTime,
+      aRefreshStartTime, aTxnStartTime, aTxnURL, fwdTime);
   mParentCommands.Clear();
   mDestroyedActors.Clear();
   mIsInTransaction = false;
@@ -221,6 +225,16 @@ static void WriteFontDescriptor(const uint8_t* aData, uint32_t aLength,
   FontFileDataSink* sink = static_cast<FontFileDataSink*>(aBaton);
 
   *sink->mFontKey = sink->mWrBridge->GetNextFontKey();
+
+#ifdef XP_WIN
+  // FIXME: Debugging kluge for bug 1455848. Remove once debugged!
+  nsTArray<uint8_t> data;
+  data.AppendElements(aData, aLength);
+  sink->mWrBridge->SendValidateFontDescriptor(data);
+  aLength =
+      uint32_t(wcsnlen_s((const wchar_t*)aData, aLength / sizeof(wchar_t)) *
+               sizeof(wchar_t));
+#endif
 
   sink->mResources->AddFontDescriptor(
       *sink->mFontKey, Range<uint8_t>(const_cast<uint8_t*>(aData), aLength),
@@ -535,6 +549,11 @@ ipc::IShmemAllocator* WebRenderBridgeChild::GetShmemAllocator() {
 
 RefPtr<KnowsCompositor> WebRenderBridgeChild::GetForMedia() {
   MOZ_ASSERT(NS_IsMainThread());
+
+  // Ensure devices initialization for video playback. The devices are lazily
+  // initialized with WebRender to reduce memory usage.
+  gfxPlatform::GetPlatform()->EnsureDevicesInitialized();
+
   return MakeAndAddRef<KnowsCompositorMediaProxy>(
       GetTextureFactoryIdentifier());
 }

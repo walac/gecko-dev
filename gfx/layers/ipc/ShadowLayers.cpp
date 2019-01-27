@@ -528,9 +528,11 @@ void ShadowLayerForwarder::SendPaintTime(TransactionId aId,
 bool ShadowLayerForwarder::EndTransaction(
     const nsIntRegion& aRegionToClear, TransactionId aId,
     bool aScheduleComposite, uint32_t aPaintSequenceNumber,
-    bool aIsRepeatTransaction, const mozilla::TimeStamp& aRefreshStart,
+    bool aIsRepeatTransaction, const mozilla::VsyncId& aVsyncId,
+    const mozilla::TimeStamp& aVsyncStart,
+    const mozilla::TimeStamp& aRefreshStart,
     const mozilla::TimeStamp& aTransactionStart, const nsCString& aURL,
-    bool* aSent) {
+    bool* aSent, const InfallibleTArray<CompositionPayload>& aPayload) {
   *aSent = false;
 
   TransactionInfo info;
@@ -670,12 +672,15 @@ bool ShadowLayerForwarder::EndTransaction(
   info.scheduleComposite() = aScheduleComposite;
   info.paintSequenceNumber() = aPaintSequenceNumber;
   info.isRepeatTransaction() = aIsRepeatTransaction;
+  info.vsyncId() = aVsyncId;
+  info.vsyncStart() = aVsyncStart;
   info.refreshStart() = aRefreshStart;
   info.transactionStart() = aTransactionStart;
   info.url() = aURL;
 #if defined(ENABLE_FRAME_LATENCY_LOG)
   info.fwdTime() = TimeStamp::Now();
 #endif
+  info.payload() = aPayload;
 
   TargetConfig targetConfig(mTxn->mTargetBounds, mTxn->mTargetRotation,
                             mTxn->mTargetOrientation, aRegionToClear);

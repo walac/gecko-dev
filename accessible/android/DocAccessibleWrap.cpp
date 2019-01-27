@@ -22,7 +22,7 @@ const uint32_t kCacheRefreshInterval = 500;
 // DocAccessibleWrap
 ////////////////////////////////////////////////////////////////////////////////
 
-DocAccessibleWrap::DocAccessibleWrap(nsIDocument* aDocument,
+DocAccessibleWrap::DocAccessibleWrap(Document* aDocument,
                                      nsIPresShell* aPresShell)
     : DocAccessible(aDocument, aPresShell) {
   nsCOMPtr<nsIDocShellTreeItem> treeItem(aDocument->GetDocShell());
@@ -103,7 +103,7 @@ void DocAccessibleWrap::CacheViewportCallback(nsITimer* aTimer,
 
   nsLayoutUtils::GetFramesForArea(
       presShell->GetRootFrame(), scrollPort, frames,
-      nsLayoutUtils::FrameForPointFlags::ONLY_VISIBLE);
+      nsLayoutUtils::FrameForPointOption::OnlyVisible);
   AccessibleHashtable inViewAccs;
   for (size_t i = 0; i < frames.Length(); i++) {
     nsIContent* content = frames.ElementAt(i)->GetContent();
@@ -214,6 +214,7 @@ void DocAccessibleWrap::CacheFocusPath(AccessibleWrap* aAccessible) {
     for (AccessibleWrap* acc = aAccessible; acc && acc != this->Parent();
          acc = static_cast<AccessibleWrap*>(acc->Parent())) {
       accessibles.AppendElement(acc);
+      mFocusPath.Put(acc->UniqueID(), acc);
     }
 
     sessionAcc->ReplaceFocusPathCache(accessibles);

@@ -89,7 +89,7 @@ class UploadLastDir final : public nsIObserver, public nsSupportsWeakReference {
    * @param aFpCallback   the callback object to be run when the file is shown.
    */
   nsresult FetchDirectoryAndDisplayPicker(
-      nsIDocument* aDoc, nsIFilePicker* aFilePicker,
+      Document* aDoc, nsIFilePicker* aFilePicker,
       nsIFilePickerShownCallback* aFpCallback);
 
   /**
@@ -98,7 +98,7 @@ class UploadLastDir final : public nsIObserver, public nsSupportsWeakReference {
    * @param aURI URI of the current page
    * @param aDir Parent directory of the file(s)/directory chosen by the user
    */
-  nsresult StoreLastUsedDirectory(nsIDocument* aDoc, nsIFile* aDir);
+  nsresult StoreLastUsedDirectory(Document* aDoc, nsIFile* aDir);
 
   class ContentPrefCallback final : public nsIContentPrefCallback2 {
     virtual ~ContentPrefCallback() {}
@@ -199,7 +199,7 @@ class HTMLInputElement final : public nsGenericHTMLFormElementWithState,
   MOZ_CAN_RUN_SCRIPT
   void SetValueOfRangeForUserEvent(Decimal aValue);
 
-  virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
+  virtual nsresult BindToTree(Document* aDocument, nsIContent* aParent,
                               nsIContent* aBindingParent) override;
   virtual void UnbindFromTree(bool aDeep = true,
                               bool aNullParent = true) override;
@@ -748,8 +748,16 @@ class HTMLInputElement final : public nsGenericHTMLFormElementWithState,
   void GetDateTimeInputBoxValue(DateTimeValue& aValue);
 
   /*
+   * This locates the inner datetimebox UA Widget element and only the
+   * UA Widget
+   * element. This should fold into GetDateTimeBoxElement() when the XBL binding is removed.
+   */
+  Element* GetDateTimeBoxElementInUAWidget();
+
+  /*
    * This allows chrome JavaScript to dispatch event to the inner datetimebox
-   * anonymous element or access nsIDateTimeInputArea implmentation.
+   * anonymous or UA Widget element and access nsIDateTimeInputArea
+   * implementation.
    */
   Element* GetDateTimeBoxElement();
 
@@ -846,6 +854,8 @@ class HTMLInputElement final : public nsGenericHTMLFormElementWithState,
    * Required() returns true whenever @required attribute is set.
    */
   bool IsRequired() const { return State().HasState(NS_EVENT_STATE_REQUIRED); }
+
+  bool HasBeenTypePassword() { return mHasBeenTypePassword; }
 
  protected:
   virtual ~HTMLInputElement();
@@ -1551,6 +1561,7 @@ class HTMLInputElement final : public nsGenericHTMLFormElementWithState,
   bool mPickerRunning : 1;
   bool mSelectionCached : 1;
   bool mIsPreviewEnabled : 1;
+  bool mHasBeenTypePassword : 1;
   bool mHasPatternAttribute : 1;
 
  private:

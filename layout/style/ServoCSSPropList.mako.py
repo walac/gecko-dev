@@ -67,6 +67,9 @@ def method(prop):
 # but other non-trivial dependence like scrollbar colors.
 SERIALIZED_PREDEFINED_TYPES = [
     "Appearance",
+    "AlignContent",
+    "AlignItems",
+    "AlignSelf",
     "BackgroundRepeat",
     "BackgroundSize",
     "BorderImageRepeat",
@@ -98,10 +101,13 @@ SERIALIZED_PREDEFINED_TYPES = [
     "FontWeight",
     "Integer",
     "ImageLayer",
+    "JustifyContent",
+    "JustifyItems",
+    "JustifySelf",
     "Length",
-    "LengthOrPercentage",
+    "LengthPercentage",
     "NonNegativeLength",
-    "NonNegativeLengthOrPercentage",
+    "NonNegativeLengthPercentage",
     "ListStyleType",
     "OffsetPath",
     "Opacity",
@@ -123,6 +129,12 @@ SERIALIZED_PREDEFINED_TYPES = [
     "position::HorizontalPosition",
     "position::VerticalPosition",
     "url::ImageUrlOrNone",
+    "Appearance",
+    "OverscrollBehavior",
+    "OverflowClipBox",
+    "ScrollSnapType",
+    "Float",
+    "Overflow",
 ]
 
 def serialized_by_servo(prop):

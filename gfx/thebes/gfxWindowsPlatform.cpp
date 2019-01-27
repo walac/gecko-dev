@@ -424,7 +424,6 @@ void gfxWindowsPlatform::InitAcceleration() {
   DeviceManagerDx::Init();
 
   InitializeConfig();
-  InitializeDevices();
   UpdateANGLEConfig();
   UpdateRenderMode();
 
@@ -432,6 +431,10 @@ void gfxWindowsPlatform::InitAcceleration() {
   if (!DWriteEnabled() && GetDefaultContentBackend() == BackendType::SKIA) {
     InitDWriteSupport();
   }
+  // We need to listen for font setting changes even if DWrite is not used.
+  Factory::SetSystemTextQuality(gfxVars::SystemTextQuality());
+  gfxVars::SetSystemTextQualityListener(
+      gfxDWriteFont::SystemTextQualityChanged);
 
   // CanUseHardwareVideoDecoding depends on DeviceManagerDx state,
   // so update the cached value now.
@@ -465,9 +468,6 @@ bool gfxWindowsPlatform::InitDWriteSupport() {
 
   SetupClearTypeParams();
   reporter.SetSuccessful();
-  Factory::SetSystemTextQuality(gfxVars::SystemTextQuality());
-  gfxVars::SetSystemTextQualityListener(
-      gfxDWriteFont::SystemTextQualityChanged);
   return true;
 }
 
@@ -497,7 +497,9 @@ bool gfxWindowsPlatform::HandleDeviceReset() {
   gfxConfig::Reset(Feature::DIRECT2D);
 
   InitializeConfig();
-  InitializeDevices();
+  if (mInitializedDevices) {
+    InitializeDevices();
+  }
   UpdateANGLEConfig();
   return true;
 }
@@ -1470,7 +1472,21 @@ void gfxWindowsPlatform::InitializeD3D11Config() {
                         uint32_t(aDevice));
 }
 
+// Supports lazy device initialization on Windows, so that WebRender can avoid
+// initializing GPU state and allocating swap chains for most non-GPU processes.
+void gfxWindowsPlatform::EnsureDevicesInitialized() {
+  if (!mInitializedDevices) {
+    mInitializedDevices = true;
+    InitializeDevices();
+    UpdateBackendPrefs();
+  }
+}
+
+bool gfxWindowsPlatform::DevicesInitialized() { return mInitializedDevices; }
+
 void gfxWindowsPlatform::InitializeDevices() {
+  MOZ_ASSERT(NS_IsMainThread());
+
   if (XRE_IsParentProcess()) {
     // If we're the UI process, and the GPU process is enabled, then we don't
     // initialize any DirectX devices. We do leave them enabled in gfxConfig
@@ -2032,6 +2048,10 @@ void gfxWindowsPlatform::BuildContentDeviceData(ContentDeviceData* aOut) {
 }
 
 bool gfxWindowsPlatform::SupportsPluginDirectDXGIDrawing() {
+  // Ensure devices initialization for plugin's DXGISurface. The devices are
+  // lazily initialized with WebRender to reduce memory usage.
+  EnsureDevicesInitialized();
+
   DeviceManagerDx* dm = DeviceManagerDx::Get();
   if (!dm->GetContentDevice() || !dm->TextureSharingWorks()) {
     return false;

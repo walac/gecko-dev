@@ -234,7 +234,9 @@ void nsHtml5TreeOpExecutor::FlushPendingNotifications(FlushType aType) {
   }
 }
 
-nsISupports* nsHtml5TreeOpExecutor::GetTarget() { return mDocument; }
+nsISupports* nsHtml5TreeOpExecutor::GetTarget() {
+  return ToSupports(mDocument);
+}
 
 nsresult nsHtml5TreeOpExecutor::MarkAsBroken(nsresult aReason) {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
@@ -359,6 +361,12 @@ void nsHtml5TreeOpExecutor::RunFlushLoop() {
   nsHtml5FlushLoopGuard guard(this);  // this is also the self-kungfu!
 
   RefPtr<nsParserBase> parserKungFuDeathGrip(mParser);
+  RefPtr<nsHtml5StreamParser> streamParserGrip;
+  if (mParser) {
+    streamParserGrip = GetParser()->GetStreamParser();
+  }
+  mozilla::Unused
+      << streamParserGrip;  // Intentionally not used within function
 
   // Remember the entry time
   (void)nsContentSink::WillParseImpl();
@@ -417,11 +425,6 @@ void nsHtml5TreeOpExecutor::RunFlushLoop() {
         ClearOpQueue();  // clear in order to be able to assert in destructor
         return;
       }
-      // Not sure if this grip is still needed, but previously, the code
-      // gripped before calling ParseUntilBlocked();
-      RefPtr<nsHtml5StreamParser> streamKungFuDeathGrip =
-          GetParser()->GetStreamParser();
-      mozilla::Unused << streamKungFuDeathGrip;  // Not used within function
       // Now parse content left in the document.write() buffer queue if any.
       // This may generate tree ops on its own or dequeue a speculation.
       nsresult rv = GetParser()->ParseUntilBlocked();
@@ -544,6 +547,12 @@ nsresult nsHtml5TreeOpExecutor::FlushDocumentWrite() {
   RefPtr<nsParserBase> parserKungFuDeathGrip(mParser);
   mozilla::Unused
       << parserKungFuDeathGrip;  // Intentionally not used within function
+  RefPtr<nsHtml5StreamParser> streamParserGrip;
+  if (mParser) {
+    streamParserGrip = GetParser()->GetStreamParser();
+  }
+  mozilla::Unused
+      << streamParserGrip;  // Intentionally not used within function
 
   MOZ_RELEASE_ASSERT(!mReadingFromStage,
                      "Got doc write flush when reading from stage");
@@ -784,8 +793,7 @@ void nsHtml5TreeOpExecutor::MaybeComplainAboutCharset(const char* aMsgId,
       EmptyString(), aLineNumber);
 }
 
-void nsHtml5TreeOpExecutor::ComplainAboutBogusProtocolCharset(
-    nsIDocument* aDoc) {
+void nsHtml5TreeOpExecutor::ComplainAboutBogusProtocolCharset(Document* aDoc) {
   NS_ASSERTION(!mAlreadyComplainedAboutCharset,
                "How come we already managed to complain?");
   mAlreadyComplainedAboutCharset = true;

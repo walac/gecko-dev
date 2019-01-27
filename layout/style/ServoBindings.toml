@@ -49,11 +49,6 @@ hide-types = [
     "nsString",
     ".*char_traits",
     ".*incompatible_char_type",
-    # JS::Value uses alignas(8) which bindgen can't represent correctly on Linux
-    # 32-bit.  See https://github.com/rust-lang-nursery/rust-bindgen/issues/917.
-    # It's also not used by Stylo.  The following types are also hidden for
-    # making use of it and being similarly unused by Stylo.
-    "JS::Value",
     "mozilla::binding_danger::TErrorResult.*",
     "mozilla::ErrorResult.*", # Causes JSWhyMagic to be included & handled incorrectly.
     "mozilla::dom::CallbackFunction",
@@ -87,8 +82,8 @@ rusty-enums = [
     "nsStyleSVGOpacitySource",
     "nsStyleUnit",
     "nsCSSKeyword",
-    "nsIDocument_DocumentTheme",
-    "nsIDocument_Type",
+    "mozilla::dom::Document_DocumentTheme",
+    "mozilla::dom::Document_Type",
     "nsCSSUnit",
     "nsCSSFontDesc",
     "nsCSSPropertyID",
@@ -140,6 +135,7 @@ rusty-enums = [
     "mozilla::StyleScrollbarWidth",
     "mozilla::StyleWhiteSpace",
     "mozilla::StyleTextRendering",
+    "mozilla::StyleColorAdjust",
     "nsStyleImageType",
     "nsStyleSVGPaintType",
     "nsStyleSVGFallbackType",
@@ -170,6 +166,8 @@ whitelist-vars = [
     "kPresContext_.*",
     "nsContentUtils_.*",
     "GECKO_IS_NIGHTLY",
+    "mozilla::detail::gGkAtoms",
+    "mozilla::detail::kGkAtomsArrayOffset",
 ]
 whitelist-types = [
     "RawGecko.*",
@@ -366,7 +364,7 @@ opaque-types = [
                      #    doesn't expose properly.
     "nsBaseHashtable", "nsRefPtrHashtable", "nsDataHashtable", "nsClassHashtable",  # <- Ditto
     "nsInterfaceHashtable",  # <- Ditto
-    "nsIDocument_SelectorCache",  # <- Inherits from nsExpirationTracker<.., 4>
+    "mozilla::dom::Document_SelectorCache",  # <- Inherits from nsExpirationTracker<.., 4>
     "nsIPresShell_ScrollAxis",  # <- For some reason the alignment of this is 4
                                 # for clang.
     "nsPIDOMWindow",  # <- Takes the vtable from a template parameter, and we can't
@@ -380,6 +378,7 @@ opaque-types = [
     "mozilla::dom::.*Callback", # Pulls in ErrorResult and other things that
                                 # don't align properly on Linux 32-bit
     "mozilla::SchedulerGroup", # Non-standard-layout packing of field into superclass
+    "mozilla::detail::GkAtoms", # https://bugzilla.mozilla.org/show_bug.cgi?id=1517685
 ]
 
 # All cbindgen-types are in mod "structs::root::mozilla".
@@ -391,6 +390,7 @@ cbindgen-types = [
     { gecko = "StyleComputedTimingFunction", servo = "values::computed::easing::TimingFunction" },
     { gecko = "StyleDisplay", servo = "values::specified::Display" },
     { gecko = "StyleDisplayMode", servo = "gecko::media_features::DisplayMode" },
+    { gecko = "StyleExtremumLength", servo = "values::computed::length::ExtremumLength" },
     { gecko = "StyleFillRule", servo = "values::generics::basic_shape::FillRule" },
     { gecko = "StyleFontDisplay", servo = "font_face::FontDisplay" },
     { gecko = "StyleFontFaceSourceListComponent", servo = "font_face::FontFaceSourceListComponent" },
@@ -403,6 +403,13 @@ cbindgen-types = [
     { gecko = "StyleBreakWithin", servo = "values::computed::BreakWithin" },
     { gecko = "StyleBorderStyle", servo = "values::computed::BorderStyle" },
     { gecko = "StyleOutlineStyle", servo = "values::computed::OutlineStyle" },
+    { gecko = "StyleScrollSnapType", servo = "values::computed::ScrollSnapType" },
+    { gecko = "StyleResize", servo = "values::computed::Resize" },
+    { gecko = "StyleOverflowClipBox", servo = "values::computed::OverflowClipBox" },
+    { gecko = "StyleFloat", servo = "values::computed::Float" },
+    { gecko = "StyleOverscrollBehavior", servo = "values::computed::OverscrollBehavior" },
+    { gecko = "StyleTextAlign", servo = "values::computed::TextAlign" },
+    { gecko = "StyleOverflow", servo = "values::computed::Overflow" },
 ]
 
 mapped-generic-types = [
@@ -475,8 +482,8 @@ structs-types = [
     "nsAttrValue",
     "nsIContent",
     "nsINode",
-    "nsIDocument",
-    "nsIDocument_DocumentTheme",
+    "Document",
+    "Document_DocumentTheme",
     "nsSimpleContentList",
     "mozilla::MediumFeaturesChangedResult",
     "RawGeckoAnimationPropertySegment",

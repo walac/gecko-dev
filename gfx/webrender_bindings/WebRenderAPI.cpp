@@ -30,6 +30,7 @@ namespace wr {
 using layers::Stringify;
 
 MOZ_DEFINE_MALLOC_SIZE_OF(WebRenderMallocSizeOf)
+MOZ_DEFINE_MALLOC_ENCLOSING_SIZE_OF(WebRenderMallocEnclosingSizeOf)
 
 class NewRenderer : public RendererEvent {
  public:
@@ -80,7 +81,8 @@ class NewRenderer : public RendererEvent {
             aRenderThread.Shaders() ? aRenderThread.Shaders()->RawShaders()
                                     : nullptr,
             aRenderThread.ThreadPool().Raw(), &WebRenderMallocSizeOf,
-            mDocHandle, &wrRenderer, mMaxTextureSize)) {
+            &WebRenderMallocEnclosingSizeOf, mDocHandle, &wrRenderer,
+            mMaxTextureSize)) {
       // wr_window_new puts a message into gfxCriticalNote if it returns false
       return;
     }
@@ -372,8 +374,9 @@ void WebRenderAPI::Readback(const TimeStamp& aStartTime, gfx::IntSize size,
     ~Readback() { MOZ_COUNT_DTOR(Readback); }
 
     virtual void Run(RenderThread& aRenderThread, WindowId aWindowId) override {
-      aRenderThread.UpdateAndRender(aWindowId, mStartTime, /* aRender */ true,
-                                    Some(mSize), Some(mBuffer), false);
+      aRenderThread.UpdateAndRender(aWindowId, VsyncId(), mStartTime,
+                                    /* aRender */ true, Some(mSize),
+                                    Some(mBuffer), false);
       layers::AutoCompleteTask complete(mTask);
     }
 
@@ -1075,7 +1078,7 @@ DisplayListBuilder::FixedPosScrollTargetTracker::GetScrollTargetForASR(
 already_AddRefed<gfxContext> DisplayListBuilder::GetTextContext(
     wr::IpcResourceUpdateQueue& aResources,
     const layers::StackingContextHelper& aSc,
-    layers::WebRenderLayerManager* aManager, nsDisplayItem* aItem,
+    layers::RenderRootStateManager* aManager, nsDisplayItem* aItem,
     nsRect& aBounds, const gfx::Point& aDeviceOffset) {
   if (!mCachedTextDT) {
     mCachedTextDT = new layout::TextDrawTarget(*this, aResources, aSc, aManager,

@@ -212,20 +212,6 @@ extern JS_PUBLIC_API bool CompileUtf8DontInflate(
     size_t length, MutableHandle<JSScript*> script);
 
 /**
- * Compile the provided Latin-1 data (i.e. each byte directly corresponds to
- * the same Unicode code point) into a script.
- *
- * This function may eventually be removed, such that *only* bytes containing
- * UTF-8 source text may be directly compiled.  Avoid using it if you can.
- *
- * |script| is always set to the compiled script or to null in case of error.
- */
-extern JS_PUBLIC_API bool CompileLatin1(JSContext* cx,
-                                        const ReadOnlyCompileOptions& options,
-                                        const char* bytes, size_t length,
-                                        MutableHandle<JSScript*> script);
-
-/**
  * Compile the UTF-8 contents of the given file into a script.  If the contents
  * contain any malformed UTF-8, an error is reported.
  *
@@ -267,13 +253,11 @@ extern JS_PUBLIC_API bool CompileForNonSyntacticScope(
     SourceText<char16_t>& srcBuf, MutableHandle<JSScript*> script);
 
 /**
- * Compile the given Latin-1 data for non-syntactic scope.
+ * Compile the given UTF-8 data for non-syntactic scope.
  *
- * There is no way to compile UTF-8 data for non-syntactic scope because no
- * user currently needs it.  Such way could be added in the future if it's ever
- * needed.
+ * An exception is thrown if the data isn't valid UTF-8.
  */
-extern JS_PUBLIC_API bool CompileLatin1ForNonSyntacticScope(
+extern JS_PUBLIC_API bool CompileUtf8ForNonSyntacticScope(
     JSContext* cx, const ReadOnlyCompileOptions& options, const char* bytes,
     size_t length, MutableHandle<JSScript*> script);
 

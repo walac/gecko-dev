@@ -37,7 +37,7 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/Likely.h"
 #include "nsIURI.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include <algorithm>
 #include "ImageLoader.h"
 
@@ -1863,7 +1863,7 @@ bool nsStyleImageRequest::Resolve(nsPresContext* aPresContext,
 
   mResolved = true;
 
-  nsIDocument* doc = aPresContext->Document();
+  Document* doc = aPresContext->Document();
   nsIURI* docURI = doc->GetDocumentURI();
   if (GetImageValue()->HasRef()) {
     bool isEqualExceptRef = false;
@@ -2977,11 +2977,11 @@ nsStyleDisplay::nsStyleDisplay(const nsPresContext* aContext)
       mBreakInside(StyleBreakWithin::Auto),
       mBreakBefore(StyleBreakBetween::Auto),
       mBreakAfter(StyleBreakBetween::Auto),
-      mOverflowX(NS_STYLE_OVERFLOW_VISIBLE),
-      mOverflowY(NS_STYLE_OVERFLOW_VISIBLE),
-      mOverflowClipBoxBlock(NS_STYLE_OVERFLOW_CLIP_BOX_PADDING_BOX),
-      mOverflowClipBoxInline(NS_STYLE_OVERFLOW_CLIP_BOX_PADDING_BOX),
-      mResize(NS_STYLE_RESIZE_NONE),
+      mOverflowX(StyleOverflow::Visible),
+      mOverflowY(StyleOverflow::Visible),
+      mOverflowClipBoxBlock(StyleOverflowClipBox::PaddingBox),
+      mOverflowClipBoxInline(StyleOverflowClipBox::PaddingBox),
+      mResize(StyleResize::None),
       mOrient(StyleOrient::Inline),
       mIsolation(NS_STYLE_ISOLATION_AUTO),
       mTopLayer(NS_STYLE_TOP_LAYER_NONE),
@@ -2990,8 +2990,8 @@ nsStyleDisplay::nsStyleDisplay(const nsPresContext* aContext)
       mScrollBehavior(NS_STYLE_SCROLL_BEHAVIOR_AUTO),
       mOverscrollBehaviorX(StyleOverscrollBehavior::Auto),
       mOverscrollBehaviorY(StyleOverscrollBehavior::Auto),
-      mScrollSnapTypeX(NS_STYLE_SCROLL_SNAP_TYPE_NONE),
-      mScrollSnapTypeY(NS_STYLE_SCROLL_SNAP_TYPE_NONE),
+      mScrollSnapTypeX(StyleScrollSnapType::None),
+      mScrollSnapTypeY(StyleScrollSnapType::None),
       mScrollSnapPointsX(eStyleUnit_None),
       mScrollSnapPointsY(eStyleUnit_None),
       mBackfaceVisibility(NS_STYLE_BACKFACE_VISIBILITY_VISIBLE),
@@ -3486,7 +3486,7 @@ nsStyleVisibility::nsStyleVisibility(const nsPresContext* aContext)
       mImageRendering(NS_STYLE_IMAGE_RENDERING_AUTO),
       mWritingMode(NS_STYLE_WRITING_MODE_HORIZONTAL_TB),
       mTextOrientation(NS_STYLE_TEXT_ORIENTATION_MIXED),
-      mColorAdjust(NS_STYLE_COLOR_ADJUST_ECONOMY) {
+      mColorAdjust(StyleColorAdjust::Economy) {
   MOZ_COUNT_CTOR(nsStyleVisibility);
 }
 

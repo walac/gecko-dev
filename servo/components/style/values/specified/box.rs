@@ -11,7 +11,7 @@ use crate::properties::{PropertyId, ShorthandId};
 use crate::values::generics::box_::AnimationIterationCount as GenericAnimationIterationCount;
 use crate::values::generics::box_::Perspective as GenericPerspective;
 use crate::values::generics::box_::VerticalAlign as GenericVerticalAlign;
-use crate::values::specified::length::{LengthOrPercentage, NonNegativeLength};
+use crate::values::specified::length::{LengthPercentage, NonNegativeLength};
 use crate::values::specified::{AllowQuirks, Number};
 use crate::values::{CustomIdent, KeyframesName};
 use crate::Atom;
@@ -218,10 +218,7 @@ impl Display {
             // Special handling for contents and list-item on the root
             // element for Gecko.
             #[cfg(feature = "gecko")]
-            Display::Contents | Display::ListItem if _is_root_element =>
-            {
-                Display::Block
-            },
+            Display::Contents | Display::ListItem if _is_root_element => Display::Block,
 
             // These are not changed by blockification.
             Display::None | Display::Block | Display::Flex | Display::ListItem | Display::Table => {
@@ -274,17 +271,16 @@ impl Display {
 }
 
 /// A specified value for the `vertical-align` property.
-pub type VerticalAlign = GenericVerticalAlign<LengthOrPercentage>;
+pub type VerticalAlign = GenericVerticalAlign<LengthPercentage>;
 
 impl Parse for VerticalAlign {
     fn parse<'i, 't>(
         context: &ParserContext,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self, ParseError<'i>> {
-        if let Ok(lop) =
-            input.try(|i| LengthOrPercentage::parse_quirky(context, i, AllowQuirks::Yes))
+        if let Ok(lp) = input.try(|i| LengthPercentage::parse_quirky(context, i, AllowQuirks::Yes))
         {
-            return Ok(GenericVerticalAlign::Length(lop));
+            return Ok(GenericVerticalAlign::Length(lp));
         }
 
         try_match_ident_ignore_ascii_case! { input,
@@ -389,6 +385,7 @@ impl Parse for AnimationName {
     ToComputedValue,
     ToCss,
 )]
+#[repr(u8)]
 pub enum ScrollSnapType {
     None,
     Mandatory,
@@ -409,6 +406,7 @@ pub enum ScrollSnapType {
     ToComputedValue,
     ToCss,
 )]
+#[repr(u8)]
 pub enum OverscrollBehavior {
     Auto,
     Contain,
@@ -429,6 +427,7 @@ pub enum OverscrollBehavior {
     ToComputedValue,
     ToCss,
 )]
+#[repr(u8)]
 pub enum OverflowClipBox {
     PaddingBox,
     ContentBox,
@@ -744,7 +743,9 @@ impl Parse for Contain {
             let flag = match flag {
                 Some(flag) if !result.contains(flag) => flag,
                 _ => {
-                    return Err(input.new_custom_error(SelectorParseErrorKind::UnexpectedIdent(name)))
+                    return Err(
+                        input.new_custom_error(SelectorParseErrorKind::UnexpectedIdent(name))
+                    );
                 },
             };
             result.insert(flag);
@@ -823,7 +824,7 @@ impl Parse for TransitionProperty {
                     location,
                     ident,
                     &["none"],
-                )?))
+                )?));
             },
         };
 
@@ -1306,7 +1307,7 @@ impl BreakBetween {
             Ok(v) => v,
             Err(()) => {
                 return Err(location
-                    .new_custom_error(SelectorParseErrorKind::UnexpectedIdent(ident.clone())))
+                    .new_custom_error(SelectorParseErrorKind::UnexpectedIdent(ident.clone())));
             },
         };
         match break_value {
@@ -1359,4 +1360,29 @@ impl BreakBetween {
 pub enum BreakWithin {
     Auto,
     Avoid,
+}
+
+/// The value for the `overflow-x` / `overflow-y` properties.
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToCss,
+    ToComputedValue,
+)]
+#[repr(u8)]
+pub enum Overflow {
+    Visible,
+    Hidden,
+    Scroll,
+    Auto,
+    #[cfg(feature = "gecko")]
+    MozHiddenUnscrollable,
 }

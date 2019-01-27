@@ -125,7 +125,7 @@ class nsComboboxControlFrame final : public nsBlockFrame,
    * and FireOnChange() will be called.
    * @param aOn true if got focus, false if lost focus.
    * @param aRepaint if true then force repaint (NOTE: we always force repaint
-   * currently)
+   *        currently)
    * @note This method might destroy |this|.
    */
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
@@ -208,7 +208,8 @@ class nsComboboxControlFrame final : public nsBlockFrame,
   // nsIStatefulFrame
   mozilla::UniquePtr<mozilla::PresState> SaveState() override;
   NS_IMETHOD RestoreState(mozilla::PresState* aState) override;
-  NS_IMETHOD GenerateStateKey(nsIContent* aContent, nsIDocument* aDocument,
+  NS_IMETHOD GenerateStateKey(nsIContent* aContent,
+                              mozilla::dom::Document* aDocument,
                               nsACString& aKey) override;
 
   static bool ToolkitHasNativePopup();

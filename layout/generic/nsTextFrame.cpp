@@ -69,7 +69,7 @@
 #include "mozilla/intl/WordBreaker.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/layers/LayersMessages.h"
-#include "mozilla/layers/WebRenderLayerManager.h"
+#include "mozilla/layers/RenderRootStateManager.h"
 #include "mozilla/layers/WebRenderBridgeChild.h"
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "mozilla/layers/StackingContextHelper.h"
@@ -435,6 +435,10 @@ class nsTextPaintStyle {
   nsSelectionStyle* GetSelectionStyle(int32_t aIndex);
   void InitSelectionStyle(int32_t aIndex);
 
+  // Ensures sufficient contrast between the frame background color and the
+  // selection background color, and swaps the selection text and background
+  // colors accordingly.
+  // Only used on platforms where mSelectionTextColor != NS_DONT_CHANGE_COLOR
   bool EnsureSufficientContrast(nscolor* aForeColor, nscolor* aBackColor);
 
   nscolor GetResolvedForeColor(nscolor aColor, nscolor aDefaultForeColor,
@@ -1824,6 +1828,15 @@ bool BuildTextRunsScanner::ContinueTextRunAcrossFrames(nsTextFrame* aFrame1,
   }
 
   ComputedStyle* sc1 = aFrame1->Style();
+  ComputedStyle* sc2 = aFrame2->Style();
+
+  // Any difference in writing-mode/directionality inhibits shaping across
+  // the boundary.
+  WritingMode wm(sc1);
+  if (wm != WritingMode(sc2)) {
+    return false;
+  }
+
   const nsStyleText* textStyle1 = sc1->StyleText();
   // If the first frame ends in a preformatted newline, then we end the textrun
   // here. This avoids creating giant textruns for an entire plain text file.
@@ -1831,8 +1844,78 @@ bool BuildTextRunsScanner::ContinueTextRunAcrossFrames(nsTextFrame* aFrame1,
   // even if it has newlines in it, so typically we won't see trailing newlines
   // until after reflow has broken up the frame into one (or more) frames per
   // line. That's OK though.
-  if (textStyle1->NewlineIsSignificant(aFrame1) && HasTerminalNewline(aFrame1))
+  if (textStyle1->NewlineIsSignificant(aFrame1) &&
+      HasTerminalNewline(aFrame1)) {
     return false;
+  }
+
+  if (aFrame1->GetParent()->GetContent() !=
+      aFrame2->GetParent()->GetContent()) {
+    // Does aFrame, or any ancestor between it and aAncestor, have a property
+    // that should inhibit cross-element-boundary shaping on aSide?
+    auto PreventCrossBoundaryShaping = [](const nsIFrame* aFrame,
+                                          const nsIFrame* aAncestor,
+                                          Side aSide) {
+      while (aFrame != aAncestor) {
+        ComputedStyle* ctx = aFrame->Style();
+        // According to https://drafts.csswg.org/css-text/#boundary-shaping:
+        //
+        // Text shaping must be broken at inline box boundaries when any of the
+        // following are true for any box whose boundary separates the two
+        // typographic character units:
+        //
+        // 1. Any of margin/border/padding separating the two typographic
+        //    character units in the inline axis is non-zero.
+        const nsStyleCoord& margin = ctx->StyleMargin()->mMargin.Get(aSide);
+        if (!margin.ConvertsToLength() || margin.ToLength() != 0) {
+          return true;
+        }
+        const nsStyleCoord& padding = ctx->StylePadding()->mPadding.Get(aSide);
+        if (!padding.ConvertsToLength() || padding.ToLength() != 0) {
+          return true;
+        }
+        if (ctx->StyleBorder()->GetComputedBorderWidth(aSide) != 0) {
+          return true;
+        }
+
+        // 2. vertical-align is not baseline.
+        const nsStyleCoord& coord = ctx->StyleDisplay()->mVerticalAlign;
+        if (coord.GetUnit() != eStyleUnit_Enumerated ||
+            coord.GetIntValue() != NS_STYLE_VERTICAL_ALIGN_BASELINE) {
+          return true;
+        }
+
+        // 3. The boundary is a bidi isolation boundary.
+        const uint8_t unicodeBidi = ctx->StyleTextReset()->mUnicodeBidi;
+        if (unicodeBidi == NS_STYLE_UNICODE_BIDI_ISOLATE ||
+            unicodeBidi == NS_STYLE_UNICODE_BIDI_ISOLATE_OVERRIDE) {
+          return true;
+        }
+
+        aFrame = aFrame->GetParent();
+      }
+      return false;
+    };
+
+    const nsIFrame* ancestor =
+      nsLayoutUtils::FindNearestCommonAncestorFrame(aFrame1, aFrame2);
+    MOZ_ASSERT(ancestor);
+
+    // Map inline-end and inline-start to physical sides for checking presence
+    // of non-zero margin/border/padding.
+    Side side1 = wm.PhysicalSide(eLogicalSideIEnd);
+    Side side2 = wm.PhysicalSide(eLogicalSideIStart);
+    // If the frames have an embedding level that is opposite to the writing
+    // mode, we need to swap which sides we're checking.
+    if (IS_LEVEL_RTL(aFrame1->GetEmbeddingLevel()) == wm.IsBidiLTR()) {
+      Swap(side1, side2);
+    }
+
+    if (PreventCrossBoundaryShaping(aFrame1, ancestor, side1) ||
+        PreventCrossBoundaryShaping(aFrame2, ancestor, side2)) {
+      return false;
+    }
+  }
 
   if (aFrame1->GetContent() == aFrame2->GetContent() &&
       aFrame1->GetNextInFlow() != aFrame2) {
@@ -1845,7 +1928,10 @@ bool BuildTextRunsScanner::ContinueTextRunAcrossFrames(nsTextFrame* aFrame1,
     return false;
   }
 
-  ComputedStyle* sc2 = aFrame2->Style();
+  if (sc1 == sc2) {
+    return true;
+  }
+
   const nsStyleText* textStyle2 = sc2->StyleText();
   if (sc1 == sc2) return true;
 
@@ -2781,7 +2867,7 @@ void BuildTextRunsScanner::AssignTextRun(gfxTextRun* aTextRun,
 }
 
 NS_QUERYFRAME_HEAD(nsTextFrame)
-NS_QUERYFRAME_ENTRY(nsTextFrame)
+  NS_QUERYFRAME_ENTRY(nsTextFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsFrame)
 
 gfxSkipCharsIterator nsTextFrame::EnsureTextRun(
@@ -4018,7 +4104,8 @@ bool nsTextPaintStyle::InitSelectionColorsAndShadow() {
       LookAndFeel::GetColor(LookAndFeel::eColorID_TextSelectForeground);
 
   if (mResolveColors) {
-    // On MacOS X, we don't exchange text color and BG color.
+    // On MacOS X, only the background color gets set,
+    // the text color remains intact.
     if (mSelectionTextColor == NS_DONT_CHANGE_COLOR) {
       nscolor frameColor =
           nsSVGUtils::IsInSVGTextSubtree(mFrame)
@@ -4790,7 +4877,7 @@ class nsDisplayText final : public nsCharClipDisplayItem {
   bool CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuilder,
                                mozilla::wr::IpcResourceUpdateQueue& aResources,
                                const StackingContextHelper& aSc,
-                               WebRenderLayerManager* aManager,
+                               RenderRootStateManager* aManager,
                                nsDisplayListBuilder* aDisplayListBuilder) final;
   void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) final;
   NS_DISPLAY_DECL_NAME("Text", TYPE_TEXT)
@@ -4938,7 +5025,7 @@ void nsDisplayText::Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) {
 bool nsDisplayText::CreateWebRenderCommands(
     mozilla::wr::DisplayListBuilder& aBuilder,
     mozilla::wr::IpcResourceUpdateQueue& aResources,
-    const StackingContextHelper& aSc, WebRenderLayerManager* aManager,
+    const StackingContextHelper& aSc, RenderRootStateManager* aManager,
     nsDisplayListBuilder* aDisplayListBuilder) {
   if (mBounds.IsEmpty()) {
     return true;
@@ -4949,8 +5036,13 @@ bool nsDisplayText::CreateWebRenderCommands(
       LayoutDevicePoint::FromAppUnits(mBounds.TopLeft(), appUnitsPerDevPixel)
           .ToUnknownPoint();
 
+  nsRect visible = GetPaintRect();
+  visible.Inflate(3 * appUnitsPerDevPixel);
+
+  visible = visible.Intersect(mBounds);
+
   RefPtr<gfxContext> textDrawer = aBuilder.GetTextContext(
-      aResources, aSc, aManager, this, mBounds, deviceOffset);
+      aResources, aSc, aManager, this, visible, deviceOffset);
 
   RenderToContext(textDrawer, aDisplayListBuilder, true);
 
