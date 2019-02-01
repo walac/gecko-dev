@@ -2,10 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
-const { PromptUtils } = ChromeUtils.import("resource://gre/modules/SharedPromptUtils.jsm", {});
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {PrivateBrowsingUtils} = ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
+const { PromptUtils } = ChromeUtils.import("resource://gre/modules/SharedPromptUtils.jsm");
 
 ChromeUtils.defineModuleGetter(this, "LoginHelper",
                                "resource://gre/modules/LoginHelper.jsm");
@@ -584,7 +584,6 @@ LoginManagerPrompter.prototype = {
             !(aAuthInfo.flags & Ci.nsIAuthInformation.PREVIOUS_FAILED) &&
             Services.prefs.getBoolPref("signon.autologin.proxy") &&
             !this._inPrivateBrowsing) {
-
           this.log("Autologin enabled, skipping auth prompt.");
           canAutologin = true;
         }
@@ -1078,7 +1077,6 @@ LoginManagerPrompter.prototype = {
     } else {
       dialogText = this._getLocalizedString("rememberPasswordMsgNoUsername",
                                             [displayHost]);
-
     }
     var dialogTitle        = this._getLocalizedString("savePasswordTitle");
     var neverButtonText    = this._getLocalizedString("neverForSiteButtonText");

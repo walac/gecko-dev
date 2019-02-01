@@ -5,7 +5,7 @@
 
 /* eslint no-unused-vars: ["error", {vars: "local", args: "none"}] */
 
-ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+var {NetUtil} = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 
 var tmp = {};
 ChromeUtils.import("resource://gre/modules/AddonManager.jsm", tmp);
@@ -370,7 +370,6 @@ function wait_for_manager_load(aManagerWindow, aCallback) {
 
 function open_manager(aView, aCallback, aLoadCallback, aLongerTimeout, aWin = window) {
   let p = new Promise((resolve, reject) => {
-
     async function setup_manager(aManagerWindow) {
       if (aLoadCallback)
         log_exceptions(aLoadCallback, aManagerWindow);
@@ -584,7 +583,6 @@ CategoryUtilities.prototype = {
   },
 
   open(aCategory, aCallback) {
-
     isnot(this.window, null, "Should not open category when manager window is not loaded");
     ok(this.isVisible(aCategory), "Category should be visible if attempting to open it");
 
@@ -1414,7 +1412,7 @@ function promisePopupNotificationShown(name = "addon-webext-permissions") {
 }
 
 function acceptAppMenuNotificationWhenShown(id) {
-  ChromeUtils.import("resource://gre/modules/AppMenuNotifications.jsm");
+  const {AppMenuNotifications} = ChromeUtils.import("resource://gre/modules/AppMenuNotifications.jsm");
   return new Promise(resolve => {
     function popupshown() {
       let notification = AppMenuNotifications.activeNotification;

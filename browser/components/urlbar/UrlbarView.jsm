@@ -6,7 +6,7 @@
 
 var EXPORTED_SYMBOLS = ["UrlbarView"];
 
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 XPCOMUtils.defineLazyModuleGetters(this, {
   Services: "resource://gre/modules/Services.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
@@ -35,6 +35,7 @@ class UrlbarView {
     this._rows = this.panel.querySelector(".urlbarView-results");
 
     this._rows.addEventListener("mouseup", this);
+    this._rows.addEventListener("mousedown", this);
 
     // For the horizontal fade-out effect, set the overflow attribute on result
     // rows when they overflow.
@@ -130,18 +131,25 @@ class UrlbarView {
   }
 
   onQueryResults(queryContext) {
-    // XXX For now, clear the results for each set received. We should really
-    // be updating the existing list.
-    this._rows.textContent = "";
     this._queryContext = queryContext;
+
+    let fragment = this.document.createDocumentFragment();
     for (let resultIndex in queryContext.results) {
-      this._addRow(resultIndex);
+      fragment.appendChild(this._createRow(resultIndex));
     }
 
     if (queryContext.preselected) {
-      this._selected = this._rows.firstElementChild;
+      this._selected = fragment.firstElementChild;
       this._selected.toggleAttribute("selected", true);
+    } else if (queryContext.lastResultCount == 0) {
+      // Clear the selection when we get a new set of results.
+      this._selected = null;
     }
+
+    // TODO bug 1523602: For now, clear the results for each set received.
+    // We should be updating the existing list instead.
+    this._rows.textContent = "";
+    this._rows.appendChild(fragment);
 
     this._openPanel();
   }
@@ -250,15 +258,15 @@ class UrlbarView {
     }
   }
 
-  _addRow(resultIndex) {
+  _createRow(resultIndex) {
     let result = this._queryContext.results[resultIndex];
     let item = this._createElement("div");
     item.className = "urlbarView-row";
     item.setAttribute("resultIndex", resultIndex);
 
-    if (result.source == UrlbarUtils.MATCH_SOURCE.TABS) {
+    if (result.source == UrlbarUtils.RESULT_SOURCE.TABS) {
       item.setAttribute("type", "tab");
-    } else if (result.source == UrlbarUtils.MATCH_SOURCE.BOOKMARKS) {
+    } else if (result.source == UrlbarUtils.RESULT_SOURCE.BOOKMARKS) {
       item.setAttribute("type", "bookmark");
     }
 
@@ -313,14 +321,19 @@ class UrlbarView {
                                       [result.payload.engine], 1);
         break;
       default:
-        secondary.classList.add("urlbarView-url");
-        this._addTextContentWithHighlights(secondary, result.payload.url || "",
-                                           result.payloadHighlights.url || []);
+        if (resultIndex == 0) {
+          secondary.classList.add("urlbarView-action");
+          secondary.textContent = bundle.GetStringFromName("visit");
+        } else {
+          secondary.classList.add("urlbarView-url");
+          this._addTextContentWithHighlights(secondary, result.payload.url || "",
+                                             result.payloadHighlights.url || []);
+        }
         break;
     }
     content.appendChild(secondary);
 
-    this._rows.appendChild(item);
+    return item;
   }
 
   /**
@@ -372,6 +385,25 @@ class UrlbarView {
     } else {
       throw new Error("Unrecognized UrlbarView event: " + event.type);
     }
+  }
+
+  _on_mousedown(event) {
+    if (event.button == 2) {
+      // Ignore right clicks.
+      return;
+    }
+
+    let row = event.target;
+    while (!row.classList.contains("urlbarView-row")) {
+      row = row.parentNode;
+    }
+    let resultIndex = row.getAttribute("resultIndex");
+    if (this._selected) {
+      this._selected.toggleAttribute("selected", false);
+    }
+    this._selected = this._rows.children[resultIndex];
+    this._selected.toggleAttribute("selected", true);
+    this.controller.speculativeConnect(this._queryContext, resultIndex, "mousedown");
   }
 
   _on_mouseup(event) {

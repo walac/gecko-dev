@@ -6,12 +6,11 @@
 
 var EXPORTED_SYMBOLS = ["PluginChild"];
 
-ChromeUtils.import("resource://gre/modules/ActorChild.jsm");
+const {ActorChild} = ChromeUtils.import("resource://gre/modules/ActorChild.jsm");
 
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/Timer.jsm");
-ChromeUtils.import("resource://gre/modules/BrowserUtils.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {BrowserUtils} = ChromeUtils.import("resource://gre/modules/BrowserUtils.jsm");
 
 ChromeUtils.defineModuleGetter(this, "ContextMenuChild",
                                "resource:///actors/ContextMenuChild.jsm");
@@ -125,8 +124,7 @@ class PluginChild extends ActorChild {
         plugin.openOrClosedShadowRoot.isUAWidget()) {
       return plugin.openOrClosedShadowRoot.getElementById(anonid);
     }
-    return plugin.ownerDocument.
-      getAnonymousElementByAttribute(plugin, "anonid", anonid);
+    return null;
   }
 
   _getPluginInfo(pluginElement) {
@@ -788,7 +786,6 @@ class PluginChild extends ActorChild {
    *   True if the plugin is a descendant of the full screen DOM element, false otherwise.
    **/
   isWithinFullScreenElement(fullScreenElement, domElement) {
-
     /**
      * Traverses down iframes until it find a non-iframe full screen DOM element.
      * @param fullScreenIframe

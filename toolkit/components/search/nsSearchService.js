@@ -2,10 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/PromiseUtils.jsm");
-ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {PromiseUtils} = ChromeUtils.import("resource://gre/modules/PromiseUtils.jsm");
+const {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
@@ -1392,7 +1392,6 @@ Engine.prototype = {
       };
       request.open("GET", aURL, true);
       request.send();
-
     });
   },
 
@@ -1765,7 +1764,6 @@ Engine.prototype = {
       LOG("_init: Initing search plugin from " + this._location);
 
       this._parse();
-
     } else {
       Cu.reportError("Invalid search plugin due to namespace not matching.");
       FAIL(this._location + " is not a valid search plugin.", Cr.NS_ERROR_FILE_CORRUPTED);
@@ -2917,7 +2915,6 @@ SearchService.prototype = {
       // NS_APP_DISTRIBUTION_SEARCH_DIR_LIST is defined by each app
       // so this throws during unit tests (but not xpcshell tests).
       locations = [];
-
     }
     for (let dir of locations) {
       if (dir.directoryEntries.nextFile)
@@ -4661,7 +4658,6 @@ SearchService.prototype = {
 
       // Schedule the next update
       engineUpdateService.scheduleNextUpdate(engine);
-
     } // end engine iteration
   },
 

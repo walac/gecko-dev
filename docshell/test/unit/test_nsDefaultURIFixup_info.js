@@ -1,5 +1,3 @@
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 var prefList = ["browser.fixup.typo.scheme", "keyword.enabled",
                 "browser.fixup.domainwhitelist.whitelisted"];
 for (let pref of prefList) {
@@ -557,7 +555,6 @@ function do_single_test_run() {
              inWhitelist: inWhitelist,
              affectedByDNSForSingleHosts: affectedByDNSForSingleHosts,
            } of relevantTests) {
-
     // Explicitly force these into a boolean
     expectKeywordLookup = !!expectKeywordLookup;
     expectProtocolChange = !!expectProtocolChange;

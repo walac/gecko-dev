@@ -180,7 +180,6 @@ var gEnvXPCOMDebugBreak;
 var gEnvXPCOMMemLeakLog;
 var gEnvDyldLibraryPath;
 var gEnvLdLibraryPath;
-var gASanOptions;
 
 // Set to true to log additional information for debugging. To log additional
 // information for an individual test set DEBUG_AUS_TEST to true in the test's
@@ -3642,7 +3641,7 @@ function checkFilesInDirRecursive(aDir, aCallback) {
  *          The callback to call if the update prompt component is called.
  */
 function overrideUpdatePrompt(aCallback) {
-  ChromeUtils.import("resource://testing-common/MockRegistrar.jsm");
+  const {MockRegistrar} = ChromeUtils.import("resource://testing-common/MockRegistrar.jsm");
   MockRegistrar.register("@mozilla.org/updates/update-prompt;1", UpdatePrompt, [aCallback]);
 }
 
@@ -3746,7 +3745,7 @@ function start_httpserver() {
              "registerDirectory! Path: " + dir.path);
   }
 
-  let { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js", {});
+  let { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
   gTestserver = new HttpServer();
   gTestserver.registerDirectory("/", dir);
   gTestserver.registerPathHandler("/" + gHTTPHandlerPath, pathHandler);
@@ -4264,14 +4263,6 @@ function setEnvironment() {
 
   gShouldResetEnv = true;
 
-  // See bug 1279108.
-  if (gEnv.exists("ASAN_OPTIONS")) {
-    gASanOptions = gEnv.get("ASAN_OPTIONS");
-    gEnv.set("ASAN_OPTIONS", gASanOptions + ":detect_leaks=0");
-  } else {
-    gEnv.set("ASAN_OPTIONS", "detect_leaks=0");
-  }
-
   if (IS_WIN && !gEnv.exists("XRE_NO_WINDOWS_CRASH_DIALOG")) {
     gAddedEnvXRENoWindowsCrashDialog = true;
     debugDump("setting the XRE_NO_WINDOWS_CRASH_DIALOG environment " +
@@ -4352,9 +4343,6 @@ function resetEnvironment() {
   }
 
   gShouldResetEnv = false;
-
-  // Restore previous ASAN_OPTIONS if there were any.
-  gEnv.set("ASAN_OPTIONS", gASanOptions ? gASanOptions : "");
 
   if (gEnvXPCOMMemLeakLog) {
     debugDump("setting the XPCOM_MEM_LEAK_LOG environment variable back to " +

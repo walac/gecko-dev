@@ -597,6 +597,8 @@ impl AlphaBatchBuilder {
         #[cfg(debug_assertions)] //TODO: why is this needed?
         debug_assert_eq!(prim_instance.prepared_frame_id, render_tasks.frame_id());
 
+        let is_chased = prim_instance.is_chased();
+
         let transform_id = transforms
             .get_id(
                 prim_instance.spatial_node_index,
@@ -626,6 +628,12 @@ impl AlphaBatchBuilder {
             prim_instance.prim_origin,
             prim_common_data.prim_size,
         );
+
+        if is_chased {
+            println!("\tbatch {:?} with clip {:?} and bound {:?}",
+                prim_rect, clip_task_address, bounding_rect);
+        }
+
 
         match prim_instance.kind {
             PrimitiveInstanceKind::Clear { data_handle } => {
@@ -836,7 +844,15 @@ impl AlphaBatchBuilder {
                             }
                         };
 
-                        let prim_header_index = prim_headers.push(&prim_header, z_id, [0; 3]);
+                        let prim_header_index = prim_headers.push(
+                            &prim_header,
+                            z_id,
+                            [
+                                (run.reference_frame_relative_offset.x * 256.0) as i32,
+                                (run.reference_frame_relative_offset.y * 256.0) as i32,
+                                run.raster_space as i32,
+                            ],
+                        );
                         let key = BatchKey::new(kind, blend_mode, textures);
                         let base_instance = GlyphInstance::new(
                             prim_header_index,
@@ -964,7 +980,7 @@ impl AlphaBatchBuilder {
                             let prim_instance = &picture.prim_list.prim_instances[child.anchor];
                             let prim_info = &ctx.scratch.prim_info[prim_instance.visibility_info.0 as usize];
 
-                            let pic_index = match prim_instance.kind {
+                            let child_pic_index = match prim_instance.kind {
                                 PrimitiveInstanceKind::Picture { pic_index, .. } => pic_index,
                                 PrimitiveInstanceKind::LineDecoration { .. } |
                                 PrimitiveInstanceKind::TextRun { .. } |
@@ -979,7 +995,7 @@ impl AlphaBatchBuilder {
                                     unreachable!();
                                 }
                             };
-                            let pic = &ctx.prim_store.pictures[pic_index.0];
+                            let pic = &ctx.prim_store.pictures[child_pic_index.0];
 
 
                             // Get clip task, if set, for the picture primitive.
@@ -999,13 +1015,12 @@ impl AlphaBatchBuilder {
                                 transform_id: child.transform_id,
                             };
 
-                            let surface_index = pic
+                            let raster_config = pic
                                 .raster_config
                                 .as_ref()
-                                .expect("BUG: 3d primitive was not assigned a surface")
-                                .surface_index;
+                                .expect("BUG: 3d primitive was not assigned a surface");
                             let (uv_rect_address, _) = ctx
-                                .surfaces[surface_index.0]
+                                .surfaces[raster_config.surface_index.0]
                                 .surface
                                 .as_ref()
                                 .expect("BUG: no surface")
@@ -1017,7 +1032,7 @@ impl AlphaBatchBuilder {
 
                             let prim_header_index = prim_headers.push(&prim_header, z_id, [
                                 uv_rect_address.as_int(),
-                                0,
+                                if raster_config.establishes_raster_root { 1 } else { 0 },
                                 0,
                             ]);
 
@@ -1050,6 +1065,14 @@ impl AlphaBatchBuilder {
 
                 match picture.raster_config {
                     Some(ref raster_config) => {
+                        // If the child picture was rendered in local space, we can safely
+                        // interpolate the UV coordinates with perspective correction.
+                        let brush_flags = if raster_config.establishes_raster_root {
+                            BrushFlags::PERSPECTIVE_INTERPOLATION
+                        } else {
+                            BrushFlags::empty()
+                        };
+
                         match raster_config.composite_mode {
                             PictureCompositeMode::TileCache { .. } => {
                                 // Construct a local clip rect that ensures we only draw pixels where
@@ -1111,7 +1134,7 @@ impl AlphaBatchBuilder {
                                             clip_task_address,
                                             segment_index: INVALID_SEGMENT_INDEX,
                                             edge_flags: EdgeAaSegmentMask::empty(),
-                                            brush_flags: BrushFlags::empty(),
+                                            brush_flags,
                                             user_data: uv_rect_address,
                                         };
 
@@ -1215,7 +1238,7 @@ impl AlphaBatchBuilder {
                                             prim_header_index,
                                             segment_index: INVALID_SEGMENT_INDEX,
                                             edge_flags: EdgeAaSegmentMask::empty(),
-                                            brush_flags: BrushFlags::empty(),
+                                            brush_flags,
                                             clip_task_address,
                                             user_data: uv_rect_address.as_int(),
                                         };
@@ -1295,7 +1318,7 @@ impl AlphaBatchBuilder {
                                             clip_task_address,
                                             segment_index: INVALID_SEGMENT_INDEX,
                                             edge_flags: EdgeAaSegmentMask::empty(),
-                                            brush_flags: BrushFlags::empty(),
+                                            brush_flags,
                                             user_data: shadow_uv_rect_address,
                                         };
 
@@ -1304,7 +1327,7 @@ impl AlphaBatchBuilder {
                                             clip_task_address,
                                             segment_index: INVALID_SEGMENT_INDEX,
                                             edge_flags: EdgeAaSegmentMask::empty(),
-                                            brush_flags: BrushFlags::empty(),
+                                            brush_flags,
                                             user_data: content_uv_rect_address,
                                         };
 
@@ -1389,7 +1412,7 @@ impl AlphaBatchBuilder {
                                             clip_task_address,
                                             segment_index: INVALID_SEGMENT_INDEX,
                                             edge_flags: EdgeAaSegmentMask::empty(),
-                                            brush_flags: BrushFlags::empty(),
+                                            brush_flags,
                                             user_data: 0,
                                         };
 
@@ -1434,7 +1457,7 @@ impl AlphaBatchBuilder {
                                     clip_task_address,
                                     segment_index: INVALID_SEGMENT_INDEX,
                                     edge_flags: EdgeAaSegmentMask::empty(),
-                                    brush_flags: BrushFlags::empty(),
+                                    brush_flags,
                                     user_data: 0,
                                 };
 
@@ -1474,7 +1497,7 @@ impl AlphaBatchBuilder {
                                     clip_task_address,
                                     segment_index: INVALID_SEGMENT_INDEX,
                                     edge_flags: EdgeAaSegmentMask::empty(),
-                                    brush_flags: BrushFlags::empty(),
+                                    brush_flags,
                                     user_data: uv_rect_address,
                                 };
 
@@ -2600,6 +2623,7 @@ impl ClipBatcher {
         // Because we only run this code path for axis-aligned rects (the root coord system check above),
         // and only for rectangles (not rounded etc), the world_device_rect is not conservative - we know
         // that there is no inner_rect, and the world_device_rect should be the real, axis-aligned clip rect.
+        let mask_origin = mask_screen_rect.origin.to_f32().to_vector();
 
         for y in 0 .. y_tiles {
             for x in 0 .. x_tiles {
@@ -2611,21 +2635,22 @@ impl ClipBatcher {
                     (p0.x + CLIP_RECTANGLE_TILE_SIZE).min(mask_screen_rect.size.width),
                     (p0.y + CLIP_RECTANGLE_TILE_SIZE).min(mask_screen_rect.size.height),
                 );
-                let sub_rect = DeviceIntRect::new(
+                let normalized_sub_rect = DeviceIntRect::new(
                     p0,
                     DeviceIntSize::new(
                         p1.x - p0.x,
                         p1.y - p0.y,
                     ),
                 ).to_f32();
+                let world_sub_rect = normalized_sub_rect.translate(&mask_origin);
 
                 // If the clip rect completely contains this tile rect, then drawing
                 // these pixels would be redundant - since this clip can't possibly
                 // affect the pixels in this tile, skip them!
-                if !world_device_rect.contains_rect(&sub_rect) {
+                if !world_device_rect.contains_rect(&world_sub_rect) {
                     self.rectangles.push(ClipMaskInstance {
                         clip_data_address: gpu_address,
-                        sub_rect,
+                        sub_rect: normalized_sub_rect,
                         ..*instance
                     });
                 }

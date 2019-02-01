@@ -2419,6 +2419,13 @@ Assembler::Condition MacroAssemblerARMCompat::testSymbol(
   return testSymbol(cond, value.typeReg());
 }
 
+#ifdef ENABLE_BIGINT
+Assembler::Condition MacroAssemblerARMCompat::testBigInt(
+    Assembler::Condition cond, const ValueOperand& value) {
+  return testBigInt(cond, value.typeReg());
+}
+#endif
+
 Assembler::Condition MacroAssemblerARMCompat::testObject(
     Assembler::Condition cond, const ValueOperand& value) {
   return testObject(cond, value.typeReg());
@@ -2481,6 +2488,15 @@ Assembler::Condition MacroAssemblerARMCompat::testSymbol(
   ma_cmp(tag, ImmTag(JSVAL_TAG_SYMBOL));
   return cond;
 }
+
+#ifdef ENABLE_BIGINT
+Assembler::Condition MacroAssemblerARMCompat::testBigInt(
+    Assembler::Condition cond, Register tag) {
+  MOZ_ASSERT(cond == Equal || cond == NotEqual);
+  ma_cmp(tag, ImmTag(JSVAL_TAG_BIGINT));
+  return cond;
+}
+#endif
 
 Assembler::Condition MacroAssemblerARMCompat::testObject(
     Assembler::Condition cond, Register tag) {
@@ -2578,6 +2594,16 @@ Assembler::Condition MacroAssemblerARMCompat::testSymbol(
   return testSymbol(cond, tag);
 }
 
+#ifdef ENABLE_BIGINT
+Assembler::Condition MacroAssemblerARMCompat::testBigInt(
+    Condition cond, const Address& address) {
+  MOZ_ASSERT(cond == Equal || cond == NotEqual);
+  ScratchRegisterScope scratch(asMasm());
+  Register tag = extractTag(address, scratch);
+  return testBigInt(cond, tag);
+}
+#endif
+
 Assembler::Condition MacroAssemblerARMCompat::testObject(
     Condition cond, const Address& address) {
   MOZ_ASSERT(cond == Equal || cond == NotEqual);
@@ -2653,6 +2679,17 @@ Assembler::Condition MacroAssemblerARMCompat::testSymbol(Condition cond,
   ma_cmp(tag, ImmTag(JSVAL_TAG_SYMBOL));
   return cond;
 }
+
+#ifdef ENABLE_BIGINT
+Assembler::Condition MacroAssemblerARMCompat::testBigInt(Condition cond,
+                                                         const BaseIndex& src) {
+  MOZ_ASSERT(cond == Equal || cond == NotEqual);
+  ScratchRegisterScope scratch(asMasm());
+  Register tag = extractTag(src, scratch);
+  ma_cmp(tag, ImmTag(JSVAL_TAG_BIGINT));
+  return cond;
+}
+#endif
 
 Assembler::Condition MacroAssemblerARMCompat::testInt32(Condition cond,
                                                         const BaseIndex& src) {
@@ -2817,14 +2854,12 @@ void MacroAssemblerARMCompat::boolValueToDouble(const ValueOperand& operand,
 
 void MacroAssemblerARMCompat::int32ValueToDouble(const ValueOperand& operand,
                                                  FloatRegister dest) {
-  VFPRegister vfpdest = VFPRegister(dest);
-  ScratchFloat32Scope scratch(asMasm());
-
   // Transfer the integral value to a floating point register.
-  as_vxfer(operand.payloadReg(), InvalidReg, scratch.sintOverlay(),
+  VFPRegister vfpdest = VFPRegister(dest);
+  as_vxfer(operand.payloadReg(), InvalidReg, vfpdest.sintOverlay(),
            CoreToFloat);
   // Convert the value to a double.
-  as_vcvt(vfpdest, scratch.sintOverlay());
+  as_vcvt(vfpdest, vfpdest.sintOverlay());
 }
 
 void MacroAssemblerARMCompat::boolValueToFloat32(const ValueOperand& operand,

@@ -227,6 +227,12 @@ struct BlobURLRegistrationData
   bool revoked;
 };
 
+struct JSWindowActorInfo
+{
+  nsString name;
+  nsCString url;
+};
+
 struct GMPAPITags
 {
     nsCString api;
@@ -528,6 +534,11 @@ child:
      */
     async InitBlobURLs(BlobURLRegistrationData[] registrations);
 
+    /**
+     * Send JSWindowActorInfos to child process.
+     */
+    async InitJSWindowActorInfos(JSWindowActorInfo[] aInfos);
+
     async SetXPCOMProcessAttributes(XPCOMInitData xpcomInit,
                                     StructuredCloneData initialData,
                                     LookAndFeelInt[] lookAndFeelIntCache,
@@ -605,12 +616,6 @@ child:
      * Send a `pushsubscriptionchange` event to a service worker in the child.
      */
     async PushSubscriptionChange(nsCString scope, Principal principal);
-
-    /**
-     * Send a Push error message to all service worker clients in the child.
-     */
-    async PushError(nsCString scope, Principal principal, nsString message,
-                    uint32_t flags);
 
     /**
      * Windows specific: associate this content process with the browsers
@@ -1262,6 +1267,13 @@ both:
      */
     async NotifyPushSubscriptionModifiedObservers(nsCString scope,
                                                   Principal principal);
+
+    /**
+     * Send a Push error message to all service worker clients in the parent or
+     * child.
+     */
+    async PushError(nsCString scope, Principal principal, nsString message,
+                    uint32_t flags);
 
     async WindowClose(BrowsingContextId aContextId,
                       bool aTrustedCaller);

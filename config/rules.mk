@@ -867,22 +867,6 @@ endif
 
 rustflags_override = $(MOZ_RUST_DEFAULT_FLAGS) $(rustflags_neon)
 
-ifdef MOZ_MSVCBITS
-# If we are building a MozillaBuild shell, we want to clear out the
-# vcvars.bat environment variables for cargo builds. This is because
-# a 32-bit MozillaBuild shell on a 64-bit machine will try to use
-# the 32-bit compiler/linker for everything, while cargo/rustc wants
-# to use the 64-bit linker for build.rs scripts. This conflict results
-# in a build failure (see bug 1350001). So we clear out the environment
-# variables that are actually relevant to 32- vs 64-bit builds.
-environment_cleaner = -u VCINSTALLDIR PATH='' LIB='' LIBPATH=''
-# The servo build needs to know where python is, and we're removing the PATH
-# so we tell it explicitly via the PYTHON env var.
-environment_cleaner += PYTHON='$(shell which $(PYTHON))'
-else
-environment_cleaner =
-endif
-
 ifdef MOZ_USING_SCCACHE
 sccache_wrap := RUSTC_WRAPPER='$(CCACHE)'
 endif
@@ -939,7 +923,7 @@ endif # MOZ_ASAN
 # don't use the prefix when make -n is used, so that cargo doesn't run
 # in that case)
 define RUN_CARGO
-$(if $(findstring n,$(filter-out --%, $(MAKEFLAGS))),,+)env $(environment_cleaner) $(sccache_wrap) \
+$(if $(findstring n,$(filter-out --%, $(MAKEFLAGS))),,+)env $(sccache_wrap) \
 	CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) \
 	RUSTFLAGS='$(2)' \
 	RUSTC=$(RUSTC) \
@@ -1022,9 +1006,20 @@ endif
 # We need to run cargo unconditionally, because cargo is the only thing that
 # has full visibility into how changes in Rust sources might affect the final
 # build.
+#
+# When we are building in --enable-release mode; we add an additional check to confirm
+# that we are not importing any networking-related functions in rust code. This reduces
+# the chance of proxy bypasses originating from rust code.
 force-cargo-library-build:
 	$(REPORT_BUILD)
 	$(call CARGO_BUILD,$(target_cargo_env_vars)) --lib $(cargo_target_flag) $(rust_features_flag) -- $(cargo_rustc_flags)
+ifndef DEVELOPER_OPTIONS
+ifndef MOZ_DEBUG_RUST
+ifeq ($(OS_ARCH), Linux)
+	$(call py_action,check_binary,--target --networking $(RUST_LIBRARY_FILE))
+endif
+endif
+endif
 
 $(RUST_LIBRARY_FILE): force-cargo-library-build
 

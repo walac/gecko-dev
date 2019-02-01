@@ -7,6 +7,7 @@
 // This is loaded into all XUL windows. Wrap in a block to prevent
 // leaking to window scope.
 {
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const elementsToDestroyOnUnload = new Set();
 
@@ -150,7 +151,6 @@ class MozBrowser extends MozElementMixin(XULFrameElement) {
         event.stopPropagation();
       }
     });
-
   }
 
   resetFields() {
@@ -545,7 +545,7 @@ class MozBrowser extends MozElementMixin(XULFrameElement) {
       return this.docShell.browsingContext;
     }
 
-    return ChromeUtils.getBrowsingContext(this._browsingContextId);
+    return BrowsingContext.get(this._browsingContextId);
   }
   /**
    * Note that this overrides webNavigation on XULFrameElement, and duplicates the return value for the non-remote case
@@ -657,7 +657,6 @@ class MozBrowser extends MozElementMixin(XULFrameElement) {
     } else {
       this.markupDocumentViewer.textZoom = val;
     }
-
   }
 
   get textZoom() {
@@ -1032,7 +1031,7 @@ class MozBrowser extends MozElementMixin(XULFrameElement) {
       this._remoteWebNavigationImpl.swapBrowser(this);
 
       // Initialize contentPrincipal to the about:blank principal for this loadcontext
-      let { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm", {});
+      let { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
       let aboutBlank = Services.io.newURI("about:blank");
       let ssm = Services.scriptSecurityManager;
       this._contentPrincipal = ssm.getLoadContextCodebasePrincipal(aboutBlank, this.loadContext);
@@ -1138,7 +1137,6 @@ class MozBrowser extends MozElementMixin(XULFrameElement) {
         this.messageManager.addMessageListener("Forms:ShowDropDown", this);
         this.messageManager.addMessageListener("Forms:HideDropDown", this);
       }
-
     }
   }
 
@@ -1350,7 +1348,6 @@ class MozBrowser extends MozElementMixin(XULFrameElement) {
         return this._receiveMessage(aMessage);
     }
     return undefined;
-
   }
 
   enableDisableCommandsRemoteOnly(aAction, aEnabledLength, aEnabledCommands, aDisabledLength, aDisabledCommands) {
@@ -1750,6 +1747,7 @@ class MozBrowser extends MozElementMixin(XULFrameElement) {
         if (msg.data.id != id) {
           return;
         }
+        mm.removeMessageListener("InPermitUnload", listener);
         aCallback(msg.data.inPermitUnload);
       });
       return;
@@ -1777,7 +1775,7 @@ class MozBrowser extends MozElementMixin(XULFrameElement) {
       let permitUnload;
       let id = this._permitUnloadId++;
       let mm = this.messageManager;
-      let Services = ChromeUtils.import("resource://gre/modules/Services.jsm", {}).Services;
+      let {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
       let msgListener = msg => {
         if (msg.data.id != id) {
@@ -1883,5 +1881,4 @@ class MozBrowser extends MozElementMixin(XULFrameElement) {
 
 MozXULElement.implementCustomInterface(MozBrowser, [Ci.nsIBrowser, Ci.nsIFrameLoaderOwner]);
 customElements.define("browser", MozBrowser);
-
 }

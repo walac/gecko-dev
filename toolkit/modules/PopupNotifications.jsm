@@ -4,9 +4,9 @@
 
 var EXPORTED_SYMBOLS = ["PopupNotifications"];
 
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
-ChromeUtils.import("resource://gre/modules/PromiseUtils.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {PrivateBrowsingUtils} = ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
+const {PromiseUtils} = ChromeUtils.import("resource://gre/modules/PromiseUtils.jsm");
 
 const NOTIFICATION_EVENT_DISMISSED = "dismissed";
 const NOTIFICATION_EVENT_REMOVED = "removed";
@@ -517,7 +517,6 @@ PopupNotifications.prototype = {
 
     if (isActiveBrowser) {
       if (isActiveWindow) {
-
         // Autofocus if the notification requests focus.
         if (options && !options.dismissed && options.autofocus) {
           this.panel.removeAttribute("noautofocus");
@@ -536,7 +535,6 @@ PopupNotifications.prototype = {
           notifications, notification.anchorElement));
         this._notify("backgroundShow");
       }
-
     } else {
       // Notify observers that we're not showing the popup (useful for testing)
       this._notify("backgroundShow");
@@ -1246,7 +1244,6 @@ PopupNotifications.prototype = {
         if (notification.options.extraAttr) {
           anchorElm.setAttribute("extraAttr", notification.options.extraAttr);
         }
-
       }
     }
   },
