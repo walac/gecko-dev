@@ -1234,11 +1234,19 @@
       ]]></handler>
 
       <handler event="transitionend"><![CDATA[
-        if (event.propertyName != "max-width") {
+        if (event.propertyName != "max-width" &&
+            event.propertyName != "transform") {
           return;
         }
 
-        var tab = event.target;
+        if (gBrowser.tabAnimationsInProgress == 0) {
+          return;
+        }
+
+        let tab = event.originalTarget;
+        if (tab.nodeName != "tab") {
+          return;
+        }
 
         if (tab.getAttribute("fadein") == "true") {
           if (tab._fullyOpen) {
@@ -1249,6 +1257,9 @@
         } else if (tab.closing) {
           gBrowser._endRemoveTab(tab);
         }
+
+        let evt = new CustomEvent("TabAnimationEnd", { bubbles: true });
+        tab.dispatchEvent(evt);
       ]]></handler>
 
       <handler event="dblclick"><![CDATA[
@@ -1907,11 +1918,11 @@
            extends="chrome://global/content/bindings/tabbox.xml#tab">
     <content context="tabContextMenu">
       <xul:stack class="tab-stack" flex="1">
-        <xul:vbox xbl:inherits="selected=visuallyselected,fadein"
+        <xul:vbox xbl:inherits="selected=visuallyselected,fadein,multiselected"
                   class="tab-background">
           <xul:hbox xbl:inherits="selected=visuallyselected,multiselected,before-multiselected"
                     class="tab-line"/>
-          <xul:spacer flex="1"/>
+          <xul:spacer flex="1" class="tab-background-inner"/>
           <xul:hbox class="tab-bottom-line"/>
         </xul:vbox>
         <xul:hbox xbl:inherits="pinned,bursting,notselectedsinceload"
