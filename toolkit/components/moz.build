@@ -97,7 +97,7 @@ if CONFIG['MOZ_TOOLKIT_SEARCH']:
 
 DIRS += ['captivedetect']
 
-if CONFIG['OS_TARGET'] != 'Android':
+if CONFIG['OS_TARGET'] != 'Android' or CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
     DIRS += ['terminator']
 
 DIRS += ['build']
