@@ -9,16 +9,18 @@
 #include "mozilla/MaybeOneOf.h"
 
 #ifdef ENABLE_BIGINT
-#include "builtin/BigInt.h"
+#  include "builtin/BigInt.h"
 #endif
 #include "builtin/Eval.h"
 #include "builtin/SelfHostingDefines.h"
 #include "builtin/String.h"
 #include "frontend/BytecodeCompiler.h"
 #include "jit/InlinableNatives.h"
+#include "js/PropertySpec.h"
 #include "js/UniquePtr.h"
 #include "util/StringBuffer.h"
 #include "vm/AsyncFunction.h"
+#include "vm/EqualityOperations.h"  // js::SameValue
 #include "vm/JSContext.h"
 #include "vm/RegExpObject.h"
 
@@ -28,7 +30,7 @@
 #include "vm/UnboxedObject-inl.h"
 
 #ifdef FUZZING
-#include "builtin/TestingFunctions.h"
+#  include "builtin/TestingFunctions.h"
 #endif
 
 using namespace js;
@@ -693,10 +695,7 @@ JSString* js::ObjectClassToString(JSContext* cx, HandleObject obj) {
 static bool obj_setPrototypeOf(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (args.length() < 2) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "Object.setPrototypeOf",
-                              "1", "");
+  if (!args.requireAtLeast(cx, "Object.setPrototypeOf", 2)) {
     return false;
   }
 
@@ -941,6 +940,26 @@ static bool AssignSlow(JSContext* cx, HandleObject to, HandleObject from) {
   return true;
 }
 
+JS_PUBLIC_API bool JS_AssignObject(JSContext* cx, JS::HandleObject target,
+                                   JS::HandleObject src) {
+  bool optimized;
+  if (!TryAssignNative(cx, target, src, &optimized)) {
+    return false;
+  }
+  if (optimized) {
+    return true;
+  }
+
+  if (!TryAssignFromUnboxed(cx, target, src, &optimized)) {
+    return false;
+  }
+  if (optimized) {
+    return true;
+  }
+
+  return AssignSlow(cx, target, src);
+}
+
 // ES2018 draft rev 48ad2688d8f964da3ea8c11163ef20eb126fb8a4
 // 19.1.2.1 Object.assign(target, ...sources)
 static bool obj_assign(JSContext* cx, unsigned argc, Value* vp) {
@@ -970,22 +989,7 @@ static bool obj_assign(JSContext* cx, unsigned argc, Value* vp) {
     }
 
     // Steps 4.b.ii, 4.c.
-    bool optimized;
-    if (!TryAssignNative(cx, to, from, &optimized)) {
-      return false;
-    }
-    if (optimized) {
-      continue;
-    }
-
-    if (!TryAssignFromUnboxed(cx, to, from, &optimized)) {
-      return false;
-    }
-    if (optimized) {
-      continue;
-    }
-
-    if (!AssignSlow(cx, to, from)) {
+    if (!JS_AssignObject(cx, to, from)) {
       return false;
     }
   }
@@ -1115,10 +1119,7 @@ bool js::obj_create(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Step 1.
-  if (args.length() == 0) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "Object.create", "0",
-                              "s");
+  if (!args.requireAtLeast(cx, "Object.create", 1)) {
     return false;
   }
 
@@ -1897,10 +1898,7 @@ static bool obj_defineProperties(JSContext* cx, unsigned argc, Value* vp) {
   args.rval().setObject(*obj);
 
   /* Step 2. */
-  if (args.length() < 2) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_MORE_ARGS_NEEDED, "Object.defineProperties",
-                              "0", "s");
+  if (!args.requireAtLeast(cx, "Object.defineProperties", 2)) {
     return false;
   }
 
@@ -2180,7 +2178,7 @@ static bool FinishObjectClassInit(JSContext* cx, JS::HandleObject ctor,
    */
   Rooted<TaggedProto> tagged(cx, TaggedProto(proto));
   if (global->shouldSplicePrototype()) {
-    if (!JSObject::splicePrototype(cx, global, global->getClass(), tagged)) {
+    if (!JSObject::splicePrototype(cx, global, tagged)) {
       return false;
     }
   }

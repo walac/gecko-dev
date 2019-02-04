@@ -9,6 +9,10 @@
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/WindowGlobalActorsBinding.h"
 
+#include "mozilla/dom/JSWindowActorBinding.h"
+#include "mozilla/dom/JSWindowActorChild.h"
+#include "mozilla/dom/JSWindowActorService.h"
+
 namespace mozilla {
 namespace dom {
 
@@ -17,17 +21,14 @@ static StaticAutoPtr<WGCByIdMap> gWindowGlobalChildById;
 
 WindowGlobalChild::WindowGlobalChild(nsGlobalWindowInner* aWindow,
                                      dom::BrowsingContext* aBrowsingContext)
-  : mWindowGlobal(aWindow)
-  , mBrowsingContext(aBrowsingContext)
-  , mInnerWindowId(aWindow->WindowID())
-  , mOuterWindowId(aWindow->GetOuterWindow()->WindowID())
-  , mIPCClosed(true)
-{
-}
+    : mWindowGlobal(aWindow),
+      mBrowsingContext(aBrowsingContext),
+      mInnerWindowId(aWindow->WindowID()),
+      mOuterWindowId(aWindow->GetOuterWindow()->WindowID()),
+      mIPCClosed(true) {}
 
-already_AddRefed<WindowGlobalChild>
-WindowGlobalChild::Create(nsGlobalWindowInner* aWindow)
-{
+already_AddRefed<WindowGlobalChild> WindowGlobalChild::Create(
+    nsGlobalWindowInner* aWindow) {
   nsCOMPtr<nsIPrincipal> principal = aWindow->GetPrincipal();
   MOZ_ASSERT(principal);
 
@@ -40,8 +41,7 @@ WindowGlobalChild::Create(nsGlobalWindowInner* aWindow)
 
   WindowGlobalInit init(principal,
                         BrowsingContextId(wgc->BrowsingContext()->Id()),
-                        wgc->mInnerWindowId,
-                        wgc->mOuterWindowId);
+                        wgc->mInnerWindowId, wgc->mOuterWindowId);
 
   // Send the link constructor over PInProcessChild or PBrowser.
   if (XRE_IsParentProcess()) {
@@ -53,7 +53,8 @@ WindowGlobalChild::Create(nsGlobalWindowInner* aWindow)
     // Note: ref is released in DeallocPWindowGlobalChild
     ipc->SendPWindowGlobalConstructor(do_AddRef(wgc).take(), init);
   } else {
-    RefPtr<TabChild> tabChild = TabChild::GetFrom(static_cast<mozIDOMWindow*>(aWindow));
+    RefPtr<TabChild> tabChild =
+        TabChild::GetFrom(static_cast<mozIDOMWindow*>(aWindow));
     MOZ_ASSERT(tabChild);
 
     // Note: ref is released in DeallocPWindowGlobalChild
@@ -74,23 +75,18 @@ WindowGlobalChild::Create(nsGlobalWindowInner* aWindow)
 }
 
 /* static */ already_AddRefed<WindowGlobalChild>
-WindowGlobalChild::GetByInnerWindowId(uint64_t aInnerWindowId)
-{
+WindowGlobalChild::GetByInnerWindowId(uint64_t aInnerWindowId) {
   if (!gWindowGlobalChildById) {
     return nullptr;
   }
   return gWindowGlobalChildById->Get(aInnerWindowId);
 }
 
-bool
-WindowGlobalChild::IsCurrentGlobal()
-{
+bool WindowGlobalChild::IsCurrentGlobal() {
   return !mIPCClosed && mWindowGlobal->IsCurrentInnerWindow();
 }
 
-already_AddRefed<WindowGlobalParent>
-WindowGlobalChild::GetParentActor()
-{
+already_AddRefed<WindowGlobalParent> WindowGlobalChild::GetParentActor() {
   if (mIPCClosed) {
     return nullptr;
   }
@@ -98,38 +94,81 @@ WindowGlobalChild::GetParentActor()
   return do_AddRef(static_cast<WindowGlobalParent*>(otherSide));
 }
 
-void
-WindowGlobalChild::ActorDestroy(ActorDestroyReason aWhy)
-{
+already_AddRefed<TabChild> WindowGlobalChild::GetTabChild() {
+  if (IsInProcess() || mIPCClosed) {
+    return nullptr;
+  }
+  return do_AddRef(static_cast<TabChild*>(Manager()));
+}
+
+void WindowGlobalChild::Destroy() {
+  // Perform async IPC shutdown unless we're not in-process, and our TabChild is
+  // in the process of being destroyed, which will destroy us as well.
+  RefPtr<TabChild> tabChild = GetTabChild();
+  if (!tabChild || !tabChild->IsDestroyed()) {
+    SendDestroy();
+  }
+
+  mIPCClosed = true;
+}
+
+already_AddRefed<JSWindowActorChild> WindowGlobalChild::GetActor(
+    const nsAString& aName, ErrorResult& aRv) {
+  // Check if this actor has already been created, and return it if it has.
+  if (mWindowActors.Contains(aName)) {
+    return do_AddRef(mWindowActors.GetWeak(aName));
+  }
+
+  // Otherwise, we want to create a new instance of this actor. Call into the
+  // JSWindowActorService to trigger construction.
+  RefPtr<JSWindowActorService> actorSvc = JSWindowActorService::GetSingleton();
+  if (!actorSvc) {
+    return nullptr;
+  }
+
+  JS::RootedObject obj(RootingCx());
+  actorSvc->ConstructActor(aName, /* aChildSide */ false, &obj, aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
+
+  // Unwrap our actor to a JSWindowActorChild object.
+  RefPtr<JSWindowActorChild> actor;
+  if (NS_FAILED(UNWRAP_OBJECT(JSWindowActorChild, &obj, actor))) {
+    return nullptr;
+  }
+
+  MOZ_RELEASE_ASSERT(!actor->Manager(),
+                     "mManager was already initialized once!");
+  actor->Init(this);
+  mWindowActors.Put(aName, actor);
+  return actor.forget();
+}
+
+void WindowGlobalChild::ActorDestroy(ActorDestroyReason aWhy) {
   mIPCClosed = true;
   gWindowGlobalChildById->Remove(mInnerWindowId);
 }
 
-WindowGlobalChild::~WindowGlobalChild()
-{
+WindowGlobalChild::~WindowGlobalChild() {
   MOZ_ASSERT(!gWindowGlobalChildById ||
              !gWindowGlobalChildById->Contains(mInnerWindowId));
 }
 
-JSObject*
-WindowGlobalChild::WrapObject(JSContext* aCx,
-                               JS::Handle<JSObject*> aGivenProto)
-{
+JSObject* WindowGlobalChild::WrapObject(JSContext* aCx,
+                                        JS::Handle<JSObject*> aGivenProto) {
   return WindowGlobalChild_Binding::Wrap(aCx, this, aGivenProto);
 }
 
-nsISupports*
-WindowGlobalChild::GetParentObject()
-{
+nsISupports* WindowGlobalChild::GetParentObject() {
   return xpc::NativeGlobal(xpc::PrivilegedJunkScope());
 }
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(WindowGlobalChild,
-                                      mWindowGlobal,
-                                      mBrowsingContext)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(WindowGlobalChild, mWindowGlobal,
+                                      mBrowsingContext, mWindowActors)
 
 NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(WindowGlobalChild, AddRef)
 NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(WindowGlobalChild, Release)
 
-} // namespace dom
-} // namespace mozilla
+}  // namespace dom
+}  // namespace mozilla

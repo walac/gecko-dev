@@ -314,6 +314,10 @@ extern const char* const CacheKindNames[];
   _(Int32NotResult)                                                    \
   _(Int32NegationResult)                                               \
   _(DoubleNegationResult)                                              \
+  _(Int32IncResult)                                                    \
+  _(Int32DecResult)                                                    \
+  _(DoubleIncResult)                                                   \
+  _(DoubleDecResult)                                                   \
   _(LoadInt32TruthyResult)                                             \
   _(LoadDoubleTruthyResult)                                            \
   _(LoadStringTruthyResult)                                            \
@@ -1177,8 +1181,20 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
   void int32NegationResult(Int32OperandId id) {
     writeOpWithOperandId(CacheOp::Int32NegationResult, id);
   }
+  void int32IncResult(Int32OperandId id) {
+    writeOpWithOperandId(CacheOp::Int32IncResult, id);
+  }
+  void int32DecResult(Int32OperandId id) {
+    writeOpWithOperandId(CacheOp::Int32DecResult, id);
+  }
   void doubleNegationResult(ValOperandId val) {
     writeOpWithOperandId(CacheOp::DoubleNegationResult, val);
+  }
+  void doubleIncResult(ValOperandId val) {
+    writeOpWithOperandId(CacheOp::DoubleIncResult, val);
+  }
+  void doubleDecResult(ValOperandId val) {
+    writeOpWithOperandId(CacheOp::DoubleDecResult, val);
   }
   void loadBooleanResult(bool val) {
     writeOp(CacheOp::LoadBooleanResult);
@@ -1907,6 +1923,7 @@ class MOZ_RAII TypeOfIRGenerator : public IRGenerator {
 
   bool tryAttachPrimitive(ValOperandId valId);
   bool tryAttachObject(ValOperandId valId);
+  void trackAttached(const char* name);
 
  public:
   TypeOfIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc,
@@ -2090,6 +2107,9 @@ inline ReferenceType ReferenceTypeFromSimpleTypeDescrKey(uint32_t key) {
   MOZ_ASSERT(!SimpleTypeDescrKeyIsScalar(key));
   return ReferenceType(key >> 1);
 }
+
+// Returns whether obj is a WindowProxy wrapping the script's global.
+extern bool IsWindowProxyForScriptGlobal(JSScript* script, JSObject* obj);
 
 }  // namespace jit
 }  // namespace js

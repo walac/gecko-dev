@@ -15,7 +15,6 @@ from marionette_harness import (
     MarionetteTestCase,
     run_if_e10s,
     run_if_manage_instance,
-    skip,
     skip_if_mobile,
     WindowManagerMixin,
 )
@@ -117,17 +116,17 @@ class BaseNavigationTestCase(WindowManagerMixin, MarionetteTestCase):
 class TestNavigate(BaseNavigationTestCase):
 
     def test_set_location_through_execute_script(self):
-        test_element_locator = (By.ID, "testh1")
+        # To avoid unexpected remoteness changes and a hang in any non-navigation
+        # command (bug 1519354) when navigating via the location bar, already
+        # pre-load a page which causes a remoteness change.
+        self.marionette.navigate(self.test_page_push_state)
 
         self.marionette.execute_script(
             "window.location.href = arguments[0];",
             script_args=(self.test_page_remote,), sandbox=None)
 
-        # We cannot use get_url() to wait until the target page has been loaded,
-        # because it will return the URL of the top browsing context and doesn't
-        # wait for the page load to be complete.
         Wait(self.marionette, timeout=self.marionette.timeout.page_load).until(
-            expected.element_present(*test_element_locator),
+            expected.element_present(*(By.ID, "testh1")),
             message="Target element 'testh1' has not been found")
 
         self.assertEqual(self.test_page_remote, self.marionette.get_url())
@@ -278,7 +277,6 @@ class TestNavigate(BaseNavigationTestCase):
         self.marionette.navigate("about:robots")
         self.assertFalse(self.is_remote_tab)
 
-    @skip_if_mobile("Bug 1334095 - Timeout: No new tab has been opened")
     def test_about_blank_for_new_docshell(self):
         self.assertEqual(self.marionette.get_url(), "about:blank")
 
@@ -301,7 +299,6 @@ class TestNavigate(BaseNavigationTestCase):
         self.marionette.switch_to_window(self.new_tab)
         self.marionette.navigate(self.test_page_remote)
 
-    @skip("Bug 1369923 - Disabling as keystrokes don't trigger page loads")
     @skip_if_mobile("Interacting with chrome elements not available for Fennec")
     def test_type_to_non_remote_tab(self):
         self.marionette.navigate(self.test_page_not_remote)
@@ -798,7 +795,6 @@ class TestPageLoadStrategy(BaseNavigationTestCase):
         self.assertEqual("complete", self.ready_state)
         self.marionette.find_element(By.ID, "slow")
 
-    @skip("Bug 1422741 - Causes following tests to fail in loading remote browser")
     @run_if_e10s("Requires e10s mode enabled")
     def test_strategy_after_remoteness_change(self):
         """Bug 1378191 - Reset of capabilities after listener reload."""

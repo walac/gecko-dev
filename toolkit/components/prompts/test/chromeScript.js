@@ -1,7 +1,7 @@
 /* eslint-env mozilla/frame-script */
 
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/Timer.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {clearInterval, setInterval} = ChromeUtils.import("resource://gre/modules/Timer.jsm");
 
 // Define these to make EventUtils happy.
 let window = this;
@@ -23,6 +23,30 @@ function handlePromptWhenItAppears(action, isTabModal, isSelect) {
       clearInterval(interval);
     }
   }, 100);
+}
+
+addMessageListener("checkPromptModal", () => {
+  checkPromptIsModal();
+});
+
+function checkPromptIsModal() {
+  // Check that the dialog is modal, chrome and dependent;
+  // We can't just check window.opener because that'll be
+  // a content window, which therefore isn't exposed (it'll lie and
+  // be null).
+  let result = {};
+  let doc = getDialogDoc();
+  let win = doc.defaultView;
+  let treeOwner = win.docShell.treeOwner;
+  treeOwner.QueryInterface(Ci.nsIInterfaceRequestor);
+  let flags = treeOwner.getInterface(Ci.nsIXULWindow).chromeFlags;
+  let wbc = treeOwner.getInterface(Ci.nsIWebBrowserChrome);
+  result.chrome = (flags & Ci.nsIWebBrowserChrome.CHROME_OPENAS_CHROME) != 0;
+  result.dialog = (flags & Ci.nsIWebBrowserChrome.CHROME_OPENAS_DIALOG) != 0;
+  result.chromeDependent = (flags & Ci.nsIWebBrowserChrome.CHROME_DEPENDENT) != 0;
+  result.isWindowModal = wbc.isWindowModal();
+
+  sendAsyncMessage("checkPromptModalResult", result);
 }
 
 function handlePrompt(action, isTabModal, isSelect) {
@@ -48,7 +72,6 @@ function handlePrompt(action, isTabModal, isSelect) {
       ui = doc;
     else
       ui = doc.defaultView.Dialog.ui;
-
   }
 
   let promptState;
@@ -86,8 +109,8 @@ function getPromptState(ui) {
   state.textHidden  = ui.loginContainer.hidden;
   state.passHidden  = ui.password1Container.hidden;
   state.checkHidden = ui.checkboxContainer.hidden;
-  state.checkMsg    = ui.checkbox.label;
-  state.checked     = ui.checkbox.checked;
+  state.checkMsg    = state.checkHidden ? "" : ui.checkbox.label;
+  state.checked     = state.checkHidden ? false : ui.checkbox.checked;
   // tab-modal prompts don't have an infoIcon
   state.iconClass   = ui.infoIcon ? ui.infoIcon.className : null;
   state.textValue   = ui.loginTextbox.getAttribute("value");
@@ -119,9 +142,9 @@ function getPromptState(ui) {
     state.focused = "button1";
   } else if (ui.button2.isSameNode(e)) {
     state.focused = "button2";
-  } else if (ui.loginTextbox.inputField.isSameNode(e)) {
+  } else if (e.isSameNode(ui.loginTextbox.inputField)) {
     state.focused = "textField";
-  } else if (ui.password1Textbox.inputField.isSameNode(e)) {
+  } else if (e.isSameNode(ui.password1Textbox.inputField)) {
     state.focused = "passField";
   } else if (ui.infoBody.isSameNode(e)) {
     state.focused = "infoBody";
@@ -189,6 +212,8 @@ function dismissPrompt(ui, action) {
         ui.button0.click();
         clearInterval(interval);
       }, 100);
+      break;
+    case "none":
       break;
 
     default:

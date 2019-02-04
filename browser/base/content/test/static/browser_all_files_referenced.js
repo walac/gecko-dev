@@ -42,14 +42,18 @@ var gExceptionPaths = [
   // Exclude all search-plugins because they aren't referenced by filename
   "resource://search-plugins/",
 
-  // This is only in Nightly, and accessed using a direct chrome URL
-  "chrome://browser/content/aboutconfig/",
+  // Previous version of "about:config" kept for risk mitigation as a hidden
+  // page accessed using a direct chrome URL, will be removed in the future.
+  "chrome://global/content/config.js",
+  "chrome://global/content/config.xul",
 ];
 
 // These are not part of the omni.ja file, so we find them only when running
 // the test on a non-packaged build.
-if (AppConstants.platform == "macosx")
+if (AppConstants.platform == "macosx") {
   gExceptionPaths.push("resource://gre/res/cursors/");
+  gExceptionPaths.push("resource://gre/res/touchbar/");
+}
 
 var whitelist = [
   // browser/extensions/pdfjs/content/PdfStreamConverter.jsm
@@ -154,16 +158,10 @@ var whitelist = [
   {file: "resource://gre/modules/PerfMeasurement.jsm"},
   // Bug 1356045
   {file: "chrome://global/content/test-ipc.xul"},
-  // Bug 1356036
-  {file: "resource://gre/modules/PerformanceWatcher-content.js"},
-  {file: "resource://gre/modules/PerformanceWatcher.jsm"},
   // Bug 1378173 (warning: still used by devtools)
   {file: "resource://gre/modules/Promise.jsm"},
   // Still used by WebIDE, which is going away but not entirely gone.
   {file: "resource://gre/modules/ZipUtils.jsm"},
-  // Bug 1463225 (on Mac and Windows this is only used by a test)
-  {file: "chrome://global/content/bindings/toolbar.xml",
-   platforms: ["macosx", "win"]},
   // Bug 1483277 (temporarily unreferenced)
   {file: AppConstants.BROWSER_CHROME_URL == "chrome://browser/content/browser.xul" ?
     "chrome://browser/content/browser.xhtml" : "chrome://browser/content/browser.xul" },
@@ -176,6 +174,11 @@ var whitelist = [
    isFromDevTools: true},
   {file: "chrome://devtools/skin/images/aboutdebugging-firefox-release.svg",
    isFromDevTools: true},
+  {file: "chrome://devtools/skin/images/next.svg", isFromDevTools: true},
+   // Feature gates are available but not used yet - Bug 1479127
+   {file: "resource://gre-resources/featuregates/FeatureGate.jsm"},
+   {file: "resource://gre-resources/featuregates/FeatureGateImplementation.jsm"},
+   {file: "resource://gre-resources/featuregates/feature_definitions.json"},
 ];
 
 whitelist = new Set(whitelist.filter(item =>
@@ -210,7 +213,6 @@ if (!isDevtools) {
                       "extension-storage.js"]) {
     whitelist.add("resource://services-sync/engines/" + module);
   }
-
 }
 
 if (AppConstants.MOZ_CODE_COVERAGE) {
@@ -341,13 +343,6 @@ function addCodeReference(url, fromURI) {
     if (ref === null)
       return;
   } else {
-    // Mark any file referenced by a 'features' bootstrap.js file as
-    // unconditionally referenced. The features folder is only in
-    // resource://app/ for non-packaged builds.
-    if (/resource:\/\/app\/features\/[^/]+\/bootstrap\.js/.test(from)) {
-      gReferencesFromCode.set(url, null);
-      return;
-    }
     ref = new Set();
     gReferencesFromCode.set(url, ref);
   }
@@ -679,9 +674,6 @@ add_task(async function checkAllTheFiles() {
       if (refs === null)
         return false;
       for (let ref of refs) {
-        if (ref.endsWith("!/bootstrap.js"))
-          return false;
-
         if (isDevtools) {
           if (ref.startsWith("resource://app/components/") ||
               (file.startsWith("chrome://") && ref.startsWith("resource://")))
@@ -753,23 +745,6 @@ add_task(async function checkAllTheFiles() {
       return true;
     });
   }
-
-  unreferencedFiles = unreferencedFiles.filter(file => {
-    // resource://app/features/ will only contain .xpi files when the test runs
-    // on a packaged build, so the following two exceptions only matter when
-    // running the test on a local non-packaged build.
-
-    if (/resource:\/\/app\/features\/[^/]+\/bootstrap\.js/.test(file)) {
-      info("not reporting feature boostrap file: " + file);
-      return false;
-    }
-    // Bug 1351892 - can stop shipping these?
-    if (/resource:\/\/app\/features\/[^/]+\/chrome\/skin\//.test(file)) {
-      info("not reporting feature skin file that may be for another platform: " + file);
-      return false;
-    }
-    return true;
-  });
 
   is(unreferencedFiles.length, 0, "there should be no unreferenced files");
   for (let file of unreferencedFiles) {

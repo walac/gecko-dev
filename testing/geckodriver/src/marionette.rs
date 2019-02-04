@@ -20,10 +20,10 @@ use std::sync::Mutex;
 use std::thread;
 use std::time;
 use webdriver::capabilities::CapabilitiesMatching;
-use webdriver::command::WebDriverCommand::{AcceptAlert, AddCookie, CloseWindow, DeleteCookie,
-                                           DeleteCookies, DeleteSession, DismissAlert,
-                                           ElementClear, ElementClick, ElementSendKeys,
-                                           ExecuteAsyncScript, ExecuteScript,
+use webdriver::command::WebDriverCommand::{AcceptAlert, AddCookie, NewWindow, CloseWindow,
+                                           DeleteCookie, DeleteCookies, DeleteSession,
+                                           DismissAlert, ElementClear, ElementClick,
+                                           ElementSendKeys, ExecuteAsyncScript, ExecuteScript,
                                            Extension, FindElement, FindElementElement,
                                            FindElementElements, FindElements, FullscreenWindow,
                                            Get, GetActiveElement, GetAlertText, GetCSSValue,
@@ -41,11 +41,11 @@ use webdriver::command::WebDriverCommand::{AcceptAlert, AddCookie, CloseWindow, 
 use webdriver::command::{ActionsParameters, AddCookieParameters, GetNamedCookieParameters,
                          GetParameters, JavascriptCommandParameters, LocatorParameters,
                          NewSessionParameters, SwitchToFrameParameters, SwitchToWindowParameters,
-                         TimeoutsParameters, WindowRectParameters};
+                         TimeoutsParameters, WindowRectParameters, NewWindowParameters};
 use webdriver::command::{WebDriverCommand, WebDriverMessage};
 use webdriver::common::{Cookie, FrameId, WebElement, ELEMENT_KEY, FRAME_KEY, WINDOW_KEY};
 use webdriver::error::{ErrorStatus, WebDriverError, WebDriverResult};
-use webdriver::response::{CloseWindowResponse, CookieResponse, CookiesResponse,
+use webdriver::response::{NewWindowResponse, CloseWindowResponse, CookieResponse, CookiesResponse,
                           ElementRectResponse, NewSessionResponse, TimeoutsResponse,
                           ValueResponse, WebDriverResponse, WindowRectResponse};
 use webdriver::server::{Session, WebDriverHandler};
@@ -54,10 +54,6 @@ use crate::build::BuildInfo;
 use crate::capabilities::{FirefoxCapabilities, FirefoxOptions};
 use crate::logging;
 use crate::prefs;
-
-// localhost may be routed to the IPv6 stack on certain systems,
-// and nsIServerSocket in Marionette only supports IPv4
-const DEFAULT_HOST: &'static str = "127.0.0.1";
 
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct MarionetteHandshake {
@@ -69,6 +65,7 @@ pub struct MarionetteHandshake {
 
 #[derive(Default)]
 pub struct MarionetteSettings {
+    pub host: String,
     pub port: Option<u16>,
     pub binary: Option<PathBuf>,
     pub connect_existing: bool,
@@ -119,12 +116,13 @@ impl MarionetteHandler {
             logging::set_max_level(l);
         }
 
-        let port = self.settings.port.unwrap_or(get_free_port()?);
+        let host = self.settings.host.to_owned();
+        let port = self.settings.port.unwrap_or(get_free_port(&host)?);
         if !self.settings.connect_existing {
             self.start_browser(port, options)?;
         }
 
-        let mut connection = MarionetteConnection::new(port, session_id.clone());
+        let mut connection = MarionetteConnection::new(host, port, session_id.clone());
         connection.connect(&mut self.browser).or_else(|e| {
             if let Some(ref mut runner) = self.browser {
                 runner.kill()?;
@@ -483,15 +481,18 @@ impl MarionetteSession {
             | TakeScreenshot
             | TakeElementScreenshot(_) => WebDriverResponse::Generic(resp.to_value_response(true)?),
             GetTimeouts => {
-                let script = try_opt!(
-                    try_opt!(
+                let script = match try_opt!(
                         resp.result.get("script"),
                         ErrorStatus::UnknownError,
                         "Missing field: script"
-                    ).as_u64(),
-                    ErrorStatus::UnknownError,
-                    "Failed to interpret script timeout duration as u64"
-                );
+                    ) {
+                        Value::Null => None,
+                        n => try_opt!(
+                            Some(n.as_u64()),
+                            ErrorStatus::UnknownError,
+                            "Failed to interpret script timeout duration as u64"
+                        ),
+                };
                 // Check for the spec-compliant "pageLoad", but also for "page load",
                 // which was sent by Firefox 52 and earlier.
                 let page_load = try_opt!(
@@ -521,6 +522,28 @@ impl MarionetteSession {
             }
             Status => panic!("Got status command that should already have been handled"),
             GetWindowHandles => WebDriverResponse::Generic(resp.to_value_response(false)?),
+            NewWindow(_) => {
+                let handle: String = try_opt!(
+                    try_opt!(
+                        resp.result.get("handle"),
+                        ErrorStatus::UnknownError,
+                        "Failed to find handle field"
+                    ).as_str(),
+                    ErrorStatus::UnknownError,
+                    "Failed to interpret handle as string"
+                ).into();
+                let typ: String = try_opt!(
+                    try_opt!(
+                        resp.result.get("type"),
+                        ErrorStatus::UnknownError,
+                        "Failed to find type field"
+                    ).as_str(),
+                    ErrorStatus::UnknownError,
+                    "Failed to interpret type as string"
+                ).into();
+
+                WebDriverResponse::NewWindow(NewWindowResponse { handle, typ })
+            }
             CloseWindow => {
                 let data = try_opt!(
                     resp.result.as_array(),
@@ -787,6 +810,7 @@ impl MarionetteCommand {
                 (Some("WebDriver:AcceptDialog"), None)
             }
             AddCookie(ref x) => (Some("WebDriver:AddCookie"), Some(x.to_marionette())),
+            NewWindow(ref x) => (Some("WebDriver:NewWindow"), Some(x.to_marionette())),
             CloseWindow => (Some("WebDriver:CloseWindow"), None),
             DeleteCookie(ref x) => {
                 let mut data = Map::new();
@@ -1045,24 +1069,27 @@ impl Into<WebDriverError> for MarionetteError {
     }
 }
 
-fn get_free_port() -> IoResult<u16> {
-    TcpListener::bind((DEFAULT_HOST, 0))
+fn get_free_port(host: &str) -> IoResult<u16> {
+    TcpListener::bind((host, 0))
         .and_then(|stream| stream.local_addr())
         .map(|x| x.port())
 }
 
 pub struct MarionetteConnection {
+    host: String,
     port: u16,
     stream: Option<TcpStream>,
     pub session: MarionetteSession,
 }
 
 impl MarionetteConnection {
-    pub fn new(port: u16, session_id: Option<String>) -> MarionetteConnection {
+    pub fn new(host: String, port: u16, session_id: Option<String>) -> MarionetteConnection {
+        let session = MarionetteSession::new(session_id);
         MarionetteConnection {
-            port: port,
+            host,
+            port,
             stream: None,
-            session: MarionetteSession::new(session_id),
+            session,
         }
     }
 
@@ -1074,7 +1101,7 @@ impl MarionetteConnection {
         debug!(
             "Waiting {}s to connect to browser on {}:{}",
             timeout.as_secs(),
-            DEFAULT_HOST,
+            self.host,
             self.port
         );
         loop {
@@ -1098,7 +1125,7 @@ impl MarionetteConnection {
                 }
             }
 
-            match TcpStream::connect(&(DEFAULT_HOST, self.port)) {
+            match TcpStream::connect((&self.host[..], self.port)) {
                 Ok(stream) => {
                     self.stream = Some(stream);
                     break;
@@ -1118,7 +1145,7 @@ impl MarionetteConnection {
 
         debug!(
             "Connection established on {}:{}. Waiting for Marionette handshake",
-            DEFAULT_HOST, self.port,
+            self.host, self.port,
         );
 
         let data = self.handshake()?;
@@ -1418,6 +1445,16 @@ impl ToMarionette for LocatorParameters {
             ErrorStatus::UnknownError,
             "Expected an object"
         ).clone())
+    }
+}
+
+impl ToMarionette for NewWindowParameters {
+    fn to_marionette(&self) -> WebDriverResult<Map<String, Value>> {
+        let mut data = Map::new();
+        if let Some(ref x) = self.type_hint {
+            data.insert("type".to_string(), serde_json::to_value(x)?);
+        }
+        Ok(data)
     }
 }
 

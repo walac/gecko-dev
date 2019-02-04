@@ -42,6 +42,7 @@ var getFNBPaint = false;
 var getFCP = false;
 var getDCF = false;
 var getTTFI = false;
+var getLoadTime = false;
 var isHeroPending = false;
 var pendingHeroes = [];
 var settings = {};
@@ -49,6 +50,7 @@ var isFNBPaintPending = false;
 var isFCPPending = false;
 var isDCFPending = false;
 var isTTFIPending = false;
+var isLoadTimePending = false;
 var isBenchmarkPending = false;
 var pageTimeout = 10000; // default pageload timeout
 var geckoProfiling = false;
@@ -56,6 +58,7 @@ var geckoInterval = 1;
 var geckoEntries = 1000000;
 var webRenderEnabled = false;
 var debugMode = 0;
+var screenCapture = false;
 
 var results = {"name": "",
                "page": "",
@@ -67,7 +70,6 @@ var results = {"name": "",
 function getTestSettings() {
   console.log("getting test settings from control server");
   return new Promise(resolve => {
-
     fetch(settingsURL).then(function(response) {
       response.text().then(function(text) {
         console.log(text);
@@ -119,6 +121,10 @@ function getTestSettings() {
           }
         }
 
+        if (settings.screen_capture !== undefined) {
+          screenCapture = settings.screen_capture;
+        }
+
         if (settings.newtab_per_cycle !== undefined) {
           reuseTab = settings.newtab_per_cycle;
         }
@@ -146,6 +152,9 @@ function getTestSettings() {
             }
             if (settings.measure.ttfi !== undefined) {
               getTTFI = settings.measure.ttfi;
+            }
+            if (settings.measure.loadtime !== undefined) {
+              getLoadTime = settings.measure.loadtime;
             }
           } else {
             console.log("abort: 'measure' key not found in test settings");
@@ -224,12 +233,21 @@ function waitForResult() {
   return new Promise(resolve => {
     async function checkForResult() {
       if (testType == "pageload") {
-        if (!isHeroPending && !isFNBPaintPending && !isFCPPending && !isDCFPending && !isTTFIPending) {
+        if (!isHeroPending &&
+            !isFNBPaintPending &&
+            !isFCPPending &&
+            !isDCFPending &&
+            !isTTFIPending &&
+            !isLoadTimePending) {
           cancelTimeoutAlarm("raptor-page-timeout");
           postToControlServer("status", "results received");
           if (geckoProfiling) {
             await getGeckoProfile();
           }
+          if (screenCapture) {
+            await getScreenCapture();
+          }
+
           resolve();
         } else {
           setTimeout(checkForResult, 5);
@@ -242,6 +260,9 @@ function waitForResult() {
             await getGeckoProfile();
           }
           resolve();
+          if (screenCapture) {
+            await getScreenCapture();
+          }
         } else {
           setTimeout(checkForResult, 5);
         }
@@ -250,6 +271,36 @@ function waitForResult() {
     checkForResult();
   });
 }
+
+async function getScreenCapture() {
+  console.log("Capturing screenshot...");
+  var capturing;
+  if (["firefox", "geckoview"].includes(browserName)) {
+    capturing = ext.tabs.captureVisibleTab();
+    capturing.then(onCaptured, onError);
+    await capturing;
+  } else {
+    // create capturing promise
+    capturing =  new Promise(function(resolve, reject) {
+    ext.tabs.captureVisibleTab(resolve);
+  });
+
+    // capture and wait for promise to end
+    capturing.then(onCaptured, onError);
+    await capturing;
+  }
+}
+
+function onCaptured(screenshotUri) {
+  console.log("Screenshot capured!");
+  postToControlServer("screenshot", [screenshotUri, testName, pageCycle]);
+}
+
+function onError(error) {
+  console.log("Screenshot captured failed!");
+  console.log(`Error: ${error}`);
+}
+
 
 async function startGeckoProfiling() {
   var _threads;
@@ -300,7 +351,6 @@ async function nextCycle() {
   }
   if (pageCycle <= pageCycles) {
     setTimeout(function() {
-
       let text = "begin pagecycle " + pageCycle;
       postToControlServer("status", text);
 
@@ -320,6 +370,8 @@ async function nextCycle() {
           isDCFPending = true;
         if (getTTFI)
           isTTFIPending = true;
+        if (getLoadTime)
+          isLoadTimePending = true;
       } else if (testType == "benchmark") {
         isBenchmarkPending = true;
       }
@@ -415,6 +467,9 @@ function resultListener(request, sender, sendResponse) {
       } else if (request.type == "fcp") {
         results.measurements.fcp.push(request.value);
         isFCPPending = false;
+      } else if (request.type == "loadtime") {
+        results.measurements.loadtime.push(request.value);
+        isLoadTimePending = false;
       }
     } else if (testType == "benchmark") {
       // benchmark results received (all results for that complete benchmark run)
@@ -461,6 +516,7 @@ function postToControlServer(msgType, msgData) {
   client.setRequestHeader("Content-Type", "application/json");
   if (client.readyState == 1) {
     console.log("posting to control server");
+    console.log(msgData);
     var data = { "type": "webext_" + msgType, "data": msgData};
     client.send(JSON.stringify(data));
   }

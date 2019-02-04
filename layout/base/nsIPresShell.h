@@ -18,6 +18,7 @@
 #include "mozilla/StyleSheet.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/WeakPtr.h"
+#include "FrameMetrics.h"
 #include "GeckoProfiler.h"
 #include "gfxPoint.h"
 #include "nsTHashtable.h"
@@ -44,9 +45,13 @@
 #include "nsCOMArray.h"
 #include "Units.h"
 
+#ifdef MOZ_REFLOW_PERF
+class ReflowCountMgr;
+#endif
+
 class gfxContext;
+struct nsCallbackEventRequest;
 class nsDocShell;
-class nsIDocument;
 class nsIFrame;
 class nsPresContext;
 class nsWindowSizes;
@@ -57,6 +62,7 @@ class nsCanvasFrame;
 class nsCaret;
 namespace mozilla {
 class AccessibleCaretEventHub;
+class OverflowChangedTracker;
 class StyleSheet;
 }  // namespace mozilla
 class nsFrameSelection;
@@ -78,6 +84,7 @@ class nsINode;
 struct nsRect;
 class nsRegion;
 class nsRefreshDriver;
+class nsAutoCauseReflowNotifier;
 class nsARefreshObserver;
 class nsAPostRefreshObserver;
 #ifdef ACCESSIBILITY
@@ -96,11 +103,16 @@ class EventStates;
 namespace dom {
 class Element;
 class Event;
+class Document;
 class HTMLSlotElement;
 class Touch;
 class Selection;
 class ShadowRoot;
 }  // namespace dom
+
+namespace layout {
+class ScrollAnchorContainer;
+}  // namespace layout
 
 namespace layers {
 class LayerManager;
@@ -175,6 +187,8 @@ class nsIPresShell : public nsStubDocumentObserver {
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_IPRESSHELL_IID)
 
  protected:
+  typedef mozilla::dom::Document Document;
+  typedef mozilla::layers::FrameMetrics FrameMetrics;
   typedef mozilla::layers::LayerManager LayerManager;
   typedef mozilla::gfx::SourceSurface SourceSurface;
 
@@ -247,7 +261,7 @@ class nsIPresShell : public nsStubDocumentObserver {
     mFrameArena.ClearArenaRefPtrs(aObjectID);
   }
 
-  nsIDocument* GetDocument() const { return mDocument; }
+  Document* GetDocument() const { return mDocument; }
 
   nsPresContext* GetPresContext() const { return mPresContext; }
 
@@ -295,7 +309,7 @@ class nsIPresShell : public nsStubDocumentObserver {
    * Update the style set somehow to take into account changed prefs which
    * affect document styling.
    */
-  virtual void UpdatePreferenceStyles() = 0;
+  void UpdatePreferenceStyles();
 
   /**
    * FrameSelection will return the Frame based selection API.
@@ -445,13 +459,19 @@ class nsIPresShell : public nsStubDocumentObserver {
    * Returns the page sequence frame associated with the frame hierarchy.
    * Returns nullptr if not a paginated view.
    */
-  virtual nsIPageSequenceFrame* GetPageSequenceFrame() const = 0;
+  nsIPageSequenceFrame* GetPageSequenceFrame() const;
 
   /**
    * Returns the canvas frame associated with the frame hierarchy.
    * Returns nullptr if is XUL document.
    */
-  virtual nsCanvasFrame* GetCanvasFrame() const = 0;
+  nsCanvasFrame* GetCanvasFrame() const;
+
+  void PostPendingScrollAnchorSelection(
+      mozilla::layout::ScrollAnchorContainer* aContainer);
+  void FlushPendingScrollAnchorSelections();
+  void PostPendingScrollAnchorAdjustment(
+      mozilla::layout::ScrollAnchorContainer* aContainer);
 
   /**
    * Tell the pres shell that a frame needs to be marked dirty and needs
@@ -478,9 +498,9 @@ class nsIPresShell : public nsStubDocumentObserver {
     // Note:  With eStyleChange, these can also apply to out-of-flows
     // in addition to aFrame.
   };
-  virtual void FrameNeedsReflow(
-      nsIFrame* aFrame, IntrinsicDirty aIntrinsicDirty, nsFrameState aBitToAdd,
-      ReflowRootHandling aRootHandling = eInferFromBitToAdd) = 0;
+  void FrameNeedsReflow(nsIFrame* aFrame, IntrinsicDirty aIntrinsicDirty,
+                        nsFrameState aBitToAdd,
+                        ReflowRootHandling aRootHandling = eInferFromBitToAdd);
 
   /**
    * Calls FrameNeedsReflow on all fixed position children of the root frame.
@@ -498,11 +518,11 @@ class nsIPresShell : public nsStubDocumentObserver {
    * method doesn't mark any intrinsic widths dirty and doesn't add any bits
    * other than NS_FRAME_HAS_DIRTY_CHILDREN.
    */
-  virtual void FrameNeedsToContinueReflow(nsIFrame* aFrame) = 0;
+  void FrameNeedsToContinueReflow(nsIFrame* aFrame);
 
-  virtual void CancelAllPendingReflows() = 0;
+  void CancelAllPendingReflows();
 
-  virtual void NotifyCounterStylesAreDirty() = 0;
+  void NotifyCounterStylesAreDirty();
 
   bool FrameIsAncestorOfDirtyRoot(nsIFrame* aFrame) const;
 
@@ -549,7 +569,7 @@ class nsIPresShell : public nsStubDocumentObserver {
    * will not affect the content model; it'll just affect style and
    * frames. Callers that actually want up-to-date presentation (other
    * than the document itself) should probably be calling
-   * nsIDocument::FlushPendingNotifications.
+   * Document::FlushPendingNotifications.
    *
    * This method can execute script, which can destroy this presshell object
    * unless someone is holding a reference to it on the stack.  The presshell
@@ -645,17 +665,22 @@ class nsIPresShell : public nsStubDocumentObserver {
    * Callbacks will be called even if reflow itself fails for
    * some reason.
    */
-  virtual nsresult PostReflowCallback(nsIReflowCallback* aCallback) = 0;
-  virtual void CancelReflowCallback(nsIReflowCallback* aCallback) = 0;
+  nsresult PostReflowCallback(nsIReflowCallback* aCallback);
+  void CancelReflowCallback(nsIReflowCallback* aCallback);
 
-  virtual void ClearFrameRefs(nsIFrame* aFrame) = 0;
+  void HandlePostedReflowCallbacks(bool aInterruptible);
+
+  void ScheduleBeforeFirstPaint();
+  void UnsuppressAndInvalidate();
+
+  void ClearFrameRefs(nsIFrame* aFrame);
 
   /**
    * Get a reference rendering context. This is a context that should not
    * be rendered to, but is suitable for measuring text and performing
    * other non-rendering operations. Guaranteed to return non-null.
    */
-  virtual already_AddRefed<gfxContext> CreateReferenceRenderingContext() = 0;
+  already_AddRefed<gfxContext> CreateReferenceRenderingContext();
 
   /**
    * Informs the pres shell that the document is now at the anchor with
@@ -666,8 +691,8 @@ class nsIPresShell : public nsStubDocumentObserver {
    * be false.  If |aAdditionalScrollFlags| is nsIPresShell::SCROLL_SMOOTH_AUTO
    * and |aScroll| is true, the scrolling may be performed with an animation.
    */
-  virtual nsresult GoToAnchor(const nsAString& aAnchorName, bool aScroll,
-                              uint32_t aAdditionalScrollFlags = 0) = 0;
+  nsresult GoToAnchor(const nsAString& aAnchorName, bool aScroll,
+                      uint32_t aAdditionalScrollFlags = 0);
 
   /**
    * Tells the presshell to scroll again to the last anchor scrolled to by
@@ -677,7 +702,7 @@ class nsIPresShell : public nsStubDocumentObserver {
    * scrolled to by GoToAnchor (we don't want to keep it alive if it's
    * removed from the DOM), so don't call this more than once.
    */
-  virtual nsresult ScrollToAnchor() = 0;
+  nsresult ScrollToAnchor();
 
   enum {
     SCROLL_TOP = 0,
@@ -769,10 +794,8 @@ class nsIPresShell : public nsStubDocumentObserver {
    *                  nsIScrollableFrame::ScrollMode::SMOOTH_MSD; otherwise,
    *                  nsIScrollableFrame::ScrollMode::INSTANT will be used.
    */
-  virtual nsresult ScrollContentIntoView(nsIContent* aContent,
-                                         ScrollAxis aVertical,
-                                         ScrollAxis aHorizontal,
-                                         uint32_t aFlags) = 0;
+  nsresult ScrollContentIntoView(nsIContent* aContent, ScrollAxis aVertical,
+                                 ScrollAxis aHorizontal, uint32_t aFlags);
 
   enum {
     SCROLL_FIRST_ANCESTOR_ONLY = 0x01,
@@ -800,10 +823,9 @@ class nsIPresShell : public nsStubDocumentObserver {
    * contain this document in a iframe or the like.
    * @return true if any scrolling happened, false if no scrolling happened
    */
-  virtual bool ScrollFrameRectIntoView(nsIFrame* aFrame, const nsRect& aRect,
-                                       ScrollAxis aVertical,
-                                       ScrollAxis aHorizontal,
-                                       uint32_t aFlags) = 0;
+  bool ScrollFrameRectIntoView(nsIFrame* aFrame, const nsRect& aRect,
+                               ScrollAxis aVertical, ScrollAxis aHorizontal,
+                               uint32_t aFlags);
 
   /**
    * Determine if a rectangle specified in the frame's coordinate system
@@ -833,36 +855,36 @@ class nsIPresShell : public nsStubDocumentObserver {
    * Suppress notification of the frame manager that frames are
    * being destroyed.
    */
-  virtual void SetIgnoreFrameDestruction(bool aIgnore) = 0;
+  void SetIgnoreFrameDestruction(bool aIgnore);
 
   /**
    * Notification sent by a frame informing the pres shell that it is about to
    * be destroyed.
    * This allows any outstanding references to the frame to be cleaned up
    */
-  virtual void NotifyDestroyingFrame(nsIFrame* aFrame) = 0;
+  void NotifyDestroyingFrame(nsIFrame* aFrame);
 
   /**
    * Get the AccessibleCaretEventHub, if it exists. AddRefs it.
    */
-  virtual already_AddRefed<mozilla::AccessibleCaretEventHub>
-  GetAccessibleCaretEventHub() const = 0;
+  already_AddRefed<mozilla::AccessibleCaretEventHub>
+  GetAccessibleCaretEventHub() const;
 
   /**
    * Get the caret, if it exists. AddRefs it.
    */
-  virtual already_AddRefed<nsCaret> GetCaret() const = 0;
+  already_AddRefed<nsCaret> GetCaret() const;
 
   /**
    * Set the current caret to a new caret. To undo this, call RestoreCaret.
    */
-  virtual void SetCaret(nsCaret* aNewCaret) = 0;
+  void SetCaret(nsCaret* aNewCaret);
 
   /**
    * Restore the caret to the original caret that this pres shell was created
    * with.
    */
-  virtual void RestoreCaret() = 0;
+  void RestoreCaret();
 
   /**
    * Should the images have borders etc.  Actual visual effects are determined
@@ -1015,7 +1037,7 @@ class nsIPresShell : public nsStubDocumentObserver {
    * Notify that a content node's state has changed
    */
   virtual void ContentStateChanged(
-      nsIDocument* aDocument, nsIContent* aContent,
+      Document* aDocument, nsIContent* aContent,
       mozilla::EventStates aStateMask) override = 0;
 
   /**
@@ -1365,9 +1387,22 @@ class nsIPresShell : public nsStubDocumentObserver {
    * resolution bounds are sane, and the resolution of this was
    * actually updated.
    *
+   * Also increase the scale of the content by the same amount
+   * (that's the "AndScaleTo" part).
+   *
    * The resolution defaults to 1.0.
+   *
+   * |aOrigin| specifies who originated the resolution change. For changes
+   * sent by APZ, pass ChangeOrigin::eApz. For changes sent by the main thread,
+   * use pass ChangeOrigin::eMainThread (similar to the |aOrigin| parameter of
+   * nsIScrollableFrame::ScrollToCSSPixels()).
    */
-  virtual nsresult SetResolution(float aResolution) = 0;
+  enum class ChangeOrigin : uint8_t {
+    eApz,
+    eMainThread,
+  };
+  virtual nsresult SetResolutionAndScaleTo(float aResolution,
+                                           ChangeOrigin aOrigin) = 0;
   float GetResolution() const { return mResolution.valueOr(1.0); }
   virtual float GetCumulativeResolution() = 0;
 
@@ -1375,37 +1410,14 @@ class nsIPresShell : public nsStubDocumentObserver {
    * Accessors for a flag that tracks whether the most recent change to
    * the pres shell's resolution was originated by the main thread.
    */
-  virtual bool IsResolutionUpdated() const = 0;
-  virtual void SetResolutionUpdated(bool aUpdated) = 0;
+  bool IsResolutionUpdated() const { return mResolutionUpdated; }
+  void SetResolutionUpdated(bool aUpdated) { mResolutionUpdated = aUpdated; }
 
   /**
    * Calculate the cumulative scale resolution from this document up to
    * but not including the root document.
    */
   virtual float GetCumulativeNonRootScaleResolution() = 0;
-
-  /**
-   * Was the current resolution set by the user or just default initialized?
-   */
-  bool IsResolutionSet() { return mResolution.isSome(); }
-
-  /**
-   * Similar to SetResolution() but also increases the scale of the content
-   * by the same amount.
-   * |aOrigin| specifies who originated the resolution change. For changes
-   * sent by APZ, pass nsGkAtoms::apz. For changes sent by the main thread,
-   * use pass nsGkAtoms::other or nsGkAtoms::restore (similar to the |aOrigin|
-   * parameter of nsIScrollableFrame::ScrollToCSSPixels()).
-   */
-  virtual nsresult SetResolutionAndScaleTo(float aResolution,
-                                           nsAtom* aOrigin) = 0;
-
-  /**
-   * Return whether we are scaling to the set resolution.
-   * This is initially false; it's set to true by a call to
-   * SetResolutionAndScaleTo(), and set to false by a call to SetResolution().
-   */
-  virtual bool ScaleToResolution() const = 0;
 
   /**
    * Used by session restore code to restore a resolution before the first
@@ -1656,13 +1668,50 @@ class nsIPresShell : public nsStubDocumentObserver {
     return mVisualViewportSize;
   }
 
-  void SetVisualViewportOffset(const nsPoint& aScrollOffset) {
-    mVisualViewportOffset = aScrollOffset;
+  /**
+   * The return value indicates whether the offset actually changed.
+   */
+  bool SetVisualViewportOffset(const nsPoint& aScrollOffset,
+                               const nsPoint& aPrevLayoutScrollPos);
+
+  nsPoint GetVisualViewportOffset() const {
+    return mVisualViewportOffset.valueOr(nsPoint());
+  }
+  bool IsVisualViewportOffsetSet() const {
+    return mVisualViewportOffset.isSome();
   }
 
-  nsPoint GetVisualViewportOffset() const { return mVisualViewportOffset; }
-
   nsPoint GetVisualViewportOffsetRelativeToLayoutViewport() const;
+
+  // Represents an update to the visual scroll offset that will be sent to APZ.
+  // The update type is used to determine priority compared to other scroll
+  // updates.
+  struct VisualScrollUpdate {
+    nsPoint mVisualScrollOffset;
+    FrameMetrics::ScrollOffsetUpdateType mUpdateType;
+  };
+
+  // Ask APZ in the next transaction to scroll to the given visual viewport
+  // offset (relative to the document).
+  // Use this sparingly, as it will clobber JS-driven scrolling that happens
+  // in the same frame. This is mostly intended to be used in special
+  // situations like "first paint" or session restore.
+  // Please request APZ review if adding a new call site.
+  void SetPendingVisualScrollUpdate(
+      const nsPoint& aVisualViewportOffset,
+      FrameMetrics::ScrollOffsetUpdateType aUpdateType) {
+    mPendingVisualScrollUpdate =
+        mozilla::Some(VisualScrollUpdate{aVisualViewportOffset, aUpdateType});
+  }
+  void ClearPendingVisualScrollUpdate() {
+    mPendingVisualScrollUpdate = mozilla::Nothing();
+  }
+  const mozilla::Maybe<VisualScrollUpdate>& GetPendingVisualScrollUpdate()
+      const {
+    return mPendingVisualScrollUpdate;
+  }
+
+  nsPoint GetLayoutViewportOffset() const;
 
   virtual void WindowSizeMoveDone() = 0;
   virtual void SysColorChanged() = 0;
@@ -1688,16 +1737,95 @@ class nsIPresShell : public nsStubDocumentObserver {
 
   void SyncWindowProperties(nsView* aView);
 
-  virtual nsIDocument* GetPrimaryContentDocument() = 0;
+  virtual Document* GetPrimaryContentDocument() = 0;
 
   // aSheetType is one of the nsIStyleSheetService *_SHEET constants.
-  virtual void NotifyStyleSheetServiceSheetAdded(mozilla::StyleSheet* aSheet,
-                                                 uint32_t aSheetType) = 0;
-  virtual void NotifyStyleSheetServiceSheetRemoved(mozilla::StyleSheet* aSheet,
-                                                   uint32_t aSheetType) = 0;
+  void NotifyStyleSheetServiceSheetAdded(mozilla::StyleSheet* aSheet,
+                                         uint32_t aSheetType);
+  void NotifyStyleSheetServiceSheetRemoved(mozilla::StyleSheet* aSheet,
+                                           uint32_t aSheetType);
 
  protected:
   friend class nsRefreshDriver;
+  friend class ::nsAutoCauseReflowNotifier;
+
+  void WillCauseReflow();
+  void DidCauseReflow();
+
+  void CancelPostedReflowCallbacks();
+  void FlushPendingScrollAnchorAdjustments();
+
+#ifdef DEBUG
+  mozilla::UniquePtr<mozilla::ServoStyleSet> CloneStyleSet(
+      mozilla::ServoStyleSet*);
+  bool VerifyIncrementalReflow();
+  void DoVerifyReflow();
+  void VerifyHasDirtyRootAncestor(nsIFrame* aFrame);
+  void ShowEventTargetDebug();
+
+  bool mInVerifyReflow = false;
+  // The reflow root under which we're currently reflowing.  Null when
+  // not in reflow.
+  nsIFrame* mCurrentReflowRoot = nullptr;
+#endif
+
+#ifdef MOZ_REFLOW_PERF
+  mozilla::UniquePtr<ReflowCountMgr> mReflowCountMgr;
+#endif
+
+  // Helper for ScrollContentIntoView
+  void DoScrollContentIntoView();
+
+  /**
+   * Methods to handle changes to user and UA sheet lists that we get
+   * notified about.
+   */
+  void AddUserSheet(mozilla::StyleSheet*);
+  void AddAgentSheet(mozilla::StyleSheet*);
+  void AddAuthorSheet(mozilla::StyleSheet*);
+  void RemoveSheet(mozilla::SheetType, mozilla::StyleSheet*);
+  void RemovePreferenceStyles();
+
+  void WillDoReflow();
+
+  // This data is stored as a content property (nsGkAtoms::scrolling) on
+  // mContentToScrollTo when we have a pending ScrollIntoView.
+  struct ScrollIntoViewData {
+    ScrollAxis mContentScrollVAxis;
+    ScrollAxis mContentScrollHAxis;
+    uint32_t mContentToScrollToFlags;
+  };
+
+  static mozilla::LazyLogModule gLog;
+
+  DOMHighResTimeStamp GetPerformanceNowUnclamped();
+
+  /**
+   * Callback handler for whether reflow happened.
+   *
+   * @param aInterruptible Whether or not reflow interruption is allowed.
+   */
+  void DidDoReflow(bool aInterruptible);
+  // ProcessReflowCommands returns whether we processed all our dirty roots
+  // without interruptions.
+  bool ProcessReflowCommands(bool aInterruptible);
+  // The callback for the mReflowContinueTimer timer.
+  static void sReflowContinueCallback(nsITimer* aTimer, void* aPresShell);
+  bool ScheduleReflowOffTimer();
+  // MaybeScheduleReflow checks if posting a reflow is needed, then checks if
+  // the last reflow was interrupted. In the interrupted case ScheduleReflow is
+  // called off a timer, otherwise it is called directly.
+  void MaybeScheduleReflow();
+  // Actually schedules a reflow.  This should only be called by
+  // MaybeScheduleReflow and the reflow timer ScheduleReflowOffTimer
+  // sets up.
+  void ScheduleReflow();
+
+  // DoReflow returns whether the reflow finished without interruption
+  // If aFrame is not the root frame, the caller must pass a non-null
+  // aOverflowTracker.
+  bool DoReflow(nsIFrame* aFrame, bool aInterruptible,
+                mozilla::OverflowChangedTracker* aOverflowTracker);
 
   // IMPORTANT: The ownership implicit in the following member variables
   // has been explicitly checked.  If you add any members to this class,
@@ -1705,13 +1833,18 @@ class nsIPresShell : public nsStubDocumentObserver {
 
   // These are the same Document and PresContext owned by the DocViewer.
   // we must share ownership.
-  nsCOMPtr<nsIDocument> mDocument;
+  RefPtr<Document> mDocument;
   RefPtr<nsPresContext> mPresContext;
+  // mStyleSet owns it but we maintain a ref, may be null
+  RefPtr<mozilla::StyleSheet> mPrefStyleSheet;
   mozilla::UniquePtr<mozilla::ServoStyleSet> mStyleSet;
   mozilla::UniquePtr<nsCSSFrameConstructor> mFrameConstructor;
   nsViewManager* mViewManager;  // [WEAK] docViewer owns it so I don't have to
-  nsPresArena mFrameArena;
+  nsPresArena<8192> mFrameArena;
   RefPtr<nsFrameSelection> mSelection;
+  RefPtr<nsCaret> mCaret;
+  RefPtr<nsCaret> mOriginalCaret;
+  RefPtr<mozilla::AccessibleCaretEventHub> mAccessibleCaretEventHub;
   // Pointer into mFrameConstructor - this is purely so that GetRootFrame() can
   // be inlined:
   nsFrameManager* mFrameManager;
@@ -1720,6 +1853,9 @@ class nsIPresShell : public nsStubDocumentObserver {
   mozilla::a11y::DocAccessible* mDocAccessible;
 #endif
 
+  // The `performance.now()` value when we last started to process reflows.
+  DOMHighResTimeStamp mLastReflowStart{0.0};
+
   // At least on Win32 and Mac after interupting a reflow we need to post
   // the resume reflow event off a timer to avoid event starvation because
   // posted messages are processed before other messages when the modal
@@ -1727,7 +1863,7 @@ class nsIPresShell : public nsStubDocumentObserver {
   nsCOMPtr<nsITimer> mReflowContinueTimer;
 
 #ifdef DEBUG
-  nsIFrame* mDrawEventTargetFrame;
+  nsIFrame* mDrawEventTargetFrame = nullptr;
 #endif
 
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
@@ -1736,12 +1872,26 @@ class nsIPresShell : public nsStubDocumentObserver {
   nsTHashtable<nsPtrHashKey<void>> mAllocatedPointers;
 #endif
 
+  nsCOMPtr<nsIContent> mLastAnchorScrolledTo;
+  // Information needed to properly handle scrolling content into view if the
+  // pre-scroll reflow flush can be interrupted.  mContentToScrollTo is non-null
+  // between the initial scroll attempt and the first time we finish processing
+  // all our dirty roots.  mContentToScrollTo has a content property storing the
+  // details for the scroll operation, see ScrollIntoViewData above.
+  nsCOMPtr<nsIContent> mContentToScrollTo;
+  nscoord mLastAnchorScrollPositionY = 0;
+
   // Count of the number of times this presshell has been painted to a window.
   uint64_t mPaintCount;
 
   nsSize mVisualViewportSize;
 
-  nsPoint mVisualViewportOffset;
+  mozilla::Maybe<nsPoint> mVisualViewportOffset;
+
+  // A pending visual scroll offset that we will ask APZ to scroll to
+  // during the next transaction. Cleared when we send the transaction.
+  // Only applicable to the RCD pres shell.
+  mozilla::Maybe<VisualScrollUpdate> mPendingVisualScrollUpdate;
 
   // A list of stack weak frames. This is a pointer to the last item in the
   // list.
@@ -1750,8 +1900,50 @@ class nsIPresShell : public nsStubDocumentObserver {
   // A hash table of heap allocated weak frames.
   nsTHashtable<nsPtrHashKey<WeakFrame>> mWeakFrames;
 
+  class DirtyRootsList {
+   public:
+    // Add a dirty root.
+    void Add(nsIFrame* aFrame);
+    // Remove this frame if present.
+    void Remove(nsIFrame* aFrame);
+    // Remove and return one of the shallowest dirty roots from the list.
+    // (If two roots are at the same depth, order is indeterminate.)
+    nsIFrame* PopShallowestRoot();
+    // Remove all dirty roots.
+    void Clear();
+    // Is this frame one of the dirty roots?
+    bool Contains(nsIFrame* aFrame) const;
+    // Are there no dirty roots?
+    bool IsEmpty() const;
+    // Is the given frame an ancestor of any dirty root?
+    bool FrameIsAncestorOfDirtyRoot(nsIFrame* aFrame) const;
+
+   private:
+    struct FrameAndDepth {
+      nsIFrame* mFrame;
+      const uint32_t mDepth;
+
+      // Easy conversion to nsIFrame*, as it's the most likely need.
+      operator nsIFrame*() const { return mFrame; }
+
+      // Used to sort by reverse depths, i.e., deeper < shallower.
+      class CompareByReverseDepth {
+       public:
+        bool Equals(const FrameAndDepth& aA, const FrameAndDepth& aB) const {
+          return aA.mDepth == aB.mDepth;
+        }
+        bool LessThan(const FrameAndDepth& aA, const FrameAndDepth& aB) const {
+          // Reverse depth! So '>' instead of '<'.
+          return aA.mDepth > aB.mDepth;
+        }
+      };
+    };
+    // List of all known dirty roots, sorted by decreasing depths.
+    nsTArray<FrameAndDepth> mList;
+  };
+
   // Reflow roots that need to be reflowed.
-  nsTArray<nsIFrame*> mDirtyRoots;
+  DirtyRootsList mDirtyRoots;
 
 #ifdef MOZ_GECKO_PROFILER
   // These two fields capture call stacks of any changes that require a restyle
@@ -1789,9 +1981,18 @@ class nsIPresShell : public nsStubDocumentObserver {
   // We've been disconnected from the document.  We will refuse to paint the
   // document until either our timer fires or all frames are constructed.
   bool mIsDocumentGone : 1;
+  bool mHaveShutDown : 1;
 
   // For all documents we initially lock down painting.
   bool mPaintingSuppressed : 1;
+
+  bool mLastRootReflowHadUnconstrainedBSize : 1;
+
+  // Indicates that it is safe to unlock painting once all pending reflows
+  // have been processed.
+  bool mShouldUnsuppressPainting : 1;
+
+  bool mIgnoreFrameDestruction : 1;
 
   bool mIsActive : 1;
   bool mFrozen : 1;
@@ -1823,6 +2024,21 @@ class nsIPresShell : public nsStubDocumentObserver {
   // performing a flush with mFlushAnimations == true.
   bool mNeedThrottledAnimationFlush : 1;
 
+  bool mFontSizeInflationForceEnabled : 1;
+  bool mFontSizeInflationDisabledInMasterProcess : 1;
+  bool mFontSizeInflationEnabled : 1;
+
+  bool mPaintingIsFrozen : 1;
+
+  // If a document belongs to an invisible DocShell, this flag must be set
+  // to true, so we can avoid any paint calls for widget related to this
+  // presshell.
+  bool mIsNeverPainting : 1;
+
+  // Whether the most recent change to the pres shell resolution was
+  // originated by the main thread.
+  bool mResolutionUpdated : 1;
+
   uint32_t mPresShellId;
 
   static nsIContent* gKeyDownTarget;
@@ -1832,25 +2048,25 @@ class nsIPresShell : public nsStubDocumentObserver {
   uint32_t mFontSizeInflationEmPerLine;
   uint32_t mFontSizeInflationMinTwips;
   uint32_t mFontSizeInflationLineThreshold;
-  bool mFontSizeInflationForceEnabled;
-  bool mFontSizeInflationDisabledInMasterProcess;
-  bool mFontSizeInflationEnabled;
-
-  bool mPaintingIsFrozen;
-
-  // If a document belongs to an invisible DocShell, this flag must be set
-  // to true, so we can avoid any paint calls for widget related to this
-  // presshell.
-  bool mIsNeverPainting;
 
   // Whether we're currently under a FlushPendingNotifications.
   // This is used to handle flush reentry correctly.
+  // NOTE: This can't be a bitfield since AutoRestore has a reference to this
+  // variable.
   bool mInFlush;
 
   nsIFrame* mCurrentEventFrame;
   nsCOMPtr<nsIContent> mCurrentEventContent;
   nsTArray<nsIFrame*> mCurrentEventFrameStack;
   nsCOMArray<nsIContent> mCurrentEventContentStack;
+  // Set of frames that we should mark with NS_FRAME_HAS_DIRTY_CHILDREN after
+  // we finish reflowing mCurrentReflowRoot.
+  nsTHashtable<nsPtrHashKey<nsIFrame>> mFramesToDirty;
+  nsTHashtable<nsPtrHashKey<nsIScrollableFrame>> mPendingScrollAnchorSelection;
+  nsTHashtable<nsPtrHashKey<nsIScrollableFrame>> mPendingScrollAnchorAdjustment;
+
+  nsCallbackEventRequest* mFirstCallbackEventRequest = nullptr;
+  nsCallbackEventRequest* mLastCallbackEventRequest = nullptr;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsIPresShell, NS_IPRESSHELL_IID)

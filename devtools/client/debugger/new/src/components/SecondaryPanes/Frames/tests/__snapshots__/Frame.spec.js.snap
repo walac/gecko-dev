@@ -1,0 +1,248 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Frame getFrameTitle 1`] = `
+<div
+  className="frame"
+  key="1"
+  onContextMenu={[Function]}
+  onKeyUp={[Function]}
+  onMouseDown={[Function]}
+  role="listitem"
+  tabIndex={0}
+  title="Jump to https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com/assets/src/js/foo-view.js:10"
+>
+  <FrameIndent />
+  <FrameTitle
+    frame={
+      Object {
+        "displayName": "renderFoo",
+        "id": 1,
+        "location": Object {
+          "line": 10,
+        },
+        "source": Object {
+          "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com/assets/src/js/foo-view.js",
+        },
+      }
+    }
+    options={
+      Object {
+        "shouldMapDisplayName": true,
+      }
+    }
+  />
+  <span
+    className="clipboard-only"
+  >
+     
+  </span>
+  <FrameLocation
+    displayFullUrl={false}
+    frame={
+      Object {
+        "displayName": "renderFoo",
+        "id": 1,
+        "location": Object {
+          "line": 10,
+        },
+        "source": Object {
+          "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com/assets/src/js/foo-view.js",
+        },
+      }
+    }
+  />
+  <br
+    className="clipboard-only"
+  />
+</div>
+`;
+
+exports[`Frame library frame 1`] = `
+<div
+  className="frame selected"
+  key="3"
+  onContextMenu={[Function]}
+  onKeyUp={[Function]}
+  onMouseDown={[Function]}
+  role="listitem"
+  tabIndex={0}
+>
+  <FrameIndent />
+  <FrameTitle
+    frame={
+      Object {
+        "displayName": "updateEvents",
+        "frameworkGroupingOn": false,
+        "id": 3,
+        "library": "backbone",
+        "location": Object {
+          "line": 12,
+        },
+        "source": Object {
+          "url": "backbone.js",
+        },
+        "toggleFrameworkGrouping": [MockFunction],
+      }
+    }
+    options={
+      Object {
+        "shouldMapDisplayName": true,
+      }
+    }
+  />
+  <span
+    className="clipboard-only"
+  >
+     
+  </span>
+  <FrameLocation
+    displayFullUrl={false}
+    frame={
+      Object {
+        "displayName": "updateEvents",
+        "frameworkGroupingOn": false,
+        "id": 3,
+        "library": "backbone",
+        "location": Object {
+          "line": 12,
+        },
+        "source": Object {
+          "url": "backbone.js",
+        },
+        "toggleFrameworkGrouping": [MockFunction],
+      }
+    }
+  />
+  <br
+    className="clipboard-only"
+  />
+</div>
+`;
+
+exports[`Frame user frame (not selected) 1`] = `
+<div
+  className="frame"
+  key="1"
+  onContextMenu={[Function]}
+  onKeyUp={[Function]}
+  onMouseDown={[Function]}
+  role="listitem"
+  tabIndex={0}
+>
+  <FrameIndent />
+  <FrameTitle
+    frame={
+      Object {
+        "displayName": "renderFoo",
+        "frameworkGroupingOn": false,
+        "id": 1,
+        "library": false,
+        "location": Object {
+          "line": 10,
+        },
+        "source": Object {
+          "isBlackBoxed": false,
+          "url": "foo-view.js",
+        },
+        "toggleFrameworkGrouping": [MockFunction],
+      }
+    }
+    options={
+      Object {
+        "shouldMapDisplayName": true,
+      }
+    }
+  />
+  <span
+    className="clipboard-only"
+  >
+     
+  </span>
+  <FrameLocation
+    displayFullUrl={false}
+    frame={
+      Object {
+        "displayName": "renderFoo",
+        "frameworkGroupingOn": false,
+        "id": 1,
+        "library": false,
+        "location": Object {
+          "line": 10,
+        },
+        "source": Object {
+          "isBlackBoxed": false,
+          "url": "foo-view.js",
+        },
+        "toggleFrameworkGrouping": [MockFunction],
+      }
+    }
+  />
+  <br
+    className="clipboard-only"
+  />
+</div>
+`;
+
+exports[`Frame user frame 1`] = `
+<div
+  className="frame selected"
+  key="1"
+  onContextMenu={[Function]}
+  onKeyUp={[Function]}
+  onMouseDown={[Function]}
+  role="listitem"
+  tabIndex={0}
+>
+  <FrameIndent />
+  <FrameTitle
+    frame={
+      Object {
+        "displayName": "renderFoo",
+        "frameworkGroupingOn": false,
+        "id": 1,
+        "library": false,
+        "location": Object {
+          "line": 10,
+        },
+        "source": Object {
+          "isBlackBoxed": false,
+          "url": "foo-view.js",
+        },
+        "toggleFrameworkGrouping": [MockFunction],
+      }
+    }
+    options={
+      Object {
+        "shouldMapDisplayName": true,
+      }
+    }
+  />
+  <span
+    className="clipboard-only"
+  >
+     
+  </span>
+  <FrameLocation
+    displayFullUrl={false}
+    frame={
+      Object {
+        "displayName": "renderFoo",
+        "frameworkGroupingOn": false,
+        "id": 1,
+        "library": false,
+        "location": Object {
+          "line": 10,
+        },
+        "source": Object {
+          "isBlackBoxed": false,
+          "url": "foo-view.js",
+        },
+        "toggleFrameworkGrouping": [MockFunction],
+      }
+    }
+  />
+  <br
+    className="clipboard-only"
+  />
+</div>
+`;

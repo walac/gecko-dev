@@ -11,25 +11,24 @@ var EXPORTED_SYMBOLS = ["AddonTestUtils", "MockAsyncShutdown"];
 
 const CERTDB_CONTRACTID = "@mozilla.org/security/x509certdb;1";
 
-Cu.importGlobalProperties(["fetch", "TextEncoder"]);
+Cu.importGlobalProperties(["fetch"]);
 
-ChromeUtils.import("resource://gre/modules/AsyncShutdown.jsm");
-ChromeUtils.import("resource://gre/modules/FileUtils.jsm");
-ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/Timer.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {AsyncShutdown} = ChromeUtils.import("resource://gre/modules/AsyncShutdown.jsm");
+const {FileUtils} = ChromeUtils.import("resource://gre/modules/FileUtils.jsm");
+const {NetUtil} = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {setTimeout} = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-const {EventEmitter} = ChromeUtils.import("resource://gre/modules/EventEmitter.jsm", {});
-const {OS} = ChromeUtils.import("resource://gre/modules/osfile.jsm", {});
-
+const {EventEmitter} = ChromeUtils.import("resource://gre/modules/EventEmitter.jsm");
+const {OS} = ChromeUtils.import("resource://gre/modules/osfile.jsm");
 
 ChromeUtils.defineModuleGetter(this, "AMTelemetry",
                                "resource://gre/modules/AddonManager.jsm");
-ChromeUtils.defineModuleGetter(this, "Extension",
-                               "resource://gre/modules/Extension.jsm");
+ChromeUtils.defineModuleGetter(this, "ExtensionTestCommon",
+                               "resource://testing-common/ExtensionTestCommon.jsm");
 XPCOMUtils.defineLazyGetter(this, "Management", () => {
-  let {Management} = ChromeUtils.import("resource://gre/modules/Extension.jsm", {});
+  let {Management} = ChromeUtils.import("resource://gre/modules/Extension.jsm", null);
   return Management;
 });
 
@@ -78,7 +77,7 @@ function isRegExp(val) {
 }
 
 // We need some internal bits of AddonManager
-var AMscope = ChromeUtils.import("resource://gre/modules/AddonManager.jsm", {});
+var AMscope = ChromeUtils.import("resource://gre/modules/AddonManager.jsm", null);
 var {AddonManager, AddonManagerPrivate} = AMscope;
 
 class MockBarrier {
@@ -246,8 +245,12 @@ class AddonsList {
           } catch (e) {
             file = new nsFile(addon.path);
           }
-        } else {
+        } else if (addon.path) {
           file = new nsFile(addon.path);
+        }
+
+        if (!file) {
+          continue;
         }
 
         this.xpis.push(file);
@@ -770,7 +773,7 @@ var AddonTestUtils = {
     if (newVersion) {
       this.appInfo.version = newVersion;
       if (Cu.isModuleLoaded("resource://gre/modules/Blocklist.jsm")) {
-        let bsPassBlocklist = ChromeUtils.import("resource://gre/modules/Blocklist.jsm", {});
+        let bsPassBlocklist = ChromeUtils.import("resource://gre/modules/Blocklist.jsm", null);
         Object.defineProperty(bsPassBlocklist, "gAppVersion", {value: newVersion});
       }
     }
@@ -802,8 +805,8 @@ var AddonTestUtils = {
     await this.loadAddonsList(true);
 
     // Wait for all add-ons to finish starting up before resolving.
-    const {XPIProvider} = ChromeUtils.import("resource://gre/modules/addons/XPIProvider.jsm", null);
-    await Promise.all(Array.from(XPIProvider.activeAddons,
+    const {XPIProvider} = ChromeUtils.import("resource://gre/modules/addons/XPIProvider.jsm");
+    await Promise.all(Array.from(XPIProvider.activeAddons.values(),
                                  addon => addon.startupPromise));
   },
 
@@ -839,7 +842,7 @@ var AddonTestUtils = {
 
     // Force the XPIProvider provider to reload to better
     // simulate real-world usage.
-    let XPIscope = ChromeUtils.import("resource://gre/modules/addons/XPIProvider.jsm", {});
+    let XPIscope = ChromeUtils.import("resource://gre/modules/addons/XPIProvider.jsm", null);
     // This would be cleaner if I could get it as the rejection reason from
     // the AddonManagerInternal.shutdown() promise
     let shutdownError = XPIscope.XPIDatabase._saveError;
@@ -875,7 +878,7 @@ var AddonTestUtils = {
 
   async loadAddonsList(flush = false) {
     if (flush) {
-      let XPIScope = ChromeUtils.import("resource://gre/modules/addons/XPIProvider.jsm", {});
+      let XPIScope = ChromeUtils.import("resource://gre/modules/addons/XPIProvider.jsm", null);
       XPIScope.XPIStates.save();
       await XPIScope.XPIStates._jsonFile._save();
     }
@@ -1132,11 +1135,11 @@ var AddonTestUtils = {
    *
    * @param {Object} data
    *        The object holding data about the add-on, as expected by
-   *        |Extension.generateXPI|.
+   *        |ExtensionTestCommon.generateXPI|.
    * @return {nsIFile} A file pointing to the created XPI file
    */
   createTempWebExtensionFile(data) {
-    let file = Extension.generateXPI(data);
+    let file = ExtensionTestCommon.generateXPI(data);
     this.tempXPIs.push(file);
     return file;
   },
@@ -1527,8 +1530,7 @@ var AddonTestUtils = {
    *
    * @param {function} task
    *        The task to run while monitoring console output. May be
-   *        either a generator function, per Task.jsm, or an ordinary
-   *        function which returns promose.
+   *        an async function, or an ordinary function which returns a promose.
    * @return {Promise<[Array<nsIConsoleMessage>, *]>}
    *        Resolves to an object containing a `messages` property, with
    *        the array of console messages emitted during the execution

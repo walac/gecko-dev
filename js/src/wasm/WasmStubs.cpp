@@ -134,18 +134,22 @@ static void SetupABIArguments(MacroAssembler& masm, const FuncExport& fe,
             masm.storePtr(scratch, Address(masm.getStackPointer(),
                                            iter->offsetFromArgBase()));
             break;
-          case MIRType::Double:
-            masm.loadDouble(src, ScratchDoubleReg);
+          case MIRType::Double: {
+            ScratchDoubleScope fpscratch(masm);
+            masm.loadDouble(src, fpscratch);
             masm.storeDouble(
-                ScratchDoubleReg,
+                fpscratch,
                 Address(masm.getStackPointer(), iter->offsetFromArgBase()));
             break;
-          case MIRType::Float32:
-            masm.loadFloat32(src, ScratchFloat32Reg);
+          }
+          case MIRType::Float32: {
+            ScratchFloat32Scope fpscratch(masm);
+            masm.loadFloat32(src, fpscratch);
             masm.storeFloat32(
-                ScratchFloat32Reg,
+                fpscratch,
                 Address(masm.getStackPointer(), iter->offsetFromArgBase()));
             break;
+          }
           default:
             MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE(
                 "unexpected stack arg type");
@@ -222,7 +226,7 @@ static const unsigned NonVolatileRegsPushSize =
     NonVolatileRegs.fpus().getPushSizeInBytes();
 #endif
 
-#ifdef ENABLE_WASM_GC
+#ifdef ENABLE_WASM_REFTYPES
 static const unsigned NumExtraPushed = 2;  // tls and argv
 #else
 static const unsigned NumExtraPushed = 1;  // argv
@@ -246,7 +250,8 @@ static void AssertExpectedSP(const MacroAssembler& masm) {
 template <class Operand>
 static void WasmPush(MacroAssembler& masm, const Operand& op) {
 #ifdef JS_CODEGEN_ARM64
-  // Allocate a pad word so that SP can remain properly aligned.
+  // Allocate a pad word so that SP can remain properly aligned.  |op| will be
+  // written at the lower-addressed of the two words pushed here.
   masm.reserveStack(WasmPushSize);
   masm.storePtr(op, Address(masm.getStackPointer(), 0));
 #else
@@ -270,16 +275,6 @@ static void MoveSPForJitABI(MacroAssembler& masm) {
 #endif
 }
 
-#ifdef ENABLE_WASM_GC
-static void SuppressGC(MacroAssembler& masm, int32_t increment,
-                       Register scratch) {
-  masm.loadPtr(Address(WasmTlsReg, offsetof(TlsData, cx)), scratch);
-  masm.add32(Imm32(increment),
-             Address(scratch, offsetof(JSContext, suppressGC) +
-                                  js::ThreadData<int32_t>::offsetOfValue()));
-}
-#endif
-
 static void CallFuncExport(MacroAssembler& masm, const FuncExport& fe,
                            const Maybe<ImmPtr>& funcPtr) {
   MOZ_ASSERT(fe.hasEagerStubs() == !funcPtr);
@@ -296,7 +291,6 @@ static void CallFuncExport(MacroAssembler& masm, const FuncExport& fe,
 // must map from the ABI of ExportFuncPtr to the export's signature's ABI.
 static bool GenerateInterpEntry(MacroAssembler& masm, const FuncExport& fe,
                                 const Maybe<ImmPtr>& funcPtr,
-                                HasGcTypes gcTypesConfigured,
                                 Offsets* offsets) {
   AssertExpectedSP(masm);
   masm.haltingAlign(CodeAlignment);
@@ -305,16 +299,16 @@ static bool GenerateInterpEntry(MacroAssembler& masm, const FuncExport& fe,
 
   // Save the return address if it wasn't already saved by the call insn.
 #ifdef JS_USE_LINK_REGISTER
-#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS32) || \
-    defined(JS_CODEGEN_MIPS64)
+#  if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS32) || \
+      defined(JS_CODEGEN_MIPS64)
   masm.pushReturnAddress();
-#elif defined(JS_CODEGEN_ARM64)
+#  elif defined(JS_CODEGEN_ARM64)
   // WasmPush updates framePushed() unlike pushReturnAddress(), but that's
   // cancelled by the setFramePushed() below.
   WasmPush(masm, lr);
-#else
+#  else
   MOZ_CRASH("Implement this");
-#endif
+#  endif
 #endif
 
   // Save all caller non-volatile registers before we clobber them here and in
@@ -355,11 +349,8 @@ static bool GenerateInterpEntry(MacroAssembler& masm, const FuncExport& fe,
         WasmTlsReg);
   }
 
-#ifdef ENABLE_WASM_GC
+#ifdef ENABLE_WASM_REFTYPES
   WasmPush(masm, WasmTlsReg);
-  if (gcTypesConfigured == HasGcTypes::True) {
-    SuppressGC(masm, 1, scratch);
-  }
 #endif
 
   // Save 'argv' on the stack so that we can recover it after the call.
@@ -415,11 +406,8 @@ static bool GenerateInterpEntry(MacroAssembler& masm, const FuncExport& fe,
   // Recover the 'argv' pointer which was saved before aligning the stack.
   WasmPop(masm, argv);
 
-#ifdef ENABLE_WASM_GC
+#ifdef ENABLE_WASM_REFTYPES
   WasmPop(masm, WasmTlsReg);
-  if (gcTypesConfigured == HasGcTypes::True) {
-    SuppressGC(masm, -1, WasmTlsReg);
-  }
 #endif
 
   // Store the return value in argv[0].
@@ -527,7 +515,7 @@ static void GenerateJitEntryThrow(MacroAssembler& masm, unsigned frameSize) {
 
 static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
                              const FuncExport& fe, const Maybe<ImmPtr>& funcPtr,
-                             HasGcTypes gcTypesConfigured, Offsets* offsets) {
+                             Offsets* offsets) {
   AssertExpectedSP(masm);
 
   RegisterOrSP sp = masm.getStackPointer();
@@ -538,16 +526,7 @@ static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
   // left):
   // <-- retAddr | descriptor | callee | argc | this | arg1..N
 
-#ifdef ENABLE_WASM_GC
-  // Save WasmTlsReg in the uppermost part of the reserved area, because we
-  // need it directly after the call.
-  unsigned savedTlsSize = AlignBytes(sizeof(void*), WasmStackAlignment);
-#else
-  unsigned savedTlsSize = 0;
-#endif
-
-  unsigned normalBytesNeeded =
-      StackArgBytes(fe.funcType().args()) + savedTlsSize;
+  unsigned normalBytesNeeded = StackArgBytes(fe.funcType().args());
 
   MIRTypeVector coerceArgTypes;
   MOZ_ALWAYS_TRUE(coerceArgTypes.append(MIRType::Int32));
@@ -561,10 +540,6 @@ static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
   // instruction.
   unsigned frameSize = StackDecrementForCall(WasmStackAlignment,
                                              masm.framePushed(), bytesNeeded);
-
-#ifdef ENABLE_WASM_GC
-  unsigned savedTlsOffset = frameSize - sizeof(void*);
-#endif
 
   // Reserve stack space for wasm ABI arguments, set up like this:
   // <-- ABI args | padding
@@ -741,25 +716,11 @@ static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
   // Setup wasm register state.
   masm.loadWasmPinnedRegsFromTls();
 
-#ifdef ENABLE_WASM_GC
-  if (gcTypesConfigured == HasGcTypes::True) {
-    masm.storePtr(WasmTlsReg, Address(sp, savedTlsOffset));
-    SuppressGC(masm, 1, ScratchIonEntry);
-  }
-#endif
-
   // Call into the real function. Note that, due to the throw stub, fp, tls
   // and pinned registers may be clobbered.
   masm.assertStackAlignment(WasmStackAlignment);
   CallFuncExport(masm, fe, funcPtr);
   masm.assertStackAlignment(WasmStackAlignment);
-
-#ifdef ENABLE_WASM_GC
-  if (gcTypesConfigured == HasGcTypes::True) {
-    masm.loadPtr(Address(sp, savedTlsOffset), WasmTlsReg);
-    SuppressGC(masm, -1, WasmTlsReg);
-  }
-#endif
 
   // If fp is equal to the FailFP magic value (set by the throw stub), then
   // report the exception to the JIT caller by jumping into the exception
@@ -778,15 +739,19 @@ static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
     case ExprType::I32:
       masm.boxNonDouble(JSVAL_TYPE_INT32, ReturnReg, JSReturnOperand);
       break;
-    case ExprType::F32:
+    case ExprType::F32: {
       masm.canonicalizeFloat(ReturnFloat32Reg);
       masm.convertFloat32ToDouble(ReturnFloat32Reg, ReturnDoubleReg);
-      masm.boxDouble(ReturnDoubleReg, JSReturnOperand, ScratchDoubleReg);
+      ScratchDoubleScope fpscratch(masm);
+      masm.boxDouble(ReturnDoubleReg, JSReturnOperand, fpscratch);
       break;
-    case ExprType::F64:
+    }
+    case ExprType::F64: {
       masm.canonicalizeDouble(ReturnDoubleReg);
-      masm.boxDouble(ReturnDoubleReg, JSReturnOperand, ScratchDoubleReg);
+      ScratchDoubleScope fpscratch(masm);
+      masm.boxDouble(ReturnDoubleReg, JSReturnOperand, fpscratch);
       break;
+    }
     case ExprType::Ref:
       MOZ_CRASH("return ref in jitentry NYI");
       break;
@@ -867,8 +832,8 @@ static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
 void wasm::GenerateDirectCallFromJit(MacroAssembler& masm, const FuncExport& fe,
                                      const Instance& inst,
                                      const JitCallStackArgVector& stackArgs,
-                                     bool profilingEnabled, bool wasmGcEnabled,
-                                     Register scratch, uint32_t* callOffset) {
+                                     bool profilingEnabled, Register scratch,
+                                     uint32_t* callOffset) {
   MOZ_ASSERT(!IsCompilingWasm());
 
   size_t framePushedAtStart = masm.framePushed();
@@ -942,14 +907,18 @@ void wasm::GenerateDirectCallFromJit(MacroAssembler& masm, const FuncExport& fe,
         Address src = stackArg.addr();
         src.offset += masm.framePushed() - framePushedAtStart;
         switch (iter.mirType()) {
-          case MIRType::Double:
-            masm.loadDouble(src, ScratchDoubleReg);
-            masm.storeDouble(ScratchDoubleReg, dst);
+          case MIRType::Double: {
+            ScratchDoubleScope fpscratch(masm);
+            masm.loadDouble(src, fpscratch);
+            masm.storeDouble(fpscratch, dst);
             break;
-          case MIRType::Float32:
-            masm.loadFloat32(src, ScratchFloat32Reg);
-            masm.storeFloat32(ScratchFloat32Reg, dst);
+          }
+          case MIRType::Float32: {
+            ScratchFloat32Scope fpscratch(masm);
+            masm.loadFloat32(src, fpscratch);
+            masm.storeFloat32(fpscratch, dst);
             break;
+          }
           case MIRType::Int32:
             masm.loadPtr(src, scratch);
             masm.storePtr(scratch, dst);
@@ -969,12 +938,6 @@ void wasm::GenerateDirectCallFromJit(MacroAssembler& masm, const FuncExport& fe,
   masm.movePtr(ImmPtr(inst.tlsData()), WasmTlsReg);
   masm.loadWasmPinnedRegsFromTls();
 
-#ifdef ENABLE_WASM_GC
-  if (wasmGcEnabled) {
-    SuppressGC(masm, 1, ABINonArgReg0);
-  }
-#endif
-
   // Actual call.
   const CodeTier& codeTier = inst.code().codeTier(inst.code().bestTier());
   const MetadataTier& metadata = codeTier.metadata();
@@ -984,12 +947,6 @@ void wasm::GenerateDirectCallFromJit(MacroAssembler& masm, const FuncExport& fe,
   masm.assertStackAlignment(WasmStackAlignment);
   masm.callJit(ImmPtr(callee));
   masm.assertStackAlignment(WasmStackAlignment);
-
-#ifdef ENABLE_WASM_GC
-  if (wasmGcEnabled) {
-    SuppressGC(masm, -1, WasmTlsReg);
-  }
-#endif
 
   masm.branchPtr(Assembler::Equal, FramePointer, Imm32(wasm::FailFP),
                  masm.exceptionLabel());
@@ -1048,12 +1005,14 @@ static void StackCopy(MacroAssembler& masm, MIRType type, Register scratch,
     masm.loadPtr(src, scratch);
     masm.storePtr(scratch, dst);
   } else if (type == MIRType::Float32) {
-    masm.loadFloat32(src, ScratchFloat32Reg);
-    masm.storeFloat32(ScratchFloat32Reg, dst);
+    ScratchFloat32Scope fpscratch(masm);
+    masm.loadFloat32(src, fpscratch);
+    masm.storeFloat32(fpscratch, dst);
   } else {
     MOZ_ASSERT(type == MIRType::Double);
-    masm.loadDouble(src, ScratchDoubleReg);
-    masm.storeDouble(ScratchDoubleReg, dst);
+    ScratchDoubleScope fpscratch(masm);
+    masm.loadDouble(src, fpscratch);
+    masm.storeDouble(fpscratch, dst);
   }
 }
 
@@ -1104,23 +1063,27 @@ static void FillArgumentArray(MacroAssembler& masm, const ValTypeVector& args,
         if (type == MIRType::Double) {
           if (toValue) {
             // Preserve the NaN pattern in the input.
-            masm.moveDouble(srcReg, ScratchDoubleReg);
-            srcReg = ScratchDoubleReg;
-            masm.canonicalizeDouble(srcReg);
+            ScratchDoubleScope fpscratch(masm);
+            masm.moveDouble(srcReg, fpscratch);
+            masm.canonicalizeDouble(fpscratch);
+            masm.storeDouble(fpscratch, dst);
+          } else {
+            masm.storeDouble(srcReg, dst);
           }
-          masm.storeDouble(srcReg, dst);
         } else {
           MOZ_ASSERT(type == MIRType::Float32);
           if (toValue) {
             // JS::Values can't store Float32, so convert to a Double.
-            masm.convertFloat32ToDouble(srcReg, ScratchDoubleReg);
-            masm.canonicalizeDouble(ScratchDoubleReg);
-            masm.storeDouble(ScratchDoubleReg, dst);
+            ScratchDoubleScope fpscratch(masm);
+            masm.convertFloat32ToDouble(srcReg, fpscratch);
+            masm.canonicalizeDouble(fpscratch);
+            masm.storeDouble(fpscratch, dst);
           } else {
             // Preserve the NaN pattern in the input.
-            masm.moveFloat32(srcReg, ScratchFloat32Reg);
-            masm.canonicalizeFloat(ScratchFloat32Reg);
-            masm.storeFloat32(ScratchFloat32Reg, dst);
+            ScratchFloat32Scope fpscratch(masm);
+            masm.moveFloat32(srcReg, fpscratch);
+            masm.canonicalizeFloat(fpscratch);
+            masm.storeFloat32(fpscratch, dst);
           }
         }
         break;
@@ -1139,14 +1102,16 @@ static void FillArgumentArray(MacroAssembler& masm, const ValTypeVector& args,
             MOZ_CRASH("generating a jit exit for anyref NYI");
           } else {
             MOZ_ASSERT(IsFloatingPointType(type));
+            ScratchDoubleScope dscratch(masm);
+            FloatRegister fscratch = dscratch.asSingle();
             if (type == MIRType::Float32) {
-              masm.loadFloat32(src, ScratchFloat32Reg);
-              masm.convertFloat32ToDouble(ScratchFloat32Reg, ScratchDoubleReg);
+              masm.loadFloat32(src, fscratch);
+              masm.convertFloat32ToDouble(fscratch, dscratch);
             } else {
-              masm.loadDouble(src, ScratchDoubleReg);
+              masm.loadDouble(src, dscratch);
             }
-            masm.canonicalizeDouble(ScratchDoubleReg);
-            masm.storeDouble(ScratchDoubleReg, dst);
+            masm.canonicalizeDouble(dscratch);
+            masm.storeDouble(dscratch, dst);
           }
         } else {
           StackCopy(masm, type, scratch, src, dst);
@@ -1360,8 +1325,9 @@ static bool GenerateImportInterpExit(MacroAssembler& masm, const FuncImport& fi,
       masm.loadDouble(argv, ReturnDoubleReg);
       break;
     case ExprType::Ref:
+      MOZ_CRASH("No Ref support here yet");
     case ExprType::AnyRef:
-      masm.call(SymbolicAddress::CallImport_Ref);
+      masm.call(SymbolicAddress::CallImport_AnyRef);
       masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, throwLabel);
       masm.loadPtr(argv, ReturnReg);
       break;
@@ -1778,6 +1744,25 @@ static_assert(!SupportsSimd,
               "high lanes of SIMD registers need to be saved too");
 #endif
 
+// Generate a MachineState which describes the locations of the GPRs as saved
+// by GenerateTrapExit.  FP registers are ignored.  Note that the values
+// stored in the MachineState are offsets in words downwards from the top of
+// the save area.  That is, a higher value implies a lower address.
+void wasm::GenerateTrapExitMachineState(MachineState* machine,
+                                        size_t* numWords) {
+  // This is the number of words pushed by the initial WasmPush().
+  *numWords = WasmPushSize / sizeof(void*);
+  MOZ_ASSERT(*numWords == TrapExitDummyValueOffsetFromTop + 1);
+
+  // And these correspond to the PushRegsInMask() that immediately follows.
+  for (GeneralRegisterBackwardIterator iter(RegsToPreserve.gprs()); iter.more();
+       ++iter) {
+    machine->setRegisterLocation(*iter,
+                                 reinterpret_cast<uintptr_t*>(*numWords));
+    (*numWords)++;
+  }
+}
+
 // Generate a stub which calls WasmReportTrap() and can be executed by having
 // the signal handler redirect PC from any trapping instruction.
 static bool GenerateTrapExit(MacroAssembler& masm, Label* throwLabel,
@@ -1794,7 +1779,7 @@ static bool GenerateTrapExit(MacroAssembler& masm, Label* throwLabel,
   // that registers are not clobbered, we need to preserve all registers in
   // the trap exit. One simplifying assumption is that flags may be clobbered.
   // Push a dummy word to use as return address below.
-  WasmPush(masm, ImmWord(0));
+  WasmPush(masm, ImmWord(TrapExitDummyValue));
   unsigned framePushedBeforePreserve = masm.framePushed();
   masm.PushRegsInMask(RegsToPreserve);
   unsigned offsetOfReturnWord = masm.framePushed() - framePushedBeforePreserve;
@@ -1927,13 +1912,12 @@ static bool GenerateDebugTrapStub(MacroAssembler& masm, Label* throwLabel,
 
 bool wasm::GenerateEntryStubs(MacroAssembler& masm, size_t funcExportIndex,
                               const FuncExport& fe, const Maybe<ImmPtr>& callee,
-                              bool isAsmJS, HasGcTypes gcTypesConfigured,
-                              CodeRangeVector* codeRanges) {
+                              bool isAsmJS, CodeRangeVector* codeRanges) {
   MOZ_ASSERT(!callee == fe.hasEagerStubs());
   MOZ_ASSERT_IF(isAsmJS, fe.hasEagerStubs());
 
   Offsets offsets;
-  if (!GenerateInterpEntry(masm, fe, callee, gcTypesConfigured, &offsets)) {
+  if (!GenerateInterpEntry(masm, fe, callee, &offsets)) {
     return false;
   }
   if (!codeRanges->emplaceBack(CodeRange::InterpEntry, fe.funcIndex(),
@@ -1945,8 +1929,7 @@ bool wasm::GenerateEntryStubs(MacroAssembler& masm, size_t funcExportIndex,
     return true;
   }
 
-  if (!GenerateJitEntry(masm, funcExportIndex, fe, callee, gcTypesConfigured,
-                        &offsets)) {
+  if (!GenerateJitEntry(masm, funcExportIndex, fe, callee, &offsets)) {
     return false;
   }
   if (!codeRanges->emplaceBack(CodeRange::JitEntry, fe.funcIndex(), offsets)) {
@@ -2007,7 +1990,7 @@ bool wasm::GenerateStubs(const ModuleEnvironment& env,
       continue;
     }
     if (!GenerateEntryStubs(masm, i, fe, noAbsolute, env.isAsmJS(),
-                            env.gcTypesConfigured, &code->codeRanges)) {
+                            &code->codeRanges)) {
       return false;
     }
   }

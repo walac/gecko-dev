@@ -1,4 +1,4 @@
-ChromeUtils.import("resource://gre/modules/FormHistory.jsm");
+const {FormHistory} = ChromeUtils.import("resource://gre/modules/FormHistory.jsm");
 
 const ENGINE_NAME = "engine-suggestions.xml";
 // This is fixed to match the port number in engine-suggestions.xml.
@@ -921,11 +921,7 @@ add_task(async function avoid_http_url_suggestions() {
     search: "ftp:/",
     searchParam: "enable-actions",
     matches: [
-      {
-        uri: makeActionURI("visiturl", { url: "http://ftp/", input: "ftp:/" }),
-        style: [ "action", "visiturl", "heuristic" ],
-        title: "http://ftp/",
-      },
+      makeSearchMatch("ftp:/", { engineName: ENGINE_NAME, heuristic: true }),
     ],
   });
 
@@ -987,11 +983,7 @@ add_task(async function avoid_http_url_suggestions() {
     search: "http:/",
     searchParam: "enable-actions",
     matches: [
-      {
-        uri: makeActionURI("visiturl", { url: "http://http/", input: "http:/" }),
-        style: [ "action", "visiturl", "heuristic" ],
-        title: "http://http/",
-      },
+      makeSearchMatch("http:/", { engineName: ENGINE_NAME, heuristic: true }),
     ],
   });
 
@@ -999,11 +991,7 @@ add_task(async function avoid_http_url_suggestions() {
     search: "https:/",
     searchParam: "enable-actions",
     matches: [
-      {
-        uri: makeActionURI("visiturl", { url: "http://https/", input: "https:/" }),
-        style: [ "action", "visiturl", "heuristic" ],
-        title: "http://https/",
-      },
+      makeSearchMatch("https:/", { engineName: ENGINE_NAME, heuristic: true }),
     ],
   });
 

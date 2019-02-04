@@ -20,6 +20,7 @@
 #include "mozilla/UniquePtr.h"
 #include "mozilla/webrender/WebRenderTypes.h"
 #include "mozilla/webrender/WebRenderAPI.h"
+#include "mozilla/webrender/RenderThread.h"
 #include "nsTArrayForwardDeclare.h"
 
 namespace mozilla {
@@ -103,8 +104,9 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
       nsTArray<RefCountedShmem>&& aSmallShmems,
       nsTArray<ipc::Shmem>&& aLargeShmems, const wr::IdNamespace& aIdNamespace,
       const bool& aContainsSVGGroup, const VsyncId& aVsyncId,
-      const TimeStamp& aRefreshStartTime, const TimeStamp& aTxnStartTime,
-      const nsCString& aTxnURL, const TimeStamp& aFwdTime) override;
+      const TimeStamp& aVsyncStartTime, const TimeStamp& aRefreshStartTime,
+      const TimeStamp& aTxnStartTime, const nsCString& aTxnURL,
+      const TimeStamp& aFwdTime) override;
   mozilla::ipc::IPCResult RecvEmptyTransaction(
       const FocusTarget& aFocusTarget, const ScrollUpdatesMap& aUpdates,
       const uint32_t& aPaintSequenceNumber,
@@ -114,9 +116,9 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
       nsTArray<OpUpdateResource>&& aResourceUpdates,
       nsTArray<RefCountedShmem>&& aSmallShmems,
       nsTArray<ipc::Shmem>&& aLargeShmems, const wr::IdNamespace& aIdNamespace,
-      const VsyncId& aVsyncId, const TimeStamp& aRefreshStartTime,
-      const TimeStamp& aTxnStartTime, const nsCString& aTxnURL,
-      const TimeStamp& aFwdTime) override;
+      const VsyncId& aVsyncId, const TimeStamp& aVsyncStartTime,
+      const TimeStamp& aRefreshStartTime, const TimeStamp& aTxnStartTime,
+      const nsCString& aTxnURL, const TimeStamp& aFwdTime) override;
   mozilla::ipc::IPCResult RecvSetFocusTarget(
       const FocusTarget& aFocusTarget) override;
   mozilla::ipc::IPCResult RecvParentCommands(
@@ -176,9 +178,10 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
   void HoldPendingTransactionId(
       const wr::Epoch& aWrEpoch, TransactionId aTransactionId,
       bool aContainsSVGGroup, const VsyncId& aVsyncId,
-      const TimeStamp& aRefreshStartTime, const TimeStamp& aTxnStartTime,
-      const nsCString& aTxnURL, const TimeStamp& aFwdTime,
-      const bool aIsFirstPaint, const bool aUseForTelemetry = true);
+      const TimeStamp& aVsyncStartTime, const TimeStamp& aRefreshStartTime,
+      const TimeStamp& aTxnStartTime, const nsCString& aTxnURL,
+      const TimeStamp& aFwdTime, const bool aIsFirstPaint,
+      const bool aUseForTelemetry = true);
   TransactionId LastPendingTransactionId();
   TransactionId FlushTransactionIdsForEpoch(
       const wr::Epoch& aEpoch, const VsyncId& aCompositeStartId,
@@ -221,6 +224,8 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
    * This function is used to force rendering even when there is not update.
    */
   void ScheduleForcedGenerateFrame();
+
+  void NotifyDidSceneBuild(RefPtr<wr::WebRenderPipelineInfo> aInfo);
 
   wr::Epoch UpdateWebRender(
       CompositorVsyncScheduler* aScheduler, wr::WebRenderAPI* aApi,
@@ -318,10 +323,20 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
 
   void MaybeGenerateFrame(VsyncId aId, bool aForceGenerateFrame);
 
+  VsyncId GetVsyncIdForEpoch(const wr::Epoch& aEpoch) {
+    for (auto& id : mPendingTransactionIds) {
+      if (id.mEpoch.mHandle == aEpoch.mHandle) {
+        return id.mVsyncId;
+      }
+    }
+    return VsyncId();
+  }
+
  private:
   struct PendingTransactionId {
     PendingTransactionId(const wr::Epoch& aEpoch, TransactionId aId,
                          bool aContainsSVGGroup, const VsyncId& aVsyncId,
+                         const TimeStamp& aVsyncStartTime,
                          const TimeStamp& aRefreshStartTime,
                          const TimeStamp& aTxnStartTime,
                          const nsCString& aTxnURL, const TimeStamp& aFwdTime,
@@ -329,6 +344,7 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
         : mEpoch(aEpoch),
           mId(aId),
           mVsyncId(aVsyncId),
+          mVsyncStartTime(aVsyncStartTime),
           mRefreshStartTime(aRefreshStartTime),
           mTxnStartTime(aTxnStartTime),
           mTxnURL(aTxnURL),
@@ -340,6 +356,7 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
     wr::Epoch mEpoch;
     TransactionId mId;
     VsyncId mVsyncId;
+    TimeStamp mVsyncStartTime;
     TimeStamp mRefreshStartTime;
     TimeStamp mTxnStartTime;
     nsCString mTxnURL;
@@ -370,7 +387,7 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
   // mActiveAnimations is used to avoid leaking animations when
   // WebRenderBridgeParent is destroyed abnormally and Tab move between
   // different windows.
-  std::unordered_set<uint64_t> mActiveAnimations;
+  std::unordered_map<uint64_t, wr::Epoch> mActiveAnimations;
   std::unordered_map<uint64_t, RefPtr<WebRenderImageHost>> mAsyncCompositables;
   std::unordered_map<uint64_t, CompositableTextureHostRef> mTextureHosts;
   std::unordered_map<uint64_t, wr::ExternalImageId> mSharedSurfaceIds;
@@ -388,6 +405,9 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
   std::queue<CompositorAnimationIdsForEpoch> mCompositorAnimationsToDelete;
   wr::Epoch mWrEpoch;
   wr::IdNamespace mIdNamespace;
+
+  VsyncId mSkippedCompositeId;
+  TimeStamp mMostRecentComposite;
 
   bool mPaused;
   bool mDestroyed;

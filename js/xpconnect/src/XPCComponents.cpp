@@ -16,6 +16,7 @@
 #include "nsCycleCollector.h"
 #include "jsfriendapi.h"
 #include "js/CharacterEncoding.h"
+#include "js/ContextOptions.h"
 #include "js/SavedFrameAPI.h"
 #include "js/StructuredClone.h"
 #include "mozilla/Attributes.h"
@@ -31,7 +32,6 @@
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/StructuredCloneTags.h"
 #include "mozilla/dom/WindowBinding.h"
-#include "mozilla/Scheduler.h"
 #include "nsZipArchive.h"
 #include "nsWindowMemoryReporter.h"
 #include "nsICycleCollectorListener.h"
@@ -1589,8 +1589,13 @@ nsXPCComponents_Utils::Unload(const nsACString& registryLocation) {
 NS_IMETHODIMP
 nsXPCComponents_Utils::ImportGlobalProperties(HandleValue aPropertyList,
                                               JSContext* cx) {
-  RootedObject global(cx, CurrentGlobalOrNull(cx));
+  // Ensure we're working in the scripted caller's realm. This is not guaranteed
+  // to be the current realm because we switch realms when calling cross-realm
+  // functions.
+  RootedObject global(cx, JS::GetScriptedCallerGlobal(cx));
   MOZ_ASSERT(global);
+  js::AssertSameCompartment(cx, global);
+  JSAutoRealm ar(cx, global);
 
   // Don't allow doing this if the global is a Window
   nsGlobalWindowInner* win;
@@ -1632,7 +1637,7 @@ NS_IMETHODIMP
 nsXPCComponents_Utils::ForceGC() {
   JSContext* cx = XPCJSContext::Get()->Context();
   PrepareForFullGC(cx);
-  NonIncrementalGC(cx, GC_NORMAL, gcreason::COMPONENT_UTILS);
+  NonIncrementalGC(cx, GC_NORMAL, GCReason::COMPONENT_UTILS);
   return NS_OK;
 }
 
@@ -1678,7 +1683,7 @@ NS_IMETHODIMP
 nsXPCComponents_Utils::ForceShrinkingGC() {
   JSContext* cx = dom::danger::GetJSContext();
   PrepareForFullGC(cx);
-  NonIncrementalGC(cx, GC_SHRINK, gcreason::COMPONENT_UTILS);
+  NonIncrementalGC(cx, GC_SHRINK, GCReason::COMPONENT_UTILS);
   return NS_OK;
 }
 
@@ -1691,7 +1696,7 @@ class PreciseGCRunnable : public Runnable {
 
   NS_IMETHOD Run() override {
     nsJSContext::GarbageCollectNow(
-        gcreason::COMPONENT_UTILS, nsJSContext::NonIncrementalGC,
+        GCReason::COMPONENT_UTILS, nsJSContext::NonIncrementalGC,
         mShrinking ? nsJSContext::ShrinkingGC : nsJSContext::NonShrinkingGC);
 
     mCallback->Callback();
@@ -1728,6 +1733,24 @@ nsXPCComponents_Utils::UnlinkGhostWindows() {
     }
   }
 
+  return NS_OK;
+#else
+  return NS_ERROR_NOT_IMPLEMENTED;
+#endif
+}
+
+#ifdef NS_FREE_PERMANENT_DATA
+struct IntentionallyLeakedObject {
+  IntentionallyLeakedObject() { MOZ_COUNT_CTOR(IntentionallyLeakedObject); }
+
+  ~IntentionallyLeakedObject() { MOZ_COUNT_DTOR(IntentionallyLeakedObject); }
+};
+#endif
+
+NS_IMETHODIMP
+nsXPCComponents_Utils::IntentionallyLeak() {
+#ifdef NS_FREE_PERMANENT_DATA
+  Unused << new IntentionallyLeakedObject();
   return NS_OK;
 #else
   return NS_ERROR_NOT_IMPLEMENTED;
@@ -1938,10 +1961,13 @@ nsXPCComponents_Utils::PermitCPOWsInScope(HandleValue obj) {
   }
 
   JSObject* scopeObj = js::UncheckedUnwrap(&obj.toObject());
-  MOZ_DIAGNOSTIC_ASSERT(
-      !mozJSComponentLoader::Get()->IsLoaderGlobal(scopeObj),
-      "Don't call Cu.PermitCPOWsInScope() in a JSM that shares its global");
-  CompartmentPrivate::Get(scopeObj)->allowCPOWs = true;
+  JS::Compartment* scopeComp = js::GetObjectCompartment(scopeObj);
+  JS::Compartment* systemComp =
+      js::GetObjectCompartment(xpc::PrivilegedJunkScope());
+  MOZ_RELEASE_ASSERT(scopeComp != systemComp,
+                     "Don't call Cu.PermitCPOWsInScope() on scopes in the "
+                     "shared system compartment");
+  CompartmentPrivate::Get(scopeComp)->allowCPOWs = true;
   return NS_OK;
 }
 
@@ -1973,9 +1999,8 @@ nsXPCComponents_Utils::SetWantXrays(HandleValue vscope, JSContext* cx) {
     return NS_ERROR_INVALID_ARG;
   }
   JSObject* scopeObj = js::UncheckedUnwrap(&vscope.toObject());
-  MOZ_DIAGNOSTIC_ASSERT(
-      !mozJSComponentLoader::Get()->IsLoaderGlobal(scopeObj),
-      "Don't call Cu.setWantXrays() in a JSM that shares its global");
+  MOZ_RELEASE_ASSERT(!AccessCheck::isChrome(scopeObj),
+                     "Don't call setWantXrays on system-principal scopes");
   JS::Compartment* compartment = js::GetObjectCompartment(scopeObj);
   CompartmentPrivate::Get(scopeObj)->wantXrays = true;
   bool ok = js::RecomputeWrappers(cx, js::SingleCompartment(compartment),
@@ -1987,11 +2012,12 @@ nsXPCComponents_Utils::SetWantXrays(HandleValue vscope, JSContext* cx) {
 NS_IMETHODIMP
 nsXPCComponents_Utils::ForcePermissiveCOWs(JSContext* cx) {
   xpc::CrashIfNotInAutomation();
-  JSObject* currentGlobal = CurrentGlobalOrNull(cx);
+  RootedObject global(cx, GetScriptedCallerGlobal(cx));
+  MOZ_ASSERT(global);
   MOZ_DIAGNOSTIC_ASSERT(
-      !mozJSComponentLoader::Get()->IsLoaderGlobal(currentGlobal),
+      !mozJSComponentLoader::Get()->IsLoaderGlobal(global),
       "Don't call Cu.forcePermissiveCOWs() in a JSM that shares its global");
-  CompartmentPrivate::Get(currentGlobal)->forcePermissiveCOWs = true;
+  RealmPrivate::Get(global)->forcePermissiveCOWs = true;
   return NS_OK;
 }
 
@@ -2077,7 +2103,7 @@ nsXPCComponents_Utils::NukeSandbox(HandleValue obj, JSContext* cx) {
   RootedObject sb(cx, UncheckedUnwrap(wrapper));
   NS_ENSURE_TRUE(IsSandbox(sb), NS_ERROR_INVALID_ARG);
 
-  xpc::NukeAllWrappersForCompartment(cx, GetObjectCompartment(sb));
+  xpc::NukeAllWrappersForRealm(cx, GetNonCCWObjectRealm(sb));
 
   return NS_OK;
 }
@@ -2398,19 +2424,6 @@ nsXPCComponents_Utils::Now(double* aRetval) {
 }
 
 NS_IMETHODIMP
-nsXPCComponents_Utils::BlockThreadedExecution(
-    nsIBlockThreadedExecutionCallback* aCallback) {
-  Scheduler::BlockThreadedExecution(aCallback);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsXPCComponents_Utils::UnblockThreadedExecution() {
-  Scheduler::UnblockThreadedExecution();
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsXPCComponents_Utils::RecordReplayDirective(int aDirective) {
   recordreplay::RecordReplayDirective(aDirective);
   return NS_OK;
@@ -2671,6 +2684,6 @@ ComponentsSH::PreCreate(nsISupports* nativeObj, JSContext* cx,
         "mScope must not be null when nsXPCComponents::PreCreate is called");
     return NS_ERROR_FAILURE;
   }
-  *parentObj = self->GetScope()->GetGlobalJSObject();
+  *parentObj = self->GetScope()->GetGlobalForWrappedNatives();
   return NS_OK;
 }

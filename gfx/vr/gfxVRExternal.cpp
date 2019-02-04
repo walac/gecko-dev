@@ -14,23 +14,24 @@
 #include "mozilla/gfx/Quaternion.h"
 
 #ifdef XP_WIN
-#include "CompositorD3D11.h"
-#include "TextureD3D11.h"
+#  include "CompositorD3D11.h"
+#  include "TextureD3D11.h"
 static const char* kShmemName = "moz.gecko.vr_ext.0.0.1";
 #elif defined(XP_MACOSX)
-#include "mozilla/gfx/MacIOSurface.h"
-#include <sys/mman.h>
-#include <sys/stat.h> /* For mode constants */
-#include <fcntl.h>    /* For O_* constants */
-#include <errno.h>
+#  include "mozilla/gfx/MacIOSurface.h"
+#  include <sys/mman.h>
+#  include <sys/stat.h> /* For mode constants */
+#  include <fcntl.h>    /* For O_* constants */
+#  include <errno.h>
 static const char* kShmemName = "/moz.gecko.vr_ext.0.0.1";
 #elif defined(MOZ_WIDGET_ANDROID)
-#include <string.h>
-#include <pthread.h>
-#include "GeckoVRManager.h"
+#  include <string.h>
+#  include <pthread.h>
+#  include "GeckoVRManager.h"
 #endif  // defined(MOZ_WIDGET_ANDROID)
 
 #include "gfxVRExternal.h"
+#include "gfxVRMutex.h"
 #include "VRManagerParent.h"
 #include "VRManager.h"
 #include "VRThread.h"
@@ -43,7 +44,7 @@ static const char* kShmemName = "/moz.gecko.vr_ext.0.0.1";
 #include "mozilla/Telemetry.h"
 
 #ifndef M_PI
-#define M_PI 3.14159265358979323846
+#  define M_PI 3.14159265358979323846
 #endif
 
 using namespace mozilla;
@@ -99,7 +100,7 @@ void VRDisplayExternal::ExpireNavigationTransition() {
   }
 }
 
-VRHMDSensorState VRDisplayExternal::GetSensorState() {
+VRHMDSensorState& VRDisplayExternal::GetSensorState() {
   return mLastSensorState;
 }
 
@@ -115,10 +116,10 @@ void VRDisplayExternal::StartPresentation() {
   mBrowserState.layerState[0].type = VRLayerType::LayerType_Stereo_Immersive;
   PushState();
 
-  mDisplayInfo.mDisplayState.mLastSubmittedFrameId = 0;
-  if (mDisplayInfo.mDisplayState.mReportsDroppedFrames) {
+  mDisplayInfo.mDisplayState.lastSubmittedFrameId = 0;
+  if (mDisplayInfo.mDisplayState.reportsDroppedFrames) {
     mTelemetry.mLastDroppedFrameCount =
-        mDisplayInfo.mDisplayState.mDroppedFrameCount;
+        mDisplayInfo.mDisplayState.droppedFrameCount;
   }
 
 #if defined(MOZ_WIDGET_ANDROID)
@@ -143,13 +144,13 @@ void VRDisplayExternal::StopPresentation() {
   Telemetry::HistogramID droppedFramesID = Telemetry::HistogramCount;
   int viewIn = 0;
 
-  if (mDisplayInfo.mDisplayState.mEightCC ==
+  if (mDisplayInfo.mDisplayState.eightCC ==
       GFX_VR_EIGHTCC('O', 'c', 'u', 'l', 'u', 's', ' ', 'D')) {
     // Oculus Desktop API
     timeSpentID = Telemetry::WEBVR_TIME_SPENT_VIEWING_IN_OCULUS;
     droppedFramesID = Telemetry::WEBVR_DROPPED_FRAMES_IN_OCULUS;
     viewIn = 1;
-  } else if (mDisplayInfo.mDisplayState.mEightCC ==
+  } else if (mDisplayInfo.mDisplayState.eightCC ==
              GFX_VR_EIGHTCC('O', 'p', 'e', 'n', 'V', 'R', ' ', ' ')) {
     // OpenVR API
     timeSpentID = Telemetry::WEBVR_TIME_SPENT_VIEWING_IN_OPENVR;
@@ -163,7 +164,7 @@ void VRDisplayExternal::StopPresentation() {
     Telemetry::Accumulate(Telemetry::WEBVR_USERS_VIEW_IN, viewIn);
     Telemetry::Accumulate(timeSpentID, duration.ToMilliseconds());
     const uint32_t droppedFramesPerSec =
-        (mDisplayInfo.mDisplayState.mDroppedFrameCount -
+        (mDisplayInfo.mDisplayState.droppedFrameCount -
          mTelemetry.mLastDroppedFrameCount) /
         duration.ToSeconds();
     Telemetry::Accumulate(droppedFramesID, droppedFramesPerSec);
@@ -238,58 +239,58 @@ bool VRDisplayExternal::SubmitFrame(const layers::SurfaceDescriptor& aTexture,
              VRLayerType::LayerType_Stereo_Immersive);
   VRLayer_Stereo_Immersive& layer =
       mBrowserState.layerState[0].layer_stereo_immersive;
-  if (!PopulateLayerTexture(aTexture, &layer.mTextureType,
-                            &layer.mTextureHandle)) {
+  if (!PopulateLayerTexture(aTexture, &layer.textureType,
+                            &layer.textureHandle)) {
     return false;
   }
-  layer.mFrameId = aFrameId;
-  layer.mInputFrameId =
+  layer.frameId = aFrameId;
+  layer.inputFrameId =
       mDisplayInfo.mLastSensorState[mDisplayInfo.mFrameId % kVRMaxLatencyFrames]
           .inputFrameID;
 
-  layer.mLeftEyeRect.x = aLeftEyeRect.x;
-  layer.mLeftEyeRect.y = aLeftEyeRect.y;
-  layer.mLeftEyeRect.width = aLeftEyeRect.width;
-  layer.mLeftEyeRect.height = aLeftEyeRect.height;
-  layer.mRightEyeRect.x = aRightEyeRect.x;
-  layer.mRightEyeRect.y = aRightEyeRect.y;
-  layer.mRightEyeRect.width = aRightEyeRect.width;
-  layer.mRightEyeRect.height = aRightEyeRect.height;
+  layer.leftEyeRect.x = aLeftEyeRect.x;
+  layer.leftEyeRect.y = aLeftEyeRect.y;
+  layer.leftEyeRect.width = aLeftEyeRect.width;
+  layer.leftEyeRect.height = aLeftEyeRect.height;
+  layer.rightEyeRect.x = aRightEyeRect.x;
+  layer.rightEyeRect.y = aRightEyeRect.y;
+  layer.rightEyeRect.width = aRightEyeRect.width;
+  layer.rightEyeRect.height = aRightEyeRect.height;
 
   PushState(true);
 
 #if defined(MOZ_WIDGET_ANDROID)
   PullState([&]() {
-    return (mDisplayInfo.mDisplayState.mLastSubmittedFrameId >= aFrameId) ||
-           mDisplayInfo.mDisplayState.mSuppressFrames ||
-           !mDisplayInfo.mDisplayState.mIsConnected;
+    return (mDisplayInfo.mDisplayState.lastSubmittedFrameId >= aFrameId) ||
+           mDisplayInfo.mDisplayState.suppressFrames ||
+           !mDisplayInfo.mDisplayState.isConnected;
   });
 
-  if (mDisplayInfo.mDisplayState.mSuppressFrames ||
-      !mDisplayInfo.mDisplayState.mIsConnected) {
+  if (mDisplayInfo.mDisplayState.suppressFrames ||
+      !mDisplayInfo.mDisplayState.isConnected) {
     // External implementation wants to supress frames, service has shut down or
     // hardware has been disconnected.
     return false;
   }
 #else
-  while (mDisplayInfo.mDisplayState.mLastSubmittedFrameId < aFrameId) {
+  while (mDisplayInfo.mDisplayState.lastSubmittedFrameId < aFrameId) {
     if (PullState()) {
-      if (mDisplayInfo.mDisplayState.mSuppressFrames ||
-          !mDisplayInfo.mDisplayState.mIsConnected) {
+      if (mDisplayInfo.mDisplayState.suppressFrames ||
+          !mDisplayInfo.mDisplayState.isConnected) {
         // External implementation wants to supress frames, service has shut
         // down or hardware has been disconnected.
         return false;
       }
     }
-#ifdef XP_WIN
+#  ifdef XP_WIN
     Sleep(0);
-#else
+#  else
     sleep(0);
-#endif
+#  endif
   }
 #endif  // defined(MOZ_WIDGET_ANDROID)
 
-  return mDisplayInfo.mDisplayState.mLastSubmittedFrameSuccessful;
+  return mDisplayInfo.mDisplayState.lastSubmittedFrameSuccessful;
 }
 
 void VRDisplayExternal::VibrateHaptic(uint32_t aControllerIdx,
@@ -426,9 +427,11 @@ VRSystemManagerExternal::VRSystemManagerExternal(
     VRExternalShmem* aAPIShmem /* = nullptr*/)
     : mExternalShmem(aAPIShmem)
 #if !defined(MOZ_WIDGET_ANDROID)
-      ,
-      mSameProcess(aAPIShmem != nullptr)
-#endif
+#if defined(XP_WIN)
+    , mMutex(NULL)
+#endif  // defined(XP_WIN)
+    , mSameProcess(aAPIShmem != nullptr)
+#endif  // !defined(MOZ_WIDGET_ANDROID)
 {
 #if defined(XP_MACOSX)
   mShmemFD = 0;
@@ -439,15 +442,31 @@ VRSystemManagerExternal::VRSystemManagerExternal(
   mEnumerationCompleted = false;
 #endif
   mDoShutdown = false;
-
-  if (!aAPIShmem) {
-    OpenShmem();
-  }
 }
 
 VRSystemManagerExternal::~VRSystemManagerExternal() { CloseShmem(); }
 
 void VRSystemManagerExternal::OpenShmem() {
+#if defined(XP_WIN)
+  if (!mMutex) {
+     mMutex = CreateMutex(
+        NULL,                   // default security descriptor
+        false,                  // mutex not owned
+        TEXT("mozilla::vr::ShmemMutex"));  // object name
+
+    if (mMutex == NULL) {
+      nsAutoCString msg("VRService CreateMutex error \"%lu\".",
+                        GetLastError());
+      NS_WARNING(msg.get());
+      MOZ_ASSERT(false);
+      return;
+    }
+    else if (GetLastError() == ERROR_ALREADY_EXISTS) {
+      NS_WARNING("CreateMutex opened an existing mutex.");
+    }
+  }
+#endif  // defined(XP_WIN)
+
   if (mExternalShmem) {
     return;
 #if defined(MOZ_WIDGET_ANDROID)
@@ -490,7 +509,8 @@ void VRSystemManagerExternal::OpenShmem() {
       mShmemFile =
           CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0,
                              sizeof(VRExternalShmem), kShmemName);
-      MOZ_ASSERT(GetLastError() == 0);
+      MOZ_ASSERT(GetLastError() == 0 || GetLastError() == ERROR_ALREADY_EXISTS);
+      MOZ_ASSERT(mShmemFile);
     } else {
       mShmemFile = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, kShmemName);
     }
@@ -550,6 +570,12 @@ void VRSystemManagerExternal::CheckForShutdown() {
 }
 
 void VRSystemManagerExternal::CloseShmem() {
+#if defined(XP_WIN)
+  if (mMutex) {
+    CloseHandle(mMutex);
+    mMutex = NULL;
+  }
+#endif
 #if !defined(MOZ_WIDGET_ANDROID)
   if (mSameProcess) {
     return;
@@ -632,15 +658,15 @@ void VRSystemManagerExternal::Enumerate() {
                 [&]() { return mEnumerationCompleted; });
 #else
       while (!PullState(&displayState)) {
-#ifdef XP_WIN
+#  ifdef XP_WIN
         Sleep(0);
-#else
+#  else
         sleep(0);
-#endif  // XP_WIN
+#  endif  // XP_WIN
       }
-#endif  // defined(MOZ_WIDGET_ANDROID)
+#endif    // defined(MOZ_WIDGET_ANDROID)
 
-      if (displayState.mIsConnected) {
+      if (displayState.isConnected) {
         mDisplay = new VRDisplayExternal(displayState);
       }
     }
@@ -772,7 +798,7 @@ bool VRSystemManagerExternal::PullState(
           if (!mEarliestRestartTime.IsNull() && mEarliestRestartTime < now) {
             mEarliestRestartTime =
                 now + TimeDuration::FromMilliseconds(
-                          (double)aDisplayState->mMinRestartInterval);
+                          (double)aDisplayState->minRestartInterval);
           }
         }
         if (!aWaitCondition || aWaitCondition()) {
@@ -799,8 +825,15 @@ bool VRSystemManagerExternal::PullState(
     VRHMDSensorState* aSensorState /* = nullptr */,
     VRControllerState* aControllerState /* = nullptr */) {
   bool success = false;
+  bool status = true;
   MOZ_ASSERT(mExternalShmem);
-  if (mExternalShmem) {
+
+#if defined(XP_WIN)
+  WaitForMutex lock(mMutex);
+  status = lock.GetStatus();
+#endif  // defined(XP_WIN)
+
+  if (mExternalShmem && status) {
     VRExternalShmem tmp;
     memcpy(&tmp, (void*)mExternalShmem, sizeof(VRExternalShmem));
     if (tmp.generationA == tmp.generationB && tmp.generationA != 0 &&
@@ -820,7 +853,7 @@ bool VRSystemManagerExternal::PullState(
         if (!mEarliestRestartTime.IsNull() && mEarliestRestartTime < now) {
           mEarliestRestartTime =
               now + TimeDuration::FromMilliseconds(
-                        (double)aDisplayState->mMinRestartInterval);
+                        (double)aDisplayState->minRestartInterval);
         }
       }
       success = true;
@@ -837,20 +870,30 @@ void VRSystemManagerExternal::PushState(VRBrowserState* aBrowserState,
   MOZ_ASSERT(mExternalShmem);
   if (mExternalShmem) {
 #if defined(MOZ_WIDGET_ANDROID)
-    if (pthread_mutex_lock((pthread_mutex_t*)&(mExternalShmem->browserMutex)) ==
+    if (pthread_mutex_lock((pthread_mutex_t*)&(mExternalShmem->geckoMutex)) ==
         0) {
-      memcpy((void*)&(mExternalShmem->browserState), aBrowserState,
+      memcpy((void*)&(mExternalShmem->geckoState), aBrowserState,
              sizeof(VRBrowserState));
       if (aNotifyCond) {
-        pthread_cond_signal((pthread_cond_t*)&(mExternalShmem->browserCond));
+        pthread_cond_signal((pthread_cond_t*)&(mExternalShmem->geckoCond));
       }
-      pthread_mutex_unlock((pthread_mutex_t*)&(mExternalShmem->browserMutex));
+      pthread_mutex_unlock((pthread_mutex_t*)&(mExternalShmem->geckoMutex));
     }
 #else
-    mExternalShmem->browserGenerationA++;
-    memcpy((void*)&(mExternalShmem->browserState), (void*)aBrowserState,
-           sizeof(VRBrowserState));
-    mExternalShmem->browserGenerationB++;
+    bool status = true;
+#if defined(XP_WIN)
+    WaitForMutex lock(mMutex);
+    status = lock.GetStatus();
+#endif  // defined(XP_WIN)
+    if (status) {
+      mExternalShmem->geckoGenerationA++;
+      memcpy((void*)&(mExternalShmem->geckoState), (void*)aBrowserState,
+            sizeof(VRBrowserState));
+      mExternalShmem->geckoGenerationB++; mExternalShmem->geckoGenerationA++;
+      memcpy((void*)&(mExternalShmem->geckoState), (void*)aBrowserState,
+            sizeof(VRBrowserState));
+      mExternalShmem->geckoGenerationB++;
+    }
 #endif  // defined(MOZ_WIDGET_ANDROID)
   }
 }

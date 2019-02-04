@@ -187,16 +187,6 @@ bool ForwardingProxyHandler::construct(JSContext* cx, HandleObject proxy,
   return true;
 }
 
-bool ForwardingProxyHandler::getPropertyDescriptor(
-    JSContext* cx, HandleObject proxy, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) const {
-  assertEnteredPolicy(cx, proxy, id, GET | SET | GET_PROPERTY_DESCRIPTOR);
-  MOZ_ASSERT(
-      !hasPrototype());  // Should never be called if there's a prototype.
-  RootedObject target(cx, proxy->as<ProxyObject>().target());
-  return GetPropertyDescriptor(cx, target, id, desc);
-}
-
 bool ForwardingProxyHandler::hasOwn(JSContext* cx, HandleObject proxy,
                                     HandleId id, bool* bp) const {
   assertEnteredPolicy(cx, proxy, id, GET);
@@ -280,13 +270,14 @@ bool ForwardingProxyHandler::isConstructor(JSObject* obj) const {
   return target->isConstructor();
 }
 
-JSObject* Wrapper::weakmapKeyDelegate(JSObject* proxy) const {
-  // This may be called during GC.
-  return UncheckedUnwrapWithoutExpose(proxy);
-}
-
 JSObject* Wrapper::New(JSContext* cx, JSObject* obj, const Wrapper* handler,
                        const WrapperOptions& options) {
+  // If this is a cross-compartment wrapper allocate it in the compartment's
+  // first realm. See Realm::realmForNewCCW.
+  mozilla::Maybe<AutoRealmUnchecked> ar;
+  if (handler->isCrossCompartmentWrapper()) {
+    ar.emplace(cx, cx->compartment()->realmForNewCCW());
+  }
   RootedValue priv(cx, ObjectValue(*obj));
   return NewProxyObject(cx, handler, priv, options.proto(), options);
 }
@@ -308,12 +299,14 @@ JSObject* Wrapper::wrappedObject(JSObject* wrapper) {
     MOZ_ASSERT_IF(IsCrossCompartmentWrapper(wrapper),
                   !IsCrossCompartmentWrapper(target));
 
+#ifdef DEBUG
     // An incremental GC will eventually mark the targets of black wrappers
     // black but while it is in progress we can observe gray targets.
-    MOZ_ASSERT_IF(
-        !wrapper->runtimeFromMainThread()->gc.isIncrementalGCInProgress() &&
-            wrapper->isMarkedBlack(),
-        JS::ObjectIsNotGray(target));
+    if (!wrapper->runtimeFromMainThread()->gc.isIncrementalGCInProgress() &&
+        wrapper->isMarkedBlack()) {
+      JS::AssertObjectIsNotGray(target);
+    }
+#endif
 
     // Unmark wrapper targets that should be black in case an incremental GC
     // hasn't marked them the correct color yet.
@@ -332,8 +325,8 @@ JS_FRIEND_API JSObject* js::UncheckedUnwrapWithoutExpose(JSObject* wrapped) {
     }
     wrapped = wrapped->as<WrapperObject>().target();
 
-    // This can be called from Wrapper::weakmapKeyDelegate() on a wrapper
-    // whose referent has been moved while it is still unmarked.
+    // This can be called from when getting a weakmap key delegate() on a
+    // wrapper whose referent has been moved while it is still unmarked.
     if (wrapped) {
       wrapped = MaybeForwarded(wrapped);
     }

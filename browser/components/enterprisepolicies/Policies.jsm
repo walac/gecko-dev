@@ -4,9 +4,9 @@
 
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
 XPCOMUtils.defineLazyServiceGetters(this, {
   gCertDB: ["@mozilla.org/security/x509certdb;1", "nsIX509CertDB"],
@@ -27,7 +27,7 @@ const PREF_LOGLEVEL           = "browser.policies.loglevel";
 const BROWSER_DOCUMENT_URL    = AppConstants.BROWSER_CHROME_URL;
 
 XPCOMUtils.defineLazyGetter(this, "log", () => {
-  let { ConsoleAPI } = ChromeUtils.import("resource://gre/modules/Console.jsm", {});
+  let { ConsoleAPI } = ChromeUtils.import("resource://gre/modules/Console.jsm");
   return new ConsoleAPI({
     prefix: "Policies.jsm",
     // tip: set maxLogLevel to "debug" and use log.debug() to create detailed
@@ -130,6 +130,12 @@ var Policies = {
   "Bookmarks": {
     onAllWindowsRestored(manager, param) {
       BookmarksPolicies.processBookmarks(param);
+    },
+  },
+
+  "CaptivePortal": {
+    onBeforeAddons(manager, param) {
+      setAndLockPref("network.captive-portal-service.enabled", param);
     },
   },
 
@@ -259,26 +265,6 @@ var Policies = {
           setAndLockPref("network.cookie.lifetimePolicy", newLifetimePolicy);
         } else {
           setDefaultPref("network.cookie.lifetimePolicy", newLifetimePolicy);
-        }
-      }
-    },
-  },
-
-  "DNSOverHTTPS": {
-    onBeforeAddons(manager, param) {
-      if ("Enabled" in param) {
-        let mode = param.Enabled ? 2 : 5;
-        if (param.Locked) {
-          setAndLockPref("network.trr.mode", mode);
-        } else {
-          setDefaultPref("network.trr.mode", mode);
-        }
-      }
-      if (param.ProviderURL) {
-        if (param.Locked) {
-          setAndLockPref("network.trr.uri", param.ProviderURL.href);
-        } else {
-          setDefaultPref("network.trr.uri", param.ProviderURL.href);
         }
       }
     },
@@ -473,6 +459,26 @@ var Policies = {
       runOncePerModification("displayMenuBar", value, () => {
         gXulStore.setValue(BROWSER_DOCUMENT_URL, "toolbar-menubar", "autohide", value);
       });
+    },
+  },
+
+  "DNSOverHTTPS": {
+    onBeforeAddons(manager, param) {
+      if ("Enabled" in param) {
+        let mode = param.Enabled ? 2 : 5;
+        if (param.Locked) {
+          setAndLockPref("network.trr.mode", mode);
+        } else {
+          setDefaultPref("network.trr.mode", mode);
+        }
+      }
+      if (param.ProviderURL) {
+        if (param.Locked) {
+          setAndLockPref("network.trr.uri", param.ProviderURL.href);
+        } else {
+          setDefaultPref("network.trr.uri", param.ProviderURL.href);
+        }
+      }
     },
   },
 
@@ -893,6 +899,48 @@ var Policies = {
           log.debug(ex);
         }
       }
+    },
+  },
+
+  "SSLVersionMax": {
+    onBeforeAddons(manager, param) {
+      let tlsVersion;
+      switch (param) {
+        case "tls1":
+          tlsVersion = 1;
+          break;
+        case "tls1.1":
+          tlsVersion = 2;
+          break;
+        case "tls1.2":
+          tlsVersion = 3;
+          break;
+        case "tls1.3":
+          tlsVersion = 4;
+          break;
+      }
+      setAndLockPref("security.tls.version.max", tlsVersion);
+    },
+  },
+
+  "SSLVersionMin": {
+    onBeforeAddons(manager, param) {
+      let tlsVersion;
+      switch (param) {
+        case "tls1":
+          tlsVersion = 1;
+          break;
+        case "tls1.1":
+          tlsVersion = 2;
+          break;
+        case "tls1.2":
+          tlsVersion = 3;
+          break;
+        case "tls1.3":
+          tlsVersion = 4;
+          break;
+      }
+      setAndLockPref("security.tls.version.min", tlsVersion);
     },
   },
 

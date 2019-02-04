@@ -6,7 +6,7 @@
 #include "UiCompositorControllerParent.h"
 
 #if defined(MOZ_WIDGET_ANDROID)
-#include "apz/src/APZCTreeManager.h"
+#  include "apz/src/APZCTreeManager.h"
 #endif
 #include "mozilla/layers/Compositor.h"
 #include "mozilla/layers/CompositorBridgeParent.h"
@@ -15,6 +15,9 @@
 #include "mozilla/gfx/Types.h"
 #include "mozilla/Move.h"
 #include "mozilla/Unused.h"
+
+#include "FrameMetrics.h"
+#include "SynchronousTask.h"
 
 namespace mozilla {
 namespace layers {
@@ -240,6 +243,21 @@ void UiCompositorControllerParent::NotifyFirstPaint() {
   ToolbarAnimatorMessageFromCompositor(FIRST_PAINT);
 }
 
+void UiCompositorControllerParent::NotifyUpdateScreenMetrics(
+    const FrameMetrics& aMetrics) {
+#if defined(MOZ_WIDGET_ANDROID)
+  CSSToScreenScale scale = ViewTargetAs<ScreenPixel>(
+      aMetrics.GetZoom().ToScaleFactor(),
+      PixelCastJustification::ScreenIsParentLayerForRoot);
+  ScreenPoint scrollOffset = aMetrics.GetScrollOffset() * scale;
+  CompositorThreadHolder::Loop()->PostTask(
+      NewRunnableMethod<ScreenPoint, CSSToScreenScale>(
+          "UiCompositorControllerParent::SendRootFrameMetrics", this,
+          &UiCompositorControllerParent::SendRootFrameMetrics, scrollOffset,
+          scale));
+#endif
+}
+
 UiCompositorControllerParent::UiCompositorControllerParent(
     const LayersId& aRootLayerTreeId)
     : mRootLayerTreeId(aRootLayerTreeId)
@@ -260,9 +278,16 @@ void UiCompositorControllerParent::InitializeForSameProcess() {
   // This function is called by UiCompositorControllerChild in the main thread.
   // So dispatch to the compositor thread to Initialize.
   if (!CompositorThreadHolder::IsInCompositorThread()) {
-    CompositorThreadHolder::Loop()->PostTask(NewRunnableMethod(
-        "layers::UiCompositorControllerParent::InitializeForSameProcess", this,
-        &UiCompositorControllerParent::InitializeForSameProcess));
+    SynchronousTask task(
+        "UiCompositorControllerParent::InitializeForSameProcess");
+
+    CompositorThreadHolder::Loop()->PostTask(NS_NewRunnableFunction(
+        "UiCompositorControllerParent::InitializeForSameProcess", [&]() {
+          AutoCompleteTask complete(&task);
+          InitializeForSameProcess();
+        }));
+
+    task.Wait();
     return;
   }
 

@@ -9,10 +9,10 @@ var EXPORTED_SYMBOLS = ["ProxyScriptContext", "ProxyChannelFilter"];
 
 /* exported ProxyScriptContext, ProxyChannelFilter */
 
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-ChromeUtils.import("resource://gre/modules/ExtensionCommon.jsm");
-ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {ExtensionCommon} = ChromeUtils.import("resource://gre/modules/ExtensionCommon.jsm");
+const {ExtensionUtils} = ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
 
 ChromeUtils.defineModuleGetter(this, "ExtensionChild",
                                "resource://gre/modules/ExtensionChild.jsm");
@@ -384,7 +384,7 @@ class ProxyScriptContext extends BaseContext {
     Schemas.exportLazyGetter(this.sandbox, "browser", () => this.browserObj);
 
     try {
-      Services.scriptloader.loadSubScript(this.url, this.sandbox, "UTF-8");
+      Services.scriptloader.loadSubScript(this.url, this.sandbox);
     } catch (error) {
       this.extension.emit("proxy-error", {
         message: this.normalizeError(error).message,

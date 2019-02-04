@@ -8,6 +8,7 @@
 #define xpcpublic_h
 
 #include "jsapi.h"
+#include "js/BuildId.h"  // JS::BuildIdCharVector
 #include "js/HeapAPI.h"
 #include "js/GCAPI.h"
 #include "js/Proxy.h"
@@ -90,8 +91,6 @@ bool IsInContentXBLScope(JSObject* obj);
 bool IsUAWidgetCompartment(JS::Compartment* compartment);
 bool IsUAWidgetScope(JS::Realm* realm);
 bool IsInUAWidgetScope(JSObject* obj);
-
-bool IsInSandboxCompartment(JSObject* obj);
 
 bool MightBeWebContentCompartment(JS::Compartment* compartment);
 
@@ -409,10 +408,9 @@ bool StringToJsval(JSContext* cx, mozilla::dom::DOMString& str,
 nsIPrincipal* GetCompartmentPrincipal(JS::Compartment* compartment);
 nsIPrincipal* GetRealmPrincipal(JS::Realm* realm);
 
-void NukeAllWrappersForCompartment(
-    JSContext* cx, JS::Compartment* compartment,
-    js::NukeReferencesToWindow nukeReferencesToWindow =
-        js::NukeWindowReferences);
+void NukeAllWrappersForRealm(JSContext* cx, JS::Realm* realm,
+                             js::NukeReferencesToWindow nukeReferencesToWindow =
+                                 js::NukeWindowReferences);
 
 void SetLocationForGlobal(JSObject* global, const nsACString& location);
 void SetLocationForGlobal(JSObject* global, nsIURI* locationURI);
@@ -717,6 +715,24 @@ bool IfaceID2JSValue(JSContext* aCx, const nsXPTInterfaceInfo& aInfo,
 bool ContractID2JSValue(JSContext* aCx, JSString* aContract,
                         JS::MutableHandleValue aVal);
 
+class JSStackFrameBase {
+ public:
+  virtual void Clear() = 0;
+};
+
+void RegisterJSStackFrame(JS::Realm* aRealm, JSStackFrameBase* aStackFrame);
+void UnregisterJSStackFrame(JS::Realm* aRealm, JSStackFrameBase* aStackFrame);
+void NukeJSStackFrames(JS::Realm* aRealm);
+
+// Check whether the given jsid is a property name (string or symbol) whose
+// value can be gotten cross-origin.  Cross-origin gets always return undefined
+// as the value, unless the Xray actually provides a different value.
+bool IsCrossOriginWhitelistedProp(JSContext* cx, JS::HandleId id);
+
+// Appends to props the jsids for property names (strings or symbols) whose
+// value can be gotten cross-origin.
+bool AppendCrossOriginWhitelistedPropNames(JSContext* cx,
+                                           JS::AutoIdVector& props);
 }  // namespace xpc
 
 namespace mozilla {

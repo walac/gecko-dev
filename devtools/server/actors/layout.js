@@ -56,11 +56,7 @@ const FlexboxActor = ActorClassWithSpec(flexboxSpec, {
     this.walker = null;
   },
 
-  form(detail) {
-    if (detail === "actorid") {
-      return this.actorID;
-    }
-
+  form() {
     const styles = CssLogic.getComputedStyle(this.containerEl);
 
     const form = {
@@ -156,11 +152,7 @@ const FlexItemActor = ActorClassWithSpec(flexItemSpec, {
     this.walker = null;
   },
 
-  form(detail) {
-    if (detail === "actorid") {
-      return this.actorID;
-    }
-
+  form() {
     const { mainAxisDirection } = this.flexItemSizing;
     const dimension = mainAxisDirection.startsWith("horizontal") ? "width" : "height";
 
@@ -276,11 +268,7 @@ const GridActor = ActorClassWithSpec(gridSpec, {
     this.walker = null;
   },
 
-  form(detail) {
-    if (detail === "actorid") {
-      return this.actorID;
-    }
-
+  form() {
     // Seralize the grid fragment data into JSON so protocol.js knows how to write
     // and read the data.
     const gridFragments = this.containerEl.getGridFragments();
@@ -336,11 +324,13 @@ const LayoutActor = ActorClassWithSpec(layoutSpec, {
    *         The node to start iterating at.
    * @param  {String} type
    *         Can be "grid" or "flex", the display type we are searching for.
+   * @param  {Boolean} onlyLookAtContainer
+   *         If true, only look at given node's container and iterate from there.
    * @return {GridActor|FlexboxActor|null}
    *         The GridActor or FlexboxActor of the grid/flex container of the given node.
    *         Otherwise, returns null.
    */
-  getCurrentDisplay(node, type) {
+  getCurrentDisplay(node, type, onlyLookAtContainer) {
     if (isNodeDead(node)) {
       return null;
     }
@@ -361,7 +351,17 @@ const LayoutActor = ActorClassWithSpec(layoutSpec, {
       }
 
       if (flexType && displayType.includes("flex")) {
-        return new FlexboxActor(this, node);
+        if (!onlyLookAtContainer) {
+          return new FlexboxActor(this, node);
+        }
+
+        const container = findFlexOrGridParentContainerForNode(node, type, this.walker);
+
+        if (container) {
+          return new FlexboxActor(this, container);
+        }
+
+        return null;
       } else if (gridType && displayType.includes("grid")) {
         return new GridActor(this, node);
       }
@@ -414,11 +414,7 @@ const LayoutActor = ActorClassWithSpec(layoutSpec, {
    *         null.
    */
   getCurrentFlexbox(node, onlyLookAtParents) {
-    if (onlyLookAtParents) {
-      node = node.rawNode.parentNode;
-    }
-
-    return this.getCurrentDisplay(node, "flex");
+    return this.getCurrentDisplay(node, "flex", onlyLookAtParents);
   },
 
   /**
@@ -482,10 +478,6 @@ function findFlexOrGridParentContainerForNode(node, type, walker) {
 
   try {
     while ((currentNode = treeWalker.parentNode())) {
-      if (!currentNode) {
-        break;
-      }
-
       const displayType = walker.getNode(currentNode).displayType;
       if (!displayType) {
         break;

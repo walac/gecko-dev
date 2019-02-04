@@ -5,7 +5,6 @@
 /* import-globals-from extensionControlled.js */
 /* import-globals-from preferences.js */
 
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 ChromeUtils.defineModuleGetter(this, "PlacesUtils",
                                "resource://gre/modules/PlacesUtils.jsm");
 ChromeUtils.defineModuleGetter(this, "ExtensionSettingsStore",
@@ -400,9 +399,8 @@ var gSearchPane = {
 function onDragEngineStart(event) {
   var selectedIndex = gEngineView.selectedIndex;
   var tree = document.getElementById("engineList");
-  var row = { }, col = { }, child = { };
-  tree.treeBoxObject.getCellAt(event.clientX, event.clientY, row, col, child);
-  if (selectedIndex >= 0 && !gEngineView.isCheckBox(row.value, col.value)) {
+  let cell = tree.getCellAt(event.clientX, event.clientY);
+  if (selectedIndex >= 0 && !gEngineView.isCheckBox(cell.row, cell.col)) {
     event.dataTransfer.setData(ENGINE_FLAVOR, selectedIndex.toString());
     event.dataTransfer.effectAllowed = "move";
   }

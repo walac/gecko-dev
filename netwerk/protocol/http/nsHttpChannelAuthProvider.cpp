@@ -794,7 +794,7 @@ nsresult nsHttpChannelAuthProvider::GetCredentialsForChallenge(
 
       // Collect statistics on how frequently the various types of HTTP
       // authentication are used over SSL and non-SSL connections.
-      if (gHttpHandler->IsTelemetryEnabled()) {
+      if (Telemetry::CanRecordPrereleaseData()) {
         if (NS_LITERAL_CSTRING("basic").LowerCaseEqualsASCII(authType)) {
           Telemetry::Accumulate(
               Telemetry::HTTP_AUTH_TYPE_STATS,
@@ -943,7 +943,7 @@ bool nsHttpChannelAuthProvider::BlockPrompt(bool proxyAuth) {
     }
   }
 
-  if (gHttpHandler->IsTelemetryEnabled()) {
+  if (Telemetry::CanRecordPrereleaseData()) {
     if (topDoc) {
       Telemetry::Accumulate(Telemetry::HTTP_AUTH_DIALOG_STATS_3,
                             HTTP_AUTH_DIALOG_TOP_LEVEL_DOC);
@@ -1542,15 +1542,15 @@ void nsHttpChannelAuthProvider::SetAuthorizationHeader(
   // or a webserver
   nsISupports **continuationState;
 
+  nsAutoCString suffix;
   if (header == nsHttp::Proxy_Authorization) {
     continuationState = &mProxyAuthContinuationState;
   } else {
     continuationState = &mAuthContinuationState;
-  }
 
-  nsCOMPtr<nsIChannel> chan = do_QueryInterface(mAuthChannel);
-  nsAutoCString suffix;
-  GetOriginAttributesSuffix(chan, suffix);
+    nsCOMPtr<nsIChannel> chan = do_QueryInterface(mAuthChannel);
+    GetOriginAttributesSuffix(chan, suffix);
+  }
 
   rv = authCache->GetAuthEntryForPath(scheme, host, port, path, suffix, &entry);
   if (NS_SUCCEEDED(rv)) {

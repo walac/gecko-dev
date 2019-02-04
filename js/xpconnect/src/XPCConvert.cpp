@@ -38,9 +38,9 @@ using namespace JS;
 
 //#define STRICT_CHECK_OF_UNICODE
 #ifdef STRICT_CHECK_OF_UNICODE
-#define ILLEGAL_RANGE(c) (0 != ((c)&0xFF80))
+#  define ILLEGAL_RANGE(c) (0 != ((c)&0xFF80))
 #else  // STRICT_CHECK_OF_UNICODE
-#define ILLEGAL_RANGE(c) (0 != ((c)&0xFF00))
+#  define ILLEGAL_RANGE(c) (0 != ((c)&0xFF00))
 #endif  // STRICT_CHECK_OF_UNICODE
 
 #define ILLEGAL_CHAR_RANGE(c) (0 != ((c)&0x80))
@@ -937,6 +937,8 @@ bool XPCConvert::NativeInterface2JSObject(MutableHandleValue d,
     return false;
   }
 
+  JSAutoRealm ar(cx, xpcscope->GetGlobalForWrappedNatives());
+
   // First, see if this object supports the wrapper cache. In that case, the
   // object to use is found as cache->GetWrapper(). If that is null, then the
   // object will create (and fill the cache) from its WrapObject call.
@@ -944,8 +946,7 @@ bool XPCConvert::NativeInterface2JSObject(MutableHandleValue d,
 
   RootedObject flat(cx, cache ? cache->GetWrapper() : nullptr);
   if (!flat && cache) {
-    RootedObject global(cx, xpcscope->GetGlobalJSObject());
-    js::AssertSameCompartment(cx, global);
+    RootedObject global(cx, CurrentGlobalOrNull(cx));
     flat = cache->WrapObject(cx, nullptr);
     if (!flat) {
       return false;
@@ -1140,7 +1141,7 @@ bool XPCConvert::JSObject2NativeInterface(JSContext* cx, void** dest,
 
   // We need to go through the QueryInterface logic to make this return
   // the right thing for the various 'special' interfaces; e.g.
-  // nsIPropertyBag. We must use AggregatedQueryInterface in cases where
+  // nsISimpleEnumerator. We must use AggregatedQueryInterface in cases where
   // there is an outer to avoid nasty recursion.
   rv = aOuter ? wrapper->AggregatedQueryInterface(*iid, dest)
               : wrapper->QueryInterface(*iid, dest);

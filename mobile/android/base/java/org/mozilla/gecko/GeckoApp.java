@@ -63,6 +63,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Parcelable;
 import android.os.StrictMode;
 import android.provider.ContactsContract;
 import android.support.annotation.NonNull;
@@ -71,6 +72,7 @@ import android.support.design.widget.Snackbar;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.util.SparseIntArray;
 import android.view.KeyEvent;
@@ -109,6 +111,7 @@ import static org.mozilla.gecko.Tabs.INTENT_EXTRA_TAB_ID;
 import static org.mozilla.gecko.Tabs.INVALID_TAB_ID;
 import static org.mozilla.gecko.mma.MmaDelegate.DOWNLOAD_MEDIA_SAVED_IMAGE;
 import static org.mozilla.gecko.mma.MmaDelegate.READER_AVAILABLE;
+import static org.mozilla.gecko.util.JavaUtil.getBundleSizeInBytes;
 
 public abstract class GeckoApp extends GeckoActivity
                                implements AnchoredPopup.OnVisibilityChangeListener,
@@ -135,6 +138,7 @@ public abstract class GeckoApp extends GeckoActivity
 
     public static final String INTENT_REGISTER_STUMBLER_LISTENER = "org.mozilla.gecko.STUMBLER_REGISTER_LOCAL_LISTENER";
 
+    private static final String GECKOVIEW_STATE_BUNDLE     = "geckoViewState";
     public static final String EXTRA_STATE_BUNDLE          = "stateBundle";
 
     public static final String PREFS_ALLOW_STATE_BUNDLE    = "allowStateBundle";
@@ -156,6 +160,11 @@ public abstract class GeckoApp extends GeckoActivity
 
     public static final String SAVED_STATE_IN_BACKGROUND   = "inBackground";
     public static final String SAVED_STATE_PRIVATE_SESSION = "privateSession";
+    /**
+     * Speculative value for the maximum size the Activity Bundle can have in the hope to avoid
+     * TransactionTooLarge exceptions.
+     */
+    protected static final int MAX_BUNDLE_SIZE_BYTES = 300_000;
 
     // Delay before running one-time "cleanup" tasks that may be needed
     // after a version upgrade.
@@ -288,6 +297,15 @@ public abstract class GeckoApp extends GeckoActivity
 
         @Override
         public void onClosedTabsRead(final JSONArray closedTabData) throws JSONException {
+            // All tabs opened in the current session (including those that will be restored through
+            // the session store) will be numbered with a tab ID ≥ 0.
+            // To avoid duplicate IDs with closed tabs read from the previous session, we therefore
+            // renumber the latter with IDs in the negative range.
+            int closedTabId = Tabs.INVALID_TAB_ID;
+            for (int i = 0; i < closedTabData.length(); i++) {
+                final JSONObject closedTab = closedTabData.getJSONObject(i);
+                closedTab.put("tabId", --closedTabId);
+            }
             windowObject.put("closedTabs", closedTabData);
         }
 
@@ -635,9 +653,24 @@ public abstract class GeckoApp extends GeckoActivity
                 } catch (final InterruptedException e) { }
             }
             outState.putString(SAVED_STATE_PRIVATE_SESSION, mPrivateBrowsingSession);
+
+            // Make sure we are not bloating the Bundle which can result in TransactionTooLargeException
+            if (getBundleSizeInBytes(outState) > MAX_BUNDLE_SIZE_BYTES) {
+                outState.remove(SAVED_STATE_PRIVATE_SESSION);
+            }
         }
 
         outState.putBoolean(SAVED_STATE_IN_BACKGROUND, isApplicationInBackground());
+
+        // There are situations where the saved instance state will be cleared (e.g. user swipes
+        // away activity in the task switcher), but Gecko will actually remain alive (because
+        // another activity or service of ours is still running in this process). The saved state is
+        // the only way we can reconnect to our previous GeckoView session and all the user's open
+        // tabs, so we need to keep a copy of the state ourselves.
+        SparseArray<Parcelable> geckoViewState = new SparseArray<>();
+        mLayerView.saveHierarchyState(geckoViewState);
+        outState.putSparseParcelableArray(GECKOVIEW_STATE_BUNDLE, geckoViewState);
+        getGeckoApplication().setSavedState(geckoViewState);
     }
 
     public void addTab(int flags) { }
@@ -676,7 +709,7 @@ public abstract class GeckoApp extends GeckoActivity
               rec.recordGeckoStartupTime(mGeckoReadyStartupTimer.getElapsed());
             }
 
-            ((GeckoApplication) getApplicationContext()).onDelayedStartup();
+            getGeckoApplication().onDelayedStartup();
 
             // Reset the crash loop counter if we remain alive for at least half a minute.
             ThreadUtils.postDelayedToBackgroundThread(new Runnable() {
@@ -956,6 +989,11 @@ public abstract class GeckoApp extends GeckoActivity
      **/
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Within onCreate(), we might inject a different savedInstanceState for testing, but this
+        // won't influence what the OS will do with regards to calling onSaveInstanceState().
+        // Therefore, record whether we were passed some data or not.
+        final boolean receivedSavedInstanceState = (savedInstanceState != null);
+
         // Enable Android Strict Mode for developers' local builds (the "default" channel).
         if ("default".equals(AppConstants.MOZ_UPDATE_CHANNEL)) {
             enableStrictMode();
@@ -1086,10 +1124,14 @@ public abstract class GeckoApp extends GeckoActivity
         mGeckoLayout = (RelativeLayout) findViewById(R.id.gecko_layout);
         mMainLayout = (RelativeLayout) findViewById(R.id.main_layout);
         mLayerView = (GeckoView) findViewById(R.id.layer_view);
+        // Disable automatic state staving - we require some special handling that we need to do
+        // ourselves.
+        mLayerView.setSaveFromParentEnabled(false);
 
-        final GeckoSession session = new GeckoSession();
-        session.getSettings().setString(GeckoSessionSettings.CHROME_URI,
-                                        "chrome://browser/content/browser.xul");
+        final GeckoSession session = new GeckoSession(
+                new GeckoSessionSettings.Builder()
+                        .chromeUri("chrome://browser/content/browser.xul")
+                        .build());
         session.setContentDelegate(this);
 
         // If the view already has a session, we need to ensure it is closed.
@@ -1098,6 +1140,9 @@ public abstract class GeckoApp extends GeckoActivity
         }
         mLayerView.setSession(session, GeckoApplication.getRuntime());
         mLayerView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        if (mIsRestoringActivity && !receivedSavedInstanceState) {
+            restoreGeckoViewState(getGeckoApplication().getSavedState());
+        }
 
         getAppEventDispatcher().registerGeckoThreadListener(this,
             "Locale:Set",
@@ -1161,7 +1206,7 @@ public abstract class GeckoApp extends GeckoActivity
                         // history). This JSON data is then sent to Gecko so session
                         // history can be restored for each tab.
                         restoreMessage = restoreSessionTabs(isExternalURL, false);
-                    } catch (SessionRestoreException e) {
+                    } catch (SessionRestoreException | OutOfMemoryError e) {
                         // If mShouldRestore was set to false in restoreSessionTabs(), this means
                         // either that we intentionally skipped all tabs read from the session file,
                         // or else that the file was syntactically valid, but didn't contain any
@@ -1174,13 +1219,13 @@ public abstract class GeckoApp extends GeckoActivity
                             // Since we will also hit this situation regularly during first run though,
                             // we'll only report it in telemetry if we failed to restore despite the
                             // file existing, which means it's very probably damaged.
-                            if (getProfile().sessionFileExists()) {
+                            if (getProfile().sessionFileExists() && !(e instanceof OutOfMemoryError)) {
                                 Telemetry.addToHistogram("FENNEC_SESSIONSTORE_DAMAGED_SESSION_FILE", 1);
                             }
                             try {
                                 restoreMessage = restoreSessionTabs(isExternalURL, true);
                                 Telemetry.addToHistogram("FENNEC_SESSIONSTORE_RESTORING_FROM_BACKUP", 1);
-                            } catch (SessionRestoreException ex) {
+                            } catch (SessionRestoreException | OutOfMemoryError ex) {
                                 if (!mShouldRestore) {
                                     // Restoring only "failed" because the backup copy was deliberately empty, too.
                                     Telemetry.addToHistogram("FENNEC_SESSIONSTORE_RESTORING_FROM_BACKUP", 1);
@@ -1190,7 +1235,8 @@ public abstract class GeckoApp extends GeckoActivity
                                     mShouldRestore = false;
 
                                     if (!getSharedPreferencesForProfile().
-                                            getBoolean(PREFS_IS_FIRST_RUN, true)) {
+                                            getBoolean(PREFS_IS_FIRST_RUN, true) &&
+                                            !(ex instanceof OutOfMemoryError)) {
                                         // Except when starting with a fresh profile, we should normally
                                         // always have a session file available, even if it might only
                                         // contain an empty window.
@@ -1289,6 +1335,26 @@ public abstract class GeckoApp extends GeckoActivity
         }
 
         mWasFirstTabShownAfterActivityUnhidden = false; // onStart indicates we were hidden.
+    }
+
+    @Override
+    protected void onRestoreInstanceState(Bundle savedInstanceState) {
+        super.onRestoreInstanceState(savedInstanceState);
+
+        final SparseArray<Parcelable> stateToRestore =
+                savedInstanceState.getSparseParcelableArray(GECKOVIEW_STATE_BUNDLE);
+        restoreGeckoViewState(stateToRestore);
+    }
+
+    /**
+     * Restores the given state into our GeckoView and clears any state we might have kept locally
+     * within our process, as it has now become obsolete.
+     */
+    private void restoreGeckoViewState(final SparseArray<Parcelable> state) {
+        if (state != null) {
+            mLayerView.restoreHierarchyState(state);
+        }
+        getGeckoApplication().setSavedState(null);
     }
 
     @Override
@@ -2510,6 +2576,10 @@ public abstract class GeckoApp extends GeckoActivity
 
     public GeckoView getGeckoView() {
         return mLayerView;
+    }
+
+    protected GeckoApplication getGeckoApplication() {
+        return (GeckoApplication) getApplicationContext();
     }
 
     @Override

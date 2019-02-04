@@ -12,11 +12,10 @@
 #include "jsfriendapi.h"
 #include "js/CharacterEncoding.h"
 #include "xpcprivate.h"
-#include "CPOWTimer.h"
 #include "WrapperFactory.h"
 
 #include "nsIDocShellTreeItem.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 
 using namespace js;
 using namespace JS;
@@ -148,10 +147,7 @@ const CPOWProxyHandler CPOWProxyHandler::singleton;
   if (!owner->allowMessage(cx)) {                                       \
     return failRetVal;                                                  \
   }                                                                     \
-  {                                                                     \
-    CPOWTimer timer(cx);                                                \
-    return owner->call args;                                            \
-  }
+  { return owner->call args; }
 
 bool CPOWProxyHandler::getOwnPropertyDescriptor(
     JSContext* cx, HandleObject proxy, HandleId id,
@@ -1044,7 +1040,7 @@ static nsCString GetRemoteObjectTag(JS::Handle<JSObject*> obj) {
       return NS_LITERAL_CSTRING("ContentDocShellTreeItem");
     }
 
-    nsCOMPtr<nsIDocument> doc(do_QueryInterface(supports));
+    nsCOMPtr<dom::Document> doc(do_QueryInterface(supports));
     if (doc) {
       return NS_LITERAL_CSTRING("ContentDocument");
     }

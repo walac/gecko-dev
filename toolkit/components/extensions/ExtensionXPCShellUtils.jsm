@@ -7,9 +7,9 @@
 
 var EXPORTED_SYMBOLS = ["ExtensionTestUtils"];
 
-ChromeUtils.import("resource://gre/modules/ActorManagerParent.jsm");
-ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {ActorManagerParent} = ChromeUtils.import("resource://gre/modules/ActorManagerParent.jsm");
+const {ExtensionUtils} = ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 // Windowless browsers can create documents that rely on XUL Custom Elements:
 ChromeUtils.import("resource://gre/modules/CustomElementsListener.jsm", null);
@@ -32,9 +32,11 @@ ChromeUtils.defineModuleGetter(this, "Services",
                                "resource://gre/modules/Services.jsm");
 ChromeUtils.defineModuleGetter(this, "TestUtils",
                                "resource://testing-common/TestUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "ExtensionTestCommon",
+                               "resource://testing-common/ExtensionTestCommon.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "Management", () => {
-  const {Management} = ChromeUtils.import("resource://gre/modules/Extension.jsm", {});
+  const {Management} = ChromeUtils.import("resource://gre/modules/Extension.jsm", null);
   return Management;
 });
 
@@ -67,8 +69,8 @@ let BASE_MANIFEST = Object.freeze({
 
 
 function frameScript() {
-  ChromeUtils.import("resource://gre/modules/MessageChannel.jsm");
-  ChromeUtils.import("resource://gre/modules/Services.jsm");
+  const {MessageChannel} = ChromeUtils.import("resource://gre/modules/MessageChannel.jsm");
+  const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
   Services.obs.notifyObservers(this, "tab-content-frameloader-created");
 
@@ -114,15 +116,22 @@ function promiseBrowserLoaded(browser, url, redirectUrl) {
 }
 
 class ContentPage {
-  constructor(remote = REMOTE_CONTENT_SCRIPTS, extension = null) {
+  constructor(remote = REMOTE_CONTENT_SCRIPTS, extension = null, privateBrowsing = false) {
     this.remote = remote;
     this.extension = extension;
+    this.privateBrowsing = privateBrowsing;
 
     this.browserReady = this._initBrowser();
   }
 
   async _initBrowser() {
     this.windowlessBrowser = Services.appShell.createWindowlessBrowser(true);
+
+    if (this.privateBrowsing) {
+      let loadContext = this.windowlessBrowser.docShell
+                            .QueryInterface(Ci.nsILoadContext);
+      loadContext.usePrivateBrowsing = true;
+    }
 
     let system = Services.scriptSecurityManager.getSystemPrincipal();
 
@@ -131,7 +140,10 @@ class ContentPage {
 
     chromeShell.createAboutBlankContentViewer(system);
     chromeShell.useGlobalHistory = false;
-    chromeShell.loadURI("chrome://extensions/content/dummy.xul", 0, null, null, null, system);
+    let loadURIOptions = {
+      triggeringPrincipal: system,
+    };
+    chromeShell.loadURI("chrome://extensions/content/dummy.xul", loadURIOptions);
 
     await promiseObserved("chrome-document-global-created",
                           win => win.document == chromeShell.document);
@@ -330,11 +342,13 @@ class ExtensionWrapper {
     return this.startupPromise;
   }
 
-  startup() {
+  async startup() {
     if (this.state != "uninitialized") {
       throw new Error("Extension already started");
     }
     this.state = "pending";
+
+    await ExtensionTestCommon.setIncognitoOverride(this.extension);
 
     this.startupPromise = this.extension.startup().then(
       result => {
@@ -748,7 +762,7 @@ var ExtensionTestUtils = {
   addonManagerStarted: false,
 
   mockAppInfo() {
-    const {updateAppInfo} = ChromeUtils.import("resource://testing-common/AppInfo.jsm", {});
+    const {updateAppInfo} = ChromeUtils.import("resource://testing-common/AppInfo.jsm");
     updateAppInfo({
       ID: "xpcshell@tests.mozilla.org",
       name: "XPCShell",
@@ -828,10 +842,10 @@ var ExtensionTestUtils = {
    *
    * @returns {ContentPage}
    */
-  loadContentPage(url, {extension = undefined, remote = undefined, redirectUrl = undefined} = {}) {
+  loadContentPage(url, {extension = undefined, remote = undefined, redirectUrl = undefined, privateBrowsing = false} = {}) {
     ContentTask.setTestScope(this.currentScope);
 
-    let contentPage = new ContentPage(remote, extension && extension.extension);
+    let contentPage = new ContentPage(remote, extension && extension.extension, privateBrowsing);
 
     return contentPage.loadURL(url, redirectUrl).then(() => {
       return contentPage;

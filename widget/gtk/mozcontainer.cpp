@@ -9,15 +9,15 @@
 #include <gtk/gtk.h>
 #include <gdk/gdkx.h>
 #ifdef MOZ_WAYLAND
-#include "nsWaylandDisplay.h"
-#include <wayland-egl.h>
+#  include "nsWaylandDisplay.h"
+#  include <wayland-egl.h>
 #endif
 #include <stdio.h>
 #include <dlfcn.h>
 
 #ifdef ACCESSIBILITY
-#include <atk/atk.h>
-#include "maiRedundantObjectFactory.h"
+#  include <atk/atk.h>
+#  include "maiRedundantObjectFactory.h"
 #endif
 
 #ifdef MOZ_WAYLAND
@@ -31,6 +31,10 @@ static void moz_container_init(MozContainer *container);
 
 /* widget class methods */
 static void moz_container_map(GtkWidget *widget);
+#if defined(MOZ_WAYLAND)
+static gboolean moz_container_map_wayland(GtkWidget *widget,
+                                          GdkEventAny *event);
+#endif
 static void moz_container_unmap(GtkWidget *widget);
 static void moz_container_realize(GtkWidget *widget);
 static void moz_container_size_allocate(GtkWidget *widget,
@@ -129,6 +133,11 @@ void moz_container_class_init(MozContainerClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
 
   widget_class->map = moz_container_map;
+#if defined(MOZ_WAYLAND)
+  if (!GDK_IS_X11_DISPLAY(gdk_display_get_default())) {
+    widget_class->map_event = moz_container_map_wayland;
+  }
+#endif
   widget_class->unmap = moz_container_unmap;
   widget_class->realize = moz_container_realize;
   widget_class->size_allocate = moz_container_size_allocate;
@@ -148,7 +157,8 @@ void moz_container_init(MozContainer *container) {
   container->subsurface = nullptr;
   container->eglwindow = nullptr;
   container->frame_callback_handler = nullptr;
-  container->ready_to_draw = false;
+  // We can draw to x11 window any time.
+  container->ready_to_draw = GDK_IS_X11_DISPLAY(gdk_display_get_default());
   container->surface_needs_clear = true;
 #endif
 }
@@ -173,15 +183,24 @@ static void frame_callback_handler(void *data, struct wl_callback *callback,
 static const struct wl_callback_listener frame_listener = {
     frame_callback_handler};
 
-static void moz_container_map_wayland(MozContainer *container) {
-  container->surface_needs_clear = true;
-  container->ready_to_draw = false;
+static gboolean moz_container_map_wayland(GtkWidget *widget,
+                                          GdkEventAny *event) {
+  MozContainer *container = MOZ_CONTAINER(widget);
+
+  if (container->ready_to_draw || container->frame_callback_handler) {
+    return FALSE;
+  }
 
   wl_surface *gtk_container_surface =
       moz_container_get_gtk_container_surface(container);
-  container->frame_callback_handler = wl_surface_frame(gtk_container_surface);
-  wl_callback_add_listener(container->frame_callback_handler, &frame_listener,
-                           container);
+
+  if (gtk_container_surface) {
+    container->frame_callback_handler = wl_surface_frame(gtk_container_surface);
+    wl_callback_add_listener(container->frame_callback_handler, &frame_listener,
+                             container);
+  }
+
+  return FALSE;
 }
 
 static void moz_container_unmap_wayland(MozContainer *container) {
@@ -190,19 +209,43 @@ static void moz_container_unmap_wayland(MozContainer *container) {
   g_clear_pointer(&container->surface, wl_surface_destroy);
   g_clear_pointer(&container->frame_callback_handler, wl_callback_destroy);
 
+  container->surface_needs_clear = true;
   container->ready_to_draw = false;
 }
 
 static gint moz_container_get_scale(MozContainer *container) {
-    static auto sGdkWindowGetScaleFactorPtr = (gint(*)(GdkWindow *))dlsym(
-        RTLD_DEFAULT, "gdk_window_get_scale_factor");
+  static auto sGdkWindowGetScaleFactorPtr =
+      (gint(*)(GdkWindow *))dlsym(RTLD_DEFAULT, "gdk_window_get_scale_factor");
 
-    if (sGdkWindowGetScaleFactorPtr) {
-      GdkWindow *window = gtk_widget_get_window(GTK_WIDGET(container));
-      return (*sGdkWindowGetScaleFactorPtr)(window);
-    }
+  if (sGdkWindowGetScaleFactorPtr) {
+    GdkWindow *window = gtk_widget_get_window(GTK_WIDGET(container));
+    return (*sGdkWindowGetScaleFactorPtr)(window);
+  }
 
-    return 1;
+  return 1;
+}
+
+void moz_container_scale_changed(MozContainer *container,
+                                 GtkAllocation *aAllocation) {
+  if (!container->surface) {
+    return;
+  }
+
+  // Set correct scaled/unscaled mozcontainer offset
+  // especially when wl_egl is used but we don't recreate it as Gtk+ does.
+  gint x, y;
+  gdk_window_get_position(gtk_widget_get_window(GTK_WIDGET(container)), &x, &y);
+  wl_subsurface_set_position(container->subsurface, x, y);
+
+  // Try to only resize wl_egl_window on scale factor change.
+  // It's a bit risky as Gtk+ recreates it at that event.
+  if (container->eglwindow) {
+    gint scale = moz_container_get_scale(container);
+    wl_surface_set_buffer_scale(container->surface,
+                                moz_container_get_scale(container));
+    wl_egl_window_resize(container->eglwindow, aAllocation->width * scale,
+                         aAllocation->height * scale, 0, 0);
+  }
 }
 #endif
 
@@ -230,7 +273,7 @@ void moz_container_map(GtkWidget *widget) {
     gdk_window_show(gtk_widget_get_window(widget));
 #if defined(MOZ_WAYLAND)
     if (!GDK_IS_X11_DISPLAY(gdk_display_get_default())) {
-      moz_container_map_wayland(MOZ_CONTAINER(widget));
+      moz_container_map_wayland(widget, nullptr);
     }
 #endif
   }
@@ -269,8 +312,12 @@ void moz_container_realize(GtkWidget *widget) {
     attributes.width = allocation.width;
     attributes.height = allocation.height;
     attributes.wclass = GDK_INPUT_OUTPUT;
-    attributes.visual = gtk_widget_get_visual(widget);
     attributes.window_type = GDK_WINDOW_CHILD;
+    MozContainer *container = MOZ_CONTAINER(widget);
+    attributes.visual =
+        container->force_default_visual
+            ? gdk_screen_get_system_visual(gtk_widget_get_screen(widget))
+            : gtk_widget_get_visual(widget);
 
     window = gdk_window_new(parent, &attributes, attributes_mask);
     gdk_window_set_user_data(window, widget);
@@ -335,8 +382,7 @@ void moz_container_size_allocate(GtkWidget *widget, GtkAllocation *allocation) {
   }
   if (container->eglwindow) {
     gint scale = moz_container_get_scale(container);
-    wl_egl_window_resize(container->eglwindow,
-                         allocation->width * scale,
+    wl_egl_window_resize(container->eglwindow, allocation->width * scale,
                          allocation->height * scale, 0, 0);
   }
 #endif
@@ -459,7 +505,6 @@ struct wl_surface *moz_container_get_wl_surface(MozContainer *container) {
     container->subsurface = wl_subcompositor_get_subsurface(
         waylandDisplay->GetSubcompositor(), container->surface,
         moz_container_get_gtk_container_surface(container));
-    WaylandDisplayRelease(waylandDisplay);
 
     GdkWindow *window = gtk_widget_get_window(GTK_WIDGET(container));
     gint x, y;
@@ -475,6 +520,10 @@ struct wl_surface *moz_container_get_wl_surface(MozContainer *container) {
 
     wl_surface_set_buffer_scale(container->surface,
                                 moz_container_get_scale(container));
+
+    wl_surface_commit(container->surface);
+    wl_display_flush(waylandDisplay->GetDisplay());
+    WaylandDisplayRelease(waylandDisplay);
   }
 
   return container->surface;
@@ -489,9 +538,10 @@ struct wl_egl_window *moz_container_get_wl_egl_window(MozContainer *container) {
 
     GdkWindow *window = gtk_widget_get_window(GTK_WIDGET(container));
     gint scale = moz_container_get_scale(container);
-    container->eglwindow = wl_egl_window_create(
-        surface, gdk_window_get_width(window) * scale,
-                 gdk_window_get_height(window) * scale);
+    container->eglwindow =
+        wl_egl_window_create(surface, gdk_window_get_width(window) * scale,
+                             gdk_window_get_height(window) * scale);
+    wl_surface_set_buffer_scale(surface, scale);
   }
   return container->eglwindow;
 }
@@ -506,3 +556,7 @@ gboolean moz_container_surface_needs_clear(MozContainer *container) {
   return state;
 }
 #endif
+
+void moz_container_force_default_visual(MozContainer *container) {
+  container->force_default_visual = true;
+}

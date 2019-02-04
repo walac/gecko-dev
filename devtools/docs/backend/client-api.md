@@ -22,7 +22,7 @@ function start() {
   client = new DebuggerClient(transport);
 
   client.connect((type, traits) => {
-    // Now the client is conected to the server.
+    // Now the client is connected to the server.
     debugTab();
   });
 }
@@ -50,7 +50,7 @@ async function startClient() {
   client = new DebuggerClient(transport);
 
   client.connect((type, traits) => {
-    // Now the client is conected to the server.
+    // Now the client is connected to the server.
     debugTab();
   });
 }
@@ -73,16 +73,12 @@ Attaching to a browser tab requires enumerating the available tabs and attaching
 ```javascript
 function attachToTab() {
   // Get the list of tabs to find the one to attach to.
-  client.listTabs().then((response) => {
+  client.mainRoot.listTabs().then(tabs => {
     // Find the active tab.
-    let tab = response.tabs[response.selected];
+    let targetFront = tabs.find(tab => tab.selected);
 
     // Attach to the tab.
-    client.attachTarget(tab).then(([response, targetFront]) => {
-      if (!targetFront) {
-        return;
-      }
-
+    targetFront.attach().then(() => {
       // Now the targetFront is ready and can be used.
 
       // Attach listeners for client events.
@@ -168,7 +164,7 @@ function startDebugger() {
   // Start the client.
   client = new DebuggerClient(transport);
   client.connect((type, traits) => {
-    // Now the client is conected to the server.
+    // Now the client is connected to the server.
     debugTab();
   });
 }
@@ -182,22 +178,13 @@ function shutdownDebugger() {
  */
 function debugTab() {
   // Get the list of tabs to find the one to attach to.
-  client.listTabs().then(response => {
+  client.mainRoot.listTabs().then(tabs => {
     // Find the active tab.
-    let tab = response.tabs[response.selected];
+    let targetFront = tabs.find(tab => tab.selected);
     // Attach to the tab.
-    client.attachTarget(tab).then(([response, targetFront]) => {
-      if (!targetFront) {
-        return;
-      }
-
+    targetFront.attach().then(() => {
       // Attach to the thread (context).
-      client.attachThread(response.threadActor, (response, thread) => {
-        if (!thread) {
-          return;
-        }
-
-        threadClient = thread;
+      targetFront.attachThread().then(([response, threadClient]) => {
         // Attach listeners for thread events.
         threadClient.addListener("paused", onPause);
         threadClient.addListener("resumed", fooListener);

@@ -9,11 +9,9 @@
  * loads.
  */
 
-const {escaped} = ChromeUtils.import("resource://testing-common/AddonTestUtils.jsm", {});
+const {escaped} = ChromeUtils.import("resource://testing-common/AddonTestUtils.jsm", null);
 
 const env = Cc["@mozilla.org/process/environment;1"].getService(Ci.nsIEnvironment);
-
-Cu.importGlobalProperties(["URL"]);
 
 // Make sure media pre-loading is enabled on Android so that our <audio> and
 // <video> elements trigger the expected requests.

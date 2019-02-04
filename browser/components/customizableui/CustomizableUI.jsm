@@ -6,9 +6,9 @@
 
 var EXPORTED_SYMBOLS = ["CustomizableUI"];
 
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   SearchWidgetTracker: "resource:///modules/SearchWidgetTracker.jsm",
@@ -1451,6 +1451,9 @@ var CustomizableUIInternal = {
     if (!aWidget) {
       throw new Error("buildWidget was passed a non-widget to build.");
     }
+    if (!aWidget.showInPrivateBrowsing && PrivateBrowsingUtils.isWindowPrivate(aDocument.defaultView)) {
+      return null;
+    }
 
     log.debug("Building " + aWidget.id + " of type " + aWidget.type);
 
@@ -1520,6 +1523,9 @@ var CustomizableUIInternal = {
           log.error("Could not find the view node with id: " + aWidget.viewId +
                     ", for widget: " + aWidget.id + ".");
         }
+
+        let keyPressHandler = this.handleWidgetKeyPress.bind(this, aWidget, node);
+        node.addEventListener("keypress", keyPressHandler);
       }
       node.setAttribute("class", nodeClasses.join(" "));
 
@@ -1616,6 +1622,7 @@ var CustomizableUIInternal = {
   },
 
   handleWidgetCommand(aWidget, aNode, aEvent) {
+    // Note that aEvent can be a keypress event for widgets of type "view".
     log.debug("handleWidgetCommand");
 
     if (aWidget.onBeforeCommand) {
@@ -1670,6 +1677,15 @@ var CustomizableUIInternal = {
       // XXXunf Need to think this through more, and formalize.
       Services.obs.notifyObservers(aNode, "customizedui-widget-click", aWidget.id);
     }
+  },
+
+  handleWidgetKeyPress(aWidget, aNode, aEvent) {
+    if (aEvent.key != " " && aEvent.key != "Enter") {
+      return;
+    }
+    aEvent.stopPropagation();
+    aEvent.preventDefault();
+    this.handleWidgetCommand(aWidget, aNode, aEvent);
   },
 
   _getPanelForNode(aNode) {
@@ -1793,7 +1809,6 @@ var CustomizableUIInternal = {
       // that this was prevented, but we probably still want to close the panel.
       // If consumers don't want this to happen, they should specify the closemenu
       // attribute.
-
     } else if (aEvent.type != "command") { // mouse events:
       if (aEvent.defaultPrevented || aEvent.button != 0) {
         return;
@@ -2619,7 +2634,10 @@ var CustomizableUIInternal = {
 
   _resetUIState() {
     try {
-      gUIStateBeforeReset.drawInTitlebar = Services.prefs.getBoolPref(kPrefDrawInTitlebar);
+      // kPrefDrawInTitlebar may not be defined on Linux/Gtk+ which throws an exception
+      // and leads to whole test failure. Let's set a fallback default value to avoid that,
+      // both titlebar states are tested anyway and it's not important which state is tested first.
+      gUIStateBeforeReset.drawInTitlebar = Services.prefs.getBoolPref(kPrefDrawInTitlebar, false);
       gUIStateBeforeReset.extraDragSpace = Services.prefs.getBoolPref(kPrefExtraDragSpace);
       gUIStateBeforeReset.uiCustomizationState = Services.prefs.getCharPref(kPrefCustomizationState);
       gUIStateBeforeReset.uiDensity = Services.prefs.getIntPref(kPrefUIDensity);
@@ -4011,8 +4029,7 @@ function WidgetGroupWrapper(aWidget) {
     }
 
     let instance = aWidget.instances.get(aWindow.document);
-    if (!instance &&
-        (aWidget.showInPrivateBrowsing || !PrivateBrowsingUtils.isWindowPrivate(aWindow))) {
+    if (!instance) {
       instance = CustomizableUIInternal.buildWidget(aWindow.document,
                                                     aWidget);
     }

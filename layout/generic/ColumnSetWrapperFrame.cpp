@@ -27,11 +27,20 @@ nsBlockFrame* NS_NewColumnSetWrapperFrame(nsIPresShell* aPresShell,
 NS_IMPL_FRAMEARENA_HELPERS(ColumnSetWrapperFrame)
 
 NS_QUERYFRAME_HEAD(ColumnSetWrapperFrame)
-NS_QUERYFRAME_ENTRY(ColumnSetWrapperFrame)
+  NS_QUERYFRAME_ENTRY(ColumnSetWrapperFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsBlockFrame)
 
 ColumnSetWrapperFrame::ColumnSetWrapperFrame(ComputedStyle* aStyle)
     : nsBlockFrame(aStyle, kClassID) {}
+
+void ColumnSetWrapperFrame::Init(nsIContent* aContent,
+                                 nsContainerFrame* aParent,
+                                 nsIFrame* aPrevInFlow) {
+  nsBlockFrame::Init(aContent, aParent, aPrevInFlow);
+
+  // ColumnSetWrapperFrame doesn't need to call ResolveBidi().
+  RemoveStateBits(NS_BLOCK_NEEDS_BIDI_RESOLUTION);
+}
 
 nsContainerFrame* ColumnSetWrapperFrame::GetContentInsertionFrame() {
   nsIFrame* columnSet = PrincipalChildList().OnlyChild();
@@ -63,7 +72,20 @@ void ColumnSetWrapperFrame::AppendDirectlyOwnedAnonBoxes(
   // Thus, no need to restyle them. AssertColumnSpanWrapperSubtreeIsSane()
   // asserts all the conditions above which allow us to skip appending
   // -moz-column-span-wrappers.
-  nsIFrame* columnSet = PrincipalChildList().FirstChild();
+  auto FindFirstChildInChildLists = [this]() -> nsIFrame* {
+    const ChildListID listIDs[] = {kPrincipalList, kOverflowList};
+    for (nsIFrame* frag = this; frag; frag = frag->GetNextInFlow()) {
+      for (ChildListID id : listIDs) {
+        const nsFrameList& list = frag->GetChildList(id);
+        if (nsIFrame* firstChild = list.FirstChild()) {
+          return firstChild;
+        }
+      }
+    }
+    return nullptr;
+  };
+
+  nsIFrame* columnSet = FindFirstChildInChildLists();
   MOZ_ASSERT(columnSet && columnSet->IsColumnSetFrame(),
              "The first child should always be ColumnSet!");
   aResult.AppendElement(OwnedAnonBox(columnSet));
@@ -114,15 +136,26 @@ void ColumnSetWrapperFrame::RemoveFrame(ChildListID aListID,
   nsBlockFrame::RemoveFrame(aListID, aOldFrame);
 }
 
+void ColumnSetWrapperFrame::MarkIntrinsicISizesDirty() {
+  nsBlockFrame::MarkIntrinsicISizesDirty();
+
+  // The parent's method adds NS_BLOCK_NEEDS_BIDI_RESOLUTION to all our
+  // continuations. Clear the bit because we don't want to call ResolveBidi().
+  for (nsIFrame* f = FirstContinuation(); f; f = f->GetNextContinuation()) {
+    f->RemoveStateBits(NS_BLOCK_NEEDS_BIDI_RESOLUTION);
+  }
+}
+
 #ifdef DEBUG
 
 /* static */ void ColumnSetWrapperFrame::AssertColumnSpanWrapperSubtreeIsSane(
     const nsIFrame* aFrame) {
   MOZ_ASSERT(aFrame->IsColumnSpan(), "aFrame is not column-span?");
 
-  if (!aFrame->Style()->IsAnonBox()) {
-    // aFrame is the primary frame of the element having "column-span: all".
-    // Traverse no further.
+  if (!nsLayoutUtils::GetStyleFrame(const_cast<nsIFrame*>(aFrame))
+           ->Style()
+           ->IsAnonBox()) {
+    // aFrame's style frame has "column-span: all". Traverse no further.
     return;
   }
 

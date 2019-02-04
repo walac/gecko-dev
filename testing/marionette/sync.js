@@ -4,17 +4,17 @@
 
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const {
   error,
   stack,
   TimeoutError,
-} = ChromeUtils.import("chrome://marionette/content/error.js", {});
-const {truncate} = ChromeUtils.import("chrome://marionette/content/format.js", {});
-const {Log} = ChromeUtils.import("chrome://marionette/content/log.js", {});
+} = ChromeUtils.import("chrome://marionette/content/error.js");
+const {truncate} = ChromeUtils.import("chrome://marionette/content/format.js");
+const {Log} = ChromeUtils.import("chrome://marionette/content/log.js");
 
 XPCOMUtils.defineLazyGetter(this, "log", Log.get);
 
@@ -22,6 +22,7 @@ this.EXPORTED_SYMBOLS = [
   "executeSoon",
   "DebounceCallback",
   "IdlePromise",
+  "MessageManagerDestroyedPromise",
   "PollPromise",
   "Sleep",
   "TimedPromise",
@@ -91,14 +92,14 @@ function executeSoon(func) {
  *       } else {
  *         reject([]);
  *       }
- *     });
+ *     }, {timeout: 1000});
  *
  * @param {Condition} func
  *     Function to run off the main thread.
- * @param {number=} [timeout=2000] timeout
- *     Desired timeout.  If 0 or less than the runtime evaluation
+ * @param {number=} [timeout] timeout
+ *     Desired timeout if wanted.  If 0 or less than the runtime evaluation
  *     time of ``func``, ``func`` is guaranteed to run at least once.
- *     The default is 2000 milliseconds.
+ *     Defaults to using no timeout.
  * @param {number=} [interval=10] interval
  *     Duration between each poll of ``func`` in milliseconds.
  *     Defaults to 10 milliseconds.
@@ -114,23 +115,30 @@ function executeSoon(func) {
  * @throws {RangeError}
  *     If `timeout` or `interval` are not unsigned integers.
  */
-function PollPromise(func, {timeout = 2000, interval = 10} = {}) {
+function PollPromise(func, {timeout = null, interval = 10} = {}) {
   const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
 
   if (typeof func != "function") {
     throw new TypeError();
   }
-  if (!(typeof timeout == "number" && typeof interval == "number")) {
+  if (timeout != null && typeof timeout != "number") {
     throw new TypeError();
   }
-  if ((!Number.isInteger(timeout) || timeout < 0) ||
+  if (typeof interval != "number") {
+    throw new TypeError();
+  }
+  if ((timeout && (!Number.isInteger(timeout) || timeout < 0)) ||
       (!Number.isInteger(interval) || interval < 0)) {
     throw new RangeError();
   }
 
   return new Promise((resolve, reject) => {
-    const start = new Date().getTime();
-    const end = start + timeout;
+    let start, end;
+
+    if (Number.isInteger(timeout)) {
+      start = new Date().getTime();
+      end = start + timeout;
+    }
 
     let evalFn = () => {
       new Promise(func).then(resolve, rejected => {
@@ -138,9 +146,10 @@ function PollPromise(func, {timeout = 2000, interval = 10} = {}) {
           throw rejected;
         }
 
-        // return if timeout is 0, allowing |func| to be evaluated at
-        // least once
-        if (start == end || new Date().getTime() >= end) {
+        // return if there is a timeout and set to 0,
+        // allowing |func| to be evaluated at least once
+        if (typeof end != "undefined" &&
+            (start == end || new Date().getTime() >= end)) {
           resolve(rejected);
         }
       }).catch(reject);
@@ -151,7 +160,6 @@ function PollPromise(func, {timeout = 2000, interval = 10} = {}) {
     evalFn();
 
     timer.init(evalFn, interval, TYPE_REPEATING_SLACK);
-
   }).then(res => {
     timer.cancel();
     return res;
@@ -224,7 +232,6 @@ function TimedPromise(fn,
     } catch (e) {
       reject(e);
     }
-
   }).then(res => {
     timer.cancel();
     return res;
@@ -253,6 +260,46 @@ function Sleep(timeout) {
     throw new TypeError();
   }
   return new TimedPromise(() => {}, {timeout, throws: null});
+}
+
+/**
+ * Detects when the specified message manager has been destroyed.
+ *
+ * One can observe the removal and detachment of a content browser
+ * (`<xul:browser>`) or a chrome window by its message manager
+ * disconnecting.
+ *
+ * When a browser is associated with a tab, this is safer than only
+ * relying on the event `TabClose` which signalises the _intent to_
+ * remove a tab and consequently would lead to the destruction of
+ * the content browser and its browser message manager.
+ *
+ * When closing a chrome window it is safer than only relying on
+ * the event 'unload' which signalises the _intent to_ close the
+ * chrome window and consequently would lead to the destruction of
+ * the window and its window message manager.
+ *
+ * @param {MessageListenerManager} messageManager
+ *     The message manager to observe for its disconnect state.
+ *     Use the browser message manager when closing a content browser,
+ *     and the window message manager when closing a chrome window.
+ *
+ * @return {Promise}
+ *     A promise that resolves when the message manager has been destroyed.
+ */
+function MessageManagerDestroyedPromise(messageManager) {
+  return new Promise(resolve => {
+    function observe(subject, topic) {
+      log.trace(`Received observer notification ${topic}`);
+
+      if (subject == messageManager) {
+        Services.obs.removeObserver(this, "message-manager-disconnect");
+        resolve();
+      }
+    }
+
+    Services.obs.addObserver(observe, "message-manager-disconnect");
+  });
 }
 
 /**

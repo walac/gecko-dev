@@ -70,6 +70,7 @@ class Message extends Component {
         frame: PropTypes.any,
       })),
       isPaused: PropTypes.bool,
+      maybeScrollToBottom: PropTypes.func,
     };
   }
 
@@ -210,6 +211,7 @@ class Message extends Component {
           onViewSourceInScratchpad: serviceContainer.onViewSourceInScratchpad
             || serviceContainer.onViewSource,
           onViewSource: serviceContainer.onViewSource,
+          onReady: this.props.maybeScrollToBottom,
           sourceMapService: serviceContainer.sourceMapService,
         }),
       );
@@ -322,12 +324,11 @@ class Message extends Component {
           repeat,
           " ", location
         ),
-        // Add a newline for formatting when copying to the clipboard.
-        "\n",
-        // If an attachment is displayed, the final newline is handled by the attachment.
         attachment,
         ...notesNodes
-      )
+      ),
+      // If an attachment is displayed, the final newline is handled by the attachment.
+      attachment ? null : dom.br(),
     );
   }
 }

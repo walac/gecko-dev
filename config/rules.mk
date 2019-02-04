@@ -107,12 +107,6 @@ endif
 endif
 endif
 
-ifndef HOST_LIBRARY
-ifdef HOST_LIBRARY_NAME
-HOST_LIBRARY		:= $(LIB_PREFIX)$(HOST_LIBRARY_NAME).$(LIB_SUFFIX)
-endif
-endif
-
 ifdef FORCE_SHARED_LIB
 ifdef MKSHLIB
 
@@ -131,24 +125,11 @@ LINK_PDBFILE ?= $(basename $(@F)).pdb
 
 ifndef GNU_CC
 
-#
-# Unless we're building SIMPLE_PROGRAMS, all C++ files share a PDB file per
-# directory. For parallel builds, this PDB file is shared and locked by
-# MSPDBSRV.EXE, starting with MSVC8 SP1. If you're using MSVC 7.1 or MSVC8
-# without SP1, don't do parallel builds.
-#
-# The final PDB for libraries and programs is created by the linker and uses
-# a different name from the single PDB file created by the compiler. See
-# bug 462740.
-#
-
 ifdef SIMPLE_PROGRAMS
 COMPILE_PDB_FLAG ?= -Fd$(basename $(@F)).pdb
-else
-COMPILE_PDB_FLAG ?= -Fdgenerated.pdb -FS
-endif
 COMPILE_CFLAGS += $(COMPILE_PDB_FLAG)
 COMPILE_CXXFLAGS += $(COMPILE_PDB_FLAG)
+endif
 
 ifdef MOZ_DEBUG
 CODFILE=$(basename $(@F)).cod
@@ -172,8 +153,6 @@ endif
 ifeq ($(HOST_OS_ARCH),WINNT)
 HOST_PDBFILE=$(basename $(@F)).pdb
 HOST_PDB_FLAG ?= -Fd$(HOST_PDBFILE)
-HOST_CFLAGS += $(HOST_PDB_FLAG)
-HOST_CXXFLAGS += $(HOST_PDB_FLAG)
 HOST_C_LDFLAGS += $(HOST_PDB_FLAG)
 HOST_CXX_LDFLAGS += $(HOST_PDB_FLAG)
 endif
@@ -188,7 +167,7 @@ endif
 
 ifdef COMPILE_ENVIRONMENT
 ifndef TARGETS
-TARGETS			= $(LIBRARY) $(SHARED_LIBRARY) $(PROGRAM) $(SIMPLE_PROGRAMS) $(HOST_LIBRARY) $(HOST_PROGRAM) $(HOST_SIMPLE_PROGRAMS) $(HOST_SHARED_LIBRARY)
+TARGETS			= $(LIBRARY) $(SHARED_LIBRARY) $(PROGRAM) $(SIMPLE_PROGRAMS) $(HOST_PROGRAM) $(HOST_SIMPLE_PROGRAMS) $(HOST_SHARED_LIBRARY)
 endif
 
 ifdef MOZ_PROFILE_GENERATE
@@ -209,11 +188,11 @@ _OBJS = $(COBJS) $(SOBJS) $(CPPOBJS) $(CMOBJS) $(CMMOBJS) $(ASOBJS)
 OBJS = $(strip $(_OBJS))
 endif
 
-HOST_COBJS = $(addprefix host_,$(notdir $(HOST_CSRCS:.c=.$(OBJ_SUFFIX))))
+HOST_COBJS = $(addprefix host_,$(notdir $(HOST_CSRCS:.c=.$(_OBJ_SUFFIX))))
 # HOST_CPPOBJS can have different extensions (eg: .cpp, .cc)
-HOST_CPPOBJS = $(addprefix host_,$(notdir $(addsuffix .$(OBJ_SUFFIX),$(basename $(HOST_CPPSRCS)))))
-HOST_CMOBJS = $(addprefix host_,$(notdir $(HOST_CMSRCS:.m=.$(OBJ_SUFFIX))))
-HOST_CMMOBJS = $(addprefix host_,$(notdir $(HOST_CMMSRCS:.mm=.$(OBJ_SUFFIX))))
+HOST_CPPOBJS = $(addprefix host_,$(notdir $(addsuffix .$(_OBJ_SUFFIX),$(basename $(HOST_CPPSRCS)))))
+HOST_CMOBJS = $(addprefix host_,$(notdir $(HOST_CMSRCS:.m=.$(_OBJ_SUFFIX))))
+HOST_CMMOBJS = $(addprefix host_,$(notdir $(HOST_CMMSRCS:.mm=.$(_OBJ_SUFFIX))))
 ifndef HOST_OBJS
 _HOST_OBJS = $(HOST_COBJS) $(HOST_CPPOBJS) $(HOST_CMOBJS) $(HOST_CMMOBJS)
 HOST_OBJS = $(strip $(_HOST_OBJS))
@@ -225,7 +204,6 @@ IMPORT_LIBRARY :=
 REAL_LIBRARY :=
 PROGRAM :=
 SIMPLE_PROGRAMS :=
-HOST_LIBRARY :=
 HOST_SHARED_LIBRARY :=
 HOST_PROGRAM :=
 HOST_SIMPLE_PROGRAMS :=
@@ -255,7 +233,7 @@ GARBAGE			+= $(SIMPLE_PROGRAMS:%=%.$(OBJ_SUFFIX))
 endif
 
 ifdef HOST_SIMPLE_PROGRAMS
-GARBAGE			+= $(HOST_SIMPLE_PROGRAMS:%=%.$(OBJ_SUFFIX))
+GARBAGE			+= $(HOST_SIMPLE_PROGRAMS:%=%.$(_OBJ_SUFFIX))
 endif
 
 ifdef MACH
@@ -323,15 +301,6 @@ else
 _LOADER_PATH := @executable_path
 endif
 EXTRA_DSO_LDOPTS	+= -dynamiclib -install_name $(_LOADER_PATH)/$(SHARED_LIBRARY) -compatibility_version 1 -current_version 1 -single_module
-endif
-endif
-
-ifeq ($(OS_ARCH),NetBSD)
-ifneq (,$(filter arc cobalt hpcmips mipsco newsmips pmax sgimips,$(OS_TEST)))
-ifneq (,$(filter layout/%,$(relativesrcdir)))
-OS_CFLAGS += -Wa,-xgot
-OS_CXXFLAGS += -Wa,-xgot
-endif
 endif
 endif
 
@@ -452,7 +421,7 @@ OBJ_TARGETS = $(OBJS) $(PROGOBJS) $(HOST_OBJS) $(HOST_PROGOBJS)
 
 compile:: host target
 
-host:: $(HOST_LIBRARY) $(HOST_PROGRAM) $(HOST_SIMPLE_PROGRAMS) $(HOST_RUST_PROGRAMS) $(HOST_RUST_LIBRARY_FILE) $(HOST_SHARED_LIBRARY)
+host:: $(HOST_OBJS) $(HOST_PROGRAM) $(HOST_SIMPLE_PROGRAMS) $(HOST_RUST_PROGRAMS) $(HOST_RUST_LIBRARY_FILE) $(HOST_SHARED_LIBRARY)
 
 target:: $(filter-out $(MOZBUILD_NON_DEFAULT_TARGETS),$(LIBRARY) $(SHARED_LIBRARY) $(PROGRAM) $(SIMPLE_PROGRAMS) $(RUST_LIBRARY_FILE) $(RUST_PROGRAMS))
 
@@ -598,7 +567,7 @@ endif
 $(HOST_PROGRAM): $(HOST_PROGOBJS) $(HOST_LIBS) $(HOST_EXTRA_DEPS) $(GLOBAL_DEPS) $(call mkdir_deps,$(DEPTH)/dist/host/bin)
 	$(REPORT_BUILD)
 ifeq (_WINNT,$(GNU_CC)_$(HOST_OS_ARCH))
-	$(HOST_LINKER) -NOLOGO -OUT:$@ -PDB:$(HOST_PDBFILE) $(HOST_OBJS) $(WIN32_EXE_LDFLAGS) $(HOST_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(HOST_LINKER) -NOLOGO -OUT:$@ -PDB:$(HOST_PDBFILE) $($(notdir $@)_OBJS) $(WIN32_EXE_LDFLAGS) $(HOST_LDFLAGS) $(HOST_LINKER_LIBPATHS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 ifdef MSMANIFEST_TOOL
 	@if test -f $@.manifest; then \
 		if test -f '$(srcdir)/$(notdir $@).manifest'; then \
@@ -615,9 +584,9 @@ ifdef MSMANIFEST_TOOL
 endif	# MSVC with manifest tool
 else
 ifeq ($(HOST_CPP_PROG_LINK),1)
-	$(HOST_CXX) -o $@ $(HOST_CXX_LDFLAGS) $(HOST_LDFLAGS) $(HOST_PROGOBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(HOST_CXX) -o $@ $(HOST_CXX_LDFLAGS) $(HOST_LDFLAGS) $($(notdir $@)_OBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
-	$(HOST_CC) -o $@ $(HOST_C_LDFLAGS) $(HOST_LDFLAGS) $(HOST_PROGOBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(HOST_CC) -o $@ $(HOST_C_LDFLAGS) $(HOST_LDFLAGS) $($(notdir $@)_OBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 endif # HOST_CPP_PROG_LINK
 endif
 ifndef CROSS_COMPILE
@@ -656,15 +625,15 @@ ifdef MOZ_POST_PROGRAM_COMMAND
 	$(MOZ_POST_PROGRAM_COMMAND) $@
 endif
 
-$(HOST_SIMPLE_PROGRAMS): host_%$(HOST_BIN_SUFFIX): host_%.$(OBJ_SUFFIX) $(HOST_LIBS) $(HOST_EXTRA_DEPS) $(GLOBAL_DEPS)
+$(HOST_SIMPLE_PROGRAMS): host_%$(HOST_BIN_SUFFIX): $(HOST_LIBS) $(HOST_EXTRA_DEPS) $(GLOBAL_DEPS)
 	$(REPORT_BUILD)
 ifeq (WINNT_,$(HOST_OS_ARCH)_$(GNU_CC))
-	$(HOST_LINKER) -NOLOGO -OUT:$@ -PDB:$(HOST_PDBFILE) $< $(WIN32_EXE_LDFLAGS) $(HOST_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(HOST_LINKER) -NOLOGO -OUT:$@ -PDB:$(HOST_PDBFILE) $($(notdir $@)_OBJS) $(WIN32_EXE_LDFLAGS) $(HOST_LDFLAGS) $(HOST_LINKER_LIBPATHS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
 ifneq (,$(HOST_CPPSRCS)$(USE_HOST_CXX))
-	$(HOST_CXX) $(HOST_OUTOPTION)$@ $(HOST_CXX_LDFLAGS) $< $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(HOST_CXX) $(HOST_OUTOPTION)$@ $(HOST_CXX_LDFLAGS) $($(notdir $@)_OBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
-	$(HOST_CC) $(HOST_OUTOPTION)$@ $(HOST_C_LDFLAGS) $< $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(HOST_CC) $(HOST_OUTOPTION)$@ $(HOST_C_LDFLAGS) $($(notdir $@)_OBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 endif
 endif
 ifndef CROSS_COMPILE
@@ -687,18 +656,13 @@ ifeq ($(OS_ARCH),WINNT)
 $(IMPORT_LIBRARY): $(SHARED_LIBRARY) ;
 endif
 
-$(HOST_LIBRARY): $(HOST_OBJS) Makefile
+$(HOST_SHARED_LIBRARY): Makefile
 	$(REPORT_BUILD)
 	$(RM) $@
-	$(HOST_AR) $(HOST_AR_FLAGS) $(HOST_OBJS)
-
-$(HOST_SHARED_LIBRARY): $(HOST_OBJS) Makefile
-	$(REPORT_BUILD)
-	$(RM) $@
-ifdef _MSC_VER
-	$(HOST_LINKER) -NOLOGO -DLL -OUT:$@ $(HOST_OBJS) $(HOST_CXX_LDFLAGS) $(HOST_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+ifneq (,$(filter msvc clang-cl,$(HOST_CC_TYPE)))
+	$(HOST_LINKER) -NOLOGO -DLL -OUT:$@ $($(notdir $@)_OBJS) $(HOST_CXX_LDFLAGS) $(HOST_LDFLAGS) $(HOST_LINKER_LIBPATHS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
-	$(HOST_CXX) $(HOST_OUTOPTION)$@ $(HOST_OBJS) $(HOST_CXX_LDFLAGS) $(HOST_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(HOST_CXX) $(HOST_OUTOPTION)$@ $($(notdir $@)_OBJS) $(HOST_CXX_LDFLAGS) $(HOST_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 endif
 
 # On Darwin (Mac OS X), dwarf2 debugging uses debug info left in .o files,
@@ -746,10 +710,10 @@ endif
 # rules that have commands for these targets must not list any other
 # prerequisites, or they will override the $< variable.
 define src_objdep
-$(basename $2$(notdir $1)).$(OBJ_SUFFIX): $1 $$(call mkdir_deps,$$(MDDEPDIR))
+$(basename $3$(notdir $1)).$2: $1 $$(call mkdir_deps,$$(MDDEPDIR))
 endef
-$(foreach f,$(CSRCS) $(SSRCS) $(CPPSRCS) $(CMSRCS) $(CMMSRCS) $(ASFILES),$(eval $(call src_objdep,$(f))))
-$(foreach f,$(HOST_CSRCS) $(HOST_CPPSRCS) $(HOST_CMSRCS) $(HOST_CMMSRCS),$(eval $(call src_objdep,$(f),host_)))
+$(foreach f,$(CSRCS) $(SSRCS) $(CPPSRCS) $(CMSRCS) $(CMMSRCS) $(ASFILES),$(eval $(call src_objdep,$(f),$(OBJ_SUFFIX))))
+$(foreach f,$(HOST_CSRCS) $(HOST_CPPSRCS) $(HOST_CMSRCS) $(HOST_CMMSRCS),$(eval $(call src_objdep,$(f),$(_OBJ_SUFFIX),host_)))
 
 # The Rust compiler only outputs library objects, and so we need different
 # mangling to generate dependency rules for it.
@@ -856,11 +820,7 @@ endif
 cargo_build_flags += --manifest-path $(CARGO_FILE)
 ifdef BUILD_VERBOSE_LOG
 cargo_build_flags += -vv
-else
-ifdef MOZ_AUTOMATION
-cargo_build_flags += -vv
-endif # MOZ_AUTOMATION
-endif # BUILD_VERBOSE_LOG
+endif
 
 # Enable color output if original stdout was a TTY and color settings
 # aren't already present. This essentially restores the default behavior
@@ -891,22 +851,6 @@ rustflags_neon += -C target_feature=+neon
 endif
 
 rustflags_override = $(MOZ_RUST_DEFAULT_FLAGS) $(rustflags_neon)
-
-ifdef MOZ_MSVCBITS
-# If we are building a MozillaBuild shell, we want to clear out the
-# vcvars.bat environment variables for cargo builds. This is because
-# a 32-bit MozillaBuild shell on a 64-bit machine will try to use
-# the 32-bit compiler/linker for everything, while cargo/rustc wants
-# to use the 64-bit linker for build.rs scripts. This conflict results
-# in a build failure (see bug 1350001). So we clear out the environment
-# variables that are actually relevant to 32- vs 64-bit builds.
-environment_cleaner = -u VCINSTALLDIR PATH='' LIB='' LIBPATH=''
-# The servo build needs to know where python is, and we're removing the PATH
-# so we tell it explicitly via the PYTHON env var.
-environment_cleaner += PYTHON='$(shell which $(PYTHON))'
-else
-environment_cleaner =
-endif
 
 ifdef MOZ_USING_SCCACHE
 sccache_wrap := RUSTC_WRAPPER='$(CCACHE)'
@@ -964,7 +908,7 @@ endif # MOZ_ASAN
 # don't use the prefix when make -n is used, so that cargo doesn't run
 # in that case)
 define RUN_CARGO
-$(if $(findstring n,$(filter-out --%, $(MAKEFLAGS))),,+)env $(environment_cleaner) $(sccache_wrap) \
+$(if $(findstring n,$(filter-out --%, $(MAKEFLAGS))),,+)env $(sccache_wrap) \
 	CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) \
 	RUSTFLAGS='$(2)' \
 	RUSTC=$(RUSTC) \
@@ -1047,9 +991,20 @@ endif
 # We need to run cargo unconditionally, because cargo is the only thing that
 # has full visibility into how changes in Rust sources might affect the final
 # build.
+#
+# When we are building in --enable-release mode; we add an additional check to confirm
+# that we are not importing any networking-related functions in rust code. This reduces
+# the chance of proxy bypasses originating from rust code.
 force-cargo-library-build:
 	$(REPORT_BUILD)
 	$(call CARGO_BUILD,$(target_cargo_env_vars)) --lib $(cargo_target_flag) $(rust_features_flag) -- $(cargo_rustc_flags)
+ifndef DEVELOPER_OPTIONS
+ifndef MOZ_DEBUG_RUST
+ifeq ($(OS_ARCH), Linux)
+	$(call py_action,check_binary,--target --networking $(RUST_LIBRARY_FILE))
+endif
+endif
+endif
 
 $(RUST_LIBRARY_FILE): force-cargo-library-build
 

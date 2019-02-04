@@ -1,8 +1,5 @@
-ChromeUtils.import("resource://testing-common/httpd.js");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {HttpServer} = ChromeUtils.import("resource://testing-common/httpd.js");
+const {NetUtil} = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "URL", function() {
   return "http://localhost:" + httpserv.identity.primaryPort + "/cached";
@@ -60,26 +57,25 @@ async function run_all_tests() {
   if (procType != Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT)
     return;
 
-  let attrs_inBrowser = JSON.stringify({ appId:1, inIsolatedMozBrowser:true });
-  let attrs_notInBrowser = JSON.stringify({ appId:1 });
+  let attrs_inBrowser = { appId:1, inIsolatedMozBrowser:true };
+  let attrs_notInBrowser = { appId:1 };
 
-  Services.obs.notifyObservers(null, "clear-origin-attributes-data", attrs_inBrowser);
+  Services.clearData.deleteDataFromOriginAttributesPattern(attrs_inBrowser);
 
   for (let test of secondTests) {
     handlers_called = 0;
     await test_channel(...test);
   }
 
-  Services.obs.notifyObservers(null, "clear-origin-attributes-data", attrs_notInBrowser);
-  Services.obs.notifyObservers(null, "clear-origin-attributes-data", attrs_inBrowser);
+  Services.clearData.deleteDataFromOriginAttributesPattern(attrs_notInBrowser);
+  Services.clearData.deleteDataFromOriginAttributesPattern(attrs_inBrowser);
 
   for (let test of thirdTests) {
     handlers_called = 0;
     await test_channel(...test);
   }
 
-  let attrs_userContextId = JSON.stringify({ userContextId: 1 });
-  Services.obs.notifyObservers(null, "clear-origin-attributes-data", attrs_userContextId);
+  Services.clearData.deleteDataFromOriginAttributesPattern({ userContextId: 1 });
 
   for (let test of fourthTests) {
     handlers_called = 0;

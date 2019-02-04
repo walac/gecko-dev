@@ -50,7 +50,7 @@ JSObject* DocumentTimeline::WrapObject(JSContext* aCx,
 /* static */ already_AddRefed<DocumentTimeline> DocumentTimeline::Constructor(
     const GlobalObject& aGlobal, const DocumentTimelineOptions& aOptions,
     ErrorResult& aRv) {
-  nsIDocument* doc = AnimationUtils::GetCurrentRealmDocument(aGlobal.Context());
+  Document* doc = AnimationUtils::GetCurrentRealmDocument(aGlobal.Context());
   if (!doc) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
@@ -166,7 +166,7 @@ void DocumentTimeline::MostRecentRefreshTimeUpdated() {
     // order to dispatch events.
     animation->Tick();
 
-    if (!animation->IsRelevant() && !animation->NeedsTicks()) {
+    if (!animation->NeedsTicks()) {
       animationsToRemove.AppendElement(animation);
     }
   }

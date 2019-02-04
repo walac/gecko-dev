@@ -26,8 +26,8 @@
 #include "mozilla/layers/TextRenderer.h"
 
 #ifdef XP_WIN
-#include "mozilla/widget/WinCompositorWidget.h"
-#include "mozilla/gfx/DeviceManagerDx.h"
+#  include "mozilla/widget/WinCompositorWidget.h"
+#  include "mozilla/gfx/DeviceManagerDx.h"
 #endif
 
 using namespace std;
@@ -304,6 +304,10 @@ void LayerManagerMLGPU::Composite() {
   // performs invalidation against the clean layer tree.
   mClonedLayerTreeProperties = nullptr;
   mClonedLayerTreeProperties = LayerProperties::CloneFrom(mRoot);
+
+  PayloadPresented();
+
+  mPayload.Clear();
 }
 
 void LayerManagerMLGPU::RenderLayers() {

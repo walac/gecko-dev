@@ -89,7 +89,7 @@ void nsImageControlFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
 }
 
 NS_QUERYFRAME_HEAD(nsImageControlFrame)
-NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
+  NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsImageFrame)
 
 #ifdef ACCESSIBILITY
@@ -155,8 +155,8 @@ nsresult nsImageControlFrame::GetCursor(const nsPoint& aPoint,
   // the cursor style is "auto" we use the pointer cursor.
   FillCursorInformationFromStyle(StyleUI(), aCursor);
 
-  if (NS_STYLE_CURSOR_AUTO == aCursor.mCursor) {
-    aCursor.mCursor = NS_STYLE_CURSOR_POINTER;
+  if (StyleCursorKind::Auto == aCursor.mCursor) {
+    aCursor.mCursor = StyleCursorKind::Pointer;
   }
 
   return NS_OK;

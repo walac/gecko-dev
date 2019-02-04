@@ -15,7 +15,7 @@
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/ServiceWorkerManager.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsPrintfCString.h"
 
 namespace mozilla {
@@ -38,7 +38,7 @@ static Maybe<uint64_t> BlobSerial(nsIURI* aURI) {
 }
 
 ImageCacheKey::ImageCacheKey(nsIURI* aURI, const OriginAttributes& aAttrs,
-                             nsIDocument* aDocument, nsresult& aRv)
+                             Document* aDocument, nsresult& aRv)
     : mURI(aURI),
       mOriginAttributes(aAttrs),
       mControlledDocument(GetSpecialCaseDocumentToken(aDocument, aURI)),
@@ -117,7 +117,7 @@ bool ImageCacheKey::SchemeIs(const char* aScheme) {
 }
 
 /* static */ void* ImageCacheKey::GetSpecialCaseDocumentToken(
-    nsIDocument* aDocument, nsIURI* aURI) {
+    Document* aDocument, nsIURI* aURI) {
   // Cookie-averse documents can never have storage granted to them.  Since they
   // may not have inner windows, they would require special handling below, so
   // just bail out early here.
@@ -134,7 +134,8 @@ bool ImageCacheKey::SchemeIs(const char* aScheme) {
 
   // If the window is 3rd party resource, let's see if first-party storage
   // access is granted for this image.
-  if (nsContentUtils::IsTrackingResourceWindow(aDocument->GetInnerWindow())) {
+  if (nsContentUtils::IsThirdPartyTrackingResourceWindow(
+          aDocument->GetInnerWindow())) {
     return nsContentUtils::StorageDisabledByAntiTracking(aDocument, aURI)
                ? aDocument
                : nullptr;

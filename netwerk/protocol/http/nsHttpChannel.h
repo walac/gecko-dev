@@ -51,8 +51,11 @@ class HttpChannelSecurityWarningReporter : public nsISupports {
  public:
   virtual MOZ_MUST_USE nsresult ReportSecurityMessage(
       const nsAString &aMessageTag, const nsAString &aMessageCategory) = 0;
-  virtual nsresult LogBlockedCORSRequest(const nsAString &aMessage,
-                                         const nsACString &aCategory) = 0;
+  virtual MOZ_MUST_USE nsresult LogBlockedCORSRequest(
+      const nsAString &aMessage, const nsACString &aCategory) = 0;
+  virtual MOZ_MUST_USE nsresult
+  LogMimeTypeMismatch(const nsACString &aMessageName, bool aWarning,
+                      const nsAString &aURL, const nsAString &aContentType) = 0;
 };
 
 //-----------------------------------------------------------------------------
@@ -135,11 +138,10 @@ class nsHttpChannel final : public HttpBaseChannel,
 
   nsHttpChannel();
 
-  virtual MOZ_MUST_USE nsresult Init(nsIURI *aURI, uint32_t aCaps,
-                                     nsProxyInfo *aProxyInfo,
-                                     uint32_t aProxyResolveFlags,
-                                     nsIURI *aProxyURI,
-                                     uint64_t aChannelId) override;
+  virtual MOZ_MUST_USE nsresult
+  Init(nsIURI *aURI, uint32_t aCaps, nsProxyInfo *aProxyInfo,
+       uint32_t aProxyResolveFlags, nsIURI *aProxyURI, uint64_t aChannelId,
+       nsContentPolicyType aContentPolicyType) override;
 
   MOZ_MUST_USE nsresult OnPush(const nsACString &uri,
                                Http2PushedStream *pushedStream);
@@ -160,12 +162,14 @@ class nsHttpChannel final : public HttpBaseChannel,
   NS_IMETHOD AsyncOpen2(nsIStreamListener *aListener) override;
   // nsIHttpChannel
   NS_IMETHOD GetEncodedBodySize(uint64_t *aEncodedBodySize) override;
+  NS_IMETHOD SwitchProcessTo(mozilla::dom::Promise *aTabParent,
+                             uint64_t aIdentifier) override;
   // nsIHttpChannelInternal
   NS_IMETHOD SetupFallbackChannel(const char *aFallbackKey) override;
   NS_IMETHOD SetChannelIsForDownload(bool aChannelIsForDownload) override;
   NS_IMETHOD GetNavigationStartTimeStamp(TimeStamp *aTimeStamp) override;
   NS_IMETHOD SetNavigationStartTimeStamp(TimeStamp aTimeStamp) override;
-  NS_IMETHOD CancelForTrackingProtection() override;
+  NS_IMETHOD CancelByChannelClassifier(nsresult aErrorCode) override;
   // nsISupportsPriority
   NS_IMETHOD SetPriority(int32_t value) override;
   // nsIClassOfService
@@ -199,6 +203,9 @@ class nsHttpChannel final : public HttpBaseChannel,
       const nsAString &aMessageTag, const nsAString &aMessageCategory) override;
   NS_IMETHOD LogBlockedCORSRequest(const nsAString &aMessage,
                                    const nsACString &aCategory) override;
+  NS_IMETHOD LogMimeTypeMismatch(const nsACString &aMessageName, bool aWarning,
+                                 const nsAString &aURL,
+                                 const nsAString &aContentType) override;
 
   void SetWarningReporter(HttpChannelSecurityWarningReporter *aReporter);
   HttpChannelSecurityWarningReporter *GetWarningReporter();
@@ -296,10 +303,16 @@ class nsHttpChannel final : public HttpBaseChannel,
  private:
   typedef nsresult (nsHttpChannel::*nsContinueRedirectionFunc)(nsresult result);
 
+  // Directly call |aFunc| if the channel is not canceled and not suspended.
+  // Otherwise, set |aFunc| to |mCallOnResume| and wait until the channel
+  // resumes.
+  nsresult CallOrWaitForResume(
+      const std::function<nsresult(nsHttpChannel *)> &aFunc);
+
   bool RequestIsConditional();
-  void HandleContinueCancelledByTrackingProtection();
+  void HandleContinueCancellingByChannelClassifier(nsresult aErrorCode);
   nsresult CancelInternal(nsresult status);
-  void ContinueCancelledByTrackingProtection();
+  void ContinueCancellingByChannelClassifier(nsresult aErrorCode);
 
   // Connections will only be established in this function.
   // (including DNS prefetch and speculative connection.)
@@ -326,12 +339,18 @@ class nsHttpChannel final : public HttpBaseChannel,
   void AsyncContinueProcessResponse();
   MOZ_MUST_USE nsresult ContinueProcessResponse1();
   MOZ_MUST_USE nsresult ContinueProcessResponse2(nsresult);
+  void UpdateCacheDisposition(bool aSuccessfulReval, bool aPartialContentUsed);
   MOZ_MUST_USE nsresult ContinueProcessResponse3(nsresult);
+  MOZ_MUST_USE nsresult ContinueProcessResponse4(nsresult);
   MOZ_MUST_USE nsresult ProcessNormal();
   MOZ_MUST_USE nsresult ContinueProcessNormal(nsresult);
   void ProcessAltService();
   bool ShouldBypassProcessNotModified();
-  MOZ_MUST_USE nsresult ProcessNotModified();
+  MOZ_MUST_USE nsresult ProcessNotModified(
+      const std::function<nsresult(nsHttpChannel *, nsresult)>
+          &aContinueProcessResponseFunc);
+  MOZ_MUST_USE nsresult ContinueProcessResponseAfterNotModified(nsresult aRv);
+
   MOZ_MUST_USE nsresult AsyncProcessRedirection(uint32_t httpStatus);
   MOZ_MUST_USE nsresult ContinueProcessRedirection(nsresult);
   MOZ_MUST_USE nsresult ContinueProcessRedirectionAfterFallback(nsresult);
@@ -346,6 +365,7 @@ class nsHttpChannel final : public HttpBaseChannel,
   MOZ_MUST_USE nsresult ContinueOnStartRequest1(nsresult);
   MOZ_MUST_USE nsresult ContinueOnStartRequest2(nsresult);
   MOZ_MUST_USE nsresult ContinueOnStartRequest3(nsresult);
+  MOZ_MUST_USE nsresult ContinueOnStartRequest4(nsresult);
 
   void OnClassOfServiceUpdated();
 
@@ -403,10 +423,25 @@ class nsHttpChannel final : public HttpBaseChannel,
   void ClearBogusContentEncodingIfNeeded();
 
   // byte range request specific methods
-  MOZ_MUST_USE nsresult ProcessPartialContent();
+  MOZ_MUST_USE nsresult ProcessPartialContent(
+      const std::function<nsresult(nsHttpChannel *, nsresult)>
+          &aContinueProcessResponseFunc);
+  MOZ_MUST_USE nsresult
+  ContinueProcessResponseAfterPartialContent(nsresult aRv);
   MOZ_MUST_USE nsresult OnDoneReadingPartialCacheEntry(bool *streamDone);
 
-  MOZ_MUST_USE nsresult DoAuthRetry(nsAHttpConnection *);
+  MOZ_MUST_USE nsresult
+  DoAuthRetry(nsAHttpConnection *,
+              const std::function<nsresult(nsHttpChannel *, nsresult)> &aOuter);
+  MOZ_MUST_USE nsresult ContinueDoAuthRetry(
+      nsAHttpConnection *aConn,
+      const std::function<nsresult(nsHttpChannel *, nsresult)> &aOuter);
+  MOZ_MUST_USE nsresult DoConnect(nsAHttpConnection *aConn = nullptr);
+  MOZ_MUST_USE nsresult ContinueOnStopRequestAfterAuthRetry(
+      nsresult aStatus, bool aAuthRetry, bool aIsFromNet, bool aContentComplete,
+      nsAHttpConnection *aStickyConn);
+  MOZ_MUST_USE nsresult ContinueOnStopRequest(nsresult status, bool aIsFromNet,
+                                              bool aContentComplete);
 
   void HandleAsyncRedirectChannelToHttps();
   MOZ_MUST_USE nsresult StartRedirectChannelToHttps();
@@ -462,7 +497,8 @@ class nsHttpChannel final : public HttpBaseChannel,
 
   inline static bool DoNotRender3xxBody(nsresult rv) {
     return rv == NS_ERROR_REDIRECT_LOOP || rv == NS_ERROR_CORRUPTED_CONTENT ||
-           rv == NS_ERROR_UNKNOWN_PROTOCOL || rv == NS_ERROR_MALFORMED_URI;
+           rv == NS_ERROR_UNKNOWN_PROTOCOL || rv == NS_ERROR_MALFORMED_URI ||
+           rv == NS_ERROR_PORT_ACCESS_NOT_ALLOWED;
   }
 
   // Report net vs cache time telemetry
@@ -643,10 +679,10 @@ class nsHttpChannel final : public HttpBaseChannel,
   // the next authentication request can be sent on a whole new connection
   uint32_t mAuthConnectionRestartable : 1;
 
-  // True if the channel classifier has marked the channel to be cancelled
-  // due to the tracking protection rules, but the asynchronous cancellation
+  // True if the channel classifier has marked the channel to be cancelled due
+  // to the safe-browsing classifier rules, but the asynchronous cancellation
   // process hasn't finished yet.
-  uint32_t mTrackingProtectionCancellationPending : 1;
+  uint32_t mChannelClassifierCancellationPending : 1;
 
   // True only when we are between Resume and async fire of mCallOnResume.
   // Used to suspend any newly created pumps in mCallOnResume handler.

@@ -63,14 +63,17 @@ class HttpBackgroundChannelChild final : public PHttpBackgroundChannelChild {
 
   IPCResult RecvOnStartRequestSent() override;
 
-  IPCResult RecvNotifyTrackingProtectionDisabled() override;
+  IPCResult RecvNotifyChannelClassifierProtectionDisabled(
+      const uint32_t& aAcceptedReason) override;
 
   IPCResult RecvNotifyCookieAllowed() override;
 
-  IPCResult RecvNotifyTrackingCookieBlocked(
-      const uint32_t& aRejectedReason) override;
+  IPCResult RecvNotifyCookieBlocked(const uint32_t& aRejectedReason) override;
 
   IPCResult RecvNotifyTrackingResource(const bool& aIsThirdParty) override;
+
+  IPCResult RecvNotifyFlashPluginStateChanged(
+      const nsIHttpChannel::FlashPluginState& aState) override;
 
   IPCResult RecvSetClassifierMatchedInfo(const ClassifierInfo& info) override;
 

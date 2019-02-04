@@ -24,7 +24,7 @@
 #include "mozilla/ServoStyleSet.h"
 
 #ifdef DEBUG
-#undef NOISY_PUSHING
+#  undef NOISY_PUSHING
 #endif
 
 using namespace mozilla;
@@ -42,7 +42,7 @@ nsInlineFrame* NS_NewInlineFrame(nsIPresShell* aPresShell,
 NS_IMPL_FRAMEARENA_HELPERS(nsInlineFrame)
 
 NS_QUERYFRAME_HEAD(nsInlineFrame)
-NS_QUERYFRAME_ENTRY(nsInlineFrame)
+  NS_QUERYFRAME_ENTRY(nsInlineFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 #ifdef DEBUG_FRAME_DUMP

@@ -20,12 +20,12 @@
 #include <stdarg.h>
 #include <string.h>
 #ifdef ANDROID
-#include <android/log.h>
-#include <fstream>
-#include <string>
+#  include <android/log.h>
+#  include <fstream>
+#  include <string>
 #endif  // ANDROID
 #ifdef XP_WIN
-#include <processthreadsapi.h>
+#  include <processthreadsapi.h>
 #endif  // XP_WIN
 
 #include "jsexn.h"
@@ -38,12 +38,13 @@
 #include "jit/Ion.h"
 #include "jit/PcScriptCache.h"
 #include "js/CharacterEncoding.h"
+#include "js/ContextOptions.h"  // JS::ContextOptions
 #include "js/Printf.h"
 #ifdef JS_SIMULATOR_ARM64
-#include "jit/arm64/vixl/Simulator-vixl.h"
+#  include "jit/arm64/vixl/Simulator-vixl.h"
 #endif
 #ifdef JS_SIMULATOR_ARM
-#include "jit/arm/Simulator-arm.h"
+#  include "jit/arm/Simulator-arm.h"
 #endif
 #include "util/DoubleToString.h"
 #include "util/NativeStack.h"
@@ -177,7 +178,6 @@ static void FreeJobQueueHandling(JSContext* cx) {
     return;
   }
 
-  cx->jobQueue->reset();
   FreeOp* fop = cx->defaultFreeOp();
   fop->delete_(cx->jobQueue.ref());
   cx->getIncumbentGlobalCallback = nullptr;
@@ -882,19 +882,10 @@ void js::ReportIsNotDefined(JSContext* cx, HandlePropertyName name) {
   ReportIsNotDefined(cx, id);
 }
 
-void js::ReportIsNullOrUndefinedForPropertyAccess(JSContext* cx, HandleValue v,
-                                                  bool reportScanStack) {
+void js::ReportIsNullOrUndefined(JSContext* cx, int spindex, HandleValue v) {
   MOZ_ASSERT(v.isNullOrUndefined());
 
-  if (!reportScanStack) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_CANT_CONVERT_TO,
-                              v.isNull() ? "null" : "undefined", "object");
-    return;
-  }
-
-  UniqueChars bytes =
-      DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, v, nullptr);
+  UniqueChars bytes = DecompileValueGenerator(cx, spindex, v, nullptr);
   if (!bytes) {
     return;
   }
@@ -911,48 +902,6 @@ void js::ReportIsNullOrUndefinedForPropertyAccess(JSContext* cx, HandleValue v,
     MOZ_ASSERT(v.isNull());
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                              JSMSG_UNEXPECTED_TYPE, bytes.get(), js_null_str);
-  }
-}
-
-void js::ReportIsNullOrUndefinedForPropertyAccess(JSContext* cx, HandleValue v,
-                                                  HandleId key,
-                                                  bool reportScanStack) {
-  MOZ_ASSERT(v.isNullOrUndefined());
-
-  UniqueChars keyBytes =
-      IdToPrintableUTF8(cx, key, IdToPrintableBehavior::IdIsPropertyKey);
-  if (!keyBytes) {
-    return;
-  }
-
-  if (!reportScanStack) {
-    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_PROPERTY_FAIL,
-                             keyBytes.get(),
-                             v.isUndefined() ? js_undefined_str : js_null_str);
-    return;
-  }
-
-  UniqueChars bytes =
-      DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, v, nullptr);
-  if (!bytes) {
-    return;
-  }
-
-  if (strcmp(bytes.get(), js_undefined_str) == 0 ||
-      strcmp(bytes.get(), js_null_str) == 0) {
-    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_PROPERTY_FAIL,
-                             keyBytes.get(), bytes.get());
-  } else {
-    const char* actual = v.isUndefined() ? js_undefined_str : js_null_str;
-    if (JSID_IS_INT(key)) {
-      JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                               JSMSG_ELEMENT_FAIL_EXPR, bytes.get(), actual,
-                               keyBytes.get());
-    } else {
-      JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                               JSMSG_PROPERTY_FAIL_EXPR, bytes.get(), actual,
-                               keyBytes.get());
-    }
   }
 }
 

@@ -366,7 +366,7 @@ class AsmFlags(BaseCompileFlags):
         debug_flags = []
         if (self._context.config.substs.get('MOZ_DEBUG') or
             self._context.config.substs.get('MOZ_DEBUG_SYMBOLS')):
-            if self._context.get('USE_NASM') or (self._context.get('USE_YASM') and self._context.config.substs.get('NASM')):
+            if self._context.get('USE_NASM'):
                 if (self._context.config.substs.get('OS_ARCH') == 'WINNT' and
                     not self._context.config.substs.get('GNU_CC')):
                     debug_flags += ['-F', 'cv8']
@@ -1764,6 +1764,13 @@ VARIABLES = {
         This is the name of the ``.xpt`` file that is created by linking
         ``XPIDL_SOURCES`` together. If unspecified, it defaults to be the same
         as ``MODULE``.
+        """),
+
+    'XPCOM_MANIFESTS': (ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList), list,
+        """XPCOM Component Manifest Files.
+
+        This is a list of files that define XPCOM components to be added
+        to the component registry.
         """),
 
     'PREPROCESSED_IPDL_SOURCES': (StrictOrderingOnAppendList, list,

@@ -5,6 +5,7 @@
 // @flow
 
 import {
+  getCurrentThread,
   getExpression,
   getExpressions,
   getSelectedFrame,
@@ -12,7 +13,8 @@ import {
   getSourceFromId,
   getSelectedSource,
   getSelectedScopeMappings,
-  getSelectedFrameBindings
+  getSelectedFrameBindings,
+  isPaused
 } from "../selectors";
 import { PROMISE } from "./utils/middleware/promise";
 import { wrapExpression } from "../utils/expressions";
@@ -117,7 +119,11 @@ export function evaluateExpressions() {
     const expressions = getExpressions(getState()).toJS();
     const inputs = expressions.map(({ input }) => input);
     const frameId = getSelectedFrameId(getState());
-    const results = await client.evaluateExpressions(inputs, frameId);
+    const thread = getCurrentThread(getState());
+    const results = await client.evaluateExpressions(inputs, {
+      frameId,
+      thread
+    });
     dispatch({ type: "EVALUATE_EXPRESSIONS", inputs, results });
   };
 }
@@ -147,11 +153,16 @@ function evaluateExpression(expression: Expression) {
     }
 
     const frameId = getSelectedFrameId(getState());
+    const thread = getCurrentThread(getState());
 
     return dispatch({
       type: "EVALUATE_EXPRESSION",
+      thread,
       input: expression.input,
-      [PROMISE]: client.evaluateInFrame(wrapExpression(input), frameId)
+      [PROMISE]: client.evaluateInFrame(wrapExpression(input), {
+        frameId,
+        thread
+      })
     });
   };
 }
@@ -162,8 +173,9 @@ function evaluateExpression(expression: Expression) {
  */
 export function getMappedExpression(expression: string) {
   return async function({ dispatch, getState, client, sourceMaps }: ThunkArgs) {
-    const mappings = getSelectedScopeMappings(getState());
-    const bindings = getSelectedFrameBindings(getState());
+    const state = getState();
+    const mappings = getSelectedScopeMappings(state);
+    const bindings = getSelectedFrameBindings(state);
 
     // We bail early if we do not need to map the expression. This is important
     // because mapping an expression can be slow if the parser worker is
@@ -180,7 +192,7 @@ export function getMappedExpression(expression: string) {
       expression,
       mappings,
       bindings || [],
-      features.mapExpressionBindings,
+      features.mapExpressionBindings && isPaused(state),
       features.mapAwaitExpression
     );
   };

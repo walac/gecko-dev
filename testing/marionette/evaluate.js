@@ -4,20 +4,19 @@
 
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-ChromeUtils.import("resource://gre/modules/Timer.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {clearTimeout, setTimeout} = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-ChromeUtils.import("chrome://marionette/content/assert.js");
+const {assert} = ChromeUtils.import("chrome://marionette/content/assert.js");
 const {
   element,
   WebElement,
-} = ChromeUtils.import("chrome://marionette/content/element.js", {});
+} = ChromeUtils.import("chrome://marionette/content/element.js");
 const {
   JavaScriptError,
   ScriptTimeoutError,
-} = ChromeUtils.import("chrome://marionette/content/error.js", {});
-const {Log} = ChromeUtils.import("chrome://marionette/content/log.js", {});
+} = ChromeUtils.import("chrome://marionette/content/error.js");
+const {Log} = ChromeUtils.import("chrome://marionette/content/log.js");
 
 XPCOMUtils.defineLazyGetter(this, "log", Log.get);
 
@@ -92,12 +91,11 @@ evaluate.sandbox = function(sb, script, args = [],
       line = 0,
       timeout = DEFAULT_TIMEOUT,
     } = {}) {
-  let scriptTimeoutID, timeoutHandler, unloadHandler;
+  let scriptTimeoutID, unloadHandler;
 
   let promise = new Promise((resolve, reject) => {
     let src = "";
     sb[COMPLETE] = resolve;
-    timeoutHandler = () => reject(new ScriptTimeoutError(`Timed out after ${timeout} ms`));
     unloadHandler = sandbox.cloneInto(
         () => reject(new JavaScriptError("Document was unloaded")),
         sb);
@@ -120,7 +118,10 @@ evaluate.sandbox = function(sb, script, args = [],
     }).apply(null, ${ARGUMENTS})`;
 
     // timeout and unload handlers
-    scriptTimeoutID = setTimeout(timeoutHandler, timeout);
+    if (timeout !== null) {
+      scriptTimeoutID = setTimeout(() => reject(new ScriptTimeoutError(
+          `Timed out after ${timeout} ms`)), timeout);
+    }
     sb.window.onunload = unloadHandler;
 
     let res;
@@ -434,6 +435,7 @@ sandbox.create = function(win, principal = null, opts = {}) {
     sandboxPrototype: win,
     wantComponents: true,
     wantXrays: true,
+    wantGlobalProperties: ["ChromeUtils"],
   }, opts);
   return new Cu.Sandbox(p, opts);
 };

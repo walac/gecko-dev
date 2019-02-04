@@ -5,20 +5,16 @@
 /* import-globals-from extensionControlled.js */
 /* import-globals-from preferences.js */
 
-/* FIXME: ESlint globals workaround should be removed once bug 1395426 gets fixed */
-/* globals DownloadUtils, LoadContextInfo */
+var {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
-ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
-ChromeUtils.import("resource://gre/modules/PluralForm.jsm");
-
-ChromeUtils.defineModuleGetter(this, "PluralForm",
-  "resource://gre/modules/PluralForm.jsm");
+ChromeUtils.defineModuleGetter(this, "DownloadUtils",
+  "resource://gre/modules/DownloadUtils.jsm");
 ChromeUtils.defineModuleGetter(this, "LoginHelper",
   "resource://gre/modules/LoginHelper.jsm");
 ChromeUtils.defineModuleGetter(this, "SiteDataManager",
   "resource:///modules/SiteDataManager.jsm");
 
-ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
+var {PrivateBrowsingUtils} = ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 const PREF_UPLOAD_ENABLED = "datareporting.healthreport.uploadEnabled";
 
@@ -77,8 +73,6 @@ Preferences.addAll([
 
   // Media
   { id: "media.autoplay.default", type: "int" },
-  { id: "media.autoplay.enabled.ask-permission", type: "bool" },
-  { id: "media.autoplay.enabled.user-gestures-needed", type: "bool" },
 
   // Popups
   { id: "dom.disable_open_during_load", type: "bool" },
@@ -132,9 +126,6 @@ if (AppConstants.MOZ_DATA_REPORTING) {
 }
 
 // Data Choices tab
-if (AppConstants.NIGHTLY_BUILD) {
-  Preferences.add({ id: "browser.chrome.errorReporter.enabled", type: "bool" });
-}
 if (AppConstants.MOZ_CRASHREPORTER) {
   Preferences.add({ id: "browser.crashReports.unsubmittedCheck.autoSubmit2", type: "bool" });
 }
@@ -271,8 +262,6 @@ var gPrivacyPane = {
   init() {
     this._updateSanitizeSettingsButton();
     this.initializeHistoryMode();
-    this.initAutoplay();
-    this.updateAutoplayMediaControlsVisibility();
     this.updateHistoryModePane();
     this.updatePrivacyMicroControls();
     this.initAutoStartPrivateBrowsingReverter();
@@ -281,9 +270,13 @@ var gPrivacyPane = {
     /* Initialize Content Blocking */
     this.initContentBlocking();
 
+    this.blockAutoplayReadPrefs();
     this.trackingProtectionReadPrefs();
     this.networkCookieBehaviorReadPrefs();
     this._initTrackingProtectionExtensionControl();
+
+    Preferences.get("media.autoplay.default").on("change",
+      gPrivacyPane.blockAutoplayReadPrefs.bind(gPrivacyPane));
 
     Preferences.get("privacy.trackingprotection.enabled").on("change",
       gPrivacyPane.trackingProtectionReadPrefs.bind(gPrivacyPane));
@@ -305,10 +298,6 @@ var gPrivacyPane = {
       gPrivacyPane._updateSanitizeSettingsButton.bind(gPrivacyPane));
     Preferences.get("browser.privatebrowsing.autostart").on("change",
       gPrivacyPane.updatePrivacyMicroControls.bind(gPrivacyPane));
-    Preferences.get("media.autoplay.enabled.ask-permission").on("change",
-     gPrivacyPane.updateAutoplayMediaControlsVisibility.bind(gPrivacyPane));
-    Preferences.get("media.autoplay.enabled.user-gestures-needed").on("change",
-     gPrivacyPane.updateAutoplayMediaControlsVisibility.bind(gPrivacyPane));
     setEventListener("historyMode", "command", function() {
       gPrivacyPane.updateHistoryModePane();
       gPrivacyPane.updateHistoryModePrefs();
@@ -366,8 +355,6 @@ var gPrivacyPane = {
       gPrivacyPane.toggleAutoplayMedia);
     setEventListener("autoplayMediaPolicyButton", "command",
       gPrivacyPane.showAutoplayMediaExceptions);
-    setEventListener("autoplayMediaPolicyComboboxButton", "command",
-      gPrivacyPane.showAutoplayMediaExceptions);
     setEventListener("notificationsDoNotDisturb", "command",
       gPrivacyPane.toggleDoNotDisturbNotifications);
 
@@ -396,25 +383,9 @@ var gPrivacyPane = {
       Services.urlFormatter.formatURLPref("app.support.baseURL") + "push";
     document.getElementById("notificationPermissionsLearnMore").setAttribute("href",
       notificationInfoURL);
-    let drmInfoURL =
-      Services.urlFormatter.formatURLPref("app.support.baseURL") + "drm-content";
-    document.getElementById("playDRMContentLink").setAttribute("href", drmInfoURL);
-    let emeUIEnabled = Services.prefs.getBoolPref("browser.eme.ui.enabled");
-    // Force-disable/hide on WinXP:
-    if (navigator.platform.toLowerCase().startsWith("win")) {
-      emeUIEnabled = emeUIEnabled && parseFloat(Services.sysinfo.get("version")) >= 6;
-    }
-    if (!emeUIEnabled) {
-      // Don't want to rely on .hidden for the toplevel groupbox because
-      // of the pane hiding/showing code potentially interfering:
-      document.getElementById("drmGroup").setAttribute("style", "display: none !important");
-    }
 
     if (AppConstants.MOZ_DATA_REPORTING) {
       this.initDataCollection();
-      if (AppConstants.NIGHTLY_BUILD) {
-        this.initCollectBrowserErrors();
-      }
       if (AppConstants.MOZ_CRASHREPORTER) {
         this.initSubmitCrashes();
       }
@@ -481,13 +452,14 @@ var gPrivacyPane = {
     this.readBlockCookies();
 
     let link = document.getElementById("contentBlockingLearnMore");
-    let url = Services.urlFormatter.formatURLPref("app.support.baseURL") + "tracking-protection";
-    link.setAttribute("href", url);
+    let contentBlockingUrl = Services.urlFormatter.formatURLPref("app.support.baseURL") + "content-blocking";
+    link.setAttribute("href", contentBlockingUrl);
 
+    let contentBlockingTour = Services.urlFormatter.formatURLPref("privacy.trackingprotection.introURL")
+      + `?step=3&newtab=true`;
     let warningLinks = document.getElementsByClassName("content-blocking-warning-learn-how");
     for (let warningLink of warningLinks) {
-      let warningUrl = Services.urlFormatter.formatURLPref("app.support.baseURL") + "content-blocking";
-      warningLink.setAttribute("href", warningUrl);
+      warningLink.setAttribute("href", contentBlockingTour);
     }
   },
 
@@ -546,6 +518,7 @@ var gPrivacyPane = {
     let behavior = Preferences.get("network.cookie.cookieBehavior").value;
     let blockCookiesMenu = document.getElementById("blockCookiesMenu");
     let deleteOnCloseCheckbox = document.getElementById("deleteOnClose");
+    let deleteOnCloseNote = document.getElementById("deleteOnCloseNote");
 
     let blockCookies = (behavior != Ci.nsICookieService.BEHAVIOR_ACCEPT);
     let cookieBehaviorLocked = Services.prefs.prefIsLocked("network.cookie.cookieBehavior");
@@ -557,6 +530,7 @@ var gPrivacyPane = {
     let cookieExpirationLocked = Services.prefs.prefIsLocked("network.cookie.lifetimePolicy");
     deleteOnCloseCheckbox.disabled = privateBrowsing || completelyBlockCookies ||
                                      cookieExpirationLocked;
+    deleteOnCloseNote.hidden = !privateBrowsing;
 
     switch (behavior) {
       case Ci.nsICookieService.BEHAVIOR_ACCEPT:
@@ -1110,10 +1084,10 @@ var gPrivacyPane = {
 
   // MEDIA
 
-  initAutoplay() {
-    let url = Services.urlFormatter.formatURLPref("app.support.baseURL") +
-      "block-autoplay";
-    document.getElementById("autoplayLearnMoreLink").setAttribute("href", url);
+  blockAutoplayReadPrefs() {
+    let blocked =
+      Preferences.get("media.autoplay.default").value == Ci.nsIAutoplay.BLOCKED;
+    document.getElementById("autoplayMediaCheckbox").checked = blocked;
   },
 
   /**
@@ -1122,29 +1096,6 @@ var gPrivacyPane = {
   toggleAutoplayMedia(event) {
     let blocked = event.target.checked ? Ci.nsIAutoplay.BLOCKED : Ci.nsIAutoplay.ALLOWED;
     Services.prefs.setIntPref("media.autoplay.default", blocked);
-  },
-
-  /**
-   * If user-gestures-needed is false we do not show any UI for configuring autoplay,
-   * if user-gestures-needed is false and ask-permission is false we show a checkbox
-   * which only allows the user to block autoplay
-   * if user-gestures-needed and ask-permission are true we show a combobox that
-   * allows the user to block / allow or prompt for autoplay
-   * We will be performing a shield study to determine the behaviour to be
-   * shipped, at which point we can remove these pref switches.
-   * https://bugzilla.mozilla.org/show_bug.cgi?id=1475099
-   */
-  updateAutoplayMediaControlsVisibility() {
-    let askPermission =
-      Services.prefs.getBoolPref("media.autoplay.ask-permission", false);
-    let userGestures =
-        Services.prefs.getBoolPref("media.autoplay.enabled.user-gestures-needed", false);
-    // Hide the combobox if we don't let the user ask for permission.
-    document.getElementById("autoplayMediaComboboxWrapper").hidden =
-      !userGestures || !askPermission;
-    // If the user may ask for permission, hide the checkbox instead.
-    document.getElementById("autoplayMediaCheckboxWrapper").hidden =
-      !userGestures || askPermission;
   },
 
   /**
@@ -1513,11 +1464,6 @@ var gPrivacyPane = {
   initDataCollection() {
     this._setupLearnMoreLink("toolkit.datacollection.infoURL",
       "dataCollectionPrivacyNotice");
-  },
-
-  initCollectBrowserErrors() {
-    this._setupLearnMoreLink("browser.chrome.errorReporter.infoURL",
-      "collectBrowserErrorsLearnMore");
   },
 
   initSubmitCrashes() {

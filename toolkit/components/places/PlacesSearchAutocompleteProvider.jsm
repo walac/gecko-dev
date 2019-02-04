@@ -10,7 +10,7 @@
 
 var EXPORTED_SYMBOLS = [ "PlacesSearchAutocompleteProvider" ];
 
-ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 ChromeUtils.defineModuleGetter(this, "SearchSuggestionController",
   "resource://gre/modules/SearchSuggestionController.jsm");
@@ -137,7 +137,7 @@ class SuggestionsFetch {
     this._engine = engine;
     this._suggestions = [];
     this._success = false;
-    this._promise = this._controller.fetch(searchString, engine, userContextId).then(results => {
+    this._promise = this._controller.fetch(searchString, inPrivateContext, engine, userContextId).then(results => {
       this._success = true;
       if (results) {
         this._suggestions.push(

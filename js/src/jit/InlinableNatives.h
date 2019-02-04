@@ -125,6 +125,7 @@
   _(IntrinsicGuardToMapIterator)                   \
   _(IntrinsicGuardToSetIterator)                   \
   _(IntrinsicGuardToStringIterator)                \
+  _(IntrinsicGuardToRegExpStringIterator)          \
                                                    \
   _(IntrinsicGuardToMapObject)                     \
   _(IntrinsicGetNextMapEntryForIterator)           \
@@ -134,6 +135,7 @@
                                                    \
   _(IntrinsicNewArrayIterator)                     \
   _(IntrinsicNewStringIterator)                    \
+  _(IntrinsicNewRegExpStringIterator)              \
                                                    \
   _(IntrinsicGuardToArrayBuffer)                   \
   _(IntrinsicArrayBufferByteLength)                \
@@ -142,6 +144,7 @@
   _(IntrinsicGuardToSharedArrayBuffer)             \
                                                    \
   _(TypedArrayConstructor)                         \
+  _(IntrinsicIsTypedArrayConstructor)              \
   _(IntrinsicIsTypedArray)                         \
   _(IntrinsicIsPossiblyWrappedTypedArray)          \
   _(IntrinsicTypedArrayLength)                     \

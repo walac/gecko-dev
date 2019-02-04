@@ -31,11 +31,12 @@
 #include "CounterStyleManager.h"
 #include <algorithm>
 #include "mozilla/dom/HTMLInputElement.h"
+#include "nsGridContainerFrame.h"
 
 #ifdef DEBUG
-#undef NOISY_VERTICAL_ALIGN
+#  undef NOISY_VERTICAL_ALIGN
 #else
-#undef NOISY_VERTICAL_ALIGN
+#  undef NOISY_VERTICAL_ALIGN
 #endif
 
 using namespace mozilla;
@@ -403,11 +404,12 @@ void ReflowInput::Init(nsPresContext* aPresContext,
   InitConstraints(aPresContext, cbSize, aBorder, aPadding, type);
 
   InitResizeFlags(aPresContext, type);
+  InitDynamicReflowRoot();
 
   nsIFrame* parent = mFrame->GetParent();
   if (parent && (parent->GetStateBits() & NS_FRAME_IN_CONSTRAINED_BSIZE) &&
       !(parent->IsScrollFrame() &&
-        parent->StyleDisplay()->mOverflowY != NS_STYLE_OVERFLOW_HIDDEN)) {
+        parent->StyleDisplay()->mOverflowY != StyleOverflow::Hidden)) {
     mFrame->AddStateBits(NS_FRAME_IN_CONSTRAINED_BSIZE);
   } else if (type == LayoutFrameType::SVGForeignObject) {
     // An SVG foreignObject frame is inherently constrained block-size.
@@ -792,6 +794,101 @@ void ReflowInput::InitResizeFlags(nsPresContext* aPresContext,
     // If we're reflowing everything, then we'll find out if we need
     // to re-set this.
     mFrame->RemoveStateBits(NS_FRAME_CONTAINS_RELATIVE_BSIZE);
+  }
+}
+
+static inline bool IsIntrinsicKeyword(const nsStyleCoord& aCoord) {
+  if (aCoord.GetUnit() != eStyleUnit_Enumerated) {
+    return false;
+  }
+
+  // All of the keywords except for '-moz-available' depend on intrinsic sizes.
+  return aCoord.GetIntValue() != NS_STYLE_WIDTH_AVAILABLE;
+}
+
+static bool AreDynamicReflowRootsEnabled() {
+  static bool sAreDynamicReflowRootsEnabled;
+  static bool sIsPrefCached = false;
+
+  if (!sIsPrefCached) {
+    sIsPrefCached = true;
+    Preferences::AddBoolVarCache(&sAreDynamicReflowRootsEnabled,
+                                 "layout.dynamic-reflow-roots.enabled");
+  }
+  return sAreDynamicReflowRootsEnabled;
+}
+
+void ReflowInput::InitDynamicReflowRoot() {
+  auto display = mStyleDisplay->mDisplay;
+  if (mFrame->IsFrameOfType(nsIFrame::eLineParticipant) ||
+      nsStyleDisplay::IsRubyDisplayType(display) ||
+      mFrameType == NS_CSS_FRAME_TYPE_INTERNAL_TABLE ||
+      display == StyleDisplay::Table || display == StyleDisplay::InlineTable ||
+      (mFrame->GetParent() && mFrame->GetParent()->IsXULBoxFrame())) {
+    // We have a display type where 'width' and 'height' don't actually
+    // set the width or height (i.e., the size depends on content).
+    NS_ASSERTION(!(mFrame->GetStateBits() & NS_FRAME_DYNAMIC_REFLOW_ROOT),
+                 "should not have dynamic reflow root bit");
+    return;
+  }
+
+  bool canBeDynamicReflowRoot = AreDynamicReflowRootsEnabled();
+
+  // We can't do this if our used 'width' and 'height' might be influenced by
+  // content.
+  // FIXME: For display:block, we should probably optimize inline-size
+  // being auto.
+  // FIXME: Other flex and grid cases?
+  const nsStyleCoord& width = mStylePosition->mWidth;
+  const nsStyleCoord& height = mStylePosition->mHeight;
+  if (canBeDynamicReflowRoot &&
+      (!width.IsCoordPercentCalcUnit() || width.HasPercent() ||
+       !height.IsCoordPercentCalcUnit() || height.HasPercent() ||
+       IsIntrinsicKeyword(mStylePosition->mMinWidth) ||
+       IsIntrinsicKeyword(mStylePosition->mMaxWidth) ||
+       IsIntrinsicKeyword(mStylePosition->mMinHeight) ||
+       IsIntrinsicKeyword(mStylePosition->mMaxHeight) ||
+       ((mStylePosition->mMinWidth.GetUnit() == eStyleUnit_Auto ||
+         mStylePosition->mMinHeight.GetUnit() == eStyleUnit_Auto) &&
+        mFrame->IsFlexOrGridItem()))) {
+    canBeDynamicReflowRoot = false;
+  }
+
+  if (canBeDynamicReflowRoot && mFrame->IsFlexItem()) {
+    // If our flex-basis is 'auto', it'll defer to 'width' (or 'height') which
+    // we've already checked. Otherwise, it preempts them, so we need to
+    // perform the same "could-this-value-be-influenced-by-content" checks that
+    // we performed for 'width' and 'height' above.
+    const nsStyleCoord& flexBasis = mStylePosition->mFlexBasis;
+    if (flexBasis.GetUnit() != eStyleUnit_Auto &&
+        (!flexBasis.IsCoordPercentCalcUnit() || flexBasis.HasPercent())) {
+      canBeDynamicReflowRoot = false;
+    }
+  }
+
+  if (canBeDynamicReflowRoot && !mFrame->IsFixedPosContainingBlock()) {
+    // We can't treat this frame as a reflow root, since dynamic changes
+    // to absolutely-positioned frames inside of it require that we
+    // reflow the placeholder before we reflow the absolutely positioned
+    // frame.
+    // FIXME:  Alternatively, we could sort the reflow roots in
+    // PresShell::ProcessReflowCommands by depth in the tree, from
+    // deepest to least deep.  However, for performance (FIXME) we
+    // should really be sorting them in the opposite order!
+    canBeDynamicReflowRoot = false;
+  }
+
+  // If we participate in a container's block reflow context, or margins
+  // can collapse through us, we can't be a dynamic reflow root.
+  if (canBeDynamicReflowRoot && mFrame->IsFrameOfType(nsIFrame::eBlockFrame) &&
+      !mFrame->HasAllStateBits(NS_BLOCK_FLOAT_MGR | NS_BLOCK_MARGIN_ROOT)) {
+    canBeDynamicReflowRoot = false;
+  }
+
+  if (canBeDynamicReflowRoot) {
+    mFrame->AddStateBits(NS_FRAME_DYNAMIC_REFLOW_ROOT);
+  } else {
+    mFrame->RemoveStateBits(NS_FRAME_DYNAMIC_REFLOW_ROOT);
   }
 }
 
@@ -1241,12 +1338,12 @@ static bool AreAllEarlierInFlowFramesEmpty(nsIFrame* aFrame,
 // containing block. The writing-mode of the hypothetical box position will
 // have the same block direction as the absolute containing block, but may
 // differ in inline-bidi direction.
-// In the code below, |aReflowInput->frame| is the absolute containing block,
+// In the code below, |aCBReflowInput->frame| is the absolute containing block,
 // while |containingBlock| is the nearest block container of the placeholder
 // frame, which may be different from the absolute containing block.
 void ReflowInput::CalculateHypotheticalPosition(
     nsPresContext* aPresContext, nsPlaceholderFrame* aPlaceholderFrame,
-    const ReflowInput* aReflowInput, nsHypotheticalPosition& aHypotheticalPos,
+    const ReflowInput* aCBReflowInput, nsHypotheticalPosition& aHypotheticalPos,
     LayoutFrameType aFrameType) const {
   NS_ASSERTION(mStyleDisplay->mOriginalDisplay != StyleDisplay::None,
                "mOriginalDisplay has not been properly initialized");
@@ -1256,7 +1353,7 @@ void ReflowInput::CalculateHypotheticalPosition(
   nscoord blockIStartContentEdge;
   // Dummy writing mode for blockContentSize, will be changed as needed by
   // GetHypotheticalBoxContainer.
-  WritingMode cbwm = aReflowInput->GetWritingMode();
+  WritingMode cbwm = aCBReflowInput->GetWritingMode();
   LogicalSize blockContentSize(cbwm);
   nsIFrame* containingBlock = GetHypotheticalBoxContainer(
       aPlaceholderFrame, blockIStartContentEdge, blockContentSize);
@@ -1328,7 +1425,7 @@ void ReflowInput::CalculateHypotheticalPosition(
   // relatively positioned...
   nsSize containerSize =
       containingBlock->GetStateBits() & NS_FRAME_IN_REFLOW
-          ? aReflowInput->ComputedSizeAsContainerIfConstrained()
+          ? aCBReflowInput->ComputedSizeAsContainerIfConstrained()
           : containingBlock->GetSize();
   LogicalPoint placeholderOffset(
       wm, aPlaceholderFrame->GetOffsetToIgnoringScrolling(containingBlock),
@@ -1443,9 +1540,9 @@ void ReflowInput::CalculateHypotheticalPosition(
   // placeholder. Convert to the coordinate space of the absolute containing
   // block.
   nsPoint cbOffset =
-      containingBlock->GetOffsetToIgnoringScrolling(aReflowInput->mFrame);
+      containingBlock->GetOffsetToIgnoringScrolling(aCBReflowInput->mFrame);
 
-  nsSize reflowSize = aReflowInput->ComputedSizeAsContainerIfConstrained();
+  nsSize reflowSize = aCBReflowInput->ComputedSizeAsContainerIfConstrained();
   LogicalPoint logCBOffs(wm, cbOffset, reflowSize - containerSize);
   aHypotheticalPos.mIStart += logCBOffs.I(wm);
   aHypotheticalPos.mBStart += logCBOffs.B(wm);
@@ -1453,9 +1550,9 @@ void ReflowInput::CalculateHypotheticalPosition(
   // The specified offsets are relative to the absolute containing block's
   // padding edge and our current values are relative to the border edge, so
   // translate.
-  LogicalMargin border = aReflowInput->ComputedLogicalBorderPadding() -
-                         aReflowInput->ComputedLogicalPadding();
-  border = border.ConvertTo(wm, aReflowInput->GetWritingMode());
+  LogicalMargin border = aCBReflowInput->ComputedLogicalBorderPadding() -
+                         aCBReflowInput->ComputedLogicalPadding();
+  border = border.ConvertTo(wm, aCBReflowInput->GetWritingMode());
   aHypotheticalPos.mIStart -= border.IStart(wm);
   aHypotheticalPos.mBStart -= border.BStart(wm);
 
@@ -1521,11 +1618,11 @@ void ReflowInput::CalculateHypotheticalPosition(
 }
 
 void ReflowInput::InitAbsoluteConstraints(nsPresContext* aPresContext,
-                                          const ReflowInput* aReflowInput,
+                                          const ReflowInput* aCBReflowInput,
                                           const LogicalSize& aCBSize,
                                           LayoutFrameType aFrameType) {
   WritingMode wm = GetWritingMode();
-  WritingMode cbwm = aReflowInput->GetWritingMode();
+  WritingMode cbwm = aCBReflowInput->GetWritingMode();
   NS_WARNING_ASSERTION(aCBSize.BSize(cbwm) != NS_AUTOHEIGHT,
                        "containing block bsize must be constrained");
 
@@ -1567,8 +1664,28 @@ void ReflowInput::InitAbsoluteConstraints(nsPresContext* aPresContext,
       hypotheticalPos.mIStart = nscoord(0);
       hypotheticalPos.mBStart = nscoord(0);
     } else {
+      // XXXmats all this is broken for orthogonal writing-modes: bug 1521988.
       CalculateHypotheticalPosition(aPresContext, placeholderFrame,
-                                    aReflowInput, hypotheticalPos, aFrameType);
+                                    aCBReflowInput, hypotheticalPos,
+                                    aFrameType);
+      if (aCBReflowInput->mFrame->IsGridContainerFrame()) {
+        // 'hypotheticalPos' is relative to the padding rect of the CB *frame*.
+        // In grid layout the CB is the grid area rectangle, so we translate
+        // 'hypotheticalPos' to be relative that rectangle here.
+        nsRect cb = nsGridContainerFrame::GridItemCB(mFrame);
+        nscoord left(0);
+        nscoord right(0);
+        if (cbwm.IsBidiLTR()) {
+          left = cb.X();
+        } else {
+          right = aCBReflowInput->ComputedWidth() +
+                  aCBReflowInput->ComputedPhysicalPadding().LeftRight() -
+                  cb.XMost();
+        }
+        LogicalMargin offsets(cbwm, nsMargin(cb.Y(), right, nscoord(0), left));
+        hypotheticalPos.mIStart -= offsets.IStart(cbwm);
+        hypotheticalPos.mBStart -= offsets.BStart(cbwm);
+      }
     }
   }
 
@@ -2482,7 +2599,8 @@ void SizeComputationInput::InitOffsets(WritingMode aWM, nscoord aPercentBasis,
   } else if (aPadding) {  // padding is an input arg
     ComputedPhysicalPadding() = *aPadding;
     needPaddingProp = mFrame->StylePadding()->IsWidthDependent() ||
-                      (mFrame->GetStateBits() & NS_FRAME_REFLOW_ROOT);
+                      mFrame->HasAnyStateBits(NS_FRAME_REFLOW_ROOT |
+                                              NS_FRAME_DYNAMIC_REFLOW_ROOT);
   } else {
     needPaddingProp = ComputePadding(aWM, aPercentBasis, aFrameType);
   }

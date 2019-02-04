@@ -12,12 +12,14 @@
 
 #include "jsapi.h"
 
+#include "js/PropertySpec.h"
 #include "js/StableStringChars.h"
 #include "js/Wrapper.h"
 #include "proxy/DeadObjectProxy.h"
 #include "proxy/ScriptedProxyHandler.h"
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
+#include "vm/JSObject.h"
 #include "vm/WrapperObject.h"
 
 #include "gc/Marking-inl.h"
@@ -36,14 +38,7 @@ void js::AutoEnterPolicy::reportErrorIfExceptionIsNotPending(JSContext* cx,
   if (JSID_IS_VOID(id)) {
     ReportAccessDenied(cx);
   } else {
-    UniqueChars prop =
-        IdToPrintableUTF8(cx, id, IdToPrintableBehavior::IdIsPropertyKey);
-    if (!prop) {
-      return;
-    }
-
-    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                             JSMSG_PROPERTY_ACCESS_DENIED, prop.get());
+    Throw(cx, id, JSMSG_PROPERTY_ACCESS_DENIED);
   }
 }
 
@@ -77,31 +72,6 @@ JS_FRIEND_API void js::assertEnteredPolicy(JSContext* cx, JSObject* proxy,
   MOZ_ASSERT(cx->enteredPolicy->enteredAction & act);
 }
 #endif
-
-bool Proxy::getPropertyDescriptor(JSContext* cx, HandleObject proxy,
-                                  HandleId id,
-                                  MutableHandle<PropertyDescriptor> desc) {
-  if (!CheckRecursionLimit(cx)) {
-    return false;
-  }
-
-  const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
-  desc.object().set(
-      nullptr);  // default result if we refuse to perform this action
-  AutoEnterPolicy policy(cx, handler, proxy, id,
-                         BaseProxyHandler::GET_PROPERTY_DESCRIPTOR, true);
-  if (!policy.allowed()) {
-    return policy.returnValue();
-  }
-
-  // Special case. See the comment on BaseProxyHandler::mHasPrototype.
-  if (handler->hasPrototype()) {
-    return handler->BaseProxyHandler::getPropertyDescriptor(cx, proxy, id,
-                                                            desc);
-  }
-
-  return handler->getPropertyDescriptor(cx, proxy, id, desc);
-}
 
 bool Proxy::getOwnPropertyDescriptor(JSContext* cx, HandleObject proxy,
                                      HandleId id,
@@ -745,11 +715,6 @@ static bool proxy_DeleteProperty(JSContext* cx, HandleObject obj, HandleId id,
   Proxy::trace(trc, obj);
 }
 
-static JSObject* proxy_WeakmapKeyDelegate(JSObject* obj) {
-  MOZ_ASSERT(obj->is<ProxyObject>());
-  return obj->as<ProxyObject>().handler()->weakmapKeyDelegate(obj);
-}
-
 static void proxy_Finalize(FreeOp* fop, JSObject* obj) {
   // Suppress a bogus warning about finalize().
   JS::AutoSuppressGCAnalysis nogc;
@@ -789,8 +754,7 @@ const ClassOps js::ProxyClassOps = {
     ProxyObject::trace, /* trace       */
 };
 
-const ClassExtension js::ProxyClassExtension = {proxy_WeakmapKeyDelegate,
-                                                proxy_ObjectMoved};
+const ClassExtension js::ProxyClassExtension = {proxy_ObjectMoved};
 
 const ObjectOps js::ProxyObjectOps = {
     proxy_LookupProperty, Proxy::defineProperty,

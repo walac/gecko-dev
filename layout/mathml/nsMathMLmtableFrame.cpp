@@ -310,19 +310,19 @@ class nsDisplaymtdBorder final : public nsDisplayBorder {
       mozilla::wr::DisplayListBuilder& aBuilder,
       mozilla::wr::IpcResourceUpdateQueue& aResources,
       const StackingContextHelper& aSc,
-      mozilla::layers::WebRenderLayerManager* aManager,
+      mozilla::layers::RenderRootStateManager* aManager,
       nsDisplayListBuilder* aDisplayListBuilder) override {
     return false;
   }
 };
 
 #ifdef DEBUG
-#define DEBUG_VERIFY_THAT_FRAME_IS(_frame, _expected)                       \
-  MOZ_ASSERT(                                                               \
-      mozilla::StyleDisplay::_expected == _frame->StyleDisplay()->mDisplay, \
-      "internal error");
+#  define DEBUG_VERIFY_THAT_FRAME_IS(_frame, _expected)                       \
+    MOZ_ASSERT(                                                               \
+        mozilla::StyleDisplay::_expected == _frame->StyleDisplay()->mDisplay, \
+        "internal error");
 #else
-#define DEBUG_VERIFY_THAT_FRAME_IS(_frame, _expected)
+#  define DEBUG_VERIFY_THAT_FRAME_IS(_frame, _expected)
 #endif
 
 static void ParseFrameAttribute(nsIFrame* aFrame, nsAtom* aAttribute,
@@ -649,7 +649,7 @@ static void ListMathMLTree(nsIFrame* atLeast) {
 // implementation of nsMathMLmtableWrapperFrame
 
 NS_QUERYFRAME_HEAD(nsMathMLmtableWrapperFrame)
-NS_QUERYFRAME_ENTRY(nsIMathMLFrame)
+  NS_QUERYFRAME_ENTRY(nsIMathMLFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsTableWrapperFrame)
 
 nsContainerFrame* NS_NewMathMLmtableOuterFrame(nsIPresShell* aPresShell,
@@ -1023,7 +1023,7 @@ void nsMathMLmtableFrame::SetUseCSSSpacing() {
 }
 
 NS_QUERYFRAME_HEAD(nsMathMLmtableFrame)
-NS_QUERYFRAME_ENTRY(nsMathMLmtableFrame)
+  NS_QUERYFRAME_ENTRY(nsMathMLmtableFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsTableFrame)
 
 // --------
@@ -1164,7 +1164,7 @@ nsMargin nsMathMLmtdFrame::GetBorderOverflow() {
 // implementation of nsMathMLmtdInnerFrame
 
 NS_QUERYFRAME_HEAD(nsMathMLmtdInnerFrame)
-NS_QUERYFRAME_ENTRY(nsIMathMLFrame)
+  NS_QUERYFRAME_ENTRY(nsIMathMLFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsBlockFrame)
 
 nsContainerFrame* NS_NewMathMLmtdInnerFrame(nsIPresShell* aPresShell,

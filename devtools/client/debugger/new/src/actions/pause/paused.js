@@ -4,10 +4,11 @@
 
 // @flow
 import {
-  getHiddenBreakpointLocation,
+  getHiddenBreakpoint,
   isEvaluatingExpression,
   getSelectedFrame,
-  getSources
+  getSources,
+  getLastCommand
 } from "../../selectors";
 
 import { mapFrames } from ".";
@@ -38,7 +39,7 @@ async function getOriginalSourceForFrame(state, frame: Frame) {
  */
 export function paused(pauseInfo: Pause) {
   return async function({ dispatch, getState, client, sourceMaps }: ThunkArgs) {
-    const { frames, why, loadedObjects } = pauseInfo;
+    const { thread, frames, why, loadedObjects } = pauseInfo;
     const topFrame = frames.length > 0 ? frames[0] : null;
 
     // NOTE: do not step when leaving a frame or paused at a debugger statement
@@ -50,22 +51,27 @@ export function paused(pauseInfo: Pause) {
       await dispatch(loadSourceText(source));
 
       if (shouldStep(mappedFrame, getState(), sourceMaps)) {
-        dispatch(command("stepOver"));
+        // When stepping past a location we shouldn't pause at according to the
+        // source map, make sure we continue stepping in the same direction we
+        // were going previously.
+        const rewind = getLastCommand(getState(), thread) == "reverseStepOver";
+        dispatch(command(rewind ? "reverseStepOver" : "stepOver"));
         return;
       }
     }
 
     dispatch({
       type: "PAUSED",
+      thread,
       why,
       frames,
       selectedFrameId: topFrame ? topFrame.id : undefined,
       loadedObjects: loadedObjects || []
     });
 
-    const hiddenBreakpointLocation = getHiddenBreakpointLocation(getState());
-    if (hiddenBreakpointLocation) {
-      dispatch(removeBreakpoint(hiddenBreakpointLocation));
+    const hiddenBreakpoint = getHiddenBreakpoint(getState());
+    if (hiddenBreakpoint) {
+      dispatch(removeBreakpoint(hiddenBreakpoint));
     }
 
     await dispatch(mapFrames());

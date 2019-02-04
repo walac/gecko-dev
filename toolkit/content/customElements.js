@@ -4,14 +4,13 @@
 
  // This file defines these globals on the window object.
  // Define them here so that ESLint can find them:
-/* globals MozElementMixin, MozXULElement, MozElements */
+/* globals BaseControlMixin, MozElementMixin, MozXULElement, MozElements */
 
 "use strict";
 
 // This is loaded into chrome windows with the subscript loader. Wrap in
 // a block to prevent accidentally leaking globals onto `window`.
 (() => {
-
 // Handle customElements.js being loaded as a script in addition to the subscriptLoader
 // from MainProcessSingleton, to handle pages that can open both before and after
 // MainProcessSingleton starts. See Bug 1501845.
@@ -19,8 +18,8 @@ if (window.MozXULElement) {
   return;
 }
 
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
 // The listener of DOMContentLoaded must be set on window, rather than
 // document, because the window can go away before the event is fired.
@@ -48,7 +47,6 @@ gXULDOMParser.forceEnableXULXBL();
 const MozElements = {};
 
 const MozElementMixin = Base => class MozElement extends Base {
-
   /*
    * Implements attribute inheritance by a child element. Uses XBL @inherit
    * syntax of |to=from|.
@@ -70,12 +68,38 @@ const MozElementMixin = Base => class MozElement extends Base {
       attrName = split[1];
       attrNewName = split[0];
     }
+    let hasAttr = this.hasAttribute(attrName);
+    let attrValue = this.getAttribute(attrName);
 
+    // If our attribute hasn't changed since we last inherited, we don't want to
+    // propagate it down to the child. This prevents overriding an attribute that's
+    // been changed on the child (for instance, [checked]).
+    if (!this._inheritedAttributesMap) {
+      this._inheritedAttributesMap = new WeakMap();
+    }
+    if (!this._inheritedAttributesMap.has(child)) {
+      this._inheritedAttributesMap.set(child, {});
+    }
+    let lastInheritedAttributes = this._inheritedAttributesMap.get(child);
+
+    if ((hasAttr && attrValue === lastInheritedAttributes[attrName]) ||
+        (!hasAttr && !lastInheritedAttributes.hasOwnProperty(attrName))) {
+      // We got a request to inherit an unchanged attribute - bail.
+      return;
+    }
+
+    // Store the value we're about to pass down to the child.
+    if (hasAttr) {
+      lastInheritedAttributes[attrName] = attrValue;
+    } else {
+      delete lastInheritedAttributes[attrName];
+    }
+
+    // Actually set the attribute.
     if (attrNewName === "text") {
-      child.textContent =
-        this.hasAttribute(attrName) ? this.getAttribute(attrName) : "";
-    } else if (this.hasAttribute(attrName)) {
-      child.setAttribute(attrNewName, this.getAttribute(attrName));
+      child.textContent = hasAttr ? attrValue : "";
+    } else if (hasAttr) {
+      child.setAttribute(attrNewName, attrValue);
     } else {
       child.removeAttribute(attrNewName);
     }
@@ -141,7 +165,8 @@ const MozElementMixin = Base => class MozElement extends Base {
             `;
         }, "")}
       ]>` : ""}
-      <box xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
+      <box xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+           xmlns:html="http://www.w3.org/1999/xhtml">
         ${str}
       </box>
     `, "application/xml");
@@ -200,7 +225,8 @@ const MozElementMixin = Base => class MozElement extends Base {
 
   /**
    * Indicate that a class defining a XUL element implements one or more
-   * XPCOM interfaces by adding a getCustomInterface implementation to it.
+   * XPCOM interfaces by adding a getCustomInterface implementation to it,
+   * as well as an implementation of QueryInterface.
    *
    * The supplied class should implement the properties and methods of
    * all of the interfaces that are specified.
@@ -211,15 +237,14 @@ const MozElementMixin = Base => class MozElement extends Base {
    *        Array of interface names.
    */
   static implementCustomInterface(cls, ifaces) {
-    const numbers = new Set(ifaces.map(i => i.number));
-    if (cls.prototype.customInterfaceNumbers) {
-      // Base class already implemented some interfaces. Inherit:
-      cls.prototype.customInterfaceNumbers.forEach(number => numbers.add(number));
+    if (cls.prototype.customInterfaces) {
+      ifaces.push(...cls.prototype.customInterfaces);
     }
+    cls.prototype.customInterfaces = ifaces;
 
-    cls.prototype.customInterfaceNumbers = numbers;
-    cls.prototype.getCustomInterfaceCallback = function getCustomInterfaceCallback(iface) {
-      if (numbers.has(iface.number)) {
+    cls.prototype.QueryInterface = ChromeUtils.generateQI(ifaces);
+    cls.prototype.getCustomInterfaceCallback = function getCustomInterfaceCallback(ifaceToCheck) {
+      if (cls.prototype.customInterfaces.some(iface => iface.equals(ifaceToCheck))) {
         return getInterfaceProxy(this);
       }
       return null;
@@ -255,39 +280,48 @@ function getInterfaceProxy(obj) {
   return obj._customInterfaceProxy;
 }
 
-MozElements.BaseControl = class BaseControl extends MozXULElement {
-  get disabled() {
-    return this.getAttribute("disabled") == "true";
-  }
+const BaseControlMixin = Base => {
+  class BaseControl extends Base {
+    get disabled() {
+      return this.getAttribute("disabled") == "true";
+    }
 
-  set disabled(val) {
-    if (val) {
-      this.setAttribute("disabled", "true");
-    } else {
-      this.removeAttribute("disabled");
+    set disabled(val) {
+      if (val) {
+        this.setAttribute("disabled", "true");
+      } else {
+        this.removeAttribute("disabled");
+      }
+    }
+
+    get tabIndex() {
+      return parseInt(this.getAttribute("tabindex")) || 0;
+    }
+
+    set tabIndex(val) {
+      if (val) {
+        this.setAttribute("tabindex", val);
+      } else {
+        this.removeAttribute("tabindex");
+      }
     }
   }
 
-  get tabIndex() {
-    return parseInt(this.getAttribute("tabindex")) || 0;
-  }
-
-  set tabIndex(val) {
-    if (val) {
-      this.setAttribute("tabindex", val);
-    } else {
-      this.removeAttribute("tabindex");
-    }
-  }
+  Base.implementCustomInterface(BaseControl,
+                                [Ci.nsIDOMXULControlElement]);
+  return BaseControl;
 };
-
-MozXULElement.implementCustomInterface(MozElements.BaseControl,
-                                       [Ci.nsIDOMXULControlElement]);
+MozElements.BaseControl = BaseControlMixin(MozXULElement);
 
 // Attach the base class to the window so other scripts can use it:
+window.BaseControlMixin = BaseControlMixin;
 window.MozElementMixin = MozElementMixin;
 window.MozXULElement = MozXULElement;
 window.MozElements = MozElements;
+
+customElements.setElementCreationCallback("browser", () => {
+  Services.scriptloader.loadSubScript("chrome://global/content/elements/browser-custom-element.js", window);
+});
 
 // For now, don't load any elements in the extension dummy document.
 // We will want to load <browser> when that's migrated (bug 1441935).
@@ -306,6 +340,8 @@ if (!isDummyDocument) {
 
   for (let [tag, script] of [
     ["findbar", "chrome://global/content/elements/findbar.js"],
+    ["menulist", "chrome://global/content/elements/menulist.js"],
+    ["richlistbox", "chrome://global/content/elements/richlistbox.js"],
     ["stringbundle", "chrome://global/content/elements/stringbundle.js"],
     ["printpreview-toolbar", "chrome://global/content/printPreviewToolbar.js"],
     ["editor", "chrome://global/content/elements/editor.js"],

@@ -225,7 +225,13 @@ const TEST_GLOBAL = {
     search: {
       init(cb) { cb(); },
       getVisibleEngines: () => [{identifier: "google"}, {identifier: "bing"}],
-      defaultEngine: {identifier: "google", searchForm: "https://www.google.com/search?q=&ie=utf-8&oe=utf-8&client=firefox-b"},
+      defaultEngine: {
+        identifier: "google",
+        searchForm: "https://www.google.com/search?q=&ie=utf-8&oe=utf-8&client=firefox-b",
+        wrappedJSObject: {
+          __internalAliases: ["@google"],
+        },
+      },
       currentEngine: {identifier: "google", searchForm: "https://www.google.com/search?q=&ie=utf-8&oe=utf-8&client=firefox-b"},
     },
     scriptSecurityManager: {
@@ -265,7 +271,16 @@ const TEST_GLOBAL = {
       on() {},
     };
   },
-  Localization: class {},
+  Localization: class {
+    async formatMessages(stringsIds) {
+      return Promise.resolve(stringsIds.map(({id, args}) => ({value: {string_id: id, args}})));
+    }
+  },
+  FxAccountsConfig: {
+    promiseEmailFirstURI(id) {
+      return Promise.resolve(id);
+    },
+  },
 };
 overrider.set(TEST_GLOBAL);
 

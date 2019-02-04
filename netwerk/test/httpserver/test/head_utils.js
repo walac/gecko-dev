@@ -13,8 +13,8 @@ load(_HTTPD_JS_PATH.path);
 // if these tests fail, we'll want the debug output
 var linDEBUG = true;
 
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+var {NetUtil} = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 
 /**
  * Constructs a new nsHttpServer instance.  This function is intended to
@@ -374,8 +374,10 @@ function RawTest(host, port, data, responseCheck) {
  *   an array of RawTests to run, in order
  * @param done
  *   function to call when all tests have run (e.g. to shut down the server)
+ * @param beforeTestCallback
+ *   function to call before each test is run. Gets passed testIndex when called
  */
-function runRawTests(testArray, done) {
+function runRawTests(testArray, done, beforeTestCallback) {
   do_test_pending();
 
   var sts = Cc["@mozilla.org/network/socket-transport-service;1"]
@@ -397,6 +399,11 @@ function runRawTests(testArray, done) {
       return;
     }
 
+    if (beforeTestCallback) {
+      try {
+        beforeTestCallback(testIndex);
+      } catch (e) { /* We don't care if this call fails */ }
+    }
 
     var rawTest = testArray[testIndex];
 

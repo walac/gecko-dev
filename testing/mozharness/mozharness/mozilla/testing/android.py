@@ -59,9 +59,9 @@ class AndroidMixin(object):
         if not self._device and self.adb_path:
             try:
                 import mozdevice
-                self._device = mozdevice.ADBAndroid(adb=self.adb_path,
-                                                    device=self.device_serial,
-                                                    verbose=True)
+                self._device = mozdevice.ADBDevice(adb=self.adb_path,
+                                                   device=self.device_serial,
+                                                   verbose=True)
                 self.info("New mozdevice with adb=%s, device=%s" %
                           (self.adb_path, self.device_serial))
             except AttributeError:
@@ -322,9 +322,12 @@ class AndroidMixin(object):
         import mozdevice
         try:
             self.device.install_app(apk)
-        except mozdevice.ADBError:
-            self.fatal('INFRA-ERROR: Failed to install %s on %s' %
-                       (self.installer_path, self.device_name),
+        except (mozdevice.ADBError, mozdevice.ADBTimeoutError):
+            self.info('Failed to install %s on %s' %
+                      (self.installer_path, self.device_name),
+                      exc_info=1)
+            self.fatal('INFRA-ERROR: Failed to install %s' %
+                       self.installer_path,
                        EXIT_STATUS_DICT[TBPL_RETRY])
 
     def is_boot_completed(self):
@@ -333,9 +336,7 @@ class AndroidMixin(object):
             out = self.device.get_prop('sys.boot_completed', timeout=30)
             if out.strip() == '1':
                 return True
-        except ValueError:
-            pass
-        except mozdevice.ADBError:
+        except (ValueError, mozdevice.ADBError, mozdevice.ADBTimeoutError):
             pass
         return False
 

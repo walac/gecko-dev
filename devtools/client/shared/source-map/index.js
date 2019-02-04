@@ -438,6 +438,7 @@ const dispatcher = new WorkerDispatcher();
 
 const setAssetRootURL = dispatcher.task("setAssetRootURL");
 const getOriginalURLs = dispatcher.task("getOriginalURLs");
+const hasOriginalURL = dispatcher.task("hasOriginalURL");
 const getOriginalRanges = dispatcher.task("getOriginalRanges");
 const getGeneratedRanges = dispatcher.task("getGeneratedRanges", {
   queue: true
@@ -449,6 +450,7 @@ const getAllGeneratedLocations = dispatcher.task("getAllGeneratedLocations", {
   queue: true
 });
 const getOriginalLocation = dispatcher.task("getOriginalLocation");
+const getFileGeneratedRange = dispatcher.task("getFileGeneratedRange");
 const getLocationScopes = dispatcher.task("getLocationScopes");
 const getOriginalSourceText = dispatcher.task("getOriginalSourceText");
 const applySourceMap = dispatcher.task("applySourceMap");
@@ -463,11 +465,13 @@ module.exports = {
   isOriginalId,
   hasMappedSource,
   getOriginalURLs,
+  hasOriginalURL,
   getOriginalRanges,
   getGeneratedRanges,
   getGeneratedLocation,
   getAllGeneratedLocations,
   getOriginalLocation,
+  getFileGeneratedRange,
   getLocationScopes,
   getOriginalSourceText,
   applySourceMap,
@@ -521,7 +525,8 @@ function generatedToOriginalId(generatedId, url) {
 }
 
 function isOriginalId(id) {
-  return !!id.match(/\/originalSource/);
+  return (/\/originalSource/.test(id)
+  );
 }
 
 function isGeneratedId(id) {
@@ -552,7 +557,8 @@ const contentMap = {
   vue: "text/vue",
   coffee: "text/coffeescript",
   elm: "text/elm",
-  cljs: "text/x-clojure"
+  cljc: "text/x-clojure",
+  cljs: "text/x-clojurescript"
 };
 
 /**

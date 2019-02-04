@@ -23,7 +23,7 @@
 #include "mozilla/gfx/Logging.h"            // for gfx::TreeLog
 #include "mozilla/gfx/Point.h"              // for Point
 #ifdef MOZ_WIDGET_ANDROID
-#include "mozilla/jni/Utils.h"  // for jni::IsFennec
+#  include "mozilla/jni/Utils.h"  // for jni::IsFennec
 #endif
 #include "mozilla/layers/APZSampler.h"      // for APZSampler
 #include "mozilla/layers/APZThreadUtils.h"  // for AssertOnControllerThread, etc
@@ -53,9 +53,9 @@
 // #define ENABLE_APZCTM_LOGGING 1
 
 #if ENABLE_APZCTM_LOGGING
-#define APZCTM_LOG(...) printf_stderr("APZCTM: " __VA_ARGS__)
+#  define APZCTM_LOG(...) printf_stderr("APZCTM: " __VA_ARGS__)
 #else
-#define APZCTM_LOG(...)
+#  define APZCTM_LOG(...)
 #endif
 
 // #define APZ_KEY_LOG(...) printf_stderr("APZKEY: " __VA_ARGS__)
@@ -817,8 +817,11 @@ void APZCTreeManager::NotifyScrollbarDragRejected(
     const ScrollableLayerGuid& aGuid) const {
   RefPtr<GeckoContentController> controller =
       GetContentController(aGuid.mLayersId);
+  // If you hit this crash and have STR, please file a bug!
   MOZ_ASSERT(controller);
-  controller->NotifyAsyncScrollbarDragRejected(aGuid.mScrollId);
+  if (controller) {
+    controller->NotifyAsyncScrollbarDragRejected(aGuid.mScrollId);
+  }
 }
 
 void APZCTreeManager::NotifyAutoscrollRejected(
@@ -1120,17 +1123,24 @@ static bool WillHandleInput(const PanGestureOrScrollWheelInput& aPanInput) {
   return APZInputBridge::ActionForWheelEvent(&wheelEvent).isSome();
 }
 
-void APZCTreeManager::FlushApzRepaints(LayersId aLayersId) {
+/*static*/ void APZCTreeManager::FlushApzRepaints(LayersId aLayersId) {
   // Previously, paints were throttled and therefore this method was used to
   // ensure any pending paints were flushed. Now, paints are flushed
   // immediately, so it is safe to simply send a notification now.
   APZCTM_LOG("Flushing repaints for layers id 0x%" PRIx64 "\n",
              uint64_t(aLayersId));
   RefPtr<GeckoContentController> controller = GetContentController(aLayersId);
+#ifndef MOZ_WIDGET_ANDROID
+  // On Android, this code is run in production and may actually get a nullptr
+  // controller here. On other platforms this code is test-only and should never
+  // get a nullptr.
   MOZ_ASSERT(controller);
-  controller->DispatchToRepaintThread(NewRunnableMethod(
-      "layers::GeckoContentController::NotifyFlushComplete", controller,
-      &GeckoContentController::NotifyFlushComplete));
+#endif
+  if (controller) {
+    controller->DispatchToRepaintThread(NewRunnableMethod(
+        "layers::GeckoContentController::NotifyFlushComplete", controller,
+        &GeckoContentController::NotifyFlushComplete));
+  }
 }
 
 nsEventStatus APZCTreeManager::ReceiveInputEvent(
@@ -1881,10 +1891,8 @@ void APZCTreeManager::SynthesizePinchGestureFromMouseWheel(
   ScreenPoint focusPoint = aWheelInput.mOrigin;
 
   // Compute span values based on the wheel delta.
-  // See the PinchGestureInput constructor called below for why
-  // it's OK to use ParentLayer coordinates for the span values.
-  ParentLayerCoord oldSpan = 100;
-  ParentLayerCoord newSpan = oldSpan + aWheelInput.mDeltaY;
+  ScreenCoord oldSpan = 100;
+  ScreenCoord newSpan = oldSpan + aWheelInput.mDeltaY;
 
   // There's no ambiguity as to the target for pinch gesture events.
   TargetConfirmationFlags confFlags{true};
@@ -1892,6 +1900,7 @@ void APZCTreeManager::SynthesizePinchGestureFromMouseWheel(
   PinchGestureInput pinchStart{PinchGestureInput::PINCHGESTURE_START,
                                aWheelInput.mTime,
                                aWheelInput.mTimeStamp,
+                               ExternalPoint(0, 0),
                                focusPoint,
                                oldSpan,
                                oldSpan,
@@ -1899,6 +1908,7 @@ void APZCTreeManager::SynthesizePinchGestureFromMouseWheel(
   PinchGestureInput pinchScale1{PinchGestureInput::PINCHGESTURE_SCALE,
                                 aWheelInput.mTime,
                                 aWheelInput.mTimeStamp,
+                                ExternalPoint(0, 0),
                                 focusPoint,
                                 oldSpan,
                                 oldSpan,
@@ -1906,6 +1916,7 @@ void APZCTreeManager::SynthesizePinchGestureFromMouseWheel(
   PinchGestureInput pinchScale2{PinchGestureInput::PINCHGESTURE_SCALE,
                                 aWheelInput.mTime,
                                 aWheelInput.mTimeStamp,
+                                ExternalPoint(0, 0),
                                 focusPoint,
                                 oldSpan,
                                 newSpan,
@@ -1914,6 +1925,7 @@ void APZCTreeManager::SynthesizePinchGestureFromMouseWheel(
       PinchGestureInput::PINCHGESTURE_END,
       aWheelInput.mTime,
       aWheelInput.mTimeStamp,
+      ExternalPoint(0, 0),
       PinchGestureInput::BothFingersLifted<ScreenPixel>(),
       newSpan,
       newSpan,
@@ -3072,8 +3084,8 @@ already_AddRefed<wr::WebRenderAPI> APZCTreeManager::GetWebRenderAPI() const {
   return api.forget();
 }
 
-already_AddRefed<GeckoContentController> APZCTreeManager::GetContentController(
-    LayersId aLayersId) const {
+/*static*/ already_AddRefed<GeckoContentController>
+APZCTreeManager::GetContentController(LayersId aLayersId) {
   RefPtr<GeckoContentController> controller;
   CompositorBridgeParent::CallWithIndirectShadowTree(
       aLayersId,

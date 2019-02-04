@@ -15,27 +15,26 @@ class nsGlobalWindowInner;
 class nsDocShell;
 
 namespace mozilla {
-namespace dom  {
+namespace dom {
 
 class BrowsingContext;
 class WindowGlobalParent;
+class JSWindowActorChild;
 
 /**
  * Actor for a single nsGlobalWindowInner. This actor is used to communicate
  * information to the parent process asynchronously.
  */
-class WindowGlobalChild : public nsWrapperCache
-                        , public PWindowGlobalChild
-{
-public:
+class WindowGlobalChild : public nsWrapperCache, public PWindowGlobalChild {
+ public:
   NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(WindowGlobalChild)
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(WindowGlobalChild)
 
-  static already_AddRefed<WindowGlobalChild>
-  GetByInnerWindowId(uint64_t aInnerWindowId);
+  static already_AddRefed<WindowGlobalChild> GetByInnerWindowId(
+      uint64_t aInnerWindowId);
 
-  static already_AddRefed<WindowGlobalChild>
-  GetByInnerWindowId(const GlobalObject& aGlobal, uint64_t aInnerWindowId) {
+  static already_AddRefed<WindowGlobalChild> GetByInnerWindowId(
+      const GlobalObject& aGlobal, uint64_t aInnerWindowId) {
     return GetByInnerWindowId(aInnerWindowId);
   }
 
@@ -44,6 +43,7 @@ public:
 
   // Has this actor been shut down
   bool IsClosed() { return mIPCClosed; }
+  void Destroy();
 
   // Check if this actor is managed by PInProcess, as-in the document is loaded
   // in the chrome process.
@@ -59,29 +59,38 @@ public:
   // |nullptr| if the actor has been torn down, or is not in-process.
   already_AddRefed<WindowGlobalParent> GetParentActor();
 
+  // Get this actor's manager if it is not an in-process actor. Returns
+  // |nullptr| if the actor has been torn down, or is in-process.
+  already_AddRefed<TabChild> GetTabChild();
+
+  // Get a JS actor object by name.
+  already_AddRefed<JSWindowActorChild> GetActor(const nsAString& aName,
+                                                ErrorResult& aRv);
+
   // Create and initialize the WindowGlobalChild object.
-  static already_AddRefed<WindowGlobalChild>
-  Create(nsGlobalWindowInner* aWindow);
+  static already_AddRefed<WindowGlobalChild> Create(
+      nsGlobalWindowInner* aWindow);
 
   nsISupports* GetParentObject();
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
 
-protected:
+ protected:
   virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 
-private:
+ private:
   WindowGlobalChild(nsGlobalWindowInner* aWindow, dom::BrowsingContext* aBc);
   ~WindowGlobalChild();
 
   RefPtr<nsGlobalWindowInner> mWindowGlobal;
   RefPtr<dom::BrowsingContext> mBrowsingContext;
+  nsRefPtrHashtable<nsStringHashKey, JSWindowActorChild> mWindowActors;
   uint64_t mInnerWindowId;
   uint64_t mOuterWindowId;
   bool mIPCClosed;
 };
 
-} // namespace dom
-} // namespace mozilla
+}  // namespace dom
+}  // namespace mozilla
 
-#endif // !defined(mozilla_dom_WindowGlobalChild_h)
+#endif  // !defined(mozilla_dom_WindowGlobalChild_h)

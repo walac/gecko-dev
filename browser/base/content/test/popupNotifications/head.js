@@ -1,4 +1,4 @@
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 ChromeUtils.defineModuleGetter(this, "PlacesUtils",
   "resource://gre/modules/PlacesUtils.jsm");
@@ -205,8 +205,8 @@ function checkPopup(popup, notifyObj) {
        "main action label matches");
     is(notification.getAttribute("buttonaccesskey"),
        notifyObj.mainAction.accessKey, "main action accesskey matches");
-    is(notification.getAttribute("buttonhighlight"),
-       (!notifyObj.mainAction.disableHighlight).toString(),
+    is(notification.hasAttribute("buttonhighlight"),
+       !notifyObj.mainAction.disableHighlight,
        "main action highlight matches");
   }
   if (notifyObj.secondaryActions && notifyObj.secondaryActions.length > 0) {

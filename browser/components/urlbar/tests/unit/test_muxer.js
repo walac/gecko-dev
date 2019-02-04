@@ -23,19 +23,19 @@ add_task(async function test_muxer() {
                 "Should throw with invalid sort");
 
   let matches = [
-    new UrlbarMatch(UrlbarUtils.MATCH_TYPE.TAB_SWITCH,
-                    UrlbarUtils.MATCH_SOURCE.TABS,
-                    { url: "http://mozilla.org/tab/" }),
-    new UrlbarMatch(UrlbarUtils.MATCH_TYPE.URL,
-                    UrlbarUtils.MATCH_SOURCE.BOOKMARKS,
-                    { url: "http://mozilla.org/bookmark/" }),
-    new UrlbarMatch(UrlbarUtils.MATCH_TYPE.URL,
-                    UrlbarUtils.MATCH_SOURCE.HISTORY,
-                    { url: "http://mozilla.org/history/" }),
+    new UrlbarResult(UrlbarUtils.RESULT_TYPE.TAB_SWITCH,
+                     UrlbarUtils.RESULT_SOURCE.TABS,
+                     { url: "http://mozilla.org/tab/" }),
+    new UrlbarResult(UrlbarUtils.RESULT_TYPE.URL,
+                     UrlbarUtils.RESULT_SOURCE.BOOKMARKS,
+                     { url: "http://mozilla.org/bookmark/" }),
+    new UrlbarResult(UrlbarUtils.RESULT_TYPE.URL,
+                     UrlbarUtils.RESULT_SOURCE.HISTORY,
+                     { url: "http://mozilla.org/history/" }),
   ];
-  registerBasicTestProvider(matches);
 
-  let context = createContext();
+  let providerName = registerBasicTestProvider(matches);
+  let context = createContext(undefined, {providers: [providerName]});
   let controller = new UrlbarController({
     browserWindow: {
       location: {
@@ -43,22 +43,27 @@ add_task(async function test_muxer() {
       },
     },
   });
-  let muxer = {
+  /**
+   * A test muxer.
+   */
+  class TestMuxer extends UrlbarMuxer {
     get name() {
       return "TestMuxer";
-    },
+    }
     sort(queryContext) {
       queryContext.results.sort((a, b) => {
-        if (b.source == UrlbarUtils.MATCH_SOURCE.TABS) {
+        if (b.source == UrlbarUtils.RESULT_SOURCE.TABS) {
           return -1;
         }
-        if (b.source == UrlbarUtils.MATCH_SOURCE.BOOKMARKS) {
+        if (b.source == UrlbarUtils.RESULT_SOURCE.BOOKMARKS) {
           return 1;
         }
-        return a.source == UrlbarUtils.MATCH_SOURCE.BOOKMARKS ? -1 : 1;
+        return a.source == UrlbarUtils.RESULT_SOURCE.BOOKMARKS ? -1 : 1;
       });
-    },
-  };
+    }
+  }
+  let muxer = new TestMuxer();
+
   UrlbarProvidersManager.registerMuxer(muxer);
   context.muxer = "TestMuxer";
 

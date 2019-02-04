@@ -4,14 +4,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
-ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
-ChromeUtils.import("resource://gre/modules/DelayedInit.jsm");
-ChromeUtils.import("resource://gre/modules/L10nRegistry.jsm");
-ChromeUtils.import("resource://gre/modules/Messaging.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-ChromeUtils.import("resource://gre/modules/TelemetryController.jsm");
+var {AddonManager} = ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
+var {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+var {DelayedInit} = ChromeUtils.import("resource://gre/modules/DelayedInit.jsm");
+var {FileSource, L10nRegistry} = ChromeUtils.import("resource://gre/modules/L10nRegistry.jsm");
+var {EventDispatcher} = ChromeUtils.import("resource://gre/modules/Messaging.jsm");
+var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+var {TelemetryController} = ChromeUtils.import("resource://gre/modules/TelemetryController.jsm");
 
 if (AppConstants.ACCESSIBILITY) {
   ChromeUtils.defineModuleGetter(this, "AccessFu",
@@ -39,7 +39,6 @@ ChromeUtils.defineModuleGetter(this, "Downloads",
 ChromeUtils.defineModuleGetter(this, "UserAgentOverrides",
                                "resource://gre/modules/UserAgentOverrides.jsm");
 
-ChromeUtils.defineModuleGetter(this, "Task", "resource://gre/modules/Task.jsm");
 ChromeUtils.defineModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
 
 ChromeUtils.defineModuleGetter(this, "SafeBrowsing",
@@ -489,11 +488,11 @@ var BrowserApp = {
     }
 
     InitLater(() => {
-      Task.spawn(function* () {
-        let downloadsDir = yield Downloads.getPreferredDownloadsDirectory();
+      (async () => {
+        let downloadsDir = await Downloads.getPreferredDownloadsDirectory();
         let logsDir = OS.Path.join(downloadsDir, "memory-reports");
-        yield OS.File.removeDir(logsDir);
-      });
+        await OS.File.removeDir(logsDir);
+      })();
     });
 
     // Don't delay loading content.js because when we restore reader mode tabs,
@@ -512,7 +511,7 @@ var BrowserApp = {
     // fxa-content-server messages.
     if (ParentalControls.isAllowed(ParentalControls.MODIFY_ACCOUNTS)) {
       console.log("browser.js: loading Firefox Accounts WebChannel");
-      ChromeUtils.import("resource://gre/modules/FxAccountsWebChannel.jsm");
+      var {EnsureFxAccountsWebChannel} = ChromeUtils.import("resource://gre/modules/FxAccountsWebChannel.jsm");
       EnsureFxAccountsWebChannel();
     } else {
       console.log("browser.js: not loading Firefox Accounts WebChannel; this profile cannot connect to Firefox Accounts.");
@@ -650,6 +649,7 @@ var BrowserApp = {
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_copy_link");
 
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
+        url = NativeWindow.contextmenus._stripViewSource(url);
         NativeWindow.contextmenus._copyStringToDefaultClipboard(url);
       });
 
@@ -678,9 +678,11 @@ var BrowserApp = {
       order: NativeWindow.contextmenus.DEFAULT_HTML5_ORDER - 1, // Show above HTML5 menu items
       selector: NativeWindow.contextmenus._disableRestricted("SHARE", NativeWindow.contextmenus.linkShareableContext),
       showAsActions: function(aElement) {
+        let uri = NativeWindow.contextmenus._getLinkURL(aElement);
+        uri = NativeWindow.contextmenus._stripViewSource(uri);
         return {
           title: aElement.textContent.trim() || aElement.title.trim(),
-          uri: NativeWindow.contextmenus._getLinkURL(aElement),
+          uri,
         };
       },
       icon: "drawable://ic_menu_share",
@@ -839,7 +841,7 @@ var BrowserApp = {
     NativeWindow.contextmenus.add(stringGetter("contextmenu.viewImage"),
       NativeWindow.contextmenus.imageLocationCopyableContext,
       function(aTarget) {
-        let url = aTarget.src;
+        let url = aTarget.currentSrc || aTarget.src;
         ContentAreaUtils.urlSecurityCheck(url, aTarget.ownerDocument.nodePrincipal,
                                           Ci.nsIScriptSecurityManager.DISALLOW_SCRIPT);
 
@@ -853,7 +855,8 @@ var BrowserApp = {
       function(aTarget) {
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_copy_image");
 
-        let url = aTarget.src;
+        let url = aTarget.currentSrc || aTarget.src;
+        url = NativeWindow.contextmenus._stripViewSource(url);
         NativeWindow.contextmenus._copyStringToDefaultClipboard(url);
       });
 
@@ -862,7 +865,8 @@ var BrowserApp = {
       selector: NativeWindow.contextmenus._disableRestricted("SHARE", NativeWindow.contextmenus.imageShareableContext),
       order: NativeWindow.contextmenus.DEFAULT_HTML5_ORDER - 1, // Show above HTML5 menu items
       showAsActions: function(aTarget) {
-        let src = aTarget.src;
+        let src = aTarget.currentSrc || aTarget.src;
+        src = NativeWindow.contextmenus._stripViewSource(src);
         return {
           title: src,
           uri: src,
@@ -903,7 +907,7 @@ var BrowserApp = {
       function(aTarget) {
         UITelemetry.addEvent("action.1", "contextmenu", null, "web_background_image");
 
-        let src = aTarget.src;
+        let src = aTarget.currentSrc || aTarget.src;
         GlobalEventDispatcher.sendRequest({
           type: "Image:SetAs",
           url: src
@@ -1501,29 +1505,29 @@ var BrowserApp = {
         return;
       }
 
-      Task.spawn(function* () {
+      (async () => {
         let fileName = ContentAreaUtils.getDefaultFileName(aBrowser.contentTitle, aBrowser.currentURI, null, null);
         fileName = fileName.trim() + ".pdf";
 
-        let downloadsDir = yield Downloads.getPreferredDownloadsDirectory();
+        let downloadsDir = await Downloads.getPreferredDownloadsDirectory();
         let file = OS.Path.join(downloadsDir, fileName);
 
         // Force this to have a unique name.
-        let openedFile = yield OS.File.openUnique(file, { humanReadable: true });
+        let openedFile = await OS.File.openUnique(file, { humanReadable: true });
         file = openedFile.path;
-        yield openedFile.file.close();
+        await openedFile.file.close();
 
-        let download = yield Downloads.createDownload({
+        let download = await Downloads.createDownload({
           source: aBrowser.contentWindow,
           target: file,
           saver: "pdf",
           startTime: Date.now(),
         });
 
-        let list = yield Downloads.getList(download.source.isPrivate ? Downloads.PRIVATE : Downloads.PUBLIC)
-        yield list.add(download);
-        yield download.start();
-      });
+        let list = await Downloads.getList(download.source.isPrivate ? Downloads.PRIVATE : Downloads.PUBLIC);
+        await list.add(download);
+        await download.start();
+      })();
     });
   },
 
@@ -3233,6 +3237,11 @@ var NativeWindow = {
     _stripScheme: function(aString) {
       let index = aString.indexOf(":");
       return aString.slice(index + 1);
+    },
+
+    _stripViewSource: function(aString) {
+      // If we're in a view source tab, remove the view-source: prefix
+      return aString.replace(/^view-source:/, "");
     }
   }
 };
@@ -3760,10 +3769,12 @@ Tab.prototype = {
       };
       GlobalEventDispatcher.sendRequest(message);
     }
+    this.browser.contentWindow.windowUtils.setDesktopModeViewport(this.desktopMode);
 
     let flags = Ci.nsIWebProgress.NOTIFY_STATE_ALL |
                 Ci.nsIWebProgress.NOTIFY_LOCATION |
-                Ci.nsIWebProgress.NOTIFY_SECURITY;
+                Ci.nsIWebProgress.NOTIFY_SECURITY |
+                Ci.nsIWebProgress.NOTIFY_CONTENT_BLOCKING;
     this.filter = Cc["@mozilla.org/appshell/component/browser-status-filter;1"].createInstance(Ci.nsIWebProgress);
     this.filter.addProgressListener(this, flags)
     this.browser.addProgressListener(this.filter, flags);
@@ -3895,8 +3906,11 @@ Tab.prototype = {
       // We were redirected; reload the original URL
       url = this.originalURI.spec;
     }
-
-    this.browser.docShell.loadURI(url, flags, null, null, null, this.browser.contentPrincipal);
+    let loadURIOptions = {
+      triggeringPrincipal: this.browser.contentPrincipal,
+      loadFlags: flags,
+    };
+    this.browser.docShell.loadURI(url, loadURIOptions);
   },
 
   destroy: function() {
@@ -4744,6 +4758,26 @@ Tab.prototype = {
     GlobalEventDispatcher.sendRequest(message);
   },
 
+  // Cache last tracking event to limit firings and only propagate changes
+  _tracking: null,
+
+  onContentBlockingEvent: function(aWebProgress, aRequest, aState) {
+    let trackingMode = IdentityHandler.getTrackingMode(aState, this.browser);
+    if (this._tracking == trackingMode) {
+        return;
+    } else {
+        this._tracking = trackingMode;
+    }
+
+    let message = {
+      type: "Content:ContentBlockingEvent",
+      tabID: this.id,
+      tracking: trackingMode
+    };
+
+    GlobalEventDispatcher.sendRequest(message);
+  },
+
   OnHistoryNewEntry: function(newURI, oldIndex) {
     Services.obs.notifyObservers(this.browser, "Content:HistoryChange");
   },
@@ -5070,8 +5104,11 @@ var ErrorPageEventHandler = {
               attrs["privateBrowsingId"] = 1;
             }
 
-            let triggeringPrincipal = nullServices.scriptSecurityManager.createNullPrincipal(attrs);
-            webNav.loadURI(location, Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CLASSIFIER, null, null, triggeringPrincipal);
+            let loadURIOptions = {
+              triggeringPrincipal: Services.scriptSecurityManager.createNullPrincipal(attrs),
+              loadFlags: Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CLASSIFIER,
+            };
+            webNav.loadURI(location, loadURIOptions);
 
             // ....but add a notify bar as a reminder, so that they don't lose
             // track after, e.g., tab switching.
@@ -5369,7 +5406,7 @@ var XPInstallObserver = {
 };
 
 /**
- * Handler for blocked popups, triggered by DOMUpdateBlockedPopups events in browser.xml
+ * Handler for blocked popups, triggered by DOMUpdateBlockedPopups events in browser.js
  */
 var PopupBlockerObserver = {
   onUpdateBlockedPopups: function onUpdateBlockedPopups(aEvent) {
@@ -5800,14 +5837,12 @@ var IdentityHandler = {
     let identityMode = this.getIdentityMode(aState, this._uri);
     let mixedDisplay = this.getMixedDisplayMode(aState);
     let mixedActive = this.getMixedActiveMode(aState);
-    let trackingMode = this.getTrackingMode(aState, aBrowser);
     let result = {
       origin: locationObj.origin,
       mode: {
         identity: identityMode,
         mixed_display: mixedDisplay,
         mixed_active: mixedActive,
-        tracking: trackingMode
       }
     };
 
@@ -6627,26 +6662,29 @@ var Distribution = {
   // aFile is an nsIFile
   // aCallback takes the parsed JSON object as a parameter
   readJSON: function dc_readJSON(aFile, aCallback) {
-    Task.spawn(function*() {
-      let bytes = yield OS.File.read(aFile.path);
-      let raw = new TextDecoder().decode(bytes) || "";
+    (async () => {
+      try {
+        let bytes = await OS.File.read(aFile.path);
+        let raw = new TextDecoder().decode(bytes) || "";
+      } catch (e) {
+        if (!(e instanceof OS.File.Error && reason.becauseNoSuchFile)) {
+          Cu.reportError("Distribution: Could not read from " + aFile.leafName + " file");
+        }
+        return;
+      }
 
       try {
         aCallback(JSON.parse(raw));
       } catch (e) {
         Cu.reportError("Distribution: Could not parse JSON: " + e);
       }
-    }).catch(function onError(reason) {
-      if (!(reason instanceof OS.File.Error && reason.becauseNoSuchFile)) {
-        Cu.reportError("Distribution: Could not read from " + aFile.leafName + " file");
-      }
-    });
+    })();
   },
 
   // Track pending installs so we can avoid showing notifications for them.
   pendingAddonInstalls: new Set(),
 
-  installDistroAddons: Task.async(function* () {
+  async installDistroAddons() {
     const PREF_ADDONS_INSTALLED = "distribution.addonsInstalled";
     try {
       let installed = Services.prefs.getBoolPref(PREF_ADDONS_INSTALLED);
@@ -6661,7 +6699,7 @@ var Distribution = {
     try {
       distroPath = FileUtils.getDir("XREAppDist", ["extensions"]).path;
 
-      let info = yield OS.File.stat(distroPath);
+      let info = await OS.File.stat(distroPath);
       if (!info.isDir) {
         return;
       }
@@ -6671,7 +6709,7 @@ var Distribution = {
 
     let it = new OS.File.DirectoryIterator(distroPath);
     try {
-      yield it.forEach(entry => {
+      await it.forEach(entry => {
         // Only support extensions that are zipped in .xpi files.
         if (entry.isDir || !entry.name.endsWith(".xpi")) {
           dump("Ignoring distribution add-on that isn't an XPI: " + entry.path);
@@ -6694,7 +6732,7 @@ var Distribution = {
     } finally {
       it.close();
     }
-  })
+  },
 };
 
 var Tabs = {

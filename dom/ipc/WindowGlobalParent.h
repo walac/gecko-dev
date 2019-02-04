@@ -10,32 +10,34 @@
 #include "mozilla/RefPtr.h"
 #include "mozilla/dom/PWindowGlobalParent.h"
 #include "nsWrapperCache.h"
+#include "nsISupports.h"
 
 class nsIPrincipal;
 class nsIURI;
 class nsFrameLoader;
 
 namespace mozilla {
-namespace dom  {
+namespace dom {
 
-class ChromeBrowsingContext;
+class CanonicalBrowsingContext;
 class WindowGlobalChild;
+class JSWindowActorParent;
 
 /**
  * A handle in the parent process to a specific nsGlobalWindowInner object.
  */
-class WindowGlobalParent final : public nsWrapperCache
-                               , public PWindowGlobalParent
-{
-public:
-  NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(WindowGlobalParent)
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(WindowGlobalParent)
+class WindowGlobalParent final : public nsISupports,
+                                 public nsWrapperCache,
+                                 public PWindowGlobalParent {
+ public:
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(WindowGlobalParent)
 
-  static already_AddRefed<WindowGlobalParent>
-  GetByInnerWindowId(uint64_t aInnerWindowId);
+  static already_AddRefed<WindowGlobalParent> GetByInnerWindowId(
+      uint64_t aInnerWindowId);
 
-  static already_AddRefed<WindowGlobalParent>
-  GetByInnerWindowId(const GlobalObject& aGlobal, uint64_t aInnerWindowId) {
+  static already_AddRefed<WindowGlobalParent> GetByInnerWindowId(
+      const GlobalObject& aGlobal, uint64_t aInnerWindowId) {
     return GetByInnerWindowId(aInnerWindowId);
   }
 
@@ -50,13 +52,21 @@ public:
   // |nullptr| if the actor has been torn down, or is not in-process.
   already_AddRefed<WindowGlobalChild> GetChildActor();
 
+  // Get a JS actor object by name.
+  already_AddRefed<JSWindowActorParent> GetActor(const nsAString& aName,
+                                                 ErrorResult& aRv);
+
+  // Get this actor's manager if it is not an in-process actor. Returns
+  // |nullptr| if the actor has been torn down, or is in-process.
+  already_AddRefed<TabParent> GetTabParent();
+
   // The principal of this WindowGlobal. This value will not change over the
   // lifetime of the WindowGlobal object, even to reflect changes in
   // |document.domain|.
   nsIPrincipal* DocumentPrincipal() { return mDocumentPrincipal; }
 
   // The BrowsingContext which this WindowGlobal has been loaded into.
-  ChromeBrowsingContext* BrowsingContext() { return mBrowsingContext; }
+  CanonicalBrowsingContext* BrowsingContext() { return mBrowsingContext; }
 
   // Get the root nsFrameLoader object for the tree of BrowsingContext nodes
   // which this WindowGlobal is a part of. This will be the nsFrameLoader
@@ -85,14 +95,15 @@ public:
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
 
-protected:
+ protected:
   // IPC messages
   mozilla::ipc::IPCResult RecvUpdateDocumentURI(nsIURI* aURI) override;
   mozilla::ipc::IPCResult RecvBecomeCurrentWindowGlobal() override;
+  mozilla::ipc::IPCResult RecvDestroy() override;
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
-private:
+ private:
   ~WindowGlobalParent();
 
   // NOTE: This document principal doesn't reflect possible |document.domain|
@@ -100,14 +111,15 @@ private:
   nsCOMPtr<nsIPrincipal> mDocumentPrincipal;
   nsCOMPtr<nsIURI> mDocumentURI;
   RefPtr<nsFrameLoader> mFrameLoader;
-  RefPtr<ChromeBrowsingContext> mBrowsingContext;
+  RefPtr<CanonicalBrowsingContext> mBrowsingContext;
+  nsRefPtrHashtable<nsStringHashKey, JSWindowActorParent> mWindowActors;
   uint64_t mInnerWindowId;
   uint64_t mOuterWindowId;
   bool mInProcess;
   bool mIPCClosed;
 };
 
-} // namespace dom
-} // namespace mozilla
+}  // namespace dom
+}  // namespace mozilla
 
-#endif // !defined(mozilla_dom_WindowGlobalParent_h)
+#endif  // !defined(mozilla_dom_WindowGlobalParent_h)

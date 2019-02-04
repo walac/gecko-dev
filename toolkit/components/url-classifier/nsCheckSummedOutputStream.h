@@ -10,8 +10,8 @@
 #include "nsIOutputStream.h"
 #include "nsICryptoHash.h"
 #include "nsNetCID.h"
+#include "nsNetUtil.h"
 #include "nsString.h"
-#include "nsToolkitCompsCID.h"
 #include "../../../netwerk/base/nsBufferedStreams.h"
 #include "prio.h"
 

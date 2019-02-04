@@ -171,7 +171,6 @@
         "getOwnPropertyDescriptor")                                            \
   MACRO(getOwnPropertyNames, getOwnPropertyNames, "getOwnPropertyNames")       \
   MACRO(getPrefix, getPrefix, "get ")                                          \
-  MACRO(getPropertyDescriptor, getPropertyDescriptor, "getPropertyDescriptor") \
   MACRO(getPropertySuper, getPropertySuper, "getPropertySuper")                \
   MACRO(getPrototypeOf, getPrototypeOf, "getPrototypeOf")                      \
   MACRO(GetTypeError, GetTypeError, "GetTypeError")                            \
@@ -323,6 +322,7 @@
   MACRO(RegExpFlagsGetter, RegExpFlagsGetter, "RegExpFlagsGetter")             \
   MACRO(RegExpMatcher, RegExpMatcher, "RegExpMatcher")                         \
   MACRO(RegExpSearcher, RegExpSearcher, "RegExpSearcher")                      \
+  MACRO(RegExpStringIterator, RegExpStringIterator, "RegExp String Iterator")  \
   MACRO(RegExpTester, RegExpTester, "RegExpTester")                            \
   MACRO(RegExp_prototype_Exec, RegExp_prototype_Exec, "RegExp_prototype_Exec") \
   MACRO(Reify, Reify, "Reify")                                                 \
@@ -419,6 +419,7 @@
   MACRO(variable, variable, "variable")                                        \
   MACRO(void0, void0, "(void 0)")                                              \
   MACRO(wasm, wasm, "wasm")                                                    \
+  MACRO(WasmAnyRef, WasmAnyRef, "WasmAnyRef")                                  \
   MACRO(wasmcall, wasmcall, "wasmcall")                                        \
   MACRO(watch, watch, "watch")                                                 \
   MACRO(WeakMapConstructorInit, WeakMapConstructorInit,                        \

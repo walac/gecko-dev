@@ -286,6 +286,7 @@ void nsStandardURL::ShutdownGlobalObjects() {
     // This instanciates a dummy class, and will trigger the class
     // destructor when libxul is unloaded. This is equivalent to atexit(),
     // but gracefully handles dlclose().
+    StaticMutexAutoLock lock(gAllURLsMutex);
     static DumpLeakedURLs d;
   }
 #endif
@@ -1187,7 +1188,6 @@ NS_INTERFACE_MAP_BEGIN(nsStandardURL)
   NS_INTERFACE_MAP_ENTRY(nsIStandardURL)
   NS_INTERFACE_MAP_ENTRY(nsISerializable)
   NS_INTERFACE_MAP_ENTRY(nsIClassInfo)
-  NS_INTERFACE_MAP_ENTRY(nsIIPCSerializableURI)
   NS_INTERFACE_MAP_ENTRY(nsISensitiveInfoHiddenURI)
   // see nsStandardURL::Equals
   if (aIID.Equals(kThisImplCID))
@@ -2205,6 +2205,10 @@ nsresult nsStandardURL::EqualsInternal(
 NS_IMETHODIMP
 nsStandardURL::SchemeIs(const char *scheme, bool *result) {
   MOZ_ASSERT(result, "null pointer");
+  if (!scheme) {
+    *result = false;
+    return NS_OK;
+  }
 
   *result = SegmentIs(mScheme, scheme);
   return NS_OK;
@@ -3305,10 +3309,6 @@ nsStandardURL::Write(nsIObjectOutputStream *stream) {
   return NS_OK;
 }
 
-//---------------------------------------------------------------------------
-// nsStandardURL::nsIIPCSerializableURI
-//---------------------------------------------------------------------------
-
 inline ipc::StandardURLSegment ToIPCSegment(
     const nsStandardURL::URLSegment &aSegment) {
   return ipc::StandardURLSegment(aSegment.mPos, aSegment.mLen);
@@ -3431,9 +3431,12 @@ bool nsStandardURL::Deserialize(const URIParams &aParams) {
       false);
   NS_ENSURE_TRUE(mPath.mLen != -1 && mSpec.CharAt(mPath.mPos) == '/', false);
   NS_ENSURE_TRUE(mPath.mPos == mFilepath.mPos, false);
-  NS_ENSURE_TRUE(mQuery.mLen == -1 || mSpec.CharAt(mQuery.mPos - 1) == '?',
+  NS_ENSURE_TRUE(mQuery.mLen == -1 ||
+                     (mQuery.mPos > 0 && mSpec.CharAt(mQuery.mPos - 1) == '?'),
                  false);
-  NS_ENSURE_TRUE(mRef.mLen == -1 || mSpec.CharAt(mRef.mPos - 1) == '#', false);
+  NS_ENSURE_TRUE(
+      mRef.mLen == -1 || (mRef.mPos > 0 && mSpec.CharAt(mRef.mPos - 1) == '#'),
+      false);
 
   return true;
 }

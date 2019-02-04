@@ -6,8 +6,8 @@
 
 var EXPORTED_SYMBOLS = ["SessionHistory"];
 
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 ChromeUtils.defineModuleGetter(this, "Utils",
   "resource://gre/modules/sessionstore/Utils.jsm");
@@ -265,9 +265,9 @@ var SessionHistoryInternal = {
    */
   _getSerializablePresState(layoutHistoryState, stateKey) {
     let presState = { stateKey };
-    let x = {}, y = {}, scrollOriginDowngrade = {}, res = {}, scaleToRes = {};
+    let x = {}, y = {}, scrollOriginDowngrade = {}, res = {};
 
-    layoutHistoryState.getPresState(stateKey, x, y, scrollOriginDowngrade, res, scaleToRes);
+    layoutHistoryState.getPresState(stateKey, x, y, scrollOriginDowngrade, res);
     if (x.value !== 0 || y.value !== 0) {
       presState.scroll = x.value + "," + y.value;
     }
@@ -276,9 +276,6 @@ var SessionHistoryInternal = {
     }
     if (res.value != 1.0) {
       presState.res = res.value;
-    }
-    if (scaleToRes.value === true) {
-      presState.scaleToRes = scaleToRes.value;
     }
 
     return presState;
@@ -331,7 +328,6 @@ var SessionHistoryInternal = {
    * @returns nsISHEntry
    */
   deserializeEntry(entry, idMap, docIdentMap) {
-
     var shEntry = Cc["@mozilla.org/browser/session-history-entry;1"].
                   createInstance(Ci.nsISHEntry);
 
@@ -495,10 +491,9 @@ var SessionHistoryInternal = {
     let scrollOriginDowngrade =
       typeof presState.scrollOriginDowngrade == "boolean" ? presState.scrollOriginDowngrade : true;
     let res = presState.res || 1.0;
-    let scaleToRes = presState.scaleToRes || false;
 
     layoutHistoryState.addNewPresState(stateKey, ...this._deserializeScrollPosition(presState.scroll),
-                                       scrollOriginDowngrade, res, scaleToRes);
+                                       scrollOriginDowngrade, res);
   },
 
   /**

@@ -27,7 +27,7 @@
 #include "nsJSUtils.h"
 #include "nsISupportsPrimitives.h"
 #include "nsServiceManagerUtils.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsIWeakReferenceUtils.h"
 
 using mozilla::Unused;  // <snicker>
@@ -61,7 +61,7 @@ VisibilityChangeListener::VisibilityChangeListener(
   MOZ_ASSERT(aWindow);
 
   mWindow = do_GetWeakReference(aWindow);
-  nsCOMPtr<nsIDocument> doc = aWindow->GetExtantDoc();
+  nsCOMPtr<Document> doc = aWindow->GetExtantDoc();
   if (doc) {
     doc->AddSystemEventListener(NS_LITERAL_STRING(kVisibilityChange),
                                 /* listener */ this,
@@ -78,7 +78,7 @@ VisibilityChangeListener::HandleEvent(Event* aEvent) {
     return NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsIDocument> doc = do_QueryInterface(aEvent->GetTarget());
+  nsCOMPtr<Document> doc = do_QueryInterface(aEvent->GetTarget());
   MOZ_ASSERT(doc);
 
   if (mCallback) {
@@ -523,20 +523,20 @@ ContentPermissionRequestBase::ContentPermissionRequestBase(
 NS_IMETHODIMP
 ContentPermissionRequestBase::GetPrincipal(
     nsIPrincipal** aRequestingPrincipal) {
-  NS_ADDREF(*aRequestingPrincipal = mPrincipal);
+  NS_IF_ADDREF(*aRequestingPrincipal = mPrincipal);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 ContentPermissionRequestBase::GetTopLevelPrincipal(
     nsIPrincipal** aRequestingPrincipal) {
-  NS_ADDREF(*aRequestingPrincipal = mTopLevelPrincipal);
+  NS_IF_ADDREF(*aRequestingPrincipal = mTopLevelPrincipal);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 ContentPermissionRequestBase::GetWindow(mozIDOMWindow** aRequestingWindow) {
-  NS_ADDREF(*aRequestingWindow = mWindow);
+  NS_IF_ADDREF(*aRequestingWindow = mWindow);
   return NS_OK;
 }
 

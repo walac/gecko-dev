@@ -224,13 +224,16 @@ class JSFunction : public js::NativeObject {
   bool needsNamedLambdaEnvironment() const;
 
   bool needsFunctionEnvironmentObjects() const {
-    return needsCallObject() || needsNamedLambdaEnvironment();
+    bool res = nonLazyScript()->needsFunctionEnvironmentObjects();
+    MOZ_ASSERT(res == (needsCallObject() || needsNamedLambdaEnvironment()));
+    return res;
   }
 
   bool needsSomeEnvironmentObject() const {
     return needsFunctionEnvironmentObjects() || needsExtraBodyVarEnvironment();
   }
 
+  static constexpr size_t NArgsBits = sizeof(nargs_) * CHAR_BIT;
   size_t nargs() const { return nargs_; }
 
   uint16_t flags() const { return flags_; }
@@ -648,9 +651,15 @@ class JSFunction : public js::NativeObject {
     return false;
   }
 
-  void setScript(JSScript* script_) { mutableScript() = script_; }
+  void setScript(JSScript* script) {
+    MOZ_ASSERT(realm() == script->realm());
+    mutableScript() = script;
+  }
 
-  void initScript(JSScript* script_) { mutableScript().init(script_); }
+  void initScript(JSScript* script) {
+    MOZ_ASSERT_IF(script, realm() == script->realm());
+    mutableScript().init(script);
+  }
 
   void setUnlazifiedScript(JSScript* script) {
     MOZ_ASSERT(isInterpretedLazy());

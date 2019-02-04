@@ -4,13 +4,12 @@
 
 const EXPORTED_SYMBOLS = ["SendTab", "FxAccountsCommands"];
 
-ChromeUtils.import("resource://gre/modules/FxAccountsCommon.js");
-ChromeUtils.import("resource://gre/modules/Preferences.jsm");
+const {COMMAND_SENDTAB, log} = ChromeUtils.import("resource://gre/modules/FxAccountsCommon.js");
 ChromeUtils.defineModuleGetter(this, "PushCrypto",
   "resource://gre/modules/PushCrypto.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-ChromeUtils.import("resource://services-common/observers.js");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {Observers} = ChromeUtils.import("resource://services-common/observers.js");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   BulkKeyBundle: "resource://services-sync/keys.js",
@@ -272,7 +271,11 @@ class SendTab {
       publicKey: sendTabKeys.publicKey,
       authSecret: sendTabKeys.authSecret,
     };
-    const {kSync, kXCS} = await this._fxAccounts.getKeys();
+    // getEncryptedKey() can be called right after a sign-in/up to FxA:
+    // We get -cached- keys using getSignedInUser() instead of getKeys()
+    // because we will await on getKeys() which is already awaiting on
+    // the promise we return.
+    const {kSync, kXCS} = await this._fxAccounts.getSignedInUser();
     if (!kSync || !kXCS) {
       return null;
     }

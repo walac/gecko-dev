@@ -16,7 +16,7 @@
 #include "nsIContent.h"
 #include "nsIContentInlines.h"
 #include "nsIDocShell.h"
-#include "nsIDocument.h"
+#include "mozilla/dom/Document.h"
 #include "nsIExternalProtocolHandler.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIObjectFrame.h"
@@ -74,6 +74,7 @@
 #include "nsWidgetsCID.h"
 #include "nsContentCID.h"
 #include "mozilla/BasicEvents.h"
+#include "mozilla/Components.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h"
@@ -89,15 +90,16 @@
 #include "mozilla/dom/HTMLObjectElementBinding.h"
 #include "mozilla/dom/HTMLEmbedElement.h"
 #include "mozilla/dom/HTMLObjectElement.h"
+#include "mozilla/net/UrlClassifierFeatureFactory.h"
 #include "mozilla/LoadInfo.h"
 #include "nsChannelClassifier.h"
 #include "nsFocusManager.h"
 
 #ifdef XP_WIN
 // Thanks so much, Microsoft! :(
-#ifdef CreateEvent
-#undef CreateEvent
-#endif
+#  ifdef CreateEvent
+#    undef CreateEvent
+#  endif
 #endif  // XP_WIN
 
 static NS_DEFINE_CID(kAppShellCID, NS_APPSHELL_CID);
@@ -128,7 +130,7 @@ static bool InActiveDocument(nsIContent* aContent) {
   if (!aContent->IsInComposedDoc()) {
     return false;
   }
-  nsIDocument* doc = aContent->OwnerDoc();
+  Document* doc = aContent->OwnerDoc();
   return (doc && doc->IsActive());
 }
 
@@ -223,7 +225,7 @@ CheckPluginStopEvent::Run() {
   // In an active document, but still no frame. Flush layout to see if we can
   // regain a frame now.
   LOG(("OBJLC [%p]: CheckPluginStopEvent - No frame, flushing layout", this));
-  nsIDocument* composedDoc = content->GetComposedDoc();
+  Document* composedDoc = content->GetComposedDoc();
   if (composedDoc) {
     composedDoc->FlushPendingNotifications(FlushType::Layout);
     if (objLC->mPendingCheckPluginStopEvent != this) {
@@ -260,15 +262,15 @@ class nsSimplePluginEvent : public Runnable {
     MOZ_ASSERT(aTarget && mDocument);
   }
 
-  nsSimplePluginEvent(nsIDocument* aTarget, const nsAString& aEvent)
+  nsSimplePluginEvent(Document* aTarget, const nsAString& aEvent)
       : mozilla::Runnable("nsSimplePluginEvent"),
-        mTarget(aTarget),
+        mTarget(ToSupports(aTarget)),
         mDocument(aTarget),
         mEvent(aEvent) {
     MOZ_ASSERT(aTarget);
   }
 
-  nsSimplePluginEvent(nsIContent* aTarget, nsIDocument* aDocument,
+  nsSimplePluginEvent(nsIContent* aTarget, Document* aDocument,
                       const nsAString& aEvent)
       : mozilla::Runnable("nsSimplePluginEvent"),
         mTarget(aTarget),
@@ -283,7 +285,7 @@ class nsSimplePluginEvent : public Runnable {
 
  private:
   nsCOMPtr<nsISupports> mTarget;
-  nsCOMPtr<nsIDocument> mDocument;
+  nsCOMPtr<Document> mDocument;
   nsString mEvent;
 };
 
@@ -332,7 +334,7 @@ NS_IMETHODIMP
 nsPluginCrashedEvent::Run() {
   LOG(("OBJLC [%p]: Firing plugin crashed event\n", mContent.get()));
 
-  nsCOMPtr<nsIDocument> doc = mContent->GetComposedDoc();
+  nsCOMPtr<Document> doc = mContent->GetComposedDoc();
   if (!doc) {
     NS_WARNING("Couldn't get document for PluginCrashed event!");
     return NS_OK;
@@ -560,7 +562,7 @@ already_AddRefed<nsIDocShell> nsObjectLoadingContent::SetupDocShell(
   return docShell.forget();
 }
 
-nsresult nsObjectLoadingContent::BindToTree(nsIDocument* aDocument,
+nsresult nsObjectLoadingContent::BindToTree(Document* aDocument,
                                             nsIContent* aParent,
                                             nsIContent* aBindingParent) {
   nsImageLoadingContent::BindToTree(aDocument, aParent, aBindingParent);
@@ -578,7 +580,7 @@ void nsObjectLoadingContent::UnbindFromTree(bool aDeep, bool aNullParent) {
   nsCOMPtr<Element> thisElement =
       do_QueryInterface(static_cast<nsIObjectLoadingContent*>(this));
   MOZ_ASSERT(thisElement);
-  nsIDocument* ownerDoc = thisElement->OwnerDoc();
+  Document* ownerDoc = thisElement->OwnerDoc();
   ownerDoc->RemovePlugin(this);
 
   /// XXX(johns): Do we want to somehow propogate the reparenting behavior to
@@ -598,20 +600,12 @@ void nsObjectLoadingContent::UnbindFromTree(bool aDeep, bool aNullParent) {
   }
 
   // Unattach plugin problem UIWidget if any.
-  if (thisElement->IsInComposedDoc() && thisElement->GetShadowRoot()) {
-    nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
-        "nsObjectLoadingContent::UnbindFromTree::UAWidgetUnbindFromTree",
-        [thisElement]() {
-          nsContentUtils::DispatchChromeEvent(
-              thisElement->OwnerDoc(), thisElement,
-              NS_LITERAL_STRING("UAWidgetUnbindFromTree"), CanBubble::eYes,
-              Cancelable::eNo);
-          thisElement->UnattachShadow();
-        }));
+  if (thisElement->IsInComposedDoc()) {
+    thisElement->NotifyUAWidgetTeardown();
   }
 
   if (mType == eType_Plugin) {
-    nsIDocument* doc = thisElement->GetComposedDoc();
+    Document* doc = thisElement->GetComposedDoc();
     if (doc && doc->IsActive()) {
       nsCOMPtr<nsIRunnable> ev =
           new nsSimplePluginEvent(doc, NS_LITERAL_STRING("PluginRemoved"));
@@ -673,7 +667,7 @@ nsresult nsObjectLoadingContent::InstantiatePluginInstance(bool aIsLoading) {
   nsCOMPtr<nsIContent> thisContent =
       do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
 
-  nsCOMPtr<nsIDocument> doc = thisContent->GetComposedDoc();
+  nsCOMPtr<Document> doc = thisContent->GetComposedDoc();
   if (!doc || !InActiveDocument(thisContent)) {
     NS_ERROR(
         "Shouldn't be calling "
@@ -926,7 +920,7 @@ nsresult nsObjectLoadingContent::BuildParametersArray() {
 
 void nsObjectLoadingContent::NotifyOwnerDocumentActivityChanged() {
   // XXX(johns): We cannot touch plugins or run arbitrary script from this call,
-  //             as nsDocument is in a non-reentrant state.
+  //             as Document is in a non-reentrant state.
 
   // If we have a plugin we want to queue an event to stop it unless we are
   // moved into an active document before returning to the event loop.
@@ -1000,7 +994,7 @@ nsObjectLoadingContent::OnStartRequest(nsIRequest* aRequest,
     return NS_ERROR_FAILURE;
   }
 
-  if (status == NS_ERROR_TRACKING_URI) {
+  if (UrlClassifierFeatureFactory::IsClassifierBlockingErrorCode(status)) {
     mContentBlockingEnabled = true;
     return NS_ERROR_FAILURE;
   }
@@ -1024,14 +1018,15 @@ nsObjectLoadingContent::OnStopRequest(nsIRequest* aRequest,
                                       nsresult aStatusCode) {
   AUTO_PROFILER_LABEL("nsObjectLoadingContent::OnStopRequest", NETWORK);
 
-  // Handle object not loading error because source was a tracking URL.
+  // Handle object not loading error because source was a tracking URL (or
+  // fingerprinting, cryptomining, etc.).
   // We make a note of this object node by including it in a dedicated
   // array of blocked tracking nodes under its parent document.
-  if (aStatusCode == NS_ERROR_TRACKING_URI) {
+  if (UrlClassifierFeatureFactory::IsClassifierBlockingErrorCode(aStatusCode)) {
     nsCOMPtr<nsIContent> thisNode =
         do_QueryInterface(static_cast<nsIObjectLoadingContent*>(this));
     if (thisNode && thisNode->IsInComposedDoc()) {
-      thisNode->GetComposedDoc()->AddBlockedTrackingNode(thisNode);
+      thisNode->GetComposedDoc()->AddBlockedNodeByClassifier(thisNode);
     }
   }
 
@@ -1085,8 +1080,8 @@ nsObjectLoadingContent::GetFrameLoader() {
   return loader.forget();
 }
 
-void nsObjectLoadingContent::PresetOpenerWindow(mozIDOMWindowProxy* aWindow,
-                                                mozilla::ErrorResult& aRv) {
+void nsObjectLoadingContent::PresetOpenerWindow(
+    const Nullable<WindowProxyHolder>& aOpenerWindow, ErrorResult& aRv) {
   aRv.Throw(NS_ERROR_FAILURE);
 }
 
@@ -1386,7 +1381,7 @@ bool nsObjectLoadingContent::CheckLoadPolicy(int16_t* aContentPolicy) {
       do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
   NS_ASSERTION(thisContent, "Must be an instance of content");
 
-  nsIDocument* doc = thisContent->OwnerDoc();
+  Document* doc = thisContent->OwnerDoc();
 
   nsContentPolicyType contentPolicyType = GetContentPolicyType();
 
@@ -1420,7 +1415,7 @@ bool nsObjectLoadingContent::CheckProcessPolicy(int16_t* aContentPolicy) {
       do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
   NS_ASSERTION(thisContent, "Must be an instance of content");
 
-  nsIDocument* doc = thisContent->OwnerDoc();
+  Document* doc = thisContent->OwnerDoc();
 
   int32_t objectType;
   switch (mType) {
@@ -1857,7 +1852,7 @@ nsresult nsObjectLoadingContent::LoadObject(bool aNotify, bool aForceLoad,
   nsCOMPtr<nsIContent> thisContent =
       do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
   NS_ASSERTION(thisContent, "must be a content");
-  nsIDocument* doc = thisContent->OwnerDoc();
+  Document* doc = thisContent->OwnerDoc();
   nsresult rv = NS_OK;
 
   // Per bug 1318303, if the parent document is not active, load the alternative
@@ -2248,9 +2243,8 @@ nsresult nsObjectLoadingContent::LoadObject(bool aNotify, bool aForceLoad,
       nsCOMPtr<nsIInterfaceRequestor> req(do_QueryInterface(docShell));
       NS_ASSERTION(req, "Docshell must be an ifreq");
 
-      nsCOMPtr<nsIURILoader> uriLoader(
-          do_GetService(NS_URI_LOADER_CONTRACTID, &rv));
-      if (NS_FAILED(rv)) {
+      nsCOMPtr<nsIURILoader> uriLoader(components::URILoader::Service());
+      if (NS_WARN_IF(!uriLoader)) {
         MOZ_ASSERT_UNREACHABLE("Failed to get uriLoader service");
         mFrameLoader->Destroy();
         mFrameLoader = nullptr;
@@ -2384,7 +2378,7 @@ nsresult nsObjectLoadingContent::OpenChannel() {
   nsCOMPtr<nsIContent> thisContent =
       do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
   NS_ASSERTION(thisContent, "must be a content");
-  nsIDocument* doc = thisContent->OwnerDoc();
+  Document* doc = thisContent->OwnerDoc();
   NS_ASSERTION(doc, "No owner document?");
 
   nsresult rv;
@@ -2559,7 +2553,7 @@ void nsObjectLoadingContent::NotifyStateChanged(ObjectType aOldType,
     return;
   }
 
-  nsIDocument* doc = thisEl->GetComposedDoc();
+  Document* doc = thisEl->GetComposedDoc();
   if (!doc) {
     return;  // Nothing to do
   }
@@ -2579,35 +2573,21 @@ void nsObjectLoadingContent::NotifyStateChanged(ObjectType aOldType,
       doc->ContentStateChanged(thisEl, changedBits);
     }
 
-    // Create/destroy plugin problem UAWidget if needed.
-    if (nsContentUtils::IsUAWidgetEnabled()) {
-      const EventStates pluginProblemState =
-          NS_EVENT_STATE_HANDLER_BLOCKED | NS_EVENT_STATE_HANDLER_CRASHED |
-          NS_EVENT_STATE_TYPE_CLICK_TO_PLAY |
-          NS_EVENT_STATE_VULNERABLE_UPDATABLE |
-          NS_EVENT_STATE_VULNERABLE_NO_UPDATE;
+    // Create/destroy plugin problem UAWidget.
+    const EventStates pluginProblemState = NS_EVENT_STATE_HANDLER_BLOCKED |
+                                           NS_EVENT_STATE_HANDLER_CRASHED |
+                                           NS_EVENT_STATE_TYPE_CLICK_TO_PLAY |
+                                           NS_EVENT_STATE_VULNERABLE_UPDATABLE |
+                                           NS_EVENT_STATE_VULNERABLE_NO_UPDATE;
 
-      bool hadProblemState = !(aOldState & pluginProblemState).IsEmpty();
-      bool hasProblemState = !(newState & pluginProblemState).IsEmpty();
+    bool hadProblemState = !(aOldState & pluginProblemState).IsEmpty();
+    bool hasProblemState = !(newState & pluginProblemState).IsEmpty();
 
-      if (hadProblemState && !hasProblemState) {
-        nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
-            "nsObjectLoadingContent::UnbindFromTree::UAWidgetUnbindFromTree",
-            [thisEl]() {
-              nsContentUtils::DispatchChromeEvent(
-                  thisEl->OwnerDoc(), thisEl,
-                  NS_LITERAL_STRING("UAWidgetUnbindFromTree"), CanBubble::eYes,
-                  Cancelable::eNo);
-              thisEl->UnattachShadow();
-            }));
-      } else if (!hadProblemState && hasProblemState) {
-        nsGenericHTMLElement::FromNode(thisEl)->AttachAndSetUAShadowRoot();
-
-        AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
-            thisEl, NS_LITERAL_STRING("UAWidgetBindToTree"), CanBubble::eYes,
-            ChromeOnlyDispatch::eYes);
-        dispatcher->RunDOMEventWhenSafe();
-      }
+    if (hadProblemState && !hasProblemState) {
+      thisEl->NotifyUAWidgetTeardown();
+    } else if (!hadProblemState && hasProblemState) {
+      thisEl->AttachAndSetUAShadowRoot();
+      thisEl->NotifyUAWidgetSetupOrChange();
     }
   } else if (aOldType != mType) {
     // If our state changed, then we already recreated frames
@@ -2821,7 +2801,7 @@ nsObjectLoadingContent::AsyncStartPluginInstance() {
 
   nsCOMPtr<nsIContent> thisContent =
       do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
-  nsIDocument* doc = thisContent->OwnerDoc();
+  Document* doc = thisContent->OwnerDoc();
   if (doc->IsStaticDocument() || doc->IsBeingUsedAsImage()) {
     return NS_OK;
   }
@@ -3176,7 +3156,7 @@ bool nsObjectLoadingContent::ShouldPlay(FallbackType& aReason) {
   nsCOMPtr<nsIContent> thisContent =
       do_QueryInterface(static_cast<nsIObjectLoadingContent*>(this));
   MOZ_ASSERT(thisContent);
-  nsIDocument* ownerDoc = thisContent->OwnerDoc();
+  Document* ownerDoc = thisContent->OwnerDoc();
 
   nsCOMPtr<nsPIDOMWindowOuter> window = ownerDoc->GetWindow();
   if (!window) {
@@ -3184,7 +3164,7 @@ bool nsObjectLoadingContent::ShouldPlay(FallbackType& aReason) {
   }
   nsCOMPtr<nsPIDOMWindowOuter> topWindow = window->GetTop();
   NS_ENSURE_TRUE(topWindow, false);
-  nsCOMPtr<nsIDocument> topDoc = topWindow->GetDoc();
+  nsCOMPtr<Document> topDoc = topWindow->GetDoc();
   NS_ENSURE_TRUE(topDoc, false);
 
   // Check the flash blocking status for this page (this applies to Flash only)
@@ -3422,7 +3402,7 @@ bool nsObjectLoadingContent::PreferFallback(bool aIsPluginClickToPlay) {
   return mPreferFallback;
 }
 
-nsIDocument* nsObjectLoadingContent::GetContentDocument(
+Document* nsObjectLoadingContent::GetContentDocument(
     nsIPrincipal& aSubjectPrincipal) {
   nsCOMPtr<nsIContent> thisContent =
       do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
@@ -3431,8 +3411,7 @@ nsIDocument* nsObjectLoadingContent::GetContentDocument(
     return nullptr;
   }
 
-  nsIDocument* sub_doc =
-      thisContent->OwnerDoc()->GetSubDocumentFor(thisContent);
+  Document* sub_doc = thisContent->OwnerDoc()->GetSubDocumentFor(thisContent);
   if (!sub_doc) {
     return nullptr;
   }

@@ -4,7 +4,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 { // start private scope for gBrowser
-
 /**
  * A set of known icons to use for internal pages. These are hardcoded so we can
  * start loading them faster than ContentLinkHandler would normally find them.
@@ -113,7 +112,7 @@ window._gBrowser = {
 
   /**
    * `_createLazyBrowser` will define properties on the unbound lazy browser
-   * which correspond to properties defined in XBL which will be bound to
+   * which correspond to properties defined in MozBrowser which will be bound to
    * the browser when it is inserted into the document.  If any of these
    * properties are accessed by consumers, `_insertBrowser` is called and
    * the browser is inserted to ensure that things don't break.  This list
@@ -298,6 +297,10 @@ window._gBrowser = {
       remoteType = E10SUtils.NOT_REMOTE;
     } else {
       let uriToLoad = gBrowserInit.uriToLoadPromise;
+      if (uriToLoad && Array.isArray(uriToLoad)) {
+        uriToLoad = uriToLoad[0]; // we only care about the first item
+      }
+
       if (uriToLoad && typeof uriToLoad == "string") {
         remoteType = E10SUtils.getRemoteTypeForURI(
           uriToLoad,
@@ -355,6 +358,10 @@ window._gBrowser = {
     this._tabForBrowser.set(browser, tab);
 
     this._appendStatusPanel();
+
+    // This is the initial browser, so it's usually active; the default is false
+    // so we have to update it:
+    browser.docShellIsActive = this.shouldActivateDocShell(browser);
 
     // Only necessary because of pageloader talos tests which access this.
     // Bug 1508171 covers removing this.
@@ -488,7 +495,7 @@ window._gBrowser = {
   },
 
   set userTypedValue(val) {
-    return this.selectedBrowser.userTypedValue = val;
+    this.selectedBrowser.userTypedValue = val;
   },
 
   get userTypedValue() {
@@ -960,10 +967,13 @@ window._gBrowser = {
 
     let securityUI = newBrowser.securityUI;
     if (securityUI) {
+      this._callProgressListeners(null, "onSecurityChange",
+                                  [webProgress, null, securityUI.state],
+                                  true, false);
       // Include the true final argument to indicate that this event is
       // simulated (instead of being observed by the webProgressListener).
-      this._callProgressListeners(null, "onSecurityChange",
-                                  [webProgress, null, securityUI.state, true],
+      this._callProgressListeners(null, "onContentBlockingEvent",
+                                  [webProgress, null, securityUI.contentBlockingEvent, true],
                                   true, false);
     }
 
@@ -1145,7 +1155,7 @@ window._gBrowser = {
 
     // If there's a tabmodal prompt showing, focus it.
     if (newBrowser.hasAttribute("tabmodalPromptShowing")) {
-      let prompts = newBrowser.parentNode.getElementsByTagNameNS(this._XUL_NS, "tabmodalprompt");
+      let prompts = newBrowser.tabModalPromptBox.listPrompts();
       let prompt = prompts[prompts.length - 1];
       // @tabmodalPromptShowing is also set for other tab modal prompts
       // (e.g. the Payment Request dialog) so there may not be a <tabmodalprompt>.
@@ -1607,7 +1617,7 @@ window._gBrowser = {
     }
 
     // Abort if we're not going to change anything
-    let oldRemoteType = aBrowser.getAttribute("remoteType");
+    let oldRemoteType = aBrowser.remoteType;
     if (isRemote == aShouldBeRemote && !newFrameloader &&
         (!isRemote || oldRemoteType == remoteType)) {
       return false;
@@ -1710,10 +1720,14 @@ window._gBrowser = {
     let securityUI = aBrowser.securityUI;
     let state = securityUI ? securityUI.state :
       Ci.nsIWebProgressListener.STATE_IS_INSECURE;
+    this._callProgressListeners(aBrowser, "onSecurityChange",
+                                [aBrowser.webProgress, null, state],
+                                true, false);
+    let event = securityUI ? securityUI.contentBlockingEvent : 0;
     // Include the true final argument to indicate that this event is
     // simulated (instead of being observed by the webProgressListener).
-    this._callProgressListeners(aBrowser, "onSecurityChange",
-                                [aBrowser.webProgress, null, state, true],
+    this._callProgressListeners(aBrowser, "onContentBlockingEvent",
+                                [aBrowser.webProgress, null, event, true],
                                 true, false);
 
     if (aShouldBeRemote) {
@@ -1751,7 +1765,7 @@ window._gBrowser = {
     if (!gMultiProcessBrowser)
       return this.updateBrowserRemoteness(aBrowser, false);
 
-    let oldRemoteType = aBrowser.getAttribute("remoteType") || null;
+    let oldRemoteType = aBrowser.remoteType;
 
     aOptions.remoteType =
       E10SUtils.getRemoteTypeForURI(aURL,
@@ -2275,6 +2289,7 @@ window._gBrowser = {
     forceNotRemote,
     fromExternal,
     index,
+    lazyTabTitle,
     name,
     nextTabParentId,
     noInitialLabel,
@@ -2415,7 +2430,6 @@ window._gBrowser = {
             ((openerTab &&
               Services.prefs.getBoolPref("browser.tabs.insertRelatedAfterCurrent")) ||
              Services.prefs.getBoolPref("browser.tabs.insertAfterCurrent"))) {
-
           let lastRelatedTab = openerTab && this._lastRelatedTabMap.get(openerTab);
           let previousTab = (lastRelatedTab || openerTab || this.selectedTab);
           if (previousTab.multiselected) {
@@ -2536,6 +2550,13 @@ window._gBrowser = {
                                                       userContextId);
           b.registeredOpenURI = lazyBrowserURI;
         }
+        SessionStore.setTabState(t, {
+          entries: [{
+            url: lazyBrowserURI ? lazyBrowserURI.spec : "about:blank",
+            title: lazyTabTitle,
+            triggeringPrincipal_base64: Utils.serializePrincipal(triggeringPrincipal),
+          }],
+        });
       } else {
         this._insertBrowser(t, true);
       }
@@ -2660,6 +2681,12 @@ window._gBrowser = {
     var shouldPrompt = Services.prefs.getBoolPref(pref);
     if (!shouldPrompt)
       return true;
+
+    const maxTabsUndo = Services.prefs.getIntPref("browser.sessionstore.max_tabs_undo");
+    if (aCloseTabs != this.closingTabsEnum.ALL &&
+        tabsToClose <= maxTabsUndo) {
+      return true;
+    }
 
     var ps = Services.prompt;
 
@@ -3089,14 +3116,14 @@ window._gBrowser = {
     if (aTab.linkedPanel) {
       this._outerWindowIDBrowserMap.delete(browser.outerWindowID);
 
-      // Because of the way XBL works (fields just set JS
-      // properties on the element) and the code we have in place
+      // Because of the fact that we are setting JS properties on
+      // the browser elements, and we have code in place
       // to preserve the JS objects for any elements that have
       // JS properties set on them, the browser element won't be
       // destroyed until the document goes away.  So we force a
       // cleanup ourselves.
-      // This has to happen before we remove the child so that the
-      // XBL implementation of nsIObserver still works.
+      // This has to happen before we remove the child since functions
+      // like `getBrowserContainer` expect the browser to be parented.
       browser.destroy();
     }
 
@@ -3790,12 +3817,15 @@ window._gBrowser = {
     // the same remote type and process as the one we're swapping in.
     // This makes sure we don't get a short-lived process for the new tab.
     let linkedBrowser = aTab.linkedBrowser;
+    let createLazyBrowser = !aTab.linkedPanel;
     let params = {
       eventDetail: { adoptedTab: aTab },
       preferredRemoteType: linkedBrowser.remoteType,
       sameProcessAsFrameLoader: linkedBrowser.frameLoader,
       skipAnimation: true,
       index: aIndex,
+      createLazyBrowser,
+      allowInheritPrincipal: createLazyBrowser,
     };
 
     let numPinned = this._numPinnedTabs;
@@ -3812,10 +3842,12 @@ window._gBrowser = {
 
     aTab.parentNode._finishAnimateTabMove();
 
-    // Stop the about:blank load.
-    newBrowser.stop();
-    // Make sure it has a docshell.
-    newBrowser.docShell;
+    if (!createLazyBrowser) {
+      // Stop the about:blank load.
+      newBrowser.stop();
+      // Make sure it has a docshell.
+      newBrowser.docShell;
+    }
 
     if (!this.swapBrowsersAndCloseOther(newTab, aTab)) {
       // Swapping wasn't permitted. Bail out.
@@ -4759,14 +4791,17 @@ window._gBrowser = {
       }
     });
 
-    this.addEventListener("AudibleAutoplayMediaOccurred", (event) => {
+    this.addEventListener("GloballyAutoplayBlocked", (event) => {
       let browser = event.originalTarget;
       let tab = this.getTabForBrowser(browser);
       if (!tab) {
         return;
       }
 
-      Services.obs.notifyObservers(tab, "AudibleAutoplayMediaOccurred");
+      SitePermissions.set(event.detail.url, "autoplay-media",
+                          SitePermissions.BLOCK,
+                          SitePermissions.SCOPE_GLOBAL,
+                          browser);
     });
   },
 
@@ -4949,7 +4984,7 @@ class TabProgressListener {
         // pointing to their resolved jar: or file: URIs.
         if (!(originalLocation && gInitialPages.includes(originalLocation.spec) &&
             originalLocation != "about:blank" &&
-            this.mBrowser.initialPageLoadedFromURLBar != originalLocation.spec &&
+            this.mBrowser.initialPageLoadedFromUserAction != originalLocation.spec &&
             this.mBrowser.currentURI && this.mBrowser.currentURI.spec == "about:blank")) {
           // Indicating that we started a load will allow the location
           // bar to be cleared when the load finishes.
@@ -4964,7 +4999,7 @@ class TabProgressListener {
           // remoteness or is a new tab/window).
           this.mBrowser.urlbarChangeTracker.startedLoad();
         }
-        delete this.mBrowser.initialPageLoadedFromURLBar;
+        delete this.mBrowser.initialPageLoadedFromUserAction;
         // If the browser is loading it must not be crashed anymore
         this.mTab.removeAttribute("crashed");
       }
@@ -4984,7 +5019,6 @@ class TabProgressListener {
       }
     } else if (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP &&
                aStateFlags & Ci.nsIWebProgressListener.STATE_IS_NETWORK) {
-
       let modifiedAttrs = [];
       if (this.mTab.hasAttribute("busy")) {
         this.mTab.removeAttribute("busy");
@@ -5082,8 +5116,11 @@ class TabProgressListener {
     // and the subframes.
     let topLevel = aWebProgress.isTopLevel;
 
+    let isSameDocument = !!(aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT);
     if (topLevel) {
-      let isSameDocument = !!(aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT);
+      let isReload = !!(aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_RELOAD);
+      let isErrorPage = !!(aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE);
+
       // We need to clear the typed value
       // if the document failed to load, to make sure the urlbar reflects the
       // failed URI (particularly for SSL errors). However, don't clear the value
@@ -5094,8 +5131,7 @@ class TabProgressListener {
       // Finally, we do insert the URL if this is a same-document navigation
       // and the user cleared the URL manually.
       if (this.mBrowser.didStartLoadSinceLastUserTyping() ||
-          ((aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE) &&
-            aLocation.spec != "about:blank") ||
+          (isErrorPage && aLocation.spec != "about:blank") ||
           (isSameDocument && this.mBrowser.inLoadURI) ||
           (isSameDocument && !this.mBrowser.userTypedValue)) {
         this.mBrowser.userTypedValue = null;
@@ -5107,8 +5143,7 @@ class TabProgressListener {
       // isn't any (STATE_IS_NETWORK & STATE_STOP) state to cause busy
       // attribute being removed. In this case we should remove the
       // attribute here.
-      if ((aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE) &&
-          this.mTab.hasAttribute("busy")) {
+      if (isErrorPage && this.mTab.hasAttribute("busy")) {
         this.mTab.removeAttribute("busy");
         gBrowser._tabAttrModified(this.mTab, ["busy"]);
       }
@@ -5135,7 +5170,9 @@ class TabProgressListener {
         }
       }
 
-      gBrowser.setTabTitle(this.mTab);
+      if (!isReload) {
+        gBrowser.setTabTitle(this.mTab);
+      }
 
       // Don't clear the favicon if this tab is in the pending
       // state, as SessionStore will have set the icon for us even
@@ -5175,9 +5212,15 @@ class TabProgressListener {
       }
     }
 
-    if (!this.mBlank) {
+    if (!this.mBlank || this.mBrowser.hasContentOpener) {
       this._callProgressListeners("onLocationChange",
                                   [aWebProgress, aRequest, aLocation, aFlags]);
+      if (topLevel && !isSameDocument) {
+        // Include the true final argument to indicate that this event is
+        // simulated (instead of being observed by the webProgressListener).
+        this._callProgressListeners("onContentBlockingEvent",
+                                    [aWebProgress, null, 0, true]);
+      }
     }
 
     if (topLevel) {
@@ -5201,6 +5244,11 @@ class TabProgressListener {
                                 [aWebProgress, aRequest, aState]);
   }
 
+  onContentBlockingEvent(aWebProgress, aRequest, aEvent) {
+    this._callProgressListeners("onContentBlockingEvent",
+                                [aWebProgress, aRequest, aEvent]);
+  }
+
   onRefreshAttempted(aWebProgress, aURI, aDelay, aSameURI) {
     return this._callProgressListeners("onRefreshAttempted",
                                        [aWebProgress, aURI, aDelay, aSameURI]);
@@ -5210,7 +5258,6 @@ TabProgressListener.prototype.QueryInterface = ChromeUtils.generateQI(
   ["nsIWebProgressListener",
    "nsIWebProgressListener2",
    "nsISupportsWeakReference"]);
-
 } // end private scope for gBrowser
 
 var StatusPanel = {

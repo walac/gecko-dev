@@ -3,7 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use api::{
-    DevicePoint, DeviceSize, DeviceRect, LayoutRect, LayoutToWorldTransform, LayoutTransform,
+    DeviceHomogeneousVector, DevicePoint, DeviceSize, DeviceRect,
+    LayoutRect, LayoutToWorldTransform, LayoutTransform,
     PremultipliedColorF, LayoutToPictureTransform, PictureToLayoutTransform, PicturePixel,
     WorldPixel, WorldToLayoutTransform, LayoutPoint,
 };
@@ -59,7 +60,7 @@ pub enum RasterizationSpace {
     Screen = 1,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, MallocSizeOf)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 #[repr(C)]
@@ -96,7 +97,7 @@ pub struct ScalingInstance {
     pub src_task_address: RenderTaskAddress,
 }
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Hash, MallocSizeOf, PartialEq, Eq)]
 #[repr(C)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
@@ -137,11 +138,11 @@ pub struct ClipMaskInstance {
     pub render_task_address: RenderTaskAddress,
     pub clip_transform_id: TransformPaletteId,
     pub prim_transform_id: TransformPaletteId,
-    pub segment: i32,
     pub clip_data_address: GpuCacheAddress,
     pub resource_address: GpuCacheAddress,
     pub local_pos: LayoutPoint,
     pub tile_rect: LayoutRect,
+    pub sub_rect: DeviceRect,
 }
 
 /// A border corner dot or dash drawn into the clipping mask.
@@ -317,6 +318,7 @@ bitflags! {
     /// code should process this instance.
     #[cfg_attr(feature = "capture", derive(Serialize))]
     #[cfg_attr(feature = "replay", derive(Deserialize))]
+    #[derive(MallocSizeOf)]
     pub struct BrushFlags: u8 {
         /// Apply perspective interpolation to UVs
         const PERSPECTIVE_INTERPOLATION = 0x1;
@@ -474,7 +476,7 @@ impl TransformPalette {
         clip_scroll_tree: &ClipScrollTree,
     ) -> usize {
         if to_index == ROOT_SPATIAL_NODE_INDEX {
-            from_index.0
+            from_index.0 as usize
         } else if from_index == to_index {
             0
         } else {
@@ -511,7 +513,7 @@ impl TransformPalette {
         &self,
         index: SpatialNodeIndex,
     ) -> LayoutToWorldTransform {
-        self.transforms[index.0]
+        self.transforms[index.0 as usize]
             .transform
             .with_destination::<WorldPixel>()
     }
@@ -520,7 +522,7 @@ impl TransformPalette {
         &self,
         index: SpatialNodeIndex,
     ) -> WorldToLayoutTransform {
-        self.transforms[index.0]
+        self.transforms[index.0 as usize]
             .inv_transform
             .with_source::<WorldPixel>()
     }
@@ -564,10 +566,10 @@ pub enum UvRectKind {
     // use a bilerp() to correctly interpolate a
     // UV coord in the vertex shader.
     Quad {
-        top_left: DevicePoint,
-        top_right: DevicePoint,
-        bottom_left: DevicePoint,
-        bottom_right: DevicePoint,
+        top_left: DeviceHomogeneousVector,
+        top_right: DeviceHomogeneousVector,
+        bottom_left: DeviceHomogeneousVector,
+        bottom_right: DeviceHomogeneousVector,
     },
 }
 
@@ -584,6 +586,8 @@ pub struct ImageSource {
 
 impl ImageSource {
     pub fn write_gpu_blocks(&self, request: &mut GpuDataRequest) {
+        // see fetch_image_resource in GLSL
+        // has to be VECS_PER_IMAGE_RESOURCE vectors
         request.push([
             self.p0.x,
             self.p0.y,
@@ -599,19 +603,12 @@ impl ImageSource {
 
         // If this is a polygon uv kind, then upload the four vertices.
         if let UvRectKind::Quad { top_left, top_right, bottom_left, bottom_right } = self.uv_rect_kind {
-            request.push([
-                top_left.x,
-                top_left.y,
-                top_right.x,
-                top_right.y,
-            ]);
-
-            request.push([
-                bottom_left.x,
-                bottom_left.y,
-                bottom_right.x,
-                bottom_right.y,
-            ]);
+            // see fetch_image_resource_extra in GLSL
+            //Note: we really need only 3 components per point here: X, Y, and W
+            request.push(top_left);
+            request.push(top_right);
+            request.push(bottom_left);
+            request.push(bottom_right);
         }
     }
 }

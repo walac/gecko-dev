@@ -1,12 +1,11 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
+"use strict";
+
 /* eslint-env browser */
 /* eslint no-unused-vars: [2, {"vars": "local"}] */
 /* import-globals-from ../../../shared/test/shared-head.js */
-/* import-globals-from debug-target-pane_collapsibilities_head.js */
-
-"use strict";
 
 // Load the shared-head file first.
 Services.scriptloader.loadSubScript(
@@ -17,10 +16,6 @@ Services.scriptloader.loadSubScript(
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/shared/test/shared-redux-head.js",
   this);
-
-// Load collapsibilities helpers
-Services.scriptloader.loadSubScript(
-  CHROME_URL_ROOT + "debug-target-pane_collapsibilities_head.js", this);
 
 // Make sure the ADB addon is removed and ADB is stopped when the test ends.
 registerCleanupFunction(async function() {
@@ -135,6 +130,18 @@ function waitForDispatch(store, type) {
 }
 
 /**
+ * Navigate to "This Firefox"
+ */
+async function selectThisFirefoxPage(doc, store) {
+  info("Select This Firefox page");
+  doc.location.hash = "#/runtime/this-firefox";
+  info("Wait for requests to settle");
+  await waitForRequestsToSettle(store);
+  info("Wait for runtime page to be rendered");
+  await waitUntil(() => doc.querySelector(".js-runtime-page"));
+}
+
+/**
  * Navigate to the Connect page. Resolves when the Connect page is rendered.
  */
 async function selectConnectPage(doc) {
@@ -153,6 +160,24 @@ async function selectConnectPage(doc) {
   await waitUntil(() => doc.querySelector(".js-connect-page"));
 }
 
+function getDebugTargetPane(title, document) {
+  // removes the suffix "(<NUMBER>)" in debug target pane's title, if needed
+  const sanitizeTitle = (x) => {
+    return x.replace(/\s+\(\d+\)$/, "");
+  };
+
+  const targetTitle = sanitizeTitle(title);
+  for (const titleEl of document.querySelectorAll(".js-debug-target-pane-title")) {
+    if (sanitizeTitle(titleEl.textContent) !== targetTitle) {
+      continue;
+    }
+
+    return titleEl.closest(".js-debug-target-pane");
+  }
+
+  return null;
+}
+
 function findDebugTargetByText(text, document) {
   const targets = [...document.querySelectorAll(".js-debug-target-item")];
   return targets.find(target => target.textContent.includes(text));
@@ -161,6 +186,13 @@ function findDebugTargetByText(text, document) {
 function findSidebarItemByText(text, document) {
   const sidebarItems = document.querySelectorAll(".js-sidebar-item");
   return [...sidebarItems].find(element => {
+    return element.textContent.includes(text);
+  });
+}
+
+function findSidebarItemLinkByText(text, document) {
+  const links = document.querySelectorAll(".js-sidebar-link");
+  return [...links].find(element => {
     return element.textContent.includes(text);
   });
 }
@@ -185,4 +217,8 @@ async function selectRuntime(deviceName, name, document) {
     const runtimeInfo = document.querySelector(".js-runtime-info");
     return runtimeInfo && runtimeInfo.textContent.includes(name);
   });
+}
+
+function getToolbox(win) {
+  return gDevTools.getToolboxes().find(toolbox => toolbox.win === win);
 }

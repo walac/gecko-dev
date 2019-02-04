@@ -144,6 +144,7 @@ config = {
         "mochitest-webgl2-deqp": ["--subsuite=webgl2-deqp"],
         "mochitest-devtools-chrome": ["--flavor=browser", "--subsuite=devtools"],
         "mochitest-devtools-chrome-chunked": ["--flavor=browser", "--subsuite=devtools", "--chunk-by-runtime"],
+        "mochitest-devtools-webreplay": ["--flavor=browser", "--subsuite=devtools-webreplay"],
         "a11y": ["--flavor=a11y"],
     },
     # local reftest suites
@@ -216,7 +217,6 @@ config = {
                              "cppunittest": [],
                              "jittest": [],
                              },
-    "download_minidump_stackwalk": True,
     "minidump_stackwalk_path": "macosx64-minidump_stackwalk",
     "minidump_tooltool_manifest_path": "config/tooltool-manifests/macosx64/releng.manifest",
     "tooltool_cache": "/builds/tooltool_cache",

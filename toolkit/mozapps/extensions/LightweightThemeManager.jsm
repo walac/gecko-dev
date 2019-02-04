@@ -6,10 +6,10 @@
 
 var EXPORTED_SYMBOLS = ["LightweightThemeManager"];
 
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {AddonManager, AddonManagerPrivate} = ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
 /* globals AddonManagerPrivate*/
-ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const ID_SUFFIX              = "@personas.mozilla.org";
 const ADDON_TYPE             = "theme";
@@ -279,6 +279,10 @@ var LightweightThemeManager = {
    * xpi packaged theme).
    */
   async _updateOneTheme(theme, isCurrent) {
+    if (!theme.updateURL) {
+      return theme;
+    }
+
     let req = new ServiceRequest();
 
     req.mozBackgroundRequest = true;
@@ -364,7 +368,7 @@ var LightweightThemeManager = {
 
     let selectedID = _prefs.getStringPref("selectedThemeID", DEFAULT_THEME_ID);
     let newThemes = await Promise.all(allThemes.map(
-      t => this._updateOneTheme(t, t.id == selectedID)));
+      t => this._updateOneTheme(t, t.id == selectedID).catch(err => {})));
     newThemes = newThemes.filter(t => t);
     _prefs.setStringPref("usedThemes", JSON.stringify(newThemes));
   },

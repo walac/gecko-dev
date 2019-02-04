@@ -56,29 +56,6 @@ bool BaseProxyHandler::has(JSContext* cx, HandleObject proxy, HandleId id,
   return true;
 }
 
-bool BaseProxyHandler::getPropertyDescriptor(
-    JSContext* cx, HandleObject proxy, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) const {
-  assertEnteredPolicy(cx, proxy, id, GET | SET | GET_PROPERTY_DESCRIPTOR);
-
-  if (!getOwnPropertyDescriptor(cx, proxy, id, desc)) {
-    return false;
-  }
-  if (desc.object()) {
-    return true;
-  }
-
-  RootedObject proto(cx);
-  if (!GetPrototype(cx, proxy, &proto)) {
-    return false;
-  }
-  if (!proto) {
-    MOZ_ASSERT(!desc.object());
-    return true;
-  }
-  return GetPropertyDescriptor(cx, proto, id, desc);
-}
-
 bool BaseProxyHandler::hasOwn(JSContext* cx, HandleObject proxy, HandleId id,
                               bool* bp) const {
   assertEnteredPolicy(cx, proxy, id, GET);
@@ -375,10 +352,6 @@ void BaseProxyHandler::finalize(JSFreeOp* fop, JSObject* proxy) const {}
 
 size_t BaseProxyHandler::objectMoved(JSObject* proxy, JSObject* old) const {
   return 0;
-}
-
-JSObject* BaseProxyHandler::weakmapKeyDelegate(JSObject* proxy) const {
-  return nullptr;
 }
 
 bool BaseProxyHandler::getPrototype(JSContext* cx, HandleObject proxy,

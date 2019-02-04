@@ -8,8 +8,8 @@ var EXPORTED_SYMBOLS = [
   "SelectParentHelper",
 ];
 
-const {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm", {});
-const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm", {});
+const {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 // Maximum number of rows to display in the select dropdown.
 const MAX_ROWS = 20;
@@ -48,15 +48,13 @@ var SelectParentHelper = {
    * @param {Array<Element>} items
    * @param {Number}         selectedIndex
    * @param {Number}         zoom
-   * @param {String}         uaBackgroundColor
-   * @param {String}         uaColor
    * @param {String}         uaSelectBackgroundColor
    * @param {String}         uaSelectColor
    * @param {String}         selectBackgroundColor
    * @param {String}         selectColor
    * @param {String}         selectTextShadow
    */
-  populate(menulist, items, selectedIndex, zoom, uaBackgroundColor, uaColor,
+  populate(menulist, items, selectedIndex, zoom,
            uaSelectBackgroundColor, uaSelectColor, selectBackgroundColor,
            selectColor, selectTextShadow) {
     // Clear the current contents of the popup
@@ -99,7 +97,7 @@ var SelectParentHelper = {
       ruleBody += `color: ${selectColor};`;
       usedSelectColor = selectColor;
     } else {
-      usedSelectColor = uaColor;
+      usedSelectColor = uaSelectColor;
     }
 
     if (customStylingEnabled &&
@@ -247,21 +245,18 @@ var SelectParentHelper = {
         return;
       }
 
-      let scrollBox = currentMenulist.menupopup.scrollBox;
+      let scrollBox = currentMenulist.menupopup.scrollBox.scrollbox;
       let scrollTop = scrollBox.scrollTop;
 
       let options = msg.data.options;
       let selectedIndex = msg.data.selectedIndex;
-      let uaBackgroundColor = msg.data.uaBackgroundColor;
-      let uaColor = msg.data.uaColor;
       let uaSelectBackgroundColor = msg.data.uaSelectBackgroundColor;
       let uaSelectColor = msg.data.uaSelectColor;
       let selectBackgroundColor = msg.data.selectBackgroundColor;
       let selectColor = msg.data.selectColor;
       let selectTextShadow = msg.data.selectTextShadow;
       this.populate(currentMenulist, options, selectedIndex,
-                    currentZoom, uaBackgroundColor, uaColor,
-                    uaSelectBackgroundColor, uaSelectColor,
+                    currentZoom, uaSelectBackgroundColor, uaSelectColor,
                     selectBackgroundColor, selectColor, selectTextShadow);
 
       // Restore scroll position to what it was prior to the update.
@@ -447,7 +442,6 @@ function populateChildren(menulist, options, selectedIndex, zoom,
   // the dropdown, and if the list is long enough for a search element to be added.
   if (Services.prefs.getBoolPref("dom.forms.selectSearch") && addSearch
       && element.childElementCount > SEARCH_MINIMUM_ELEMENTS) {
-
     // Add a search text field as the first element of the dropdown
     let searchbox = element.ownerDocument.createXULElement("textbox");
     searchbox.setAttribute("type", "search");

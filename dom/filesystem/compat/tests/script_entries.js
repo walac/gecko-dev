@@ -1,12 +1,13 @@
 /* eslint-env mozilla/frame-script */
+// eslint-disable-next-line mozilla/reject-importGlobalProperties
 Cu.importGlobalProperties(["File", "Directory"]);
-ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var tmpFile, tmpDir;
 
 addMessageListener("entries.open", function(e) {
   tmpFile = Services.dirsvc.QueryInterface(Ci.nsIProperties).get("TmpD", Ci.nsIFile);
   tmpFile.append("file.txt");
-  tmpFile.createUnique(Ci.nsIFile.FILE_TYPE, 0o600);
+  tmpFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
 
   tmpDir = Services.dirsvc.QueryInterface(Ci.nsIProperties).get("TmpD", Ci.nsIFile);
 

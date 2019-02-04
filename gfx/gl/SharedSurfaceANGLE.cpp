@@ -98,6 +98,11 @@ SharedSurface_ANGLEShareHandle::SharedSurface_ANGLEShareHandle(
       mKeyedMutex(keyedMutex) {}
 
 SharedSurface_ANGLEShareHandle::~SharedSurface_ANGLEShareHandle() {
+  GLContext* gl = mGL;
+
+  if (gl && GLContextEGL::Cast(gl)->GetEGLSurfaceOverride() == mPBuffer) {
+    GLContextEGL::Cast(gl)->SetEGLSurfaceOverride(EGL_NO_SURFACE);
+  }
   mEGL->fDestroySurface(Display(), mPBuffer);
 }
 

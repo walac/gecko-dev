@@ -1,5 +1,12 @@
 /*eslint-env es6:false*/
 /*
+ * DO NOT MODIFY THIS FILE DIRECTLY!
+ *
+ * This is a shared library that is maintained in an external repo:
+ * https://github.com/mozilla/readability
+ */
+
+/*
  * Copyright (c) 2010 Arc90 Inc
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +46,7 @@ function Readability(doc, options) {
   this._articleTitle = null;
   this._articleByline = null;
   this._articleDir = null;
+  this._articleSiteName = null;
   this._attempts = [];
 
   // Configurable options
@@ -323,7 +331,7 @@ Readability.prototype = {
       return uri;
     }
 
-    var links = articleContent.getElementsByTagName("a");
+    var links = this._getAllNodesWithTag(articleContent, ["a"]);
     this._forEachNode(links, function(link) {
       var href = link.getAttribute("href");
       if (href) {
@@ -338,7 +346,7 @@ Readability.prototype = {
       }
     });
 
-    var imgs = articleContent.getElementsByTagName("img");
+    var imgs = this._getAllNodesWithTag(articleContent, ["img"]);
     this._forEachNode(imgs, function(img) {
       var src = img.getAttribute("src");
       if (src) {
@@ -411,7 +419,7 @@ Readability.prototype = {
         curTitle = this._getInnerText(hOnes[0]);
     }
 
-    curTitle = curTitle.trim();
+    curTitle = curTitle.trim().replace(this.REGEXPS.normalize, " ");
     // If we now have 4 words or fewer as our title, and either no
     // 'hierarchical' separators (\, /, > or ») were found in the original
     // title or we decreased the number of words by more than 1 word, use
@@ -537,7 +545,16 @@ Readability.prototype = {
       replacement.readability = node.readability;
 
     for (var i = 0; i < node.attributes.length; i++) {
-      replacement.setAttribute(node.attributes[i].name, node.attributes[i].value);
+      try {
+        replacement.setAttribute(node.attributes[i].name, node.attributes[i].value);
+      } catch (ex) {
+        /* it's possible for setAttribute() to throw if the attribute name
+         * isn't a valid XML Name. Such attributes can however be parsed from
+         * source in HTML docs, see https://github.com/whatwg/html/issues/4275,
+         * so we can hit them here and then throw. We don't care about such
+         * attributes so we ignore them.
+         */
+      }
     }
     return replacement;
   },
@@ -1144,7 +1161,7 @@ Readability.prototype = {
           this._attempts.push({articleContent: articleContent, textLength: textLength});
           // No luck after removing flags, just return the longest text we found during the different loops
           this._attempts.sort(function (a, b) {
-            return a.textLength < b.textLength;
+            return b.textLength - a.textLength;
           });
 
           // But first check if we actually have something
@@ -1202,16 +1219,19 @@ Readability.prototype = {
     var metaElements = this._doc.getElementsByTagName("meta");
 
     // property is a space-separated list of values
-    var propertyPattern = /\s*(dc|dcterm|og|twitter)\s*:\s*(author|creator|description|title)\s*/gi;
+    var propertyPattern = /\s*(dc|dcterm|og|twitter)\s*:\s*(author|creator|description|title|site_name)\s*/gi;
 
     // name is a single value
-    var namePattern = /^\s*(?:(dc|dcterm|og|twitter|weibo:(article|webpage))\s*[\.:]\s*)?(author|creator|description|title)\s*$/i;
+    var namePattern = /^\s*(?:(dc|dcterm|og|twitter|weibo:(article|webpage))\s*[\.:]\s*)?(author|creator|description|title|site_name)\s*$/i;
 
     // Find description tags.
     this._forEachNode(metaElements, function(element) {
       var elementName = element.getAttribute("name");
       var elementProperty = element.getAttribute("property");
       var content = element.getAttribute("content");
+      if (!content) {
+        return;
+      }
       var matches = null;
       var name = null;
 
@@ -1264,6 +1284,9 @@ Readability.prototype = {
                        values["weibo:webpage:description"] ||
                        values["description"] ||
                        values["twitter:description"];
+
+    // get site name
+    metadata.siteName = values["og:site_name"];
 
     return metadata;
   },
@@ -1704,7 +1727,7 @@ Readability.prototype = {
   },
 
   _isProbablyVisible: function(node) {
-    return node.style.display != "none" && !node.hasAttribute("hidden");
+    return (!node.style || node.style.display != "none") && !node.hasAttribute("hidden");
   },
 
   /**
@@ -1763,6 +1786,7 @@ Readability.prototype = {
       textContent: textContent,
       length: textContent.length,
       excerpt: metadata.excerpt,
+      siteName: metadata.siteName || this._articleSiteName
     };
   }
 };

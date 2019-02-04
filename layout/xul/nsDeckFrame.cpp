@@ -30,7 +30,7 @@
 #include "nsXULPopupManager.h"
 
 #ifdef ACCESSIBILITY
-#include "nsAccessibilityService.h"
+#  include "nsAccessibilityService.h"
 #endif
 
 using namespace mozilla;
@@ -42,7 +42,7 @@ nsIFrame* NS_NewDeckFrame(nsIPresShell* aPresShell, ComputedStyle* aStyle) {
 NS_IMPL_FRAMEARENA_HELPERS(nsDeckFrame)
 
 NS_QUERYFRAME_HEAD(nsDeckFrame)
-NS_QUERYFRAME_ENTRY(nsDeckFrame)
+  NS_QUERYFRAME_ENTRY(nsDeckFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsBoxFrame)
 
 nsDeckFrame::nsDeckFrame(ComputedStyle* aStyle)

@@ -29,7 +29,7 @@
 
 // X.h on Linux #defines CurrentTime as 0L, so we have to #undef it here.
 #ifdef CurrentTime
-#undef CurrentTime
+#  undef CurrentTime
 #endif
 
 #include "mozilla/dom/HTMLMediaElementBinding.h"
@@ -146,7 +146,7 @@ class HTMLMediaElement : public nsGenericHTMLElement,
                               nsIPrincipal* aMaybeScriptedPrincipal,
                               nsAttrValue& aResult) override;
 
-  virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
+  virtual nsresult BindToTree(Document* aDocument, nsIContent* aParent,
                               nsIContent* aBindingParent) override;
   virtual void UnbindFromTree(bool aDeep = true,
                               bool aNullParent = true) override;
@@ -560,6 +560,12 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // For use by mochitests. Enabling pref "media.test.video-suspend"
   bool HasSuspendTaint() const;
 
+  // For use by mochitests.
+  bool IsVideoDecodingSuspended() const;
+
+  // For use by mochitests only.
+  bool IsVisible() const;
+
   // Synchronously, return the next video frame and mark the element unable to
   // participate in decode suspending.
   //
@@ -683,7 +689,7 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   };
   void MarkAsContentSource(CallerAPI aAPI);
 
-  nsIDocument* GetDocument() const override;
+  Document* GetDocument() const override;
 
   void ConstructMediaTracks(const MediaInfo* aInfo) override;
 
@@ -716,6 +722,11 @@ class HTMLMediaElement : public nsGenericHTMLElement,
     MOZ_ASSERT(NS_IsMainThread());
     aSinkId = mSink.first();
   }
+
+  // This is used to notify MediaElementAudioSourceNode that media element is
+  // allowed to play when media element is used as a source for web audio, so
+  // that we can start AudioContext if it was not allowed to start.
+  RefPtr<GenericNonExclusivePromise> GetAllowedToPlayPromise();
 
  protected:
   virtual ~HTMLMediaElement();
@@ -781,6 +792,13 @@ class HTMLMediaElement : public nsGenericHTMLElement,
    */
   void ReportLoadError(const char* aMsg, const char16_t** aParams = nullptr,
                        uint32_t aParamCount = 0);
+
+  /**
+   * Log message to web console.
+   */
+  void ReportToConsole(uint32_t aErrorFlags, const char* aMsg,
+                       const char16_t** aParams = nullptr,
+                       uint32_t aParamCount = 0) const;
 
   /**
    * Changes mHasPlayedOrSeeked to aValue. If mHasPlayedOrSeeked changes
@@ -1243,9 +1261,6 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // is put in the foreground, whereupon we will begin playback.
   bool AudioChannelAgentDelayingPlayback();
 
-  // Ensures we're prompting the user for permission to autoplay.
-  void EnsureAutoplayRequested(bool aHandlingUserInput);
-
   // Update the silence range of the audio track when the audible status of
   // silent audio track changes or seeking to the new position where the audio
   // track is silent.
@@ -1351,7 +1366,7 @@ class HTMLMediaElement : public nsGenericHTMLElement,
 
   // Points to the document whose load we're blocking. This is the document
   // we're bound to when loading starts.
-  nsCOMPtr<nsIDocument> mLoadBlockedDoc;
+  nsCOMPtr<Document> mLoadBlockedDoc;
 
   // Contains names of events that have been raised while in the bfcache.
   // These events get re-dispatched when the bfcache is exited.
@@ -1489,9 +1504,6 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // Used to indicate if the MediaKeys attaching operation is on-going or not.
   bool mAttachingMediaKey = false;
   MozPromiseRequestHolder<SetCDMPromise> mSetCDMRequest;
-  // Request holder for permission prompt to autoplay. Non-null if we're
-  // currently showing a prompt for permission to autoplay.
-  MozPromiseRequestHolder<GenericPromise> mAutoplayPermissionRequest;
 
   // Stores the time at the start of the current 'played' range.
   double mCurrentPlayRangeStart = 1.0;
@@ -1650,6 +1662,11 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // True if the autoplay media was blocked because it hadn't loaded metadata
   // yet.
   bool mBlockedAsWithoutMetadata = false;
+
+  // This promise is used to notify MediaElementAudioSourceNode that media
+  // element is allowed to play when MediaElement is used as a source for web
+  // audio.
+  MozPromiseHolder<GenericNonExclusivePromise> mAllowedToPlayPromise;
 
  public:
   // Helper class to measure times for MSE telemetry stats

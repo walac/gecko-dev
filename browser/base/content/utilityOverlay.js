@@ -4,9 +4,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // Services = object with smart getters for common XPCOM services
-ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+var {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 ChromeUtils.defineModuleGetter(this, "PrivateBrowsingUtils",
                                "resource://gre/modules/PrivateBrowsingUtils.jsm");
@@ -22,7 +22,6 @@ XPCOMUtils.defineLazyServiceGetter(this, "aboutNewTabService",
                                    "nsIAboutNewTabService");
 
 Object.defineProperty(this, "BROWSER_NEW_TAB_URL", {
-  configurable: true,
   enumerable: true,
   get() {
     if (PrivateBrowsingUtils.isWindowPrivate(window) &&
@@ -340,7 +339,7 @@ function openLinkIn(url, where, params) {
         userContextId: aUserContextId,
         privateBrowsingId: aIsPrivate || (w && PrivateBrowsingUtils.isWindowPrivate(w)),
       };
-      return Services.scriptSecurityManager.createCodebasePrincipal(principal.URI, attrs);
+      return Services.scriptSecurityManager.principalWithOA(principal, attrs);
     }
     return principal;
   }
@@ -937,7 +936,6 @@ function makeURLAbsolute(aBase, aUrl) {
  *        parameters passed to openLinkIn
  */
 function openNewTabWith(aURL, aShiftKey, aParams = {}) {
-
   // As in openNewWindowWith(), we want to pass the charset of the
   // current document over to a new tab.
   if (document.documentElement.getAttribute("windowtype") == "navigator:browser")
@@ -973,6 +971,8 @@ function openHelpLink(aHelpTopic, aCalledFromModal, aWhere) {
 
   openTrustedLinkIn(url, where);
 }
+
+window.addEventListener("dialoghelp", openPrefsHelp);
 
 function openPrefsHelp() {
   // non-instant apply prefwindows are usually modal, so we can't open in the topmost window,

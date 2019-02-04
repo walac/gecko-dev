@@ -8,7 +8,9 @@ import base64
 import hashlib
 import imghdr
 import struct
+import sys
 import tempfile
+import unittest
 import urllib
 
 from marionette_driver import By
@@ -65,10 +67,7 @@ class ScreenCaptureTestCase(MarionetteTestCase):
 
     @property
     def viewport_dimensions(self):
-        return self.marionette.execute_script("""
-            return [arguments[0].clientWidth,
-                    arguments[0].clientHeight];
-            """, script_args=[self.document_element])
+        return self.marionette.execute_script("return [window.innerWidth, window.innerHeight];")
 
     def assert_png(self, screenshot):
         """Test that screenshot is a Base64 encoded PNG file."""
@@ -205,6 +204,7 @@ class TestScreenCaptureChrome(WindowManagerMixin, ScreenCaptureTestCase):
         self.marionette.switch_to_window(self.start_window)
 
     @skip_if_mobile("Fennec doesn't support other chrome windows")
+    @unittest.skipIf(sys.platform.startswith("linux"), "Bug 1504201")
     def test_formats(self):
         dialog = self.open_dialog()
         self.marionette.switch_to_window(dialog)

@@ -105,6 +105,18 @@ namespace ChromeUtils {
   ArrayBuffer base64URLDecode(ByteString string,
                               Base64URLDecodeOptions options);
 
+  /**
+   * Cause the current process to fatally crash unless the given condition is
+   * true. This is similar to MOZ_RELEASE_ASSERT in C++ code.
+   *
+   * WARNING: This message is included publicly in the crash report, and must
+   * not contain private information.
+   *
+   * Crash report will be augmented with the current JS stack information.
+   */
+  void releaseAssert(boolean condition,
+                     optional DOMString message = "<no message>");
+
 #ifdef NIGHTLY_BUILD
 
   /**
@@ -269,15 +281,18 @@ partial namespace ChromeUtils {
    * Synchronously loads and evaluates the js file located at
    * 'aResourceURI' with a new, fully privileged global object.
    *
-   * If 'aTargetObj' is specified and null, this method just returns
-   * the module's global object. Otherwise (if 'aTargetObj' is not
-   * specified, or 'aTargetObj' is != null) looks for a property
-   * 'EXPORTED_SYMBOLS' on the new global object. 'EXPORTED_SYMBOLS'
-   * is expected to be an array of strings identifying properties on
-   * the global object.  These properties will be installed as
-   * properties on 'targetObj', or, if 'aTargetObj' is not specified,
-   * on the caller's global object. If 'EXPORTED_SYMBOLS' is not
-   * found, an error is thrown.
+   * If `aTargetObj` is specified, and non-null, all properties exported by
+   * the module are copied to that object.
+   *
+   * If `aTargetObj` is not specified, or is non-null, an object is returned
+   * containing all of the module's exported properties. The same object is
+   * returned for every call.
+   *
+   * If `aTargetObj` is specified and null, the module's global object is
+   * returned, rather than its explicit exports. This behavior is deprecated,
+   * and will removed in the near future, since it is incompatible with the
+   * ES6 module semanitcs we intend to migrate to. It should not be used in
+   * new code.
    *
    * @param aResourceURI A resource:// URI string to load the module from.
    * @param aTargetObj the object to install the exported properties on or null.
@@ -353,20 +368,33 @@ partial namespace ChromeUtils {
   [Throws]
   Promise<sequence<IOActivityDataDictionary>> requestIOActivity();
 
-  /**
-   * Returns the BrowsingContext referred by the given id.
-   */
-  [ChromeOnly]
-  BrowsingContext? getBrowsingContext(unsigned long long id);
-
-  /**
-   * Returns all the root BrowsingContexts.
-   */
-  [ChromeOnly]
-  sequence<BrowsingContext> getRootBrowsingContexts();
-
   [ChromeOnly, Throws]
   boolean hasReportingHeaderForOrigin(DOMString aOrigin);
+
+  [ChromeOnly]
+  PopupBlockerState getPopupControlState();
+
+  [ChromeOnly]
+  boolean isPopupTokenUnused();
+
+  /**
+   * Milliseconds from the last iframe loading an external protocol.
+   */
+  [ChromeOnly]
+  double lastExternalProtocolIframeAllowed();
+
+  /**
+   * For testing purpose we need to reset this value.
+   */
+  [ChromeOnly]
+  void resetLastExternalProtocolIframeAllowed();
+
+  [ChromeOnly, Throws]
+  void registerWindowActor(DOMString aName, WindowActorOptions aOptions);
+
+  [ChromeOnly]
+  // aError should a nsresult.
+  boolean isClassifierBlockingErrorCode(unsigned long aError);
 };
 
 /**
@@ -503,6 +531,17 @@ dictionary Base64URLEncodeOptions {
   required boolean pad;
 };
 
+dictionary WindowActorOptions {
+  /** This fields are used for configuring individual sides of the actor. */
+  required WindowActorSidedOptions parent;
+  required WindowActorSidedOptions child;
+};
+
+dictionary WindowActorSidedOptions {
+  /** The module path which should be loaded for the actor on this side. */
+  required ByteString moduleURI;
+};
+
 enum Base64URLDecodePadding {
   /**
    * Fails decoding if the input is unpadded. RFC 4648, section 3.2 requires
@@ -524,4 +563,13 @@ enum Base64URLDecodePadding {
 dictionary Base64URLDecodeOptions {
   /** Specifies the padding mode for decoding the input. */
   required Base64URLDecodePadding padding;
+};
+
+// Keep this in sync with PopupBlocker::PopupControlState!
+enum PopupBlockerState {
+  "openAllowed",
+  "openControlled",
+  "openBlocked",
+  "openAbused",
+  "openOverridden",
 };

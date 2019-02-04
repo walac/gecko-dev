@@ -78,19 +78,27 @@ var TrackingProtection = {
   updateCategoryLabel() {
     let label;
     if (this.enabled) {
-      label = "contentBlocking.trackers.blocked.label";
+      label = ContentBlocking.showBlockedLabels ? "contentBlocking.trackers.blocking.label" : null;
     } else {
       label = ContentBlocking.showAllowedLabels ? "contentBlocking.trackers.allowed.label" : null;
     }
     this.categoryLabel.textContent = label ? gNavigatorBundle.getString(label) : "";
   },
 
+  // FIXME This must change! Fingerprinting and cryptomining must have theirs
+  // own sections. See bug 1522566.
   isBlocking(state) {
-    return (state & Ci.nsIWebProgressListener.STATE_BLOCKED_TRACKING_CONTENT) != 0;
+    return (state & Ci.nsIWebProgressListener.STATE_BLOCKED_TRACKING_CONTENT) != 0 ||
+           (state & Ci.nsIWebProgressListener.STATE_BLOCKED_FINGERPRINTING_CONTENT) != 0 ||
+           (state & Ci.nsIWebProgressListener.STATE_BLOCKED_CRYPTOMINING_CONTENT) != 0;
   },
 
+  // FIXME This must change! Fingerprinting and cryptomining must have theirs
+  // own sections. See bug 1522566.
   isAllowing(state) {
-    return (state & Ci.nsIWebProgressListener.STATE_LOADED_TRACKING_CONTENT) != 0;
+    return (state & Ci.nsIWebProgressListener.STATE_LOADED_TRACKING_CONTENT) != 0 ||
+           (state & Ci.nsIWebProgressListener.STATE_LOADED_FINGERPRINTING_CONTENT) != 0 ||
+           (state & Ci.nsIWebProgressListener.STATE_LOADED_CRYPTOMINING_CONTENT) != 0;
   },
 
   isDetected(state) {
@@ -115,6 +123,31 @@ var TrackingProtection = {
       }
     }
 
+    // If we don't have trackers we would usually not show the menu item
+    // allowing the user to show the sub-panel. However, in the edge case
+    // that we annotated trackers on the page using the strict list but did
+    // not detect trackers on the page using the basic list, we currently
+    // still show the panel. To reduce the confusion, tell the user that we have
+    // not detected any tracker.
+    if (fragment.childNodes.length == 0) {
+      let emptyBox = document.createXULElement("vbox");
+      let emptyImage = document.createXULElement("image");
+      emptyImage.classList.add("identity-popup-content-blocking-trackersView-empty-image");
+      emptyImage.classList.add("tracking-protection-icon");
+
+      let emptyLabel = document.createXULElement("label");
+      emptyLabel.classList.add("identity-popup-content-blocking-empty-label");
+      emptyLabel.textContent = gNavigatorBundle.getString("contentBlocking.trackersView.empty.label");
+
+      emptyBox.appendChild(emptyImage);
+      emptyBox.appendChild(emptyLabel);
+      fragment.appendChild(emptyBox);
+
+      this.subViewList.classList.add("empty");
+    } else {
+      this.subViewList.classList.remove("empty");
+    }
+
     // This might have taken a while. Only update the list if we're still on the same page.
     if (previousURI == gBrowser.currentURI.spec &&
         previousWindow == gBrowser.selectedBrowser.innerWindowID) {
@@ -129,9 +162,16 @@ var TrackingProtection = {
     if (this.trackingTable == this.trackingAnnotationTable) {
       return true;
     }
+
+    let feature = classifierService.getFeatureByName("tracking-protection");
+    if (!feature) {
+      return false;
+    }
+
     return new Promise(resolve => {
-      classifierService.asyncClassifyLocalWithTables(uri, this.trackingTable, [], [],
-        (code, list) => resolve(!!list));
+      classifierService.asyncClassifyLocalWithFeatures(uri, [feature],
+        Ci.nsIUrlClassifierFeature.blacklist,
+        list => resolve(!!list.length));
     });
   },
 
@@ -251,16 +291,16 @@ var ThirdPartyCookies = {
     let label;
     switch (this.behaviorPref) {
     case Ci.nsICookieService.BEHAVIOR_REJECT_FOREIGN:
-      label = "contentBlocking.cookies.3rdPartyBlocked.label";
+      label = ContentBlocking.showBlockedLabels ? "contentBlocking.cookies.blocking3rdParty.label" : null;
       break;
     case Ci.nsICookieService.BEHAVIOR_REJECT:
-      label = "contentBlocking.cookies.allBlocked.label";
+      label = ContentBlocking.showBlockedLabels ? "contentBlocking.cookies.blockingAll.label" : null;
       break;
     case Ci.nsICookieService.BEHAVIOR_LIMIT_FOREIGN:
-      label = "contentBlocking.cookies.unvisitedBlocked.label";
+      label = ContentBlocking.showBlockedLabels ? "contentBlocking.cookies.blockingUnvisited.label" : null;
       break;
     case Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER:
-      label = "contentBlocking.cookies.trackersBlocked.label";
+      label = ContentBlocking.showBlockedLabels ? "contentBlocking.cookies.blockingTrackers.label" : null;
       break;
     default:
       Cu.reportError(`Error: Unknown cookieBehavior pref observed: ${this.behaviorPref}`);
@@ -304,17 +344,26 @@ var ThirdPartyCookies = {
     this.subViewList.textContent = "";
 
     for (let category of ["firstParty", "trackers", "thirdParty"]) {
-      if (categories[category].length) {
-        let box = document.createXULElement("vbox");
-        let label = document.createXULElement("label");
-        label.className = "identity-popup-cookiesView-list-header";
-        label.textContent = gNavigatorBundle.getString(`contentBlocking.cookiesView.${category}.label`);
-        box.appendChild(label);
-        for (let info of categories[category]) {
-          box.appendChild(this._createListItem(info));
-        }
-        this.subViewList.appendChild(box);
+      let box = document.createXULElement("vbox");
+      let label = document.createXULElement("label");
+      label.className = "identity-popup-cookiesView-list-header";
+      label.textContent = gNavigatorBundle.getString(`contentBlocking.cookiesView.${category}.label`);
+      box.appendChild(label);
+
+      for (let info of categories[category]) {
+        box.appendChild(this._createListItem(info));
       }
+
+      // If the category is empty, add a label noting that to the user.
+      if (categories[category].length == 0) {
+        let emptyLabel = document.createXULElement("label");
+        emptyLabel.classList.add("identity-popup-content-blocking-empty-label");
+        emptyLabel.textContent =
+          gNavigatorBundle.getString(`contentBlocking.cookiesView.${category}.empty.label`);
+        box.appendChild(emptyLabel);
+      }
+
+      this.subViewList.appendChild(box);
     }
   },
 
@@ -395,8 +444,8 @@ var ThirdPartyCookies = {
         }
         // blocked tells us whether the resource was actually blocked
         // (which it may not be in case of an exception).
-        if (this.isBlocking(state) && blocked) {
-          info.isAllowed = false;
+        if (this.isBlocking(state)) {
+          info.isAllowed = !blocked;
         }
       }
 
@@ -489,13 +538,56 @@ var ContentBlocking = {
   PREF_INTRO_COUNT_CB: "browser.contentblocking.introCount",
   PREF_CB_CATEGORY: "browser.contentblocking.category",
   PREF_SHOW_ALLOWED_LABELS: "browser.contentblocking.control-center.ui.showAllowedLabels",
-  content: null,
-  icon: null,
-  activeTooltipText: null,
-  disabledTooltipText: null,
+  PREF_SHOW_BLOCKED_LABELS: "browser.contentblocking.control-center.ui.showBlockedLabels",
 
   get prefIntroCount() {
     return this.PREF_INTRO_COUNT_CB;
+  },
+
+  get content() {
+    delete this.content;
+    return this.content =
+      document.getElementById("identity-popup-content-blocking-content");
+  },
+
+  get icon() {
+    delete this.icon;
+    return this.icon = document.getElementById("tracking-protection-icon");
+  },
+
+  get iconBox() {
+    delete this.iconBox;
+    return this.iconBox = document.getElementById("tracking-protection-icon-box");
+  },
+
+  get animatedIcon() {
+    delete this.animatedIcon;
+    return this.animatedIcon =
+      document.getElementById("tracking-protection-icon-animatable-image");
+  },
+
+  get identityPopupMultiView() {
+    delete this.identityPopupMultiView;
+    return this.identityPopupMultiView =
+      document.getElementById("identity-popup-multiView");
+  },
+
+  get reportBreakageButton() {
+    delete this.reportBreakageButton;
+    return this.reportBreakageButton =
+      document.getElementById("identity-popup-content-blocking-report-breakage");
+  },
+
+  get reportBreakageURL() {
+    delete this.reportBreakageURL;
+    return this.reportBreakageURL =
+      document.getElementById("identity-popup-breakageReportView-collection-url");
+  },
+
+  get reportBreakageLearnMore() {
+    delete this.reportBreakageLearnMore;
+    return this.reportBreakageLearnMore =
+      document.getElementById("identity-popup-breakageReportView-learn-more");
   },
 
   get appMenuLabel() {
@@ -519,6 +611,18 @@ var ContentBlocking = {
       delete this.appMenuTooltip;
       return this.appMenuTooltip =
         gNavigatorBundle.getString("contentBlocking.tooltip");
+    },
+
+    get activeTooltipText() {
+      delete this.activeTooltipText;
+      return this.activeTooltipText =
+        gNavigatorBundle.getString("trackingProtection.icon.activeTooltip");
+    },
+
+    get disabledTooltipText() {
+      delete this.disabledTooltipText;
+      return this.disabledTooltipText =
+        gNavigatorBundle.getString("trackingProtection.icon.disabledTooltip");
     },
   },
 
@@ -546,17 +650,7 @@ var ContentBlocking = {
   },
 
   init() {
-    let $ = selector => document.querySelector(selector);
-    this.content = $("#identity-popup-content-blocking-content");
-    this.icon = $("#tracking-protection-icon");
-    this.iconBox = $("#tracking-protection-icon-box");
-    this.animatedIcon = $("#tracking-protection-icon-animatable-image");
     this.animatedIcon.addEventListener("animationend", () => this.iconBox.removeAttribute("animate"));
-
-    this.identityPopupMultiView = $("#identity-popup-multiView");
-    this.reportBreakageButton = $("#identity-popup-content-blocking-report-breakage");
-    this.reportBreakageURL = $("#identity-popup-breakageReportView-collection-url");
-    this.reportBreakageLearnMore = $("#identity-popup-breakageReportView-learn-more");
 
     let baseURL = Services.urlFormatter.formatURLPref("app.support.baseURL");
     this.reportBreakageLearnMore.href = baseURL + "blocking-breakage";
@@ -565,6 +659,21 @@ var ContentBlocking = {
       this.iconBox.toggleAttribute("animationsenabled",
         Services.prefs.getBoolPref(this.PREF_ANIMATIONS_ENABLED, false));
     };
+
+    XPCOMUtils.defineLazyPreferenceGetter(this, "showBlockedLabels",
+      this.PREF_SHOW_BLOCKED_LABELS, false, () => {
+        for (let blocker of this.blockers) {
+          blocker.updateCategoryLabel();
+        }
+    });
+    XPCOMUtils.defineLazyPreferenceGetter(this, "showAllowedLabels",
+      this.PREF_SHOW_ALLOWED_LABELS, false, () => {
+        for (let blocker of this.blockers) {
+          blocker.updateCategoryLabel();
+        }
+    });
+    XPCOMUtils.defineLazyPreferenceGetter(this, "reportBreakageEnabled",
+      this.PREF_REPORT_BREAKAGE_ENABLED, false);
 
     for (let blocker of this.blockers) {
       if (blocker.init) {
@@ -576,22 +685,9 @@ var ContentBlocking = {
 
     Services.prefs.addObserver(this.PREF_ANIMATIONS_ENABLED, this.updateAnimationsEnabled);
 
-    XPCOMUtils.defineLazyPreferenceGetter(this, "showAllowedLabels",
-      this.PREF_SHOW_ALLOWED_LABELS, false, () => {
-        for (let blocker of this.blockers) {
-          blocker.updateCategoryLabel();
-        }
-    });
-    XPCOMUtils.defineLazyPreferenceGetter(this, "reportBreakageEnabled",
-      this.PREF_REPORT_BREAKAGE_ENABLED, false);
-
     this.appMenuLabel.setAttribute("value", this.strings.appMenuTitle);
     this.appMenuLabel.setAttribute("tooltiptext", this.strings.appMenuTooltip);
 
-    this.activeTooltipText =
-      gNavigatorBundle.getString("trackingProtection.icon.activeTooltip");
-    this.disabledTooltipText =
-      gNavigatorBundle.getString("trackingProtection.icon.disabledTooltip");
     this.updateCBCategoryLabel = this.updateCBCategoryLabel.bind(this);
     this.updateCBCategoryLabel();
     Services.prefs.addObserver(this.PREF_CB_CATEGORY, this.updateCBCategoryLabel);
@@ -703,7 +799,7 @@ var ContentBlocking = {
     // they see in the report breakage dialog.
     this.reportURI = gBrowser.currentURI;
     let urlWithoutQuery = this.reportURI.asciiSpec.replace("?" + this.reportURI.query, "");
-    this.reportBreakageURL.textContent = urlWithoutQuery;
+    this.reportBreakageURL.value = urlWithoutQuery;
     this.identityPopupMultiView.showSubView("identity-popup-breakageReportView");
   },
 
@@ -724,7 +820,7 @@ var ContentBlocking = {
     Services.telemetry.getHistogramById("TRACKING_PROTECTION_SHIELD").add(value);
   },
 
-  onSecurityChange(state, webProgress, isSimulated) {
+  onContentBlockingEvent(event, webProgress, isSimulated) {
     let baseURI = this._baseURIForChannelClassifier;
 
     // Don't deal with about:, file: etc.
@@ -735,13 +831,6 @@ var ContentBlocking = {
       return;
     }
 
-    // The user might have navigated before the shield animation
-    // finished. In this case, reset the animation to be able to
-    // play it in full again and avoid choppiness.
-    if (webProgress.isTopLevel) {
-      this.iconBox.removeAttribute("animate");
-    }
-
     let anyDetected = false;
     let anyBlocking = false;
 
@@ -750,9 +839,9 @@ var ContentBlocking = {
       // reporting it using the "report breakage" dialog. Under normal circumstances this
       // dialog should only be able to open in the currently selected tab and onSecurityChange
       // runs on tab switch, so we can avoid associating the data with the document directly.
-      blocker.activated = blocker.isBlocking(state);
+      blocker.activated = blocker.isBlocking(event);
       blocker.categoryItem.classList.toggle("blocked", blocker.enabled);
-      let detected = blocker.isDetected(state);
+      let detected = blocker.isDetected(event);
       blocker.categoryItem.hidden = !detected;
       anyDetected = anyDetected || detected;
       anyBlocking = anyBlocking || blocker.activated;
@@ -764,6 +853,26 @@ var ContentBlocking = {
     let type =  isBrowserPrivate ? "trackingprotection-pb" : "trackingprotection";
     let hasException = Services.perms.testExactPermission(baseURI, type) ==
       Services.perms.ALLOW_ACTION;
+
+    // Reset the animation in case the user is switching tabs or if no blockers were detected
+    // (this is most likely happening because the user navigated on to a different site). This
+    // allows us to play it from the start without choppiness next time.
+    if (isSimulated || !anyBlocking) {
+      this.iconBox.removeAttribute("animate");
+    // Only play the animation when the shield is not already shown on the page (the visibility
+    // of the shield based on this onSecurityChange be determined afterwards).
+    } else if (anyBlocking && !this.iconBox.hasAttribute("active")) {
+      this.iconBox.setAttribute("animate", "true");
+
+      if (!isBrowserPrivate) {
+        let introCount = Services.prefs.getIntPref(this.prefIntroCount);
+        if (introCount < this.MAX_INTROS) {
+          Services.prefs.setIntPref(this.prefIntroCount, ++introCount);
+          Services.prefs.savePrefFile(null);
+          this.showIntroPanel();
+        }
+      }
+    }
 
     // We consider the shield state "active" when some kind of blocking activity
     // occurs on the page.  Note that merely allowing the loading of content that
@@ -787,26 +896,11 @@ var ContentBlocking = {
       this.reportBreakageButton.setAttribute("hidden", "true");
     }
 
-    if (isSimulated) {
-      this.iconBox.removeAttribute("animate");
-    } else if (anyBlocking && webProgress.isTopLevel) {
-      this.iconBox.setAttribute("animate", "true");
-
-      if (!isBrowserPrivate) {
-        let introCount = Services.prefs.getIntPref(this.prefIntroCount);
-        if (introCount < this.MAX_INTROS) {
-          Services.prefs.setIntPref(this.prefIntroCount, ++introCount);
-          Services.prefs.savePrefFile(null);
-          this.showIntroPanel();
-        }
-      }
-    }
-
     if (hasException) {
-      this.iconBox.setAttribute("tooltiptext", this.disabledTooltipText);
+      this.iconBox.setAttribute("tooltiptext", this.strings.disabledTooltipText);
       this.shieldHistogramAdd(1);
     } else if (anyBlocking) {
-      this.iconBox.setAttribute("tooltiptext", this.activeTooltipText);
+      this.iconBox.setAttribute("tooltiptext", this.strings.activeTooltipText);
       this.shieldHistogramAdd(2);
     } else {
       this.iconBox.removeAttribute("tooltiptext");

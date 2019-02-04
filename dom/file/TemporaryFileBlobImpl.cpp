@@ -51,7 +51,26 @@ class TemporaryFileInputStream final : public nsFileInputStream {
   }
 
   void Serialize(InputStreamParams& aParams,
-                 FileDescriptorArray& aFileDescriptors) override {
+                 FileDescriptorArray& aFileDescriptors, bool aDelayedStart,
+                 nsIContentChild* aManager) override {
+    MOZ_CRASH("This inputStream cannot be serialized.");
+  }
+
+  void Serialize(InputStreamParams& aParams,
+                 FileDescriptorArray& aFileDescriptors, bool aDelayedStart,
+                 PBackgroundChild* aManager) override {
+    MOZ_CRASH("This inputStream cannot be serialized.");
+  }
+
+  void Serialize(InputStreamParams& aParams,
+                 FileDescriptorArray& aFileDescriptors, bool aDelayedStart,
+                 nsIContentParent* aManager) override {
+    MOZ_CRASH("This inputStream cannot be serialized.");
+  }
+
+  void Serialize(InputStreamParams& aParams,
+                 FileDescriptorArray& aFileDescriptors, bool aDelayedStart,
+                 PBackgroundParent* aManager) override {
     MOZ_CRASH("This inputStream cannot be serialized.");
   }
 
@@ -87,13 +106,17 @@ class TemporaryFileInputStream final : public nsFileInputStream {
 
 TemporaryFileBlobImpl::TemporaryFileBlobImpl(nsIFile* aFile,
                                              const nsAString& aContentType)
-    : FileBlobImpl(aFile, EmptyString(), aContentType)
+    : FileBlobImpl(aFile, EmptyString(), aContentType,
+                   NS_LITERAL_STRING("TemporaryBlobImpl"))
 #ifdef DEBUG
       ,
       mInputStreamCreated(false)
 #endif
 {
   MOZ_ASSERT(XRE_IsParentProcess());
+
+  // This must be considered a blob.
+  mIsFile = false;
 }
 
 TemporaryFileBlobImpl::~TemporaryFileBlobImpl() {

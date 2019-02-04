@@ -95,6 +95,10 @@ var DebuggerServer = {
     return this._initialized;
   },
 
+  hasConnection() {
+    return Object.keys(this._connections).length > 0;
+  },
+
   /**
    * Performs cleanup tasks before shutting down the debugger server. Such tasks
    * include clearing any actor constructors added at runtime. This method
@@ -167,30 +171,6 @@ var DebuggerServer = {
    */
   registerAllActors() {
     this.registerActors({ root: true, browser: true, target: true });
-  },
-
-  /**
-   * Passes a set of options to the AddonTargetActors for the given ID.
-   *
-   * @param id string
-   *        The ID of the add-on to pass the options to
-   * @param options object
-   *        The options.
-   * @return a promise that will be resolved when complete.
-   */
-  setAddonOptions(id, options) {
-    if (!this._initialized) {
-      return Promise.resolve();
-    }
-
-    const promises = [];
-
-    // Pass to all connections
-    for (const connID of Object.getOwnPropertyNames(this._connections)) {
-      promises.push(this._connections[connID].setAddonOptions(id, options));
-    }
-
-    return Promise.all(promises);
   },
 
   get listeningSockets() {
@@ -1198,31 +1178,6 @@ DebuggerServerConnection.prototype = {
     });
 
     this._actorResponses.set(from, responsePromise);
-  },
-
-  /**
-   * Passes a set of options to the AddonTargetActors for the given ID.
-   *
-   * @param id string
-   *        The ID of the add-on to pass the options to
-   * @param options object
-   *        The options.
-   * @return a promise that will be resolved when complete.
-   */
-  setAddonOptions(id, options) {
-    const addonList = this.rootActor._parameters.addonList;
-    if (!addonList) {
-      return Promise.resolve();
-    }
-    return addonList.getList().then((addonTargetActors) => {
-      for (const actor of addonTargetActors) {
-        if (actor.addonId != id) {
-          continue;
-        }
-        actor.setOptions(options);
-        return;
-      }
-    });
   },
 
   /**

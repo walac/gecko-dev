@@ -8,7 +8,7 @@ import { toEditorLine, endOperation, startOperation } from "../../utils/editor";
 import { getDocument, hasDocument } from "../../utils/editor/source-documents";
 import { isLoaded } from "../../utils/source";
 
-import { connect } from "react-redux";
+import { connect } from "../../utils/connect";
 import {
   getVisibleSelectedFrame,
   getSelectedLocation,
@@ -16,7 +16,12 @@ import {
   getPauseCommand
 } from "../../selectors";
 
-import type { Frame, SourceLocation, Source } from "../../types";
+import type {
+  Frame,
+  SourceLocation,
+  Source,
+  SourceDocuments
+} from "../../types";
 import type { Command } from "../../reducers/types";
 
 type Props = {
@@ -54,6 +59,14 @@ export class HighlightLine extends Component<Props> {
     return this.shouldSetHighlightLine(selectedLocation, selectedSource);
   }
 
+  componentDidUpdate(prevProps: Props) {
+    this.completeHighlightLine(prevProps);
+  }
+
+  componentDidMount() {
+    this.completeHighlightLine(null);
+  }
+
   shouldSetHighlightLine(
     selectedLocation: SourceLocation,
     selectedSource: Source
@@ -72,7 +85,7 @@ export class HighlightLine extends Component<Props> {
     return true;
   }
 
-  componentDidUpdate(prevProps: Props) {
+  completeHighlightLine(prevProps: Props | null) {
     const {
       pauseCommand,
       selectedLocation,
@@ -84,10 +97,12 @@ export class HighlightLine extends Component<Props> {
     }
 
     startOperation();
-    this.clearHighlightLine(
-      prevProps.selectedLocation,
-      prevProps.selectedSource
-    );
+    if (prevProps) {
+      this.clearHighlightLine(
+        prevProps.selectedLocation,
+        prevProps.selectedSource
+      );
+    }
     this.setHighlightLine(selectedLocation, selectedFrame, selectedSource);
     endOperation();
   }
@@ -101,6 +116,7 @@ export class HighlightLine extends Component<Props> {
     if (!this.shouldSetHighlightLine(selectedLocation, selectedSource)) {
       return;
     }
+
     this.isStepping = false;
     const editorLine = toEditorLine(sourceId, line);
     this.previousEditorLine = editorLine;
@@ -111,6 +127,28 @@ export class HighlightLine extends Component<Props> {
 
     const doc = getDocument(sourceId);
     doc.addLineClass(editorLine, "line", "highlight-line");
+    this.resetHighlightLine(doc, editorLine);
+  }
+
+  resetHighlightLine(doc: SourceDocuments, editorLine: number) {
+    const editorWrapper: HTMLElement | null = document.querySelector(
+      ".editor-wrapper"
+    );
+
+    if (editorWrapper === null) {
+      return;
+    }
+
+    const style = getComputedStyle(editorWrapper);
+    const durationString = style.getPropertyValue("--highlight-line-duration");
+
+    let duration = durationString.match(/\d+/);
+    duration = duration.length ? Number(duration[0]) : 0;
+
+    setTimeout(
+      () => doc && doc.removeLineClass(editorLine, "line", "highlight-line"),
+      duration
+    );
   }
 
   clearHighlightLine(selectedLocation: SourceLocation, selectedSource: Source) {

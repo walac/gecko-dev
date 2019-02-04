@@ -5,16 +5,17 @@
 "use strict";
 /* global frame */
 
-const {WebElementEventTarget} = ChromeUtils.import("chrome://marionette/content/dom.js", {});
-ChromeUtils.import("chrome://marionette/content/element.js");
+const {WebElementEventTarget} = ChromeUtils.import("chrome://marionette/content/dom.js");
+const {element} = ChromeUtils.import("chrome://marionette/content/element.js");
 const {
   NoSuchWindowError,
   UnsupportedOperationError,
-} = ChromeUtils.import("chrome://marionette/content/error.js", {});
+} = ChromeUtils.import("chrome://marionette/content/error.js");
 const {
+  MessageManagerDestroyedPromise,
   waitForEvent,
   waitForObserverTopic,
-} = ChromeUtils.import("chrome://marionette/content/sync.js", {});
+} = ChromeUtils.import("chrome://marionette/content/sync.js");
 
 this.EXPORTED_SYMBOLS = ["browser", "Context", "WindowState"];
 
@@ -115,7 +116,6 @@ browser.getTabBrowser = function(window) {
  * the current environment (Firefox, Fennec).
  */
 browser.Context = class {
-
   /**
    * @param {ChromeWindow} win
    *     ChromeWindow that contains the top-level browsing context.
@@ -260,7 +260,6 @@ browser.Context = class {
       y: this.window.screenY,
       width: this.window.outerWidth,
       height: this.window.outerHeight,
-      state: WindowState.from(this.window.windowState),
     };
   }
 
@@ -276,9 +275,10 @@ browser.Context = class {
 
     // The modal is a direct sibling of the browser element.
     // See tabbrowser.xml's getTabModalPromptBox.
-    let modals = br.parentNode.getElementsByTagNameNS(
+    let modalElements = br.parentNode.getElementsByTagNameNS(
         XUL_NS, "tabmodalprompt");
-    return modals[0].ui;
+
+    return br.tabModalPromptBox.prompts.get(modalElements[0]).ui;
   }
 
   /**
@@ -288,15 +288,13 @@ browser.Context = class {
    *     A promise which is resolved when the current window has been closed.
    */
   closeWindow() {
-    // Create a copy of the messageManager before it is disconnected
-    let messageManager = this.window.messageManager;
-    let disconnected = waitForObserverTopic("message-manager-disconnect",
-        subject => subject === messageManager);
+    let destroyed = new MessageManagerDestroyedPromise(
+        this.window.messageManager);
     let unloaded = waitForEvent(this.window, "unload");
 
     this.window.close();
 
-    return Promise.all([disconnected, unloaded]);
+    return Promise.all([destroyed, unloaded]);
   }
 
   /**
@@ -313,15 +311,16 @@ browser.Context = class {
         // race condition when promptly focusing to the original window again.
         let win = this.window.OpenBrowserWindow();
 
+        let activated = waitForEvent(win, "activate");
+        let focused = waitForEvent(win, "focus", {capture: true});
+        let startup = waitForObserverTopic("browser-delayed-startup-finished",
+            subject => subject == win);
+
         // Bug 1509380 - Missing focus/activate event when Firefox is not
         // the top-most application. As such wait for the next tick, and
         // manually focus the newly opened window.
         win.setTimeout(() => win.focus(), 0);
 
-        let activated = waitForEvent(win, "activate");
-        let focused = waitForEvent(win, "focus", {capture: true});
-        let startup = waitForObserverTopic("browser-delayed-startup-finished",
-            subject => subject == win);
         await Promise.all([activated, focused, startup]);
 
         if (!focus) {
@@ -362,11 +361,7 @@ browser.Context = class {
       return this.closeWindow();
     }
 
-    // Create a copy of the messageManager before it is disconnected
-    let messageManager = this.messageManager;
-    let disconnected = waitForObserverTopic("message-manager-disconnect",
-        subject => subject === messageManager);
-
+    let destroyed = new MessageManagerDestroyedPromise(this.messageManager);
     let tabClosed;
 
     switch (this.driver.appName) {
@@ -386,7 +381,7 @@ browser.Context = class {
           `closeTab() not supported in ${this.driver.appName}`);
     }
 
-    return Promise.all([disconnected, tabClosed]);
+    return Promise.all([destroyed, tabClosed]);
   }
 
   /**
@@ -534,7 +529,6 @@ browser.Context = class {
       cb();
     }
   }
-
 };
 
 /**
@@ -552,7 +546,6 @@ browser.Context = class {
  *
  */
 browser.Windows = class extends Map {
-
   /**
    * Save a weak reference to the Window object.
    *
@@ -589,7 +582,6 @@ browser.Windows = class extends Map {
     }
     return wref.get();
   }
-
 };
 
 /**

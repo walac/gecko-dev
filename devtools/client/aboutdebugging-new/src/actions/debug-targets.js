@@ -34,11 +34,16 @@ const {
   REQUEST_WORKERS_FAILURE,
   REQUEST_WORKERS_START,
   REQUEST_WORKERS_SUCCESS,
+  TEMPORARY_EXTENSION_INSTALL_FAILURE,
+  TEMPORARY_EXTENSION_INSTALL_START,
+  TEMPORARY_EXTENSION_INSTALL_SUCCESS,
   RUNTIMES,
 } = require("../constants");
 
+const Actions = require("./index");
+
 function inspectDebugTarget(type, id) {
-  return async (_, getState) => {
+  return async (dispatch, getState) => {
     const runtime = getCurrentRuntime(getState().runtimes);
     const { runtimeDetails, type: runtimeType } = runtime;
 
@@ -71,33 +76,40 @@ function inspectDebugTarget(type, id) {
         gDevToolsBrowser.openWorkerToolbox(front);
         break;
       }
-
       default: {
         console.error("Failed to inspect the debug target of " +
                       `type: ${ type } id: ${ id }`);
       }
     }
+
+    dispatch(Actions.recordTelemetryEvent("inspect", {
+      "target_type": type,
+      "runtime_type": runtimeType,
+    }));
   };
 }
 
 function installTemporaryExtension() {
   const message = l10n.getString("about-debugging-tmp-extension-install-message");
   return async (dispatch, getState) => {
+    dispatch({ type: TEMPORARY_EXTENSION_INSTALL_START });
     const file = await openTemporaryExtension(window, message);
     try {
       await AddonManager.installTemporaryAddon(file);
+      dispatch({ type: TEMPORARY_EXTENSION_INSTALL_SUCCESS });
     } catch (e) {
-      console.error(e);
+      dispatch({ type: TEMPORARY_EXTENSION_INSTALL_FAILURE, error: e });
     }
   };
 }
 
-function pushServiceWorker(actor) {
+function pushServiceWorker(id) {
   return async (_, getState) => {
     const clientWrapper = getCurrentClient(getState().runtimes);
 
     try {
-      await clientWrapper.request({ to: actor, type: "push" });
+      const workerActor = await clientWrapper.getServiceWorkerFront({ id });
+      await workerActor.push();
     } catch (e) {
       console.error(e);
     }
@@ -134,7 +146,7 @@ function requestTabs() {
     const clientWrapper = getCurrentClient(getState().runtimes);
 
     try {
-      const { tabs } = await clientWrapper.listTabs({ favicons: true });
+      const tabs = await clientWrapper.listTabs({ favicons: true });
 
       dispatch({ type: REQUEST_TABS_SUCCESS, tabs });
     } catch (e) {
@@ -151,7 +163,9 @@ function requestExtensions() {
     const clientWrapper = getCurrentClient(getState().runtimes);
 
     try {
-      const addons = await clientWrapper.listAddons();
+      const isIconDataURLRequired = runtime.type !== RUNTIMES.THIS_FIREFOX;
+      const addons =
+        await clientWrapper.listAddons({ iconDataURL: isIconDataURLRequired });
       let extensions = addons.filter(a => a.debuggable);
 
       // Filter out system addons unless the dedicated preference is set to true.
@@ -194,6 +208,16 @@ function requestWorkers() {
         sharedWorkers,
       } = await clientWrapper.listWorkers();
 
+      for (const serviceWorker of serviceWorkers) {
+        const { registrationFront } = serviceWorker;
+        if (!registrationFront) {
+          continue;
+        }
+
+        const subscription = await registrationFront.getPushSubscription();
+        serviceWorker.subscription = subscription;
+      }
+
       dispatch({
         type: REQUEST_WORKERS_SUCCESS,
         otherWorkers,
@@ -206,12 +230,20 @@ function requestWorkers() {
   };
 }
 
-function startServiceWorker(actor) {
+function startServiceWorker(registrationFront) {
   return async (_, getState) => {
-    const clientWrapper = getCurrentClient(getState().runtimes);
-
     try {
-      await clientWrapper.request({ to: actor, type: "start" });
+      await registrationFront.start();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+}
+
+function unregisterServiceWorker(registrationFront) {
+  return async (_, getState) => {
+    try {
+      await registrationFront.unregister();
     } catch (e) {
       console.error(e);
     }
@@ -228,4 +260,5 @@ module.exports = {
   requestExtensions,
   requestWorkers,
   startServiceWorker,
+  unregisterServiceWorker,
 };

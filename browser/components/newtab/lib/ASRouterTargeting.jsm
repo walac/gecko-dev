@@ -1,5 +1,5 @@
-ChromeUtils.import("resource://gre/modules/components-utils/FilterExpressions.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {FilterExpressions} = ChromeUtils.import("resource://gre/modules/components-utils/FilterExpressions.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 ChromeUtils.defineModuleGetter(this, "ASRouterPreferences",
   "resource://activity-stream/lib/ASRouterPreferences.jsm");
@@ -151,6 +151,24 @@ function sortMessagesByWeightedRank(messages) {
     .map(message => ({message, rank: Math.pow(Math.random(), 1 / message.weight)}))
     .sort((a, b) => b.rank - a.rank)
     .map(({message}) => message);
+}
+
+/**
+ * Messages with targeting should get evaluated first, this way we can have
+ * fallback messages (no targeting at all) that will show up if nothing else
+ * matched
+ */
+function sortMessagesByTargeting(messages) {
+  return messages.sort((a, b) => {
+    if (a.targeting && !b.targeting) {
+      return -1;
+    }
+    if (!a.targeting && b.targeting) {
+      return 1;
+    }
+
+    return 0;
+  });
 }
 
 const TargetingGetters = {
@@ -347,7 +365,8 @@ this.ASRouterTargeting = {
    * @returns {obj} an AS router message
    */
   async findMatchingMessage({messages, trigger, context, onError}) {
-    const sortedMessages = sortMessagesByWeightedRank([...messages]);
+    const weightSortedMessages = sortMessagesByWeightedRank([...messages]);
+    const sortedMessages = sortMessagesByTargeting(weightSortedMessages);
 
     for (const candidate of sortedMessages) {
       if (

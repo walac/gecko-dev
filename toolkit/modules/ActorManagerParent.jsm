@@ -95,31 +95,30 @@
 
 var EXPORTED_SYMBOLS = ["ActorManagerParent"];
 
-ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {ExtensionUtils} = ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const {DefaultMap} = ExtensionUtils;
 
 let ACTORS = {
-  AudibleAutoplay: {
-    child: {
-      module: "resource://gre/actors/AudibleAutoplayChild.jsm",
-      events: {
-        "AudibleAutoplayMediaOccurred": {},
-      },
-    },
-  },
-
   AudioPlayback: {
     child: {
       module: "resource://gre/actors/AudioPlaybackChild.jsm",
       messages: [
         "AudioPlayback",
-        "TemporaryPermissionChanged",
       ],
       observers: [
         "audio-playback",
       ],
+    },
+  },
+
+  Autoplay: {
+    child: {
+      module: "resource://gre/actors/AutoplayChild.jsm",
+      events: {
+        "GloballyAutoplayBlocked": {},
+      },
     },
   },
 
@@ -267,9 +266,8 @@ let ACTORS = {
     child: {
       module: "resource://gre/actors/UAWidgetsChild.jsm",
       events: {
-        "UAWidgetBindToTree": {},
-        "UAWidgetAttributeChanged": {},
-        "UAWidgetUnbindFromTree": {},
+        "UAWidgetSetupOrChange": {},
+        "UAWidgetTeardown": {},
       },
     },
   },

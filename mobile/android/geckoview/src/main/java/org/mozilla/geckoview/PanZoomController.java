@@ -11,6 +11,8 @@ import org.mozilla.gecko.util.ThreadUtils;
 
 import android.graphics.Rect;
 import android.os.SystemClock;
+import android.support.annotation.NonNull;
+import android.support.annotation.UiThread;
 import android.util.Log;
 import android.util.Pair;
 import android.view.MotionEvent;
@@ -18,6 +20,7 @@ import android.view.InputDevice;
 
 import java.util.ArrayList;
 
+@UiThread
 public class PanZoomController extends JNIObject {
     private static final String LOGTAG = "GeckoNPZC";
     private static final int EVENT_SOURCE_SCROLL = 0;
@@ -36,7 +39,7 @@ public class PanZoomController extends JNIObject {
 
     @WrapForJNI(calledFrom = "ui")
     private native boolean handleMotionEvent(
-            int action, int actionIndex, long time, int metaState,
+            int action, int actionIndex, long time, int metaState,  float screenX, float screenY,
             int pointerId[], float x[], float y[], float orientation[], float pressure[],
             float toolMajor[], float toolMinor[]);
 
@@ -91,8 +94,15 @@ public class PanZoomController extends JNIObject {
             toolMinor[i] = coords.toolMinor;
         }
 
+        final float screenX = event.getRawX() - event.getX();
+        final float screenY = event.getRawY() - event.getY();
+
+        // Take this opportunity to update screen origin of session. This gets
+        // dispatched to the gecko thread, so we also pass the new screen x/y directly to apz.
+        mSession.onScreenOriginChanged((int)screenX, (int)screenY);
+
         return handleMotionEvent(action, event.getActionIndex(), event.getEventTime(),
-                event.getMetaState(), pointerId, x, y, orientation, pressure,
+                event.getMetaState(), screenX, screenY, pointerId, x, y, orientation, pressure,
                 toolMajor, toolMinor);
     }
 
@@ -183,7 +193,7 @@ public class PanZoomController extends JNIObject {
      * @param event MotionEvent to process.
      * @return True if the event was handled.
      */
-    public boolean onTouchEvent(final MotionEvent event) {
+    public boolean onTouchEvent(final @NonNull MotionEvent event) {
         ThreadUtils.assertOnUiThread();
         return handleMotionEvent(event);
     }
@@ -196,7 +206,7 @@ public class PanZoomController extends JNIObject {
      * @param event MotionEvent to process.
      * @return True if the event was handled.
      */
-    public boolean onMouseEvent(final MotionEvent event) {
+    public boolean onMouseEvent(final @NonNull MotionEvent event) {
         ThreadUtils.assertOnUiThread();
 
         if (event.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE) {
@@ -218,7 +228,7 @@ public class PanZoomController extends JNIObject {
      * @param event MotionEvent to process.
      * @return True if the event was handled.
      */
-    public boolean onMotionEvent(MotionEvent event) {
+    public boolean onMotionEvent(@NonNull MotionEvent event) {
         ThreadUtils.assertOnUiThread();
 
         final int action = event.getActionMasked();

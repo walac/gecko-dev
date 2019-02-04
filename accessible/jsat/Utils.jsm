@@ -153,7 +153,6 @@ var Utils = { // jshint ignore:line
       let extState = {};
       aAccessibleOrEvent.getState(state, extState);
       return new State(state.value, extState.value);
-
   },
 
   getAttributes: function getAttributes(aAccessible) {
@@ -178,9 +177,7 @@ var Utils = { // jshint ignore:line
   },
 
   getContentResolution: function _getContentResolution(aAccessible) {
-    let res = { value: 1 };
-    aAccessible.document.window.windowUtils.getResolution(res);
-    return res.value;
+    return aAccessible.document.window.windowUtils.getResolution();
   },
 
   getBounds: function getBounds(aAccessible) {

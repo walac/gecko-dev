@@ -29,7 +29,8 @@ DataChannelParent::SetParentListener(HttpChannelParentListener *aListener) {
 }
 
 NS_IMETHODIMP
-DataChannelParent::NotifyTrackingProtectionDisabled() {
+DataChannelParent::NotifyChannelClassifierProtectionDisabled(
+    uint32_t aAcceptedReason) {
   // Nothing to do.
   return NS_OK;
 }
@@ -41,13 +42,20 @@ DataChannelParent::NotifyCookieAllowed() {
 }
 
 NS_IMETHODIMP
-DataChannelParent::NotifyTrackingCookieBlocked(uint32_t aRejectedReason) {
+DataChannelParent::NotifyCookieBlocked(uint32_t aRejectedReason) {
   // Nothing to do.
   return NS_OK;
 }
 
 NS_IMETHODIMP
 DataChannelParent::NotifyTrackingResource(bool aIsThirdParty) {
+  // Nothing to do.
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+DataChannelParent::NotifyFlashPluginStateChanged(
+    nsIHttpChannel::FlashPluginState aState) {
   // Nothing to do.
   return NS_OK;
 }

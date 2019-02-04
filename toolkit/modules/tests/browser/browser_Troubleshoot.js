@@ -6,9 +6,8 @@
 // that aren't initialized outside of a XUL app environment like AddonManager
 // and the "@mozilla.org/xre/app-info;1" component.
 
-ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/Troubleshoot.jsm");
+const {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+const {Troubleshoot} = ChromeUtils.import("resource://gre/modules/Troubleshoot.jsm");
 
 function test() {
   waitForExplicitFinish();
@@ -124,6 +123,9 @@ const SNAPSHOT_SCHEMA = {
         },
         supportURL: {
           type: "string",
+        },
+        launcherProcessState: {
+          type: "number",
         },
         remoteAutoStart: {
           type: "boolean",
@@ -283,7 +285,17 @@ const SNAPSHOT_SCHEMA = {
           type: "boolean",
         },
         numAcceleratedWindowsMessage: {
-          type: "array",
+          type: "object",
+          properties: {
+            key: {
+              required: true,
+              type: "string",
+            },
+            args: {
+              required: false,
+              type: "object",
+            },
+          },
         },
         adapterDescription: {
           type: "string",
@@ -394,9 +406,16 @@ const SNAPSHOT_SCHEMA = {
           type: "object",
         },
         failures: {
-          type: "array",
-          items: {
-            type: "string",
+          type: "object",
+          properties: {
+            key: {
+              required: true,
+              type: "string",
+            },
+            args: {
+              required: false,
+              type: "object",
+            },
           },
         },
         indices: {
@@ -412,7 +431,23 @@ const SNAPSHOT_SCHEMA = {
           type: "array",
         },
         direct2DEnabledMessage: {
-          type: "array",
+          type: "object",
+          properties: {
+            key: {
+              required: true,
+              type: "string",
+            },
+            args: {
+              required: false,
+              type: "object",
+            },
+          },
+        },
+        lowEndMachine: {
+          type: "boolean",
+        },
+        targetFrameRate: {
+          type: "number",
         },
       },
     },

@@ -68,6 +68,18 @@ enum class TraceKind {
 };
 const static uintptr_t OutOfLineTraceKindMask = 0x07;
 
+// Returns true if the JS::TraceKind is one the cycle collector cares about.
+// Everything used as WeakMap key should be listed here, to represent the key
+// in cycle collector's graph, otherwise the key is considered to be pointed
+// from somewhere unknown, and results in leaking the subgraph which contains
+// the key.
+// See the comments in NoteWeakMapsTracer::trace for more details.
+inline constexpr bool IsCCTraceKind(JS::TraceKind aKind) {
+  return aKind == JS::TraceKind::Object || aKind == JS::TraceKind::Script ||
+         aKind == JS::TraceKind::LazyScript || aKind == JS::TraceKind::Scope ||
+         aKind == JS::TraceKind::RegExpShared;
+}
+
 #define ASSERT_TRACE_KIND(tk)                                             \
   static_assert(                                                          \
       (uintptr_t(tk) & OutOfLineTraceKindMask) == OutOfLineTraceKindMask, \
@@ -104,25 +116,6 @@ struct MapTypeToTraceKind {
   IF_BIGINT(D(BigInt, JS::BigInt, false), )               \
   D(RegExpShared, js::RegExpShared, true)
 
-// Returns true if the JS::TraceKind is one the cycle collector cares about.
-// Everything used as WeakMap key should be listed here, to represent the key
-// in cycle collector's graph, otherwise the key is considered to be pointed
-// from somewhere unknown, and results in leaking the subgraph which contains
-// the key.
-// See the comments in NoteWeakMapsTracer::trace for more details.
-inline constexpr bool IsCCTraceKind(JS::TraceKind aKind)
-{
-  switch (aKind) {
-#define JS_EXPAND_DEF(name, _, isCCTraceKind) \
-    case JS::TraceKind::name: \
-      return isCCTraceKind;
-    JS_FOR_EACH_TRACEKIND(JS_EXPAND_DEF);
-#undef JS_EXPAND_DEF
-    default:
-      return false;
-  }
-}
-
 // Map from all public types to their trace kind.
 #define JS_EXPAND_DEF(name, type, _)                       \
   template <>                                              \
@@ -131,11 +124,6 @@ inline constexpr bool IsCCTraceKind(JS::TraceKind aKind)
   };
 JS_FOR_EACH_TRACEKIND(JS_EXPAND_DEF);
 #undef JS_EXPAND_DEF
-
-template <typename T>
-struct TypeParticipatesInCC {
-  static const bool value = IsCCTraceKind(MapTypeToTraceKind<T>::kind);
-};
 
 // RootKind is closely related to TraceKind. Whereas TraceKind's indices are
 // laid out for convenient embedding as a pointer tag, the indicies of RootKind
@@ -219,9 +207,9 @@ struct MapTypeToRootKind<JSFunction*> : public MapTypeToRootKind<JSObject*> {};
 // The clang-cl front end defines _MSC_VER, but still requires the explicit
 // template declaration, so we must test for __clang__ here as well.
 #if (defined(_MSC_VER) && _MSC_VER < 1910) && !defined(__clang__)
-#define JS_DEPENDENT_TEMPLATE_HINT
+#  define JS_DEPENDENT_TEMPLATE_HINT
 #else
-#define JS_DEPENDENT_TEMPLATE_HINT template
+#  define JS_DEPENDENT_TEMPLATE_HINT template
 #endif
 template <typename F, typename... Args>
 auto DispatchTraceKindTyped(F f, JS::TraceKind traceKind, Args&&... args)

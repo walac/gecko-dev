@@ -95,7 +95,8 @@ static bool DepthFirstSearchUse(MIRGenerator* mir,
       }
 
       MPhi* cphi = cdef->toPhi();
-      if (cphi->getUsageAnalysis() == PhiUsage::Used || cphi->isUseRemoved()) {
+      if (cphi->getUsageAnalysis() == PhiUsage::Used || cphi->isUseRemoved() ||
+          cphi->isImplicitlyUsed()) {
         // The information got cached on the Phi the last time it
         // got visited, or when flagging operands of removed
         // instructions.
@@ -225,7 +226,8 @@ static bool FlagPhiInputsAsHavingRemovedUses(MIRGenerator* mir,
 
     // If the Phi is either Used or Unused, set the UseRemoved flag
     // accordingly.
-    if (phi->getUsageAnalysis() == PhiUsage::Used || phi->isUseRemoved()) {
+    if (phi->getUsageAnalysis() == PhiUsage::Used || phi->isUseRemoved() ||
+        phi->isImplicitlyUsed()) {
       def->setUseRemoved();
       continue;
     } else if (phi->getUsageAnalysis() == PhiUsage::Unused) {
@@ -2889,14 +2891,14 @@ static void CheckOperand(const MNode* consumer, const MUse* use,
   MOZ_ASSERT(!producer->isDiscarded());
   MOZ_ASSERT(producer->block() != nullptr);
   MOZ_ASSERT(use->consumer() == consumer);
-#ifdef _DEBUG_CHECK_OPERANDS_USES_BALANCE
+#  ifdef _DEBUG_CHECK_OPERANDS_USES_BALANCE
   Fprinter print(stderr);
   print.printf("==Check Operand\n");
   use->producer()->dump(print);
   print.printf("  index: %zu\n", use->consumer()->indexOf(use));
   use->consumer()->dump(print);
   print.printf("==End\n");
-#endif
+#  endif
   --*usesBalance;
 }
 
@@ -2907,14 +2909,14 @@ static void CheckUse(const MDefinition* producer, const MUse* use,
                 !use->consumer()->toDefinition()->isDiscarded());
   MOZ_ASSERT(use->consumer()->block() != nullptr);
   MOZ_ASSERT(use->consumer()->getOperand(use->index()) == producer);
-#ifdef _DEBUG_CHECK_OPERANDS_USES_BALANCE
+#  ifdef _DEBUG_CHECK_OPERANDS_USES_BALANCE
   Fprinter print(stderr);
   print.printf("==Check Use\n");
   use->producer()->dump(print);
   print.printf("  index: %zu\n", use->consumer()->indexOf(use));
   use->consumer()->dump(print);
   print.printf("==End\n");
-#endif
+#  endif
   ++*usesBalance;
 }
 

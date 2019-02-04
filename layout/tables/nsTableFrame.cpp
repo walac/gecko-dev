@@ -51,7 +51,7 @@
 
 #include "gfxPrefs.h"
 #include "mozilla/layers/StackingContextHelper.h"
-#include "mozilla/layers/WebRenderLayerManager.h"
+#include "mozilla/layers/RenderRootStateManager.h"
 
 using namespace mozilla;
 using namespace mozilla::image;
@@ -1171,7 +1171,8 @@ class nsDisplayTableBorderCollapse final : public nsDisplayTableItem {
   void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
   bool CreateWebRenderCommands(
       wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
-      const StackingContextHelper& aSc, layers::WebRenderLayerManager* aManager,
+      const StackingContextHelper& aSc,
+      layers::RenderRootStateManager* aManager,
       nsDisplayListBuilder* aDisplayListBuilder) override;
   NS_DISPLAY_DECL_NAME("TableBorderCollapse", TYPE_TABLE_BORDER_COLLAPSE)
 };
@@ -1197,7 +1198,7 @@ void nsDisplayTableBorderCollapse::Paint(nsDisplayListBuilder* aBuilder,
 bool nsDisplayTableBorderCollapse::CreateWebRenderCommands(
     wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
     const StackingContextHelper& aSc,
-    mozilla::layers::WebRenderLayerManager* aManager,
+    mozilla::layers::RenderRootStateManager* aManager,
     nsDisplayListBuilder* aDisplayListBuilder) {
   static_cast<nsTableFrame*>(mFrame)->CreateWebRenderCommandsForBCBorders(
       aBuilder, aSc, GetPaintRect(), ToReferenceFrame());
@@ -3914,7 +3915,7 @@ nscoord nsTableFrame::CalcBorderBoxBSize(const ReflowInput& aReflowInput) {
 bool nsTableFrame::IsAutoLayout() {
   if (StyleTable()->mLayoutStrategy == NS_STYLE_TABLE_LAYOUT_AUTO) return true;
   // a fixed-layout inline-table must have a inline size
-  // and tables with inline size set to '-moz-max-content' must be
+  // and tables with inline size set to 'max-content' must be
   // auto-layout (at least as long as
   // FixedTableLayoutStrategy::GetPrefISize returns nscoord_MAX)
   const nsStyleCoord& iSize = StylePosition()->ISize(GetWritingMode());
@@ -4069,17 +4070,17 @@ bool nsTableFrame::ColumnHasCellSpacingBefore(int32_t aColIndex) const {
  *******************************************************************************/
 
 #ifdef DEBUG
-#define VerifyNonNegativeDamageRect(r)                       \
-  NS_ASSERTION((r).StartCol() >= 0, "negative col index");   \
-  NS_ASSERTION((r).StartRow() >= 0, "negative row index");   \
-  NS_ASSERTION((r).ColCount() >= 0, "negative cols damage"); \
-  NS_ASSERTION((r).RowCount() >= 0, "negative rows damage");
-#define VerifyDamageRect(r)                          \
-  VerifyNonNegativeDamageRect(r);                    \
-  NS_ASSERTION((r).EndCol() <= GetColCount(),        \
-               "cols damage extends outside table"); \
-  NS_ASSERTION((r).EndRow() <= GetRowCount(),        \
-               "rows damage extends outside table");
+#  define VerifyNonNegativeDamageRect(r)                       \
+    NS_ASSERTION((r).StartCol() >= 0, "negative col index");   \
+    NS_ASSERTION((r).StartRow() >= 0, "negative row index");   \
+    NS_ASSERTION((r).ColCount() >= 0, "negative cols damage"); \
+    NS_ASSERTION((r).RowCount() >= 0, "negative rows damage");
+#  define VerifyDamageRect(r)                          \
+    VerifyNonNegativeDamageRect(r);                    \
+    NS_ASSERTION((r).EndCol() <= GetColCount(),        \
+                 "cols damage extends outside table"); \
+    NS_ASSERTION((r).EndRow() <= GetRowCount(),        \
+                 "rows damage extends outside table");
 #endif
 
 void nsTableFrame::AddBCDamageArea(const TableArea& aValue) {
@@ -4672,22 +4673,6 @@ void BCMapCellIterator::PeekBEnd(BCMapCellInfo& aRefInfo, uint32_t aColIndex,
   aAjaInfo.SetInfo(nextRow, aColIndex, cellData, this, cellMap);
 }
 
-// Assign priorities to border styles. For example,
-// styleToPriority(StyleBorderStyle::Solid) will return the priority of
-// StyleBorderStyle::Solid.
-static uint8_t styleToPriority[13] = {0,   // StyleBorderStyle::None
-                                      2,   // StyleBorderStyle::Groove
-                                      4,   // StyleBorderStyle::Ridge
-                                      5,   // StyleBorderStyle::Dotted
-                                      6,   // StyleBorderStyle::Dashed
-                                      7,   // StyleBorderStyle::Solid
-                                      8,   // StyleBorderStyle::Double
-                                      1,   // StyleBorderStyle::Inset
-                                      3,   // StyleBorderStyle::Outset
-                                      9};  // StyleBorderStyle::Hidden
-// priority rules follow CSS 2.1 spec
-// 'hidden', 'double', 'solid', 'dashed', 'dotted', 'ridge', 'outset', 'groove',
-// and the lowest: 'inset'. none is even weaker
 #define CELL_CORNER true
 
 /** return the border style, border color and optionally the width in
@@ -4810,11 +4795,10 @@ static const BCCellBorder& CompareBorders(
   } else if (aBorder1.width < aBorder2.width) {
     firstDominates = false;
   } else if (aBorder1.width == aBorder2.width) {
-    if (styleToPriority[static_cast<uint8_t>(aBorder1.style)] <
-        styleToPriority[static_cast<uint8_t>(aBorder2.style)]) {
+    if (static_cast<uint8_t>(aBorder1.style) <
+        static_cast<uint8_t>(aBorder2.style)) {
       firstDominates = false;
-    } else if (styleToPriority[static_cast<uint8_t>(aBorder1.style)] ==
-               styleToPriority[static_cast<uint8_t>(aBorder2.style)]) {
+    } else if (aBorder1.style == aBorder2.style) {
       if (aBorder1.owner == aBorder2.owner) {
         firstDominates = !aSecondIsInlineDir;
       } else if (aBorder1.owner < aBorder2.owner) {

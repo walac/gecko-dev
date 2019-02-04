@@ -4,19 +4,19 @@
 
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const {
   error,
   WebDriverError,
-} = ChromeUtils.import("chrome://marionette/content/error.js", {});
-ChromeUtils.import("chrome://marionette/content/evaluate.js");
-const {Log} = ChromeUtils.import("chrome://marionette/content/log.js", {});
-ChromeUtils.import("chrome://marionette/content/modal.js");
+} = ChromeUtils.import("chrome://marionette/content/error.js");
+const {evaluate} = ChromeUtils.import("chrome://marionette/content/evaluate.js");
+const {Log} = ChromeUtils.import("chrome://marionette/content/log.js");
+const {modal} = ChromeUtils.import("chrome://marionette/content/modal.js");
 const {
-  waitForObserverTopic,
-} = ChromeUtils.import("chrome://marionette/content/sync.js", {});
+  MessageManagerDestroyedPromise,
+} = ChromeUtils.import("chrome://marionette/content/sync.js");
 
 this.EXPORTED_SYMBOLS = ["proxy"];
 
@@ -156,9 +156,7 @@ proxy.AsyncMessageChannel = class {
             break;
         }
 
-        await waitForObserverTopic("message-manager-disconnect",
-            subject => subject === messageManager);
-
+        await new MessageManagerDestroyedPromise(messageManager);
         this.removeHandlers();
         resolve();
       };

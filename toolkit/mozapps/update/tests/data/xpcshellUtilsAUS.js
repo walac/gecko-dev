@@ -180,7 +180,6 @@ var gEnvXPCOMDebugBreak;
 var gEnvXPCOMMemLeakLog;
 var gEnvDyldLibraryPath;
 var gEnvLdLibraryPath;
-var gASanOptions;
 
 // Set to true to log additional information for debugging. To log additional
 // information for an individual test set DEBUG_AUS_TEST to true in the test's
@@ -204,8 +203,6 @@ const DATA_URI_SPEC = Services.io.newFileURI(do_get_file("../data", false)).spec
 /* import-globals-from ../data/shared.js */
 Services.scriptloader.loadSubScript(DATA_URI_SPEC + "shared.js", this);
 
-ChromeUtils.defineModuleGetter(this, "ctypes",
-                               "resource://gre/modules/ctypes.jsm");
 ChromeUtils.defineModuleGetter(this, "MockRegistrar",
                                "resource://testing-common/MockRegistrar.jsm");
 
@@ -730,6 +727,10 @@ var gTestDirsCommon = [
   }, {
     relPathDir: DIR_RESOURCES + "9/99/",
     dirRemoved: true,
+  }, {
+    description: "Silences 'WARNING: Failed to resolve XUL App Dir.' in debug builds",
+    relPathDir: DIR_RESOURCES + "browser",
+    dirRemoved: false,
   }];
 
 // Directories for a complete successful update. This array can be used for a
@@ -894,13 +895,6 @@ function cleanupTestCommon() {
     gPrefRoot.removeObserver(PREF_APP_UPDATE_CHANNEL, observer);
   }
 
-  // Call app update's observe method passing quit-application to test that the
-  // shutdown of app update runs without throwing or leaking. The observer
-  // method is used directly instead of calling notifyObservers so components
-  // outside of the scope of this test don't assert and thereby cause app update
-  // tests to fail.
-  gAUS.observe(null, "quit-application", "");
-
   gTestserver = null;
 
   if (IS_UNIX) {
@@ -1024,93 +1018,17 @@ function doTestFinish() {
     Services.prefs.setBoolPref(PREF_APP_UPDATE_LOG, false);
     gAUS.observe(null, "nsPref:changed", PREF_APP_UPDATE_LOG);
   }
-  executeSoon(testFinishWaitForUpdateXMLFiles);
-}
 
-/**
- * Waits until the update files don't exist and then calls do_test_finished to
- * end the test. This is necessary due to the update xml files being written
- * asynchronously by nsIUpdateManager. Uses do_timeout instead of
- * do_execute_soon to lessen log spew.
- */
-function testFinishWaitForUpdateXMLFiles() {
-  /**
-   * Waits until the update tmp files don't exist and then calls
-   * testFinishReloadUpdateXMLFiles.
-   */
-  function testFinishWaitForUpdateTmpXMLFiles() {
-    let tmpActiveUpdateXML = getUpdatesRootDir();
-    tmpActiveUpdateXML.append(FILE_ACTIVE_UPDATE_XML + ".tmp");
-    if (tmpActiveUpdateXML.exists()) {
-      // The xml files are written asynchronously so wait until it has been
-      // removed.
-      do_timeout(10, testFinishWaitForUpdateTmpXMLFiles);
-      return;
-    }
+  reloadUpdateManagerData(true);
 
-    let tmpUpdatesXML = getUpdatesRootDir();
-    tmpUpdatesXML.append(FILE_UPDATES_XML + ".tmp");
-    if (tmpUpdatesXML.exists()) {
-      // The xml files are written asynchronously so wait until it has been
-      // removed.
-      do_timeout(10, testFinishWaitForUpdateTmpXMLFiles);
-      return;
-    }
+  // Call app update's observe method passing quit-application to test that the
+  // shutdown of app update runs without throwing or leaking. The observer
+  // method is used directly instead of calling notifyObservers so components
+  // outside of the scope of this test don't assert and thereby cause app update
+  // tests to fail.
+  gAUS.observe(null, "quit-application", "");
 
-    do_timeout(10, testFinishReloadUpdateXMLFiles);
-  }
-
-  /**
-   * Creates empty update xml files, reloads / saves the update data, and then
-   * calls testFinishWaitForUpdateXMLFiles.
-   */
-  function testFinishReloadUpdateXMLFiles() {
-    try {
-      // Wrapped in a try catch since the file can be in the middle of a write.
-      writeUpdatesToXMLFile(getLocalUpdatesXMLString(""), true);
-    } catch (e) {
-      do_timeout(10, testFinishReloadUpdateXMLFiles);
-      return;
-    }
-    try {
-      // Wrapped in a try catch since the file can be in the middle of a write.
-      writeUpdatesToXMLFile(getLocalUpdatesXMLString(""), false);
-    } catch (e) {
-      do_timeout(10, testFinishReloadUpdateXMLFiles);
-      return;
-    }
-
-    reloadUpdateManagerData();
-    gUpdateManager.saveUpdates();
-    do_timeout(10, testFinishWaitForUpdateXMLFilesDelete);
-  }
-
-  /**
-   * Waits until the active-update.xml and updates.xml files don't exist and
-   * then calls do_test_finished to end the test. This is necessary due to the
-   * update xml files being written asynchronously by nsIUpdateManager.
-   */
-  function testFinishWaitForUpdateXMLFilesDelete() {
-    let activeUpdateXML = getUpdatesXMLFile(true);
-    if (activeUpdateXML.exists()) {
-      // Since the file is removed asynchronously wait until it has been
-      // removed. Uses do_timeout instead of do_execute_soon to lessen log spew.
-      do_timeout(10, testFinishWaitForUpdateXMLFilesDelete);
-      return;
-    }
-
-    let updatesXML = getUpdatesXMLFile(false);
-    if (updatesXML.exists()) {
-      // Since the file is removed asynchronously wait until it has been
-      // removed. Uses do_timeout instead of do_execute_soon to lessen log spew.
-      do_timeout(10, testFinishWaitForUpdateXMLFilesDelete);
-      return;
-    }
-
-    do_timeout(10, do_test_finished);
-  }
-
-  do_timeout(10, testFinishWaitForUpdateTmpXMLFiles);
+  executeSoon(do_test_finished);
 }
 
 /**
@@ -2162,8 +2080,7 @@ function stageUpdate(aCheckSvcLog) {
   try {
     // Stage the update.
     Cc["@mozilla.org/updates/update-processor;1"].
-      createInstance(Ci.nsIUpdateProcessor).
-      processUpdate(gUpdateManager.activeUpdate);
+      createInstance(Ci.nsIUpdateProcessor).processUpdate();
   } catch (e) {
     Assert.ok(false,
               "error thrown while calling processUpdate, exception: " + e);
@@ -2882,9 +2799,12 @@ function waitForHelperExit() {
  * @param   aPostUpdateExeRelPathPrefix
  *          When aPostUpdateAsync null this value is ignored otherwise it is
  *          passed to createUpdaterINI.
+ * @param   aSetupActiveUpdate
+ *          Whether to setup the active update.
  */
 function setupUpdaterTest(aMarFile, aPostUpdateAsync,
-                          aPostUpdateExeRelPathPrefix = "") {
+                          aPostUpdateExeRelPathPrefix = "",
+                          aSetupActiveUpdate = true) {
   debugDump("start - updater test setup");
   let updatesPatchDir = getUpdatesPatchDir();
   if (!updatesPatchDir.exists()) {
@@ -2971,7 +2891,9 @@ function setupUpdaterTest(aMarFile, aPostUpdateAsync,
     debugDump("finish - setup test directory: " + aTestDir.relPathDir);
   });
 
-  setupActiveUpdate();
+  if (aSetupActiveUpdate) {
+    setupActiveUpdate();
+  }
 
   if (aPostUpdateAsync !== null) {
     createUpdaterINI(aPostUpdateAsync, aPostUpdateExeRelPathPrefix);
@@ -3718,7 +3640,7 @@ function checkFilesInDirRecursive(aDir, aCallback) {
  *          The callback to call if the update prompt component is called.
  */
 function overrideUpdatePrompt(aCallback) {
-  ChromeUtils.import("resource://testing-common/MockRegistrar.jsm");
+  const {MockRegistrar} = ChromeUtils.import("resource://testing-common/MockRegistrar.jsm");
   MockRegistrar.register("@mozilla.org/updates/update-prompt;1", UpdatePrompt, [aCallback]);
 }
 
@@ -3822,7 +3744,7 @@ function start_httpserver() {
              "registerDirectory! Path: " + dir.path);
   }
 
-  let { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js", {});
+  let { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
   gTestserver = new HttpServer();
   gTestserver.registerDirectory("/", dir);
   gTestserver.registerPathHandler("/" + gHTTPHandlerPath, pathHandler);
@@ -3995,7 +3917,9 @@ function getLaunchScript() {
 function adjustGeneralPaths() {
   let dirProvider = {
     getFile: function AGP_DP_getFile(aProp, aPersistent) {
-      aPersistent.value = true;
+      // Set the value of persistent to false so when this directory provider is
+      // unregistered it will revert back to the original provider.
+      aPersistent.value = false;
       switch (aProp) {
         case NS_GRE_DIR:
           return getApplyDirFile(DIR_RESOURCES, true);
@@ -4338,14 +4262,6 @@ function setEnvironment() {
 
   gShouldResetEnv = true;
 
-  // See bug 1279108.
-  if (gEnv.exists("ASAN_OPTIONS")) {
-    gASanOptions = gEnv.get("ASAN_OPTIONS");
-    gEnv.set("ASAN_OPTIONS", gASanOptions + ":detect_leaks=0");
-  } else {
-    gEnv.set("ASAN_OPTIONS", "detect_leaks=0");
-  }
-
   if (IS_WIN && !gEnv.exists("XRE_NO_WINDOWS_CRASH_DIALOG")) {
     gAddedEnvXRENoWindowsCrashDialog = true;
     debugDump("setting the XRE_NO_WINDOWS_CRASH_DIALOG environment " +
@@ -4426,9 +4342,6 @@ function resetEnvironment() {
   }
 
   gShouldResetEnv = false;
-
-  // Restore previous ASAN_OPTIONS if there were any.
-  gEnv.set("ASAN_OPTIONS", gASanOptions ? gASanOptions : "");
 
   if (gEnvXPCOMMemLeakLog) {
     debugDump("setting the XPCOM_MEM_LEAK_LOG environment variable back to " +

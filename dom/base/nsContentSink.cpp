@@ -10,13 +10,14 @@
  */
 
 #include "nsContentSink.h"
-#include "nsIDocument.h"
+#include "mozilla/Components.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/css/Loader.h"
 #include "mozilla/dom/SRILogHelper.h"
 #include "nsStyleLinkElement.h"
 #include "nsIDocShell.h"
 #include "nsILoadContext.h"
-#include "nsCPrefetchService.h"
+#include "nsIPrefetchService.h"
 #include "nsIURI.h"
 #include "nsNetUtil.h"
 #include "nsIMIMEHeaderParam.h"
@@ -182,7 +183,7 @@ void nsContentSink::InitializeStatics() {
                               0);
 }
 
-nsresult nsContentSink::Init(nsIDocument* aDoc, nsIURI* aURI,
+nsresult nsContentSink::Init(Document* aDoc, nsIURI* aURI,
                              nsISupports* aContainer, nsIChannel* aChannel) {
   MOZ_ASSERT(aDoc, "null ptr");
   MOZ_ASSERT(aURI, "null ptr");
@@ -825,8 +826,7 @@ void nsContentSink::PrefetchPreloadHref(const nsAString& aHref,
                                         const nsAString& aAs,
                                         const nsAString& aType,
                                         const nsAString& aMedia) {
-  nsCOMPtr<nsIPrefetchService> prefetchService(
-      do_GetService(NS_PREFETCHSERVICE_CONTRACTID));
+  nsCOMPtr<nsIPrefetchService> prefetchService(components::Prefetch::Service());
   if (prefetchService) {
     // construct URI using document charset
     auto encoding = mDocument->GetDocumentCharacterSet();
@@ -911,11 +911,6 @@ nsresult nsContentSink::SelectDocAppCache(
 
   *aAction = CACHE_SELECTION_NONE;
 
-  nsCOMPtr<nsIApplicationCacheContainer> applicationCacheDocument =
-      do_QueryInterface(mDocument);
-  NS_ASSERTION(applicationCacheDocument,
-               "mDocument must implement nsIApplicationCacheContainer.");
-
   if (aLoadApplicationCache) {
     nsCOMPtr<nsIURI> groupURI;
     rv = aLoadApplicationCache->GetManifestURI(getter_AddRefs(groupURI));
@@ -944,7 +939,7 @@ nsresult nsContentSink::SelectDocAppCache(
                   clientID.get(), docURISpec.get()));
 #endif
 
-      rv = applicationCacheDocument->SetApplicationCache(aLoadApplicationCache);
+      rv = mDocument->SetApplicationCache(aLoadApplicationCache);
       NS_ENSURE_SUCCESS(rv, rv);
 
       // Document will be added as implicit entry to the cache as part of
@@ -981,11 +976,6 @@ nsresult nsContentSink::SelectDocAppCacheNoManifest(
   if (aLoadApplicationCache) {
     // The document was loaded from an application cache, use that
     // application cache as the document's application cache.
-    nsCOMPtr<nsIApplicationCacheContainer> applicationCacheDocument =
-        do_QueryInterface(mDocument);
-    NS_ASSERTION(applicationCacheDocument,
-                 "mDocument must implement nsIApplicationCacheContainer.");
-
 #ifdef DEBUG
     nsAutoCString docURISpec, clientID;
     mDocumentURI->GetAsciiSpec(docURISpec);
@@ -996,7 +986,7 @@ nsresult nsContentSink::SelectDocAppCacheNoManifest(
                 clientID.get(), docURISpec.get()));
 #endif
 
-    rv = applicationCacheDocument->SetApplicationCache(aLoadApplicationCache);
+    rv = mDocument->SetApplicationCache(aLoadApplicationCache);
     NS_ENSURE_SUCCESS(rv, rv);
 
     // Return the uri and invoke the update process for the selected
@@ -1136,7 +1126,7 @@ void nsContentSink::ProcessOfflineManifest(const nsAString& aManifestSpec) {
       break;
     case CACHE_SELECTION_UPDATE: {
       nsCOMPtr<nsIOfflineCacheUpdateService> updateService =
-          do_GetService(NS_OFFLINECACHEUPDATESERVICE_CONTRACTID);
+          components::OfflineCacheUpdate::Service();
 
       if (updateService) {
         updateService->ScheduleOnDocumentStop(
@@ -1180,8 +1170,9 @@ void nsContentSink::StartLayout(bool aIgnorePendingSheets) {
 
   mDeferredLayoutStart = true;
 
-  if (!aIgnorePendingSheets && WaitForPendingSheets()) {
-    // Bail out; we'll start layout when the sheets load
+  if (!aIgnorePendingSheets &&
+      (WaitForPendingSheets() || mDocument->HasPendingInitialTranslation())) {
+    // Bail out; we'll start layout when the sheets and l10n load
     return;
   }
 
@@ -1409,7 +1400,7 @@ void nsContentSink::FavorPerformanceHint(bool perfOverStarvation,
     appShell->FavorPerformanceHint(perfOverStarvation, starvationDelay);
 }
 
-void nsContentSink::BeginUpdate(nsIDocument* aDocument) {
+void nsContentSink::BeginUpdate(Document* aDocument) {
   // Remember nested updates from updates that we started.
   if (mInNotification > 0 && mUpdatesInNotification < 2) {
     ++mUpdatesInNotification;
@@ -1426,7 +1417,7 @@ void nsContentSink::BeginUpdate(nsIDocument* aDocument) {
   }
 }
 
-void nsContentSink::EndUpdate(nsIDocument* aDocument) {
+void nsContentSink::EndUpdate(Document* aDocument) {
   // If we're in a script and we didn't do the notification,
   // something else in the script processing caused the
   // notification to occur. Update our notion of how much
@@ -1440,9 +1431,9 @@ void nsContentSink::EndUpdate(nsIDocument* aDocument) {
 void nsContentSink::DidBuildModelImpl(bool aTerminated) {
   if (mDocument) {
     MOZ_ASSERT(aTerminated || mDocument->GetReadyStateEnum() ==
-                                  nsIDocument::READYSTATE_LOADING,
+                                  Document::READYSTATE_LOADING,
                "Bad readyState");
-    mDocument->SetReadyStateInternal(nsIDocument::READYSTATE_INTERACTIVE);
+    mDocument->SetReadyStateInternal(Document::READYSTATE_INTERACTIVE);
   }
 
   if (mScriptLoader) {
@@ -1557,19 +1548,19 @@ void nsContentSink::WillBuildModelImpl() {
 }
 
 /* static */
-void nsContentSink::NotifyDocElementCreated(nsIDocument* aDoc) {
+void nsContentSink::NotifyDocElementCreated(Document* aDoc) {
   MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
 
   nsCOMPtr<nsIObserverService> observerService =
       mozilla::services::GetObserverService();
   if (observerService) {
-    observerService->NotifyObservers(aDoc, "document-element-inserted",
-                                     EmptyString().get());
+    observerService->NotifyObservers(
+        ToSupports(aDoc), "document-element-inserted", EmptyString().get());
   }
 
   nsContentUtils::DispatchChromeEvent(
-      aDoc, aDoc, NS_LITERAL_STRING("DOMDocElementInserted"), CanBubble::eYes,
-      Cancelable::eNo);
+      aDoc, ToSupports(aDoc), NS_LITERAL_STRING("DOMDocElementInserted"),
+      CanBubble::eYes, Cancelable::eNo);
 }
 
 NS_IMETHODIMP

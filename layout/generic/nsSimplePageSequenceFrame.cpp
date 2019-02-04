@@ -53,8 +53,11 @@ nsSimplePageSequenceFrame::nsSimplePageSequenceFrame(ComputedStyle* aStyle)
 
   // XXX Unsafe to assume successful allocation
   mPageData = new nsSharedPageData();
-  mPageData->mHeadFootFont = *PresContext()->GetDefaultFont(
-      kGenericFont_serif, aStyle->StyleFont()->mLanguage);
+  mPageData->mHeadFootFont =
+      *PresContext()
+           ->Document()
+           ->GetFontPrefsForLang(aStyle->StyleFont()->mLanguage)
+           ->GetDefaultFont(kGenericFont_serif);
   mPageData->mHeadFootFont.size = nsPresContext::CSSPointsToAppUnits(10);
 
   // Doing this here so we only have to go get these formats once
@@ -68,7 +71,7 @@ nsSimplePageSequenceFrame::~nsSimplePageSequenceFrame() {
 }
 
 NS_QUERYFRAME_HEAD(nsSimplePageSequenceFrame)
-NS_QUERYFRAME_ENTRY(nsIPageSequenceFrame)
+  NS_QUERYFRAME_ENTRY(nsIPageSequenceFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 //----------------------------------------------------------------------

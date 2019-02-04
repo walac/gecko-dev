@@ -12,8 +12,7 @@
 
 var EXPORTED_SYMBOLS = ["SpecialPowersAPI", "bindDOMWindowUtils"];
 
-ChromeUtils.import("resource://gre/modules/Services.jsm");
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 Services.scriptloader.loadSubScript("resource://specialpowers/MozillaLogger.js", this);
 
@@ -31,19 +30,9 @@ ChromeUtils.defineModuleGetter(this, "NetUtil",
                                "resource://gre/modules/NetUtil.jsm");
 ChromeUtils.defineModuleGetter(this, "AppConstants",
                                "resource://gre/modules/AppConstants.jsm");
-ChromeUtils.defineModuleGetter(this, "ServiceWorkerCleanUp",
-                               "resource://gre/modules/ServiceWorkerCleanUp.jsm");
 
 ChromeUtils.defineModuleGetter(this, "PerTestCoverageUtils",
   "resource://testing-common/PerTestCoverageUtils.jsm");
-
-try {
-    Cu.importGlobalProperties(["DOMParser", "File", "InspectorUtils",
-                               "NodeFilter", "PromiseDebugging"]);
-} catch (e) {
-  // We are in window scope hence DOMParser, File, InspectorUtils, NodeFilter,
-  // and PromiseDebugging are already defined, So do nothing.
-}
 
 // Allow stuff from this scope to be accessed from non-privileged scopes. This
 // would crash if used outside of automation.
@@ -147,7 +136,6 @@ function doApply(fun, invocant, args) {
 }
 
 function wrapPrivileged(obj) {
-
   // Primitives pass straight through.
   if (!isWrappable(obj))
     return obj;
@@ -166,7 +154,6 @@ function wrapPrivileged(obj) {
 }
 
 function unwrapPrivileged(x) {
-
   // We don't wrap primitives, so sometimes we have a primitive where we'd
   // expect to have a wrapper. The proxy pretends to be the type that it's
   // emulating, so we can just as easily check isWrappable() on a proxy as
@@ -517,7 +504,6 @@ SpecialPowersAPI.prototype = {
     var mc = new window.MessageChannel();
     sb.port = mc.port1;
     try {
-      Cu.importGlobalProperties(["URL", "Blob"]);
       let blob = new Blob([str], {type: "application/javascript"});
       let blobUrl = URL.createObjectURL(blob);
       Services.scriptloader.loadSubScript(blobUrl, sb);
@@ -656,7 +642,6 @@ SpecialPowersAPI.prototype = {
     if (message.hadError) {
       throw "SpecialPowers.importInMainProcess failed with error " + message.errorMessage;
     }
-
   },
 
   get Services() {
@@ -813,10 +798,6 @@ SpecialPowersAPI.prototype = {
           originalValue = Ci.nsIPermissionManager.PROMPT_ACTION;
         } else if (this.testPermission(permission.type, Ci.nsICookiePermission.ACCESS_SESSION, context)) {
           originalValue = Ci.nsICookiePermission.ACCESS_SESSION;
-        } else if (this.testPermission(permission.type, Ci.nsICookiePermission.ACCESS_ALLOW_FIRST_PARTY_ONLY, context)) {
-          originalValue = Ci.nsICookiePermission.ACCESS_ALLOW_FIRST_PARTY_ONLY;
-        } else if (this.testPermission(permission.type, Ci.nsICookiePermission.ACCESS_LIMIT_THIRD_PARTY, context)) {
-          originalValue = Ci.nsICookiePermission.ACCESS_LIMIT_THIRD_PARTY;
         }
 
         let principal = this._getPrincipalFromArg(context);
@@ -1274,6 +1255,10 @@ SpecialPowersAPI.prototype = {
     "specialpowers-http-notify-request": function(aMessage) {
       let uri = aMessage.json.uri;
       Services.obs.notifyObservers(null, "specialpowers-http-notify-request", uri);
+    },
+
+    "specialpowers-service-worker-shutdown": function(aMessage) {
+      Services.obs.notifyObservers(null, "specialpowers-service-worker-shutdown");
     },
   },
 
@@ -1986,11 +1971,11 @@ SpecialPowersAPI.prototype = {
   },
 
   removeAllServiceWorkerData() {
-    return wrapIfUnwrapped(ServiceWorkerCleanUp.removeAll());
+    return wrapIfUnwrapped(this._removeServiceWorkerData("SPRemoveAllServiceWorkers"));
   },
 
   removeServiceWorkerDataForExampleDomain() {
-    return wrapIfUnwrapped(ServiceWorkerCleanUp.removeFromHost("example.com"));
+    return wrapIfUnwrapped(this._removeServiceWorkerData("SPRemoveServiceWorkerDataForExampleDomain"));
   },
 
   cleanUpSTSData(origin, flags) {
@@ -2233,7 +2218,7 @@ SpecialPowersAPI.prototype = {
    * chrome-privileged and allowed to run inside SystemGroup
    */
 
-  doUrlClassify(principal, eventTarget, tpEnabled, callback) {
+  doUrlClassify(principal, eventTarget, callback) {
     let classifierService =
       Cc["@mozilla.org/url-classifier/dbservice;1"].getService(Ci.nsIURIClassifier);
 
@@ -2248,7 +2233,7 @@ SpecialPowersAPI.prototype = {
     };
 
     return classifierService.classify(unwrapIfWrapped(principal), eventTarget,
-                                      tpEnabled, wrapCallback);
+                                      wrapCallback);
   },
 
   // TODO: Bug 1353701 - Supports custom event target for labelling.
@@ -2256,19 +2241,21 @@ SpecialPowersAPI.prototype = {
     let classifierService =
       Cc["@mozilla.org/url-classifier/dbservice;1"].getService(Ci.nsIURIClassifier);
 
-    let wrapCallback = (...args) => {
+    let wrapCallback = results => {
       Services.tm.dispatchToMainThread(() => {
         if (typeof callback == "function") {
-          callback(...args);
+          callback(wrapIfUnwrapped(results));
         } else {
-          callback.onClassifyComplete.call(undefined, ...args);
+          callback.onClassifyComplete.call(undefined, wrapIfUnwrapped(results));
         }
       });
     };
 
-    return classifierService.asyncClassifyLocalWithTables(unwrapIfWrapped(uri),
-                                                          tables, [], [],
-                                                          wrapCallback);
+    let feature = classifierService.createFeatureWithTables("test", tables.split(","), []);
+    return classifierService.asyncClassifyLocalWithFeatures(unwrapIfWrapped(uri),
+                                                            [feature],
+                                                            Ci.nsIUrlClassifierFeature.blacklist,
+                                                            wrapCallback);
   },
 
   EARLY_BETA_OR_EARLIER: AppConstants.EARLY_BETA_OR_EARLIER,

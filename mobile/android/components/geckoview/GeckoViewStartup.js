@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-ChromeUtils.import("resource://gre/modules/GeckoViewUtils.jsm");
+const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {GeckoViewUtils} = ChromeUtils.import("resource://gre/modules/GeckoViewUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   ActorManagerParent: "resource://gre/modules/ActorManagerParent.jsm",
@@ -71,6 +71,17 @@ GeckoViewStartup.prototype = {
           handler: _ => this.GeckoViewConsole,
         });
 
+        // Handle invalid form submission. If we don't hook up to this,
+        // invalid forms are allowed to be submitted!
+        Services.obs.addObserver({
+          QueryInterface: ChromeUtils.generateQI([
+            Ci.nsIObserver, Ci.nsIFormSubmitObserver,
+          ]),
+          notifyInvalidSubmit: (form, element) => {
+            // We should show the validation message here, bug 1510450.
+          },
+        }, "invalidformsubmit");
+
         if (Services.appinfo.processType == Services.appinfo.PROCESS_TYPE_DEFAULT) {
           ActorManagerParent.flush();
 
@@ -124,6 +135,8 @@ GeckoViewStartup.prototype = {
         let locales = Services.locale.packagedLocales;
         const greSource = new FileSource("toolkit", locales, "resource://gre/localization/{locale}/");
         L10nRegistry.registerSource(greSource);
+
+        ChromeUtils.import("resource://gre/modules/NotificationDB.jsm");
 
         // Listen for global EventDispatcher messages
         EventDispatcher.instance.registerListener(this,
