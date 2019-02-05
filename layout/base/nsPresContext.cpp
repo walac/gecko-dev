@@ -788,6 +788,9 @@ nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
 
     if (!mRefreshDriver) {
       mRefreshDriver = new nsRefreshDriver(this);
+      if (XRE_IsContentProcess()) {
+        mRefreshDriver->InitializeTimer();
+      }
     }
   }
 
@@ -1861,8 +1864,8 @@ bool nsPresContext::HasAuthorSpecifiedRules(const nsIFrame* aFrame,
                                        aRuleTypeMask, UseDocumentColors());
 }
 
-gfxUserFontSet* nsPresContext::GetUserFontSet(bool aFlushUserFontSet) {
-  return mDocument->GetUserFontSet(aFlushUserFontSet);
+gfxUserFontSet* nsPresContext::GetUserFontSet() {
+  return mDocument->GetUserFontSet();
 }
 
 void nsPresContext::UserFontSetUpdated(gfxUserFontEntry* aUpdatedFont) {
@@ -1931,8 +1934,7 @@ void nsPresContext::FlushCounterStyles() {
     bool changed = mCounterStyleManager->NotifyRuleChanged();
     if (changed) {
       PresShell()->NotifyCounterStylesAreDirty();
-      PostRebuildAllStyleDataEvent(NS_STYLE_HINT_REFLOW,
-                                   eRestyle_ForceDescendants);
+      PostRebuildAllStyleDataEvent(NS_STYLE_HINT_REFLOW, nsRestyleHint(0));
       RefreshDriver()->AddPostRefreshObserver(
           new CounterStyleCleaner(RefreshDriver(), mCounterStyleManager));
     }
