@@ -1519,6 +1519,7 @@ class WebGLContext : public nsICanvasRenderingContextInternal,
   GLenum LastColorAttachmentEnum() const {
     return LOCAL_GL_COLOR_ATTACHMENT0 + mGLMaxColorAttachments - 1;
   }
+  const auto& GLMaxDrawBuffers() const { return mGLMaxDrawBuffers; }
 
   const decltype(mOptions)& Options() const { return mOptions; }
 
@@ -1712,8 +1713,8 @@ class WebGLContext : public nsICanvasRenderingContextInternal,
 
   bool ValidateArrayBufferView(const dom::ArrayBufferView& view,
                                GLuint elemOffset, GLuint elemCountOverride,
-                               uint8_t** const out_bytes,
-                               size_t* const out_byteLen);
+                               GLenum errorVal, uint8_t** const out_bytes,
+                               size_t* const out_byteLen) const;
 
  protected:
   ////

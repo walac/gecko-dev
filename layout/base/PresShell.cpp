@@ -1157,9 +1157,7 @@ void PresShell::Destroy() {
     }
   }
   if (mPresContext) {
-    const bool mayFlushUserFontSet = false;
-    gfxUserFontSet* fs = mPresContext->GetUserFontSet(mayFlushUserFontSet);
-    if (fs) {
+    if (gfxUserFontSet* fs = mPresContext->GetUserFontSet()) {
       uint32_t fontCount;
       uint64_t fontSize;
       fs->GetLoadStatistics(fontCount, fontSize);
@@ -6503,40 +6501,19 @@ nsresult PresShell::EventHandler::HandleEvent(nsIFrame* aFrame,
     return NS_OK;
   }
 
-  if (!nsContentUtils::IsSafeToRunScript() &&
-      aGUIEvent->IsAllowedToDispatchDOMEvent()) {
-    if (aGUIEvent->mClass == eCompositionEventClass) {
-      IMEStateManager::OnCompositionEventDiscarded(
-          aGUIEvent->AsCompositionEvent());
-    }
-#ifdef DEBUG
-    if (aGUIEvent->IsIMERelatedEvent()) {
-      nsPrintfCString warning("%s event is discarded",
-                              ToChar(aGUIEvent->mMessage));
-      NS_WARNING(warning.get());
-    }
-#endif
-    nsContentUtils::WarnScriptWasIgnored(GetDocument());
+  if (MaybeDiscardEvent(aGUIEvent)) {
+    // Nobody cannot handle the event for now.
     return NS_OK;
   }
 
   if (!aDontRetargetEvents) {
-    RefPtr<Document> retargetEventDoc;
-    if (!GetRetargetEventDocument(aGUIEvent,
-                                  getter_AddRefs(retargetEventDoc))) {
-      return NS_OK;  // Not need to return error.
-    }
-
-    if (retargetEventDoc) {
-      nsIFrame* frame =
-          GetFrameForHandlingEventWith(aGUIEvent, retargetEventDoc, aFrame);
-      if (!frame) {
-        return NS_OK;  // Not need to return error.
-      }
-      if (frame != aFrame) {
-        nsCOMPtr<nsIPresShell> shell = frame->PresContext()->GetPresShell();
-        return shell->HandleEvent(frame, aGUIEvent, true, aEventStatus);
-      }
+    // If aGUIEvent should be handled in another PresShell, we should call its
+    // HandleEvent() and do nothing here.
+    nsresult rv = NS_OK;
+    if (MaybeHandleEventWithAnotherPresShell(aFrame, aGUIEvent, aEventStatus,
+                                             &rv)) {
+      // Handled by another PresShell or nobody can handle the event.
+      return rv;
     }
   }
 
@@ -6558,7 +6535,7 @@ nsresult PresShell::EventHandler::HandleEvent(nsIFrame* aFrame,
     // XXX Retrieving capturing content here.  However, some of the following
     //     methods allow to run script.  So, isn't it possible the capturing
     //     content outdated?
-    nsIContent* capturingContent =
+    nsCOMPtr<nsIContent> capturingContent =
         EventHandler::GetCapturingContentFor(aGUIEvent);
     if (GetDocument()) {
       if (aGUIEvent->mClass == eTouchEventClass) {
@@ -7105,6 +7082,40 @@ bool PresShell::EventHandler::MaybeHandleEventWithAccessibleCaret(
   return true;
 }
 
+bool PresShell::EventHandler::MaybeDiscardEvent(WidgetGUIEvent* aGUIEvent) {
+  MOZ_ASSERT(aGUIEvent);
+
+  // If it is safe to dispatch events now, don't discard the event.
+  if (nsContentUtils::IsSafeToRunScript()) {
+    return false;
+  }
+
+  // If the event does not cause dispatching DOM event (i.e., internal event),
+  // we can keep handling it even when it's not safe to run script.
+  if (!aGUIEvent->IsAllowedToDispatchDOMEvent()) {
+    return false;
+  }
+
+  // If the event is a composition event, we need to let IMEStateManager know
+  // it's discarded because it needs to listen all composition events to manage
+  // TextComposition instance.
+  if (aGUIEvent->mClass == eCompositionEventClass) {
+    IMEStateManager::OnCompositionEventDiscarded(
+        aGUIEvent->AsCompositionEvent());
+  }
+
+#ifdef DEBUG
+  if (aGUIEvent->IsIMERelatedEvent()) {
+    nsPrintfCString warning("%s event is discarded",
+                            ToChar(aGUIEvent->mMessage));
+    NS_WARNING(warning.get());
+  }
+#endif  // #ifdef DEBUG
+
+  nsContentUtils::WarnScriptWasIgnored(GetDocument());
+  return true;
+}
+
 // static
 nsIContent* PresShell::EventHandler::GetCapturingContentFor(
     WidgetGUIEvent* aGUIEvent) {
@@ -7218,6 +7229,48 @@ nsIFrame* PresShell::EventHandler::GetFrameForHandlingEventWith(
 
   // Otherwise, use nearest ancestor frame which includes the PresShell.
   return GetNearestFrameContainingPresShell(retargetPresShell);
+}
+
+bool PresShell::EventHandler::MaybeHandleEventWithAnotherPresShell(
+    nsIFrame* aFrameForPresShell, WidgetGUIEvent* aGUIEvent,
+    nsEventStatus* aEventStatus, nsresult* aRv) {
+  MOZ_ASSERT(aGUIEvent);
+  MOZ_ASSERT(aEventStatus);
+  MOZ_ASSERT(aRv);
+
+  *aRv = NS_OK;
+
+  RefPtr<Document> retargetEventDoc;
+  if (!GetRetargetEventDocument(aGUIEvent, getter_AddRefs(retargetEventDoc))) {
+    // Nobody can handle this event.  So, treat as handled by somebody to make
+    // caller do nothing anymore.
+    return true;
+  }
+
+  // If there is no proper retarget document, the caller should handle the
+  // event by itself.
+  if (!retargetEventDoc) {
+    return false;
+  }
+
+  nsIFrame* frame = GetFrameForHandlingEventWith(aGUIEvent, retargetEventDoc,
+                                                 aFrameForPresShell);
+  if (!frame) {
+    // Nobody can handle this event.  So, treat as handled by somebody to make
+    // caller do nothing anymore.
+    return true;
+  }
+
+  // If we reached same frame as set to HandleEvent(), the caller should handle
+  // the event by itself.
+  if (frame == aFrameForPresShell) {
+    return false;
+  }
+
+  // We need to handle aGUIEvent with another PresShell.
+  nsCOMPtr<nsIPresShell> shell = frame->PresContext()->GetPresShell();
+  *aRv = shell->HandleEvent(frame, aGUIEvent, true, aEventStatus);
+  return true;
 }
 
 Document* PresShell::GetPrimaryContentDocument() {
