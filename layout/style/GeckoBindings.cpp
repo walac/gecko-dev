@@ -327,8 +327,7 @@ uint32_t Gecko_CalcStyleDifference(ComputedStyleBorrowed aOldStyle,
 
   uint32_t equalStructs;
   nsChangeHint result =
-      const_cast<ComputedStyle*>(aOldStyle)->CalcStyleDifference(
-          const_cast<ComputedStyle*>(aNewStyle), &equalStructs);
+      aOldStyle->CalcStyleDifference(*aNewStyle, &equalStructs);
 
   *aAnyStyleStructChanged =
       equalStructs != StyleStructConstants::kAllStructsMask;
@@ -1759,6 +1758,10 @@ nsCSSValueSharedList* Gecko_NewNoneTransform() {
   list->mHead = new nsCSSValueList;
   list->mHead->mValue.SetNoneValue();
   return list.forget().take();
+}
+
+void Gecko_StyleDisplay_GenerateCombinedTransform(nsStyleDisplay* aDisplay) {
+  aDisplay->GenerateCombinedIndividualTransform();
 }
 
 void Gecko_CSSValue_SetNumber(nsCSSValueBorrowedMut aCSSValue, float aNumber) {

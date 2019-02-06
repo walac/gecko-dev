@@ -109,6 +109,7 @@ class UrlbarInput {
     this.inputField.addEventListener("mouseover", this);
     this.inputField.addEventListener("overflow", this);
     this.inputField.addEventListener("underflow", this);
+    this.inputField.addEventListener("paste", this);
     this.inputField.addEventListener("scrollend", this);
     this.inputField.addEventListener("select", this);
     this.inputField.addEventListener("keydown", this);
@@ -314,7 +315,7 @@ class UrlbarInput {
 
     switch (result.type) {
       case UrlbarUtils.RESULT_TYPE.TAB_SWITCH: {
-        if (this.hasAttribute("noactions")) {
+        if (this.hasAttribute("actionoverride")) {
           where = "current";
           break;
         }
@@ -368,7 +369,6 @@ class UrlbarInput {
    */
   setValueFromResult(result) {
     let val;
-
     switch (result.type) {
       case UrlbarUtils.RESULT_TYPE.SEARCH:
         val = result.payload.suggestion || result.payload.query;
@@ -389,7 +389,10 @@ class UrlbarInput {
       }
     }
     this.value = val;
+    // Also update userTypedValue. See bug 287996.
+    this.window.gBrowser.userTypedValue = val;
 
+    // The value setter clobbers the actiontype attribute, so update this after that.
     switch (result.type) {
       case UrlbarUtils.RESULT_TYPE.TAB_SWITCH:
         this.setAttribute("actiontype", "switchtab");
@@ -645,7 +648,7 @@ class UrlbarInput {
     return selectedVal;
   }
 
-  _toggleNoActions(event) {
+  _toggleActionOverride(event) {
     if (event.keyCode == KeyEvent.DOM_VK_SHIFT ||
         event.keyCode == KeyEvent.DOM_VK_ALT ||
         event.keyCode == (AppConstants.platform == "macosx" ?
@@ -653,10 +656,12 @@ class UrlbarInput {
                             KeyEvent.DOM_VK_CONTROL)) {
       if (event.type == "keydown") {
         this._actionOverrideKeyCount++;
-        this.setAttribute("noactions", "true");
+        this.setAttribute("actionoverride", "true");
+        this.view.panel.setAttribute("actionoverride", "true");
       } else if (this._actionOverrideKeyCount &&
                  --this._actionOverrideKeyCount == 0) {
-        this.removeAttribute("noactions");
+        this.removeAttribute("actionoverride");
+        this.view.panel.removeAttribute("actionoverride");
       }
     }
   }
@@ -991,6 +996,37 @@ class UrlbarInput {
     this._updateUrlTooltip();
   }
 
+  _on_paste(event) {
+    let originalPasteData = event.clipboardData.getData("text/plain");
+    if (!originalPasteData) {
+      return;
+    }
+
+    let oldValue = this.inputField.value;
+    let oldStart = oldValue.substring(0, this.inputField.selectionStart);
+    // If there is already non-whitespace content in the URL bar
+    // preceding the pasted content, it's not necessary to check
+    // protocols used by the pasted content:
+    if (oldStart.trim()) {
+      return;
+    }
+    let oldEnd = oldValue.substring(this.inputField.selectionEnd);
+
+    let pasteData = UrlbarUtils.stripUnsafeProtocolOnPaste(originalPasteData);
+    if (originalPasteData != pasteData) {
+      // Unfortunately we're not allowed to set the bits being pasted
+      // so cancel this event:
+      event.preventDefault();
+      event.stopImmediatePropagation();
+
+      this.inputField.value = oldStart + pasteData + oldEnd;
+      // Fix up cursor/selection:
+      let newCursorPos = oldStart.length + pasteData.length;
+      this.inputField.selectionStart = newCursorPos;
+      this.inputField.selectionEnd = newCursorPos;
+    }
+  }
+
   _on_scrollend(event) {
     this._updateTextOverflow();
   }
@@ -1001,11 +1037,11 @@ class UrlbarInput {
 
   _on_keydown(event) {
     this.controller.handleKeyNavigation(event);
-    this._toggleNoActions(event);
+    this._toggleActionOverride(event);
   }
 
   _on_keyup(event) {
-    this._toggleNoActions(event);
+    this._toggleActionOverride(event);
   }
 
   _on_popupshowing() {

@@ -7383,7 +7383,7 @@ MOZ_NEVER_INLINE GCRuntime::IncrementalResult GCRuntime::gcCycle(
   if (shouldCollectNurseryForSlice(nonincrementalByAPI, budget)) {
     minorGC(reason, gcstats::PhaseKind::EVICT_NURSERY_FOR_MAJOR_GC);
   } else {
-    ++number; // This otherwise happens in minorGC().
+    ++number;  // This otherwise happens in minorGC().
   }
 
   AutoGCSession session(rt, JS::HeapState::MajorCollecting);
@@ -8051,7 +8051,7 @@ void GCRuntime::mergeRealms(Realm* source, Realm* target) {
        script.next()) {
     MOZ_ASSERT(script->realm() == source);
     script->realm_ = target;
-    script->setTypesGeneration(target->zone()->types.generation);
+    MOZ_ASSERT(!script->types());
   }
 
   GlobalObject* global = target->maybeGlobal();
