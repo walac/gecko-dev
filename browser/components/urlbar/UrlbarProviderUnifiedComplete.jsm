@@ -16,10 +16,10 @@ const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm")
 XPCOMUtils.defineLazyModuleGetters(this, {
   Log: "resource://gre/modules/Log.jsm",
   PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   UrlbarProvider: "resource:///modules/UrlbarUtils.jsm",
   UrlbarResult: "resource:///modules/UrlbarResult.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
 });
 
 XPCOMUtils.defineLazyServiceGetter(this, "unifiedComplete",
@@ -197,10 +197,19 @@ function convertResultToMatches(context, result, urls) {
     if (!match) {
       continue;
     }
-    // Manage autofillValue and preselected properties for the first match.
+    // Manage autofill and preselected properties for the first match.
     if (i == 0) {
       if (style.includes("autofill") && result.defaultIndex == 0) {
-        context.autofillValue = result.getValueAt(i);
+        let autofillValue = result.getValueAt(i);
+        if (autofillValue.toLocaleLowerCase()
+            .startsWith(context.searchString.toLocaleLowerCase())) {
+          match.autofill = {
+            value: context.searchString +
+                   autofillValue.substring(context.searchString.length),
+            selectionStart: context.searchString.length,
+            selectionEnd: autofillValue.length,
+          };
+        }
       }
       if (style.includes("heuristic")) {
         context.preselected = true;

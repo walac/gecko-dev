@@ -7498,6 +7498,10 @@ void Document::Destroy() {
 
   mIsGoingAway = true;
 
+  if (mDocumentL10n) {
+    mDocumentL10n->Destroy();
+  }
+
   ScriptLoader()->Destroy();
   SetScriptGlobalObject(nullptr);
   RemovedFromDocShell();
@@ -7519,6 +7523,10 @@ void Document::Destroy() {
   mInUnlinkOrDeletion = oldVal;
 
   mLayoutHistoryState = nullptr;
+
+  if (mOriginalDocument) {
+    mOriginalDocument->mLatestStaticClone = nullptr;
+  }
 
   // Shut down our external resource map.  We might not need this for
   // leak-fixing if we fix nsDocumentViewer to do cycle-collection, but
@@ -8892,8 +8900,10 @@ already_AddRefed<Document> Document::CreateStaticClone(
     if (clonedDoc) {
       if (IsStaticDocument()) {
         clonedDoc->mOriginalDocument = mOriginalDocument;
+        mOriginalDocument->mLatestStaticClone = clonedDoc;
       } else {
         clonedDoc->mOriginalDocument = this;
+        mLatestStaticClone = clonedDoc;
       }
 
       clonedDoc->mOriginalDocument->mStaticCloneCount++;

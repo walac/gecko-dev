@@ -673,6 +673,56 @@ class PresShell final : public nsIPresShell,
                                              nsEventStatus* aEventStatus);
 
     /**
+     * MaybeDiscardOrDelayKeyboardEvent() may discared or put aGUIEvent into
+     * the delayed event queue if it's a keyboard event and if we should do so.
+     * If aGUIEvent is not a keyboard event, this does nothing.
+     *
+     * @param aGUIEvent         The handling event.
+     * @return                  true if this method discard the event or
+     *                          put it into the delayed event queue.
+     */
+    bool MaybeDiscardOrDelayKeyboardEvent(WidgetGUIEvent* aGUIEvent);
+
+    /**
+     * MaybeFlushThrottledStyles() tries to flush pending animation.  If it's
+     * flushed and then aFrameForPresShell is destroyed, returns new frame
+     * which contains mPresShell.
+     *
+     * @param aFrameForPresShell        The frame for mPresShell.  This can be
+     *                                  nullptr.
+     * @return                          Maybe new frame for mPresShell.
+     *                                  If aFrameForPresShell is not nullptr
+     *                                  and hasn't been destroyed, returns
+     *                                  aFrameForPresShell as-is.
+     */
+    MOZ_CAN_RUN_SCRIPT
+    nsIFrame* MaybeFlushThrottledStyles(nsIFrame* aFrameForPresShell);
+
+    /**
+     * ComputeRootFrameToHandleEvent() returns root frame to handle the event.
+     * For example, if there is a popup, this returns the popup frame.
+     * If there is capturing content and it's in a scrolled frame, returns
+     * the scrolled frame.
+     *
+     * @param aFrameForPresShell                The frame for mPresShell.
+     * @param aGUIEvent                         The handling event.
+     * @param aCapturingContent                 Capturing content if there is.
+     *                                          nullptr, otherwise.
+     * @param aIsCapturingContentIgnored        [out] true if aCapturingContent
+     *                                          is not nullptr but it should be
+     *                                          ignored to handle the event.
+     * @param aIsCaptureRetargeted              [out] true if aCapturingContent
+     *                                          is not nullptr but it's
+     *                                          retargeted.
+     * @return                                  Root frame to handle the event.
+     */
+    nsIFrame* ComputeRootFrameToHandleEvent(nsIFrame* aFrameForPresShell,
+                                            WidgetGUIEvent* aGUIEvent,
+                                            nsIContent* aCapturingContent,
+                                            bool* aIsCapturingContentIgnored,
+                                            bool* aIsCaptureRetargeted);
+
+    /**
      * XXX Needs better name.
      * HandleEventInternal() dispatches aEvent into the DOM tree and
      * notify EventStateManager of that.

@@ -36,8 +36,7 @@ class FullParseHandler {
   ParseNodeAllocator allocator;
 
   ParseNode* allocParseNode(size_t size) {
-    MOZ_ASSERT(size == sizeof(ParseNode));
-    return static_cast<ParseNode*>(allocator.allocNode());
+    return static_cast<ParseNode*>(allocator.allocNode(size));
   }
 
   /*
@@ -785,6 +784,12 @@ class FullParseHandler {
 
     return newBinary(ParseNodeKind::Colon, key, value,
                      AccessorTypeToJSOp(atype));
+  }
+
+  BinaryNodeType newShorthandPropertyDefinition(Node key, Node value) {
+    MOZ_ASSERT(isUsableAsObjectPropertyName(key));
+
+    return newBinary(ParseNodeKind::Shorthand, key, value, JSOP_INITPROP);
   }
 
   void setFunctionFormalParametersAndBody(FunctionNodeType funNode,
