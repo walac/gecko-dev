@@ -10,8 +10,7 @@ Currently the setup is:
   `env REPO_INIT_FLAGS="--depth=1" REPO_SYNC_FLAGS="-j16 --force-sync" GITREPO=../b2g-manifest BRANCH=emulator-m ./config.sh emulator-m`
 
 - modify mozconfig-b2g to point to an android NDK r17b & SDK
-- `export MOZCONFIG=mozconfig-b2g`
-- `export GONK_PATH=../B2G`
+- modify build-b2g.sh to point to an android NDK r17b & SDK
 - cd to directory `$NDK_DIR/sysroot/usr/lib` and run:
 ```bash
 for i in $NDK_DIR/platforms/android-23/arch-arm/usr/lib/*; do ln -s $i .; done
@@ -22,8 +21,6 @@ for i in $NDK_DIR/platforms/android-23/arch-arm/usr/lib/*; do ln -s $i .; done
 #undef sa_handler
 #undef sa_sigaction
 ```
-- run `./mach build`
-
-I tried to setup the build more manually with the toolchain flags as environment variables in the `build-b2g.sh` script. This may be the right path but that doesn't work either yet.
+- run `./build-b2g.sh`
 
 Note that Gecko now builds with clang > 3.8 instead of gcc. It's unclear if it's mandatory for now but it's likely that gcc builds will break sooner or later.
