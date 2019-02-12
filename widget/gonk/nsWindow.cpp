@@ -232,14 +232,15 @@ nsWindow::NotifyHoverMove(const ScreenIntPoint& point)
   }
 }
 
-class DispatchTouchInputOnMainThread : public nsRunnable
+class DispatchTouchInputOnMainThread : public mozilla::Runnable
 {
 public:
   DispatchTouchInputOnMainThread(const MultiTouchInput& aInput,
                                  const ScrollableLayerGuid& aGuid,
                                  const uint64_t& aInputBlockId,
                                  nsEventStatus aApzResponse)
-    : mInput(aInput)
+    : mozilla::Runnable("DispatchTouchInputOnMainThread")
+    , mInput(aInput)
     , mGuid(aGuid)
     , mInputBlockId(aInputBlockId)
     , mApzResponse(aApzResponse)
