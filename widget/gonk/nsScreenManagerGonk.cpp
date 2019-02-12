@@ -695,7 +695,7 @@ nsScreenGonk::EnableMirroring()
 
     // Update mMirroringWidget on compositor thread
     nsMainThreadPtrHandle<nsScreenGonk> primary =
-      nsMainThreadPtrHandle<nsScreenGonk>(new nsMainThreadPtrHolder<nsScreenGonk>("ScreenGonk", primaryScreen, false));
+      nsMainThreadPtrHandle<nsScreenGonk>(new nsMainThreadPtrHolder<nsScreenGonk>("nsScreenGonk::EnableMirroring", primaryScreen, false));
     layers::CompositorThreadHolder::Loop()->PostTask(
         NewRunnableFunction("nsScreenGonk::EnableMirroring", &UpdateMirroringWidgetSync,
                             primary,
@@ -720,7 +720,7 @@ nsScreenGonk::DisableMirroring()
 
     // Update mMirroringWidget on compositor thread
     nsMainThreadPtrHandle<nsScreenGonk> primary =
-      nsMainThreadPtrHandle<nsScreenGonk>(new nsMainThreadPtrHolder<nsScreenGonk>("ScreenGonk", primaryScreen, false));
+      nsMainThreadPtrHandle<nsScreenGonk>(new nsMainThreadPtrHolder<nsScreenGonk>("nsScreenGonk::DisableMirroring", primaryScreen, false));
     layers::CompositorThreadHolder::Loop()->PostTask(
         NewRunnableFunction("nsScreenGonk::DisableMirroring", &UpdateMirroringWidgetSync,
                             primary,
@@ -892,9 +892,12 @@ nsScreenManagerGonk::DisplayEnabled(bool aEnabled)
      * To avoid this issue, keep the value stored in |mDisplayEnabled|.
      */
     mDisplayEnabled = aEnabled;
+// TODO: FIXME
+#if 0
     if (mCompositorVsyncScheduler) {
         mCompositorVsyncScheduler->SetDisplay(mDisplayEnabled);
     }
+#endif
 #endif
 
     VsyncControl(aEnabled);
@@ -908,6 +911,8 @@ nsScreenManagerGonk::GetPrimaryScreen(nsIScreen **outScreen)
     return NS_OK;
 }
 
+// TODO: FIXME
+#if 0
 NS_IMETHODIMP
 nsScreenManagerGonk::ScreenForId(uint32_t aId,
                                  nsIScreen **outScreen)
@@ -922,6 +927,7 @@ nsScreenManagerGonk::ScreenForId(uint32_t aId,
     *outScreen = nullptr;
     return NS_OK;
 }
+#endif
 
 NS_IMETHODIMP
 nsScreenManagerGonk::ScreenForRect(int32_t inLeft,
@@ -935,6 +941,8 @@ nsScreenManagerGonk::ScreenForRect(int32_t inLeft,
     return GetPrimaryScreen(outScreen);
 }
 
+// TODO: FIXME
+#if 0
 NS_IMETHODIMP
 nsScreenManagerGonk::ScreenForNativeWidget(void *aWidget, nsIScreen **outScreen)
 {
@@ -962,25 +970,29 @@ nsScreenManagerGonk::GetSystemDefaultScale(float *aDefaultScale)
     *aDefaultScale = 1.0f;
     return NS_OK;
 }
+#endif
 
 void
 nsScreenManagerGonk::VsyncControl(bool aEnabled)
 {
     if (!NS_IsMainThread()) {
         NS_DispatchToMainThread(
-            NS_NewRunnableMethodWithArgs<bool>(this,
+            NewRunnableMethod<bool>("sScreenManagerGonk::VsyncControl", this,
                                                &nsScreenManagerGonk::VsyncControl,
                                                aEnabled));
         return;
     }
 
     MOZ_ASSERT(NS_IsMainThread());
+// TODO: FIXME
+#if 0
     VsyncSource::Display &display = gfxPlatform::GetPlatform()->GetHardwareVsync()->GetGlobalDisplay();
     if (aEnabled) {
         display.EnableVsync();
     } else {
         display.DisableVsync();
     }
+#endif
 }
 
 bool
@@ -1083,17 +1095,23 @@ nsScreenManagerGonk::AddScreen(GonkDisplay::DisplayType aDisplayType,
         NotifyDisplayChange(id, true);
     }
 
+// TODO: FIXME
+#if 0
     // By default, non primary screen does mirroring.
     if (aDisplayType != GonkDisplay::DISPLAY_PRIMARY &&
         gfxPrefs::ScreenMirroringEnabled()) {
         screen->EnableMirroring();
     }
+#endif
 
+// TODO: FIXME
+#if 0
     VsyncSource::VsyncType vsyncType = (screen->IsVsyncSupported()) ?
       VsyncSource::VsyncType::HARDWARE_VYSNC :
       VsyncSource::VsyncType::SORTWARE_VSYNC;
 
     gfxPlatform::GetPlatform()->GetHardwareVsync()->AddDisplay(id, vsyncType);
+#endif
 
     return NS_OK;
 }
@@ -1125,7 +1143,10 @@ nsScreenManagerGonk::RemoveScreen(GonkDisplay::DisplayType aDisplayType)
       NotifyDisplayChange(screenId, false);
     }
 
+// TODO: FIXME
+#if 0
     gfxPlatform::GetPlatform()->GetHardwareVsync()->RemoveDisplay(screenId);
+#endif
 
     return NS_OK;
 }
@@ -1134,6 +1155,8 @@ nsScreenManagerGonk::RemoveScreen(GonkDisplay::DisplayType aDisplayType)
 void
 nsScreenManagerGonk::SetCompositorVsyncScheduler(mozilla::layers::CompositorVsyncScheduler *aObserver)
 {
+// TODO: FIXME
+#if 0
     MOZ_ASSERT(NS_IsMainThread());
 
     // We assume on b2g that there is only 1 CompositorBridgeParent
@@ -1141,5 +1164,6 @@ nsScreenManagerGonk::SetCompositorVsyncScheduler(mozilla::layers::CompositorVsyn
     MOZ_ASSERT(aObserver);
     mCompositorVsyncScheduler = aObserver;
     mCompositorVsyncScheduler->SetDisplay(mDisplayEnabled);
+#endif
 }
 #endif
