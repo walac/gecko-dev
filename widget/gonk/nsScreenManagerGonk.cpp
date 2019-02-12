@@ -762,7 +762,7 @@ nsScreenGonk::UpdateMirroringWidget(already_AddRefed<nsWindow>& aWindow)
 
     if (mMirroringWidget) {
         nsCOMPtr<nsIWidget> widget = mMirroringWidget.forget();
-        NS_ReleaseOnMainThread(widget.forget());
+        NS_ReleaseOnMainThreadSystemGroup(widget.forget());
     }
     mMirroringWidget = aWindow;
 }
