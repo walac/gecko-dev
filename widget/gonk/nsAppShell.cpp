@@ -775,7 +775,7 @@ nsRepeatKeyTimer::Stop()
     if (mTimer)
     {
         mTimer->Cancel();
-        mTimer = 0;
+        mTimer = nullptr;
     }
 
     return NS_OK;
