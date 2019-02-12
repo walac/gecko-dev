@@ -56,10 +56,16 @@ export CFLAGS="-DANDROID -DTARGET_OS_GONK \
 -isystem $GONK_PATH/bionic/libc/kernel/uapi/ \
 -isystem $GONK_PATH/bionic/libc/kernel/uapi/asm-arm/ \
 -isystem $GONK_PATH/bionic/libm/include \
+-isystem $GONK_PATH/external/skia/include/core \
+-isystem $GONK_PATH/external/skia/include \
+-I$GONK_PATH/system/core/libpixelflinger/include/ \
 -I$GONK_PATH/frameworks/native/include \
 -I$GONK_PATH/system \
 -I$GONK_PATH/system/core/include \
--I$GONK_PATH/external/zlib"
+-I$GONK_PATH/external/zlib \
+-I$GONK_PATH/external/skia/include/config \
+-I$GONK_PATH/external/skia/include/core \
+-I$GONK_PATH/external/skia/include/effects"
 
 export CPPFLAGS="-O2 -fPIC \
 -isystem $GONK_PATH/api/cpp/include \
@@ -76,4 +82,4 @@ export LDFLAGS="-L$GONK_PATH/out/target/product/$GONK_PRODUCT_NAME/obj/lib \
 -Wl,-rpath-link=$GONK_PATH/out/target/product/$GONK_PRODUCT_NAME/obj/lib \
 --sysroot=$NDK_DIR/sysroot $GCC_LIB -ldl -lstdc++"
 
-./mach build
+./mach build $@

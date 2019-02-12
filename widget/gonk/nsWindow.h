@@ -112,12 +112,10 @@ public:
     override;
   virtual void EndRemoteDrawing() override;
 
-  void SetCursor(nsCursor aCursor) override;
-  NS_IMETHOD SetCursor(imgIContainer* aCursor,
+  void SetCursor(nsCursor aDefaultCursor, imgIContainer* aCursor,
                        uint32_t aHotspotX,
                        uint32_t aHotspotY) override
   {
-    return NS_ERROR_NOT_IMPLEMENTED;
   }
 
   void UpdateCursorSourceMap(nsCursor aCursor);
@@ -130,8 +128,7 @@ public:
   virtual mozilla::layers::LayerManager* GetLayerManager(
     PLayerTransactionChild* aShadowManager = nullptr,
     LayersBackend aBackendHint = mozilla::layers::LayersBackend::LAYERS_NONE,
-    LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT,
-    bool* aAllowRetaining = nullptr) override;
+    LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT) override;
   virtual void DestroyCompositor() override;
 
   virtual CompositorBridgeParent* NewCompositorBridgeParent(int aSurfaceWidth,
@@ -172,7 +169,7 @@ protected:
   // event (like a keypress or mouse click).
   void UserActivity();
 
-  void DrawWindowOverlay(mozilla::layers::LayerManagerComposite* aManager,
+  void DrawWindowOverlay(mozilla::widget::WidgetRenderingContext* aContext,
                          LayoutDeviceIntRect aRect) override;
 
 private:
@@ -184,7 +181,7 @@ private:
 
   RefPtr<nsScreenGonk> mScreen;
 
-  RefPtr<mozilla::HwcComposer2D> mComposer2D;
+  //RefPtr<mozilla::HwcComposer2D> mComposer2D;
 
   // 1. This member variable would be accessed by main and compositor thread.
   // 2. Currently there is a lock in GLCursorImageManager to protect it's data

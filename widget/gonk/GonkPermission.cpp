@@ -24,8 +24,6 @@
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/TabParent.h"
 #include "mozilla/SyncRunnable.h"
-#include "nsIAppsService.h"
-#include "mozIApplication.h"
 #include "nsThreadUtils.h"
 
 #undef LOG
@@ -36,15 +34,17 @@
 using namespace android;
 using namespace mozilla;
 
+#if 0
 // Checking permissions needs to happen on the main thread, but the
 // binder callback is called on a special binder thread, so we use
 // this runnable for that.
-class GonkPermissionChecker : public nsRunnable {
+class GonkPermissionChecker : public mozilla::Runnable {
   int32_t mPid;
   bool mCanUseCamera;
 
   explicit GonkPermissionChecker(int32_t pid)
-    : mPid(pid)
+    : mozilla::Runnable("GonkPermissionChecker")
+    , mPid(pid)
     , mCanUseCamera(false)
   {
   }
@@ -64,7 +64,7 @@ public:
     return mCanUseCamera;
   }
 
-  NS_IMETHOD Run();
+  NS_IMETHOD Run() override;
 };
 
 NS_IMETHODIMP
@@ -89,6 +89,9 @@ GonkPermissionChecker::Run()
     return NS_OK;
   }
 
+
+// TODO: implement permission check
+#if 0
   // Now iterate its apps...
   const ManagedContainer<dom::PBrowserParent>& browsers =
     contentParent->ManagedPBrowserParent();
@@ -108,8 +111,11 @@ GonkPermissionChecker::Run()
       return NS_OK;
     }
   }
+#endif
+  mCanUseCamera = true;
   return NS_OK;
 }
+#endif
 
 bool
 GonkPermissionService::checkPermission(const String16& permission, int32_t pid,
@@ -163,9 +169,11 @@ GonkPermissionService::checkPermission(const String16& permission, int32_t pid,
 
   // Camera/audio record permissions are allowed for apps with the
   // "camera" permission.
-  RefPtr<GonkPermissionChecker> checker =
-    GonkPermissionChecker::Inspect(pid);
-  bool canUseCamera = checker->CanUseCamera();
+  
+  // TODO: FIXME
+  // RefPtr<GonkPermissionChecker> checker =
+  //   GonkPermissionChecker::Inspect(pid);
+  bool canUseCamera = true; // checker->CanUseCamera();
   if (!canUseCamera) {
     ALOGE("%s for pid=%d,uid=%d denied: not granted by user or app manifest",
       String8(permission).string(), pid, uid);

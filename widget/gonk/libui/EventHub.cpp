@@ -70,12 +70,6 @@ namespace android {
 static const char *WAKE_LOCK_ID = "KeyEvents";
 static const char *DEVICE_PATH = "/dev/input";
 
-/* return the larger integer */
-static inline int max(int v1, int v2)
-{
-    return (v1 > v2) ? v1 : v2;
-}
-
 static inline const char* toString(bool value) {
     return value ? "true" : "false";
 }
@@ -1343,7 +1337,7 @@ bool EventHub::isExternalDeviceLocked(Device* device) {
 }
 
 bool EventHub::hasKeycodeLocked(Device* device, int keycode) const {
-    if (!device->keyMap.haveKeyLayout() || !device->keyBitmask) {
+    if (!device->keyMap.haveKeyLayout()) {
         return false;
     }
     

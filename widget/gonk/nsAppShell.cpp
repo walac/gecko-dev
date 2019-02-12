@@ -303,12 +303,13 @@ KeyEventDispatcher::DispatchKeyEventInternal(EventMessage aEventMessage,
     if (aEventMessage == eKeyPress) {
         // XXX If the charCode is not a printable character, the charCode
         //     should be computed without Ctrl/Alt/Meta modifiers.
-        event.charCode = static_cast<uint32_t>(mChar);
+        event.mCharCode = static_cast<uint32_t>(mChar);
     }
-    if (!event.charCode) {
-        event.keyCode = mDOMKeyCode;
+    if (!event.mCharCode) {
+        event.mKeyCode = mDOMKeyCode;
     }
-    event.isChar = !!event.charCode;
+    // TODO: FIXME ... removed ...
+    // event.isChar = !!event.mCharCode;
     event.mIsRepeat = IsRepeat();
     event.mKeyNameIndex = mDOMKeyNameIndex;
     if (mDOMPrintableKeyValue) {
@@ -316,15 +317,18 @@ KeyEventDispatcher::DispatchKeyEventInternal(EventMessage aEventMessage,
     }
     event.mCodeNameIndex = mDOMCodeNameIndex;
     event.mModifiers = getDOMModifiers(mData.metaState);
-    event.location = mDOMKeyLocation;
+    event.mLocation = mDOMKeyLocation;
     event.mTime = mData.timeMs;
 
     nsEventStatus status =
       nsWindow::DispatchKeyInput(event);
 
+    // TODO: FIXME
+#if 0
     if (aHandledByIME) {
       *aHandledByIME = event.mFlags.mHandledByIME;
     }
+#endif
     return status;
 }
 
@@ -341,10 +345,13 @@ KeyEventDispatcher::Dispatch()
         return;
     }
 
+    // TODO: FIXME
+    #if 0
     if (mDOMKeyNameIndex == KEY_NAME_INDEX_Flip){
         hal::NotifyFlipStateFromInputDevice(!IsKeyPress());
         return;
     }
+    #endif
 
     if (IsKeyPress()) {
         DispatchKeyDownEvent();
@@ -369,24 +376,27 @@ KeyEventDispatcher::DispatchKeyUpEvent()
     DispatchKeyEventInternal(eKeyUp);
 }
 
-class SwitchEventRunnable : public nsRunnable {
+#if 0
+class SwitchEventRunnable : public mozilla::Runnable {
 public:
-    SwitchEventRunnable(hal::SwitchEvent& aEvent) : mEvent(aEvent)
+    SwitchEventRunnable(::hal::SwitchEvent& aEvent) : mEvent(aEvent)
     {}
 
     NS_IMETHOD Run()
     {
-        hal::NotifySwitchStateFromInputDevice(mEvent.device(),
+        ::hal::NotifySwitchStateFromInputDevice(mEvent.device(),
           mEvent.status());
         return NS_OK;
     }
 private:
     hal::SwitchEvent mEvent;
 };
+#endif
 
 static void
 updateHeadphoneSwitch()
 {
+#if 0
     hal::SwitchEvent event;
 
     switch (sHeadphoneState) {
@@ -403,6 +413,7 @@ updateHeadphoneSwitch()
 
     event.device() = hal::SWITCH_HEADPHONES;
     NS_DispatchToMainThread(new SwitchEventRunnable(event));
+#endif
 }
 
 class GeckoPointerController : public PointerControllerInterface {
@@ -760,7 +771,7 @@ nsRepeatKeyTimer::Stop()
     if (mTimer)
     {
         mTimer->Cancel();
-        mTimer = 0;
+        mTimer = nullptr;
     }
 
     return NS_OK;
@@ -830,29 +841,29 @@ NS_IMPL_RELEASE(nsRepeatKeyTimer)
 NS_INTERFACE_MAP_BEGIN(nsRepeatKeyTimer)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsITimerCallback)
   NS_INTERFACE_MAP_ENTRY(nsITimerCallback)
-NS_INTERFACE_MAP_END_THREADSAFE
+NS_INTERFACE_MAP_END//_THREADSAFE
 
 
 // GeckoInputReaderPolicy
 void
 GeckoInputReaderPolicy::setDisplayInfo()
 {
-    static_assert(static_cast<int>(nsIScreen::ROTATION_0_DEG) ==
+    static_assert(static_cast<int>(ROTATION_0) ==
                   static_cast<int>(DISPLAY_ORIENTATION_0),
                   "Orientation enums not matched!");
-    static_assert(static_cast<int>(nsIScreen::ROTATION_90_DEG) ==
+    static_assert(static_cast<int>(ROTATION_90) ==
                   static_cast<int>(DISPLAY_ORIENTATION_90),
                   "Orientation enums not matched!");
-    static_assert(static_cast<int>(nsIScreen::ROTATION_180_DEG) ==
+    static_assert(static_cast<int>(ROTATION_180) ==
                   static_cast<int>(DISPLAY_ORIENTATION_180),
                   "Orientation enums not matched!");
-    static_assert(static_cast<int>(nsIScreen::ROTATION_270_DEG) ==
+    static_assert(static_cast<int>(ROTATION_270) ==
                   static_cast<int>(DISPLAY_ORIENTATION_270),
                   "Orientation enums not matched!");
 
     RefPtr<nsScreenGonk> screen = nsScreenManagerGonk::GetPrimaryScreen();
 
-    uint32_t rotation = nsIScreen::ROTATION_0_DEG;
+    uint32_t rotation = ROTATION_0;
     DebugOnly<nsresult> rv = screen->GetRotation(&rotation);
     MOZ_ASSERT(NS_SUCCEEDED(rv));
     LayoutDeviceIntRect screenBounds = screen->GetNaturalBounds();
@@ -1009,8 +1020,8 @@ addMultiTouch(MultiTouchInput& aMultiTouch,
       radiusY = coords.getAxisValue(AMOTION_EVENT_AXIS_TOUCH_MINOR) / 2;
     }
 
-    ScreenIntPoint point(floor(coords.getX() + 0.5),
-                         floor(coords.getY() + 0.5));
+    ScreenIntPoint point(int(floor(coords.getX() + 0.5)),
+                         int(floor(coords.getY() + 0.5)));
 
     SingleTouchData touchData(id, point, ScreenSize(radiusX, radiusY),
                               rotationAngle, force);
@@ -1046,7 +1057,7 @@ GeckoInputDispatcher::notifyMotion(const NotifyMotionArgs* args)
         touchType = MultiTouchInput::MULTITOUCH_CANCEL;
         break;
     case AMOTION_EVENT_ACTION_HOVER_MOVE:
-        touchType = MultiTouchInput::MULTITOUCH_HOVER_MOVE;
+        touchType = MultiTouchInput::MULTITOUCH_MOVE;
         break;
     case AMOTION_EVENT_ACTION_HOVER_EXIT:
     case AMOTION_EVENT_ACTION_HOVER_ENTER:
@@ -1213,7 +1224,7 @@ nsAppShell::Init()
 
         // Causes the kernel timezone to be set, which in turn causes the
         // timestamps on SD cards to have the local time rather than UTC time.
-        hal::SetTimezone(hal::GetTimezone());
+        // TODO: FIXME hal::SetTimezone(hal::GetTimezone());
     }
 
     nsCOMPtr<nsIObserverService> obsServ = GetObserverService();
@@ -1251,7 +1262,7 @@ nsAppShell::CheckPowerKey()
     // Consumers of the b2g.safe_mode preference need to listen on this
     // preference change to prevent startup races.
     nsCOMPtr<nsIRunnable> prefSetter =
-    NS_NewRunnableFunction([powerState] () -> void {
+    NS_NewRunnableFunction("CheckPowerKey", [powerState] () -> void {
         Preferences::SetCString("b2g.safe_mode",
                                 (powerState == AKEY_STATE_DOWN) ? "yes" : "no");
     });
@@ -1268,7 +1279,7 @@ nsAppShell::Observe(nsISupports* aSubject,
     if (!strcmp(aTopic, "network-connection-state-changed")) {
         NS_ConvertUTF16toUTF8 type(aData);
         if (!type.IsEmpty()) {
-            hal::NotifyNetworkChange(hal::NetworkInformation(atoi(type.get()), 0, 0));
+            // TODO: FIXME: hal::NotifyNetworkChange(hal::NetworkInformation(atoi(type.get()), 0, 0));
         }
         return NS_OK;
     } else if (!strcmp(aTopic, "browser-ui-startup-complete")) {
@@ -1304,7 +1315,7 @@ nsAppShell::Exit()
 void
 nsAppShell::InitInputDevices()
 {
-    sDevInputAudioJack = hal::IsHeadphoneEventFromInputDev();
+    sDevInputAudioJack = false; // TODO: FIXME: hal::IsHeadphoneEventFromInputDev();
     sHeadphoneState = AKEY_STATE_UNKNOWN;
     sMicrophoneState = AKEY_STATE_UNKNOWN;
 
@@ -1350,15 +1361,13 @@ nsAppShell::ScheduleNativeEventCallback()
 bool
 nsAppShell::ProcessNextNativeEvent(bool mayWait)
 {
-    PROFILER_LABEL("nsAppShell", "ProcessNextNativeEvent",
-        js::ProfileEntry::Category::EVENTS);
+    AUTO_PROFILER_LABEL("nsAppShell::ProcessNextNativeEvent", OTHER);
 
     epoll_event events[16] = {{ 0 }};
 
     int event_count;
     {
-        PROFILER_LABEL("nsAppShell", "ProcessNextNativeEvent::Wait",
-            js::ProfileEntry::Category::EVENTS);
+        AUTO_PROFILER_LABEL("nsAppShell::ProcessNextNativeEvent::Wait", IDLE);
 
         if ((event_count = epoll_wait(epollfd, events, 16,  mayWait ? -1 : 0)) <= 0)
             return true;
@@ -1408,5 +1417,5 @@ nsAppShell::NotifyScreenRotation()
     gAppShell->mReader->requestRefreshConfiguration(InputReaderConfiguration::CHANGE_DISPLAY_INFO);
 
     RefPtr<nsScreenGonk> screen = nsScreenManagerGonk::GetPrimaryScreen();
-    hal::NotifyScreenConfigurationChange(screen->GetConfiguration());
+    // TODO: FIXME: hal::NotifyScreenConfigurationChange(screen->GetConfiguration());
 }

@@ -17,6 +17,7 @@
 #ifndef nsScreenManagerGonk_h___
 #define nsScreenManagerGonk_h___
 
+#include "base/task.h" // NewRunnableFunction
 #include "cutils/properties.h"
 #include "hardware/hwcomposer.h"
 
@@ -28,10 +29,10 @@
 #include "nsCOMPtr.h"
 #include "nsIScreenManager.h"
 #include "nsProxyRelease.h"
-
+#include "mozilla/layers/CompositorVsyncScheduler.h"
+#include "mozilla/layers/CompositorThread.h"
 #include <android/native_window.h>
 
-class nsRunnable;
 class nsWindow;
 
 namespace android {
@@ -220,8 +221,8 @@ protected:
 
     bool mInitialized;
     nsTArray<RefPtr<nsScreenGonk>> mScreens;
-    RefPtr<nsRunnable> mScreenOnEvent;
-    RefPtr<nsRunnable> mScreenOffEvent;
+    RefPtr<nsIRunnable> mScreenOnEvent;
+    RefPtr<nsIRunnable> mScreenOffEvent;
 
 #if ANDROID_VERSION >= 19
     bool mDisplayEnabled;

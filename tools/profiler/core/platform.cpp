@@ -91,7 +91,7 @@
 #  include "GeckoTaskTracer.h"
 #endif
 
-#if defined(GP_OS_android)
+#if defined(GP_OS_android) && !defined(MOZ_WIDGET_GONK)
 #  include "FennecJNINatives.h"
 #  include "FennecJNIWrappers.h"
 #endif
@@ -178,7 +178,7 @@ using mozilla::profiler::detail::RacyFeatures;
 
 LazyLogModule gProfilerLog("prof");
 
-#if defined(GP_OS_android)
+#if defined(GP_OS_android) && !defined(MOZ_WIDGET_GONK)
 class GeckoJavaSampler
     : public java::GeckoJavaSampler::Natives<GeckoJavaSampler> {
  private:
@@ -404,7 +404,7 @@ class ActivePS {
     // Filter out any features unavailable in this platform/configuration.
     aFeatures &= profiler_get_available_features();
 
-#if defined(GP_OS_android)
+#if defined(GP_OS_android) && !defined(MOZ_WIDGET_GONK)
     if (!jni::IsFennec()) {
       aFeatures &= ~ProfilerFeature::Java;
     }
@@ -1894,7 +1894,7 @@ static void StreamPages(PSLockRef aLock, SpliceableJSONWriter& aWriter) {
   }
 }
 
-#if defined(GP_OS_android)
+#if defined(GP_OS_android) && !defined(MOZ_WIDGET_GONK)
 static UniquePtr<ProfileBuffer> CollectJavaThreadProfileData() {
   // locked_profiler_start uses sample count is 1000 for Java thread.
   // This entry size is enough now, but we might have to estimate it
@@ -1997,7 +1997,7 @@ static void locked_profiler_stream_json_for_this_process(
                                      ActivePS::FeatureJSTracer(aLock));
     }
 
-#if defined(GP_OS_android)
+#if defined(GP_OS_android) && !defined(MOZ_WIDGET_GONK)
     if (ActivePS::FeatureJava(aLock)) {
       java::GeckoJavaSampler::Pause();
 
@@ -2665,7 +2665,7 @@ void profiler_init(void* aStackTop) {
   SharedLibraryInfo::Initialize();
 
   uint32_t features =
-#if defined(GP_OS_android)
+#if defined(GP_OS_android) && !defined(MOZ_WIDGET_GONK)
       ProfilerFeature::Java |
 #endif
       ProfilerFeature::JS | ProfilerFeature::Leaf |
@@ -2701,7 +2701,7 @@ void profiler_init(void* aStackTop) {
     tasktracer::InitTaskTracer();
 #endif
 
-#if defined(GP_OS_android)
+#if defined(GP_OS_android) && !defined(MOZ_WIDGET_GONK)
     if (jni::IsFennec()) {
       GeckoJavaSampler::Init();
     }
@@ -3178,7 +3178,7 @@ static void locked_profiler_start(PSLockRef aLock, uint32_t aCapacity,
   }
 #endif
 
-#if defined(GP_OS_android)
+#if defined(GP_OS_android) && !defined(MOZ_WIDGET_GONK)
   if (ActivePS::FeatureJava(aLock)) {
     int javaInterval = interval;
     // Java sampling doesn't accurately keep up with 1ms sampling.
@@ -3291,7 +3291,7 @@ static MOZ_MUST_USE SamplerThread* locked_profiler_stop(PSLockRef aLock) {
   mozilla::profiler::install_memory_counter(false);
 #endif
 
-#if defined(GP_OS_android)
+#if defined(GP_OS_android) && !defined(MOZ_WIDGET_GONK)
   if (ActivePS::FeatureJava(aLock)) {
     java::GeckoJavaSampler::Stop();
   }
