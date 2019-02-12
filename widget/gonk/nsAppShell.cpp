@@ -1020,8 +1020,8 @@ addMultiTouch(MultiTouchInput& aMultiTouch,
       radiusY = coords.getAxisValue(AMOTION_EVENT_AXIS_TOUCH_MINOR) / 2;
     }
 
-    ScreenIntPoint point(floor(coords.getX() + 0.5),
-                         floor(coords.getY() + 0.5));
+    ScreenIntPoint point(int(floor(coords.getX() + 0.5)),
+                         int(floor(coords.getY() + 0.5)));
 
     SingleTouchData touchData(id, point, ScreenSize(radiusX, radiusY),
                               rotationAngle, force);
@@ -1056,9 +1056,11 @@ GeckoInputDispatcher::notifyMotion(const NotifyMotionArgs* args)
     case AMOTION_EVENT_ACTION_CANCEL:
         touchType = MultiTouchInput::MULTITOUCH_CANCEL;
         break;
+#if 0
     case AMOTION_EVENT_ACTION_HOVER_MOVE:
         touchType = MultiTouchInput::MULTITOUCH_HOVER_MOVE;
         break;
+#endif
     case AMOTION_EVENT_ACTION_HOVER_EXIT:
     case AMOTION_EVENT_ACTION_HOVER_ENTER:
     case AMOTION_EVENT_ACTION_SCROLL:
@@ -1361,15 +1363,15 @@ nsAppShell::ScheduleNativeEventCallback()
 bool
 nsAppShell::ProcessNextNativeEvent(bool mayWait)
 {
-    PROFILER_LABEL("nsAppShell", "ProcessNextNativeEvent",
-        js::ProfileEntry::Category::EVENTS);
+    /*PROFILER_LABEL("nsAppShell", "ProcessNextNativeEvent",
+        js::ProfileEntry::Category::EVENTS);*/
 
     epoll_event events[16] = {{ 0 }};
 
     int event_count;
     {
-        PROFILER_LABEL("nsAppShell", "ProcessNextNativeEvent::Wait",
-            js::ProfileEntry::Category::EVENTS);
+        /*PROFILER_LABEL("nsAppShell", "ProcessNextNativeEvent::Wait",
+            js::ProfileEntry::Category::EVENTS);*/
 
         if ((event_count = epoll_wait(epollfd, events, 16,  mayWait ? -1 : 0)) <= 0)
             return true;
