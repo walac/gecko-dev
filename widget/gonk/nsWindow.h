@@ -125,8 +125,7 @@ public:
   virtual mozilla::layers::LayerManager* GetLayerManager(
     PLayerTransactionChild* aShadowManager = nullptr,
     LayersBackend aBackendHint = mozilla::layers::LayersBackend::LAYERS_NONE,
-    LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT,
-    bool* aAllowRetaining = nullptr) override;
+    LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT) override;
   virtual void DestroyCompositor() override;
 
   virtual CompositorBridgeParent* NewCompositorBridgeParent(int aSurfaceWidth,
@@ -166,9 +165,6 @@ protected:
   // Call this function when the users activity is the direct cause of an
   // event (like a keypress or mouse click).
   void UserActivity();
-
-  void DrawWindowOverlay(mozilla::layers::LayerManagerComposite* aManager,
-                         LayoutDeviceIntRect aRect) override;
 
 private:
   void EnsureGLCursorImageManager();

@@ -774,30 +774,6 @@ nsWindow::MakeFullScreen(bool aFullScreen, nsIScreen*)
   return NS_OK;
 }
 
-void
-nsWindow::DrawWindowOverlay(LayerManagerComposite* aManager,
-                            LayoutDeviceIntRect aRect)
-{
-  // if (aManager && mGLCursorImageManager) {
-  //   CompositorOGL* compositor =
-  //     static_cast<CompositorOGL*>(aManager->GetCompositor());
-  //   if (compositor) {
-  //     if (mGLCursorImageManager->ShouldDrawGLCursor() &&
-  //         mGLCursorImageManager->IsCursorImageReady(mCursor)) {
-  //       GLCursorImageManager::GLCursorImage cursorImage =
-  //         mGLCursorImageManager->GetGLCursorImage(mCursor);
-  //       LayoutDeviceIntPoint position =
-  //         mGLCursorImageManager->GetGLCursorPosition();
-  //       compositor->DrawGLCursor(aRect,
-  //                                position,
-  //                                cursorImage.mSurface,
-  //                                cursorImage.mImgSize,
-  //                                cursorImage.mHotspot);
-  //     }
-  //   }
-  // }
-}
-
 already_AddRefed<DrawTarget>
 nsWindow::StartRemoteDrawing()
 {
