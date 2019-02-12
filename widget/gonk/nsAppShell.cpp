@@ -376,14 +376,14 @@ KeyEventDispatcher::DispatchKeyUpEvent()
     DispatchKeyEventInternal(eKeyUp);
 }
 
-class SwitchEventRunnable : public nsRunnable {
+class SwitchEventRunnable : public mozilla::Runnable {
 public:
-    SwitchEventRunnable(hal::SwitchEvent& aEvent) : mEvent(aEvent)
+    SwitchEventRunnable(::hal::SwitchEvent& aEvent) : mEvent(aEvent)
     {}
 
     NS_IMETHOD Run()
     {
-        hal::NotifySwitchStateFromInputDevice(mEvent.device(),
+        ::hal::NotifySwitchStateFromInputDevice(mEvent.device(),
           mEvent.status());
         return NS_OK;
     }
@@ -1258,7 +1258,7 @@ nsAppShell::CheckPowerKey()
     // Consumers of the b2g.safe_mode preference need to listen on this
     // preference change to prevent startup races.
     nsCOMPtr<nsIRunnable> prefSetter =
-    NS_NewRunnableFunction([powerState] () -> void {
+    NS_NewRunnableFunction("Power State", [powerState] () -> void {
         Preferences::SetCString("b2g.safe_mode",
                                 (powerState == AKEY_STATE_DOWN) ? "yes" : "no");
     });

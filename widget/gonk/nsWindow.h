@@ -112,11 +112,10 @@ public:
     override;
   virtual void EndRemoteDrawing() override;
 
-  NS_IMETHOD SetCursor(nsCursor aDefaultCursor, imgIContainer* aCursor,
+  void SetCursor(nsCursor aDefaultCursor, imgIContainer* aCursor,
                        uint32_t aHotspotX,
                        uint32_t aHotspotY) override
   {
-    return NS_ERROR_NOT_IMPLEMENTED;
   }
 
   void UpdateCursorSourceMap(nsCursor aCursor);
@@ -170,7 +169,7 @@ protected:
   // event (like a keypress or mouse click).
   void UserActivity();
 
-  void DrawWindowOverlay(mozilla::layers::LayerManagerComposite* aManager,
+  void DrawWindowOverlay(mozilla::widget::WidgetRenderingContext* aContext,
                          LayoutDeviceIntRect aRect) override;
 
 private:
