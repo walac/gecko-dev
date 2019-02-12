@@ -376,11 +376,29 @@ KeyEventDispatcher::DispatchKeyUpEvent()
     DispatchKeyEventInternal(eKeyUp);
 }
 
+<<<<<<< HEAD
 #if 0
 class SwitchEventRunnable : public mozilla::Runnable {
+||||||| merged common ancestors
+class SwitchEventRunnable : public nsRunnable {
+=======
+// TODO: FIXME
+#if 0
+class SwitchEventRunnable : public mozilla::Runnable {
+>>>>>>> lissyx/gonk-is-back
 public:
+<<<<<<< HEAD
     SwitchEventRunnable(::hal::SwitchEvent& aEvent) : mEvent(aEvent)
     {}
+||||||| merged common ancestors
+    SwitchEventRunnable(hal::SwitchEvent& aEvent) : mEvent(aEvent)
+    {}
+=======
+    SwitchEventRunnable(hal::SwitchEvent& aEvent)
+      : mozilla::Runnable("SwitchEventRunnable")
+      , mEvent(aEvent)
+      {}
+>>>>>>> lissyx/gonk-is-back
 
     NS_IMETHOD Run()
     {
@@ -396,7 +414,13 @@ private:
 static void
 updateHeadphoneSwitch()
 {
+<<<<<<< HEAD
 #if 0
+||||||| merged common ancestors
+=======
+// TODO: FIXME
+#if 0
+>>>>>>> lissyx/gonk-is-back
     hal::SwitchEvent event;
 
     switch (sHeadphoneState) {
@@ -841,14 +865,28 @@ NS_IMPL_RELEASE(nsRepeatKeyTimer)
 NS_INTERFACE_MAP_BEGIN(nsRepeatKeyTimer)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsITimerCallback)
   NS_INTERFACE_MAP_ENTRY(nsITimerCallback)
+<<<<<<< HEAD
 NS_INTERFACE_MAP_END//_THREADSAFE
+||||||| merged common ancestors
+NS_INTERFACE_MAP_END_THREADSAFE
+=======
+NS_INTERFACE_MAP_END
+>>>>>>> lissyx/gonk-is-back
 
 
 // GeckoInputReaderPolicy
 void
 GeckoInputReaderPolicy::setDisplayInfo()
 {
+<<<<<<< HEAD
     static_assert(static_cast<int>(ROTATION_0) ==
+||||||| merged common ancestors
+    static_assert(static_cast<int>(nsIScreen::ROTATION_0_DEG) ==
+=======
+// TODO: FIXME
+#if 0
+    static_assert(static_cast<int>(nsIScreen::ROTATION_0_DEG) ==
+>>>>>>> lissyx/gonk-is-back
                   static_cast<int>(DISPLAY_ORIENTATION_0),
                   "Orientation enums not matched!");
     static_assert(static_cast<int>(ROTATION_90) ==
@@ -860,6 +898,7 @@ GeckoInputReaderPolicy::setDisplayInfo()
     static_assert(static_cast<int>(ROTATION_270) ==
                   static_cast<int>(DISPLAY_ORIENTATION_270),
                   "Orientation enums not matched!");
+#endif
 
     RefPtr<nsScreenGonk> screen = nsScreenManagerGonk::GetPrimaryScreen();
 
@@ -1056,6 +1095,9 @@ GeckoInputDispatcher::notifyMotion(const NotifyMotionArgs* args)
     case AMOTION_EVENT_ACTION_CANCEL:
         touchType = MultiTouchInput::MULTITOUCH_CANCEL;
         break;
+    case AMOTION_EVENT_ACTION_HOVER_MOVE:
+        touchType = MultiTouchInput::MULTITOUCH_MOVE;
+        break;
     case AMOTION_EVENT_ACTION_HOVER_EXIT:
     case AMOTION_EVENT_ACTION_HOVER_ENTER:
     case AMOTION_EVENT_ACTION_SCROLL:
@@ -1221,7 +1263,13 @@ nsAppShell::Init()
 
         // Causes the kernel timezone to be set, which in turn causes the
         // timestamps on SD cards to have the local time rather than UTC time.
+<<<<<<< HEAD
         //TODO FIXME hal::SetTimezone(hal::GetTimezone());
+||||||| merged common ancestors
+        hal::SetTimezone(hal::GetTimezone());
+=======
+        // TODO: FIXME hal::SetTimezone(hal::GetTimezone());
+>>>>>>> lissyx/gonk-is-back
     }
 
     nsCOMPtr<nsIObserverService> obsServ = GetObserverService();
@@ -1259,7 +1307,13 @@ nsAppShell::CheckPowerKey()
     // Consumers of the b2g.safe_mode preference need to listen on this
     // preference change to prevent startup races.
     nsCOMPtr<nsIRunnable> prefSetter =
+<<<<<<< HEAD
     NS_NewRunnableFunction("Power State", [powerState] () -> void {
+||||||| merged common ancestors
+    NS_NewRunnableFunction([powerState] () -> void {
+=======
+    NS_NewRunnableFunction("CheckPowerKey", [powerState] () -> void {
+>>>>>>> lissyx/gonk-is-back
         Preferences::SetCString("b2g.safe_mode",
                                 (powerState == AKEY_STATE_DOWN) ? "yes" : "no");
     });
@@ -1276,7 +1330,13 @@ nsAppShell::Observe(nsISupports* aSubject,
     if (!strcmp(aTopic, "network-connection-state-changed")) {
         NS_ConvertUTF16toUTF8 type(aData);
         if (!type.IsEmpty()) {
+<<<<<<< HEAD
             // TODO FIXME hal::NotifyNetworkChange(hal::NetworkInformation(atoi(type.get()), 0, 0));
+||||||| merged common ancestors
+            hal::NotifyNetworkChange(hal::NetworkInformation(atoi(type.get()), 0, 0));
+=======
+            // TODO: FIXME: hal::NotifyNetworkChange(hal::NetworkInformation(atoi(type.get()), 0, 0));
+>>>>>>> lissyx/gonk-is-back
         }
         return NS_OK;
     } else if (!strcmp(aTopic, "browser-ui-startup-complete")) {
@@ -1312,7 +1372,13 @@ nsAppShell::Exit()
 void
 nsAppShell::InitInputDevices()
 {
+<<<<<<< HEAD
     sDevInputAudioJack = false; //hal::IsHeadphoneEventFromInputDev();
+||||||| merged common ancestors
+    sDevInputAudioJack = hal::IsHeadphoneEventFromInputDev();
+=======
+    sDevInputAudioJack = false; // TODO: FIXME: hal::IsHeadphoneEventFromInputDev();
+>>>>>>> lissyx/gonk-is-back
     sHeadphoneState = AKEY_STATE_UNKNOWN;
     sMicrophoneState = AKEY_STATE_UNKNOWN;
 
@@ -1414,5 +1480,5 @@ nsAppShell::NotifyScreenRotation()
     gAppShell->mReader->requestRefreshConfiguration(InputReaderConfiguration::CHANGE_DISPLAY_INFO);
 
     RefPtr<nsScreenGonk> screen = nsScreenManagerGonk::GetPrimaryScreen();
-    hal::NotifyScreenConfigurationChange(screen->GetConfiguration());
+    // TODO: FIXME: hal::NotifyScreenConfigurationChange(screen->GetConfiguration());
 }

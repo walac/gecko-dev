@@ -50,7 +50,7 @@
 #include "mozilla/layers/LayerManagerComposite.h"
 #include "mozilla/layers/LayerTransactionChild.h"
 #include "mozilla/TouchEvents.h"
-#include "HwcComposer2D.h"
+// TODO: FIXME: #include "HwcComposer2D.h"
 #include "nsImageLoadingContent.h"
 
 #define LOG(args...) __android_log_print(ANDROID_LOG_INFO, "Gonk", ##args)
@@ -151,7 +151,7 @@ nsWindow::DoDraw(void)
           lm->GetBackendType()) {
         // No need to do anything, the compositor will handle drawing
       } else {
-        NS_RUNTIMEABORT("Unexpected layer manager type");
+        MOZ_CRASH("Unexpected layer manager type");
       }
       listener->DidPaintWindow();
     }
@@ -446,7 +446,7 @@ nsWindow::Create(nsIWidget* aParent,
     mBounds = mScreen->GetRect();
   }
 
-  mComposer2D = HwcComposer2D::GetInstance();
+  // TODO: FIXME: mComposer2D = HwcComposer2D::GetInstance();
 
   if (!IS_TOPLEVEL()) {
     return NS_OK;
@@ -658,7 +658,7 @@ static void
 StopRenderWithHwc(bool aStop)
 {
   MOZ_ASSERT(CompositorBridgeParent::IsInCompositorThread());
-  HwcComposer2D::GetInstance()->StopRenderWithHwc(aStop);
+  // TODO: FIXME: HwcComposer2D::GetInstance()->StopRenderWithHwc(aStop);
 }
 
 NS_IMETHODIMP

@@ -24,7 +24,7 @@
 #include "libdisplay/GonkDisplay.h"
 #include "nsScreenManagerGonk.h"
 #include "nsThreadUtils.h"
-#include "HwcComposer2D.h"
+// TODO: FIXME: #include "HwcComposer2D.h"
 #include "VsyncSource.h"
 #include "nsWindow.h"
 #include "mozilla/ClearOnShutdown.h"
@@ -63,10 +63,11 @@ using namespace mozilla::dom;
 
 namespace {
 
-class ScreenOnOffEvent : public nsRunnable {
+class ScreenOnOffEvent : public mozilla::Runnable {
 public:
     ScreenOnOffEvent(bool on)
-        : mIsOn(on)
+        : mozilla::Runnable("ScreenOnOffEvent")
+	, mIsOn(on)
     {}
 
     NS_IMETHOD Run() {
@@ -75,7 +76,7 @@ public:
         if (observerService) {
           observerService->NotifyObservers(
             nullptr, "screen-state-changed",
-            mIsOn ? MOZ_UTF16("on") : MOZ_UTF16("off")
+            mIsOn ? u"on" : u"off"
           );
         }
 
@@ -128,8 +129,8 @@ nsScreenGonk::nsScreenGonk(uint32_t aId,
     , mEventVisibility(aEventVisibility)
     , mNativeWindow(aNativeData.mNativeWindow)
     , mDpi(aNativeData.mXdpi)
-    , mScreenRotation(nsIScreen::ROTATION_0_DEG)
-    , mPhysicalScreenRotation(nsIScreen::ROTATION_0_DEG)
+    , mScreenRotation(ROTATION_0) // TODO: FIXME
+    , mPhysicalScreenRotation(ROTATION_0) // TODO: FIXME
 #if ANDROID_VERSION >= 17
     , mDisplaySurface(aNativeData.mDisplaySurface)
 #endif
@@ -146,7 +147,7 @@ nsScreenGonk::nsScreenGonk(uint32_t aId,
     if (mNativeWindow->query(mNativeWindow.get(), NATIVE_WINDOW_WIDTH, &mVirtualBounds.width) ||
         mNativeWindow->query(mNativeWindow.get(), NATIVE_WINDOW_HEIGHT, &mVirtualBounds.height) ||
         mNativeWindow->query(mNativeWindow.get(), NATIVE_WINDOW_FORMAT, &mSurfaceFormat)) {
-        NS_RUNTIMEABORT("Failed to get native window size, aborting...");
+        MOZ_CRASH("Failed to get native window size, aborting...");
     }
 
     mNaturalBounds = mVirtualBounds;
@@ -170,9 +171,8 @@ nsScreenGonk::~nsScreenGonk()
 {
     // Release GLContext on compositor thread
     if (mGLContext) {
-        CompositorBridgeParent::CompositorLoop()->PostTask(
-            FROM_HERE,
-            NewRunnableFunction(&ReleaseGLContextSync,
+        layers::CompositorThreadHolder::Loop()->PostTask(
+            NewRunnableFunction("nsScreenGonk::~nsScreenGonk", &ReleaseGLContextSync,
                                 mGLContext.forget().take()));
         mGLContext = nullptr;
     }
@@ -273,6 +273,8 @@ nsScreenGonk::GetNativeWindow()
 NS_IMETHODIMP
 nsScreenGonk::SetRotation(uint32_t aRotation)
 {
+// TODO: FIXME
+#if 0
     if (!(aRotation <= ROTATION_270_DEG)) {
         return NS_ERROR_ILLEGAL_VALUE;
     }
@@ -299,7 +301,7 @@ nsScreenGonk::SetRotation(uint32_t aRotation)
                                mVirtualBounds.height,
                                true);
     }
-
+#endif
     return NS_OK;
 }
 
@@ -320,6 +322,8 @@ nsScreenGonk::EffectiveScreenRotation()
 static ScreenOrientation
 ComputeOrientation(uint32_t aRotation, const LayoutDeviceIntSize& aScreenSize)
 {
+// TODO: FIXME
+#if 0
     bool naturallyPortrait = (aScreenSize.height > aScreenSize.width);
     switch (aRotation) {
     case nsIScreen::ROTATION_0_DEG:
@@ -339,6 +343,8 @@ ComputeOrientation(uint32_t aRotation, const LayoutDeviceIntSize& aScreenSize)
     default:
         MOZ_CRASH("Gonk screen must always have a known rotation");
     }
+#endif
+    return eScreenOrientation_PortraitPrimary;
 }
 
 static uint16_t
@@ -611,7 +617,8 @@ nsScreenGonk::GetPrevDispAcquireFd()
 bool
 nsScreenGonk::IsComposer2DSupported()
 {
-    return mComposer2DSupported;
+    // TODO: FIXME
+    return false;
 }
 
 bool
@@ -689,9 +696,8 @@ nsScreenGonk::EnableMirroring()
     // Update mMirroringWidget on compositor thread
     nsMainThreadPtrHandle<nsScreenGonk> primary =
       nsMainThreadPtrHandle<nsScreenGonk>(new nsMainThreadPtrHolder<nsScreenGonk>(primaryScreen, false));
-    CompositorBridgeParent::CompositorLoop()->PostTask(
-        FROM_HERE,
-        NewRunnableFunction(&UpdateMirroringWidgetSync,
+    layers::CompositorThreadHolder::Loop()->PostTask(
+        NewRunnableFunction("nsScreenGonk::EnableMirroring", &UpdateMirroringWidgetSync,
                             primary,
                             window.forget().take()));
 
@@ -715,9 +721,8 @@ nsScreenGonk::DisableMirroring()
     // Update mMirroringWidget on compositor thread
     nsMainThreadPtrHandle<nsScreenGonk> primary =
       nsMainThreadPtrHandle<nsScreenGonk>(new nsMainThreadPtrHolder<nsScreenGonk>(primaryScreen, false));
-    CompositorBridgeParent::CompositorLoop()->PostTask(
-        FROM_HERE,
-        NewRunnableFunction(&UpdateMirroringWidgetSync,
+    layers::CompositorThreadHolder::Loop()->PostTask(
+        NewRunnableFunction("nsScreenGonk::DisableMirroring", &UpdateMirroringWidgetSync,
                             primary,
                             nullptr));
     return true;
@@ -1019,10 +1024,11 @@ private:
 
 NS_IMPL_ISUPPORTS(DisplayInfo, nsIDisplayInfo, nsISupports)
 
-class NotifyTask : public nsRunnable {
+class NotifyTask : public mozilla::Runnable {
 public:
     NotifyTask(uint32_t aId, bool aConnected)
-        : mDisplayInfo(new DisplayInfo(aId, aConnected))
+        : mozilla::Runnable("NotifyTask")
+	, mDisplayInfo(new DisplayInfo(aId, aConnected))
     {
     }
 
