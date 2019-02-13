@@ -43,15 +43,18 @@
 #include "mozilla/TextEvents.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Logging.h"
-#include "mozilla/layers/APZCTreeManager.h"
+#include "mozilla/layers/IAPZCTreeManager.h"
 #include "mozilla/layers/APZThreadUtils.h"
 #include "mozilla/layers/CompositorOGL.h"
 #include "mozilla/layers/CompositorBridgeParent.h"
 #include "mozilla/layers/LayerManagerComposite.h"
 #include "mozilla/layers/LayerTransactionChild.h"
 #include "mozilla/TouchEvents.h"
-#include "HwcComposer2D.h"
+// TODO: FIXME: #include "HwcComposer2D.h"
 #include "nsImageLoadingContent.h"
+#include "mozilla/layers/IAPZCTreeManager.h"
+#include "mozilla/layers/APZInputBridge.h"
+#include "mozilla/layers/CompositorBridgeParent.h"
 
 #define LOG(args...) __android_log_print(ANDROID_LOG_INFO, "Gonk", ##args)
 #define LOGW(args...) __android_log_print(ANDROID_LOG_WARN, "Gonk", ##args)
@@ -94,27 +97,39 @@ nsWindow::nsWindow()
 
 nsWindow::~nsWindow()
 {
+#if 0
   if (mScreen->IsPrimaryScreen()) {
+// TODO: FIXME
+#if 0
     mComposer2D->SetCompositorBridgeParent(nullptr);
+#endif
   }
+#endif
 }
 
 void
 nsWindow::DoDraw(void)
 {
+// TODO: FIXME
+#if 0
   if (!hal::GetScreenEnabled()) {
     gDrawRequest = true;
     return;
   }
+#else
+  gDrawRequest = true;
+#endif
 
-  uint32_t screenNums = 0;
+  uint32_t screenNums = 1;
   RefPtr<nsScreenManagerGonk> screenManager =
     nsScreenManagerGonk::GetInstance();
+#if 0
   screenManager->GetNumberOfScreens(&screenNums);
+#endif
 
   while (screenNums--) {
-    nsCOMPtr<nsIScreen> screen;
-    screenManager->ScreenForId(screenNums, getter_AddRefs(screen));
+    RefPtr<nsScreenGonk> screen = screenManager->GetPrimaryScreen();
+    //screenManager->ScreenForId(screenNums, getter_AddRefs(screen));
     MOZ_ASSERT(screen);
     if (!screen) {
       continue;
@@ -151,7 +166,7 @@ nsWindow::DoDraw(void)
           lm->GetBackendType()) {
         // No need to do anything, the compositor will handle drawing
       } else {
-        NS_RUNTIMEABORT("Unexpected layer manager type");
+        MOZ_CRASH("Unexpected layer manager type");
       }
       listener->DidPaintWindow();
     }
@@ -161,12 +176,13 @@ nsWindow::DoDraw(void)
 void
 nsWindow::ConfigureAPZControllerThread()
 {
-  APZThreadUtils::SetControllerThread(CompositorBridgeParent::CompositorLoop());
+  //FIXME APZThreadUtils::SetControllerThread(CompositorBridgeParent::CompositorLoop());
 }
 
 void
 nsWindow::SetMouseCursorPosition(const ScreenIntPoint& aScreenIntPoint)
 {
+#if 0
   // The only implementation of nsIWidget::SetMouseCursorPosition in nsWindow
   // is for remote control.
   if (gFocusedWindow) {
@@ -177,6 +193,7 @@ nsWindow::SetMouseCursorPosition(const ScreenIntPoint& aScreenIntPoint)
     gFocusedWindow->mCompositorBridgeParent->InvalidateOnCompositorThread();
     gFocusedWindow->mCompositorBridgeParent->ScheduleRenderOnCompositorThread();
   }
+#endif
 }
 
 /*static*/ nsEventStatus
@@ -209,16 +226,19 @@ nsWindow::DispatchTouchInput(MultiTouchInput& aInput)
 /*static*/ void
 nsWindow::SetMouseDevice(bool aMouse)
 {
+#if 0
   if (gFocusedWindow) {
     gFocusedWindow->SetDrawMouse(aMouse);
     ScreenIntPoint point(0, 0);
     nsWindow::NotifyHoverMove(point);
   }
+#endif
 }
 
 /*static*/ void
 nsWindow::NotifyHoverMove(const ScreenIntPoint& point)
 {
+#if 0
   if (gFocusedWindow) {
     // NB: this is a racy use of gFocusedWindow.  We assume that
     // our one and only top widget is already in a stable state by
@@ -227,16 +247,18 @@ nsWindow::NotifyHoverMove(const ScreenIntPoint& point)
     gFocusedWindow->mCompositorBridgeParent->InvalidateOnCompositorThread();
     gFocusedWindow->mCompositorBridgeParent->ScheduleRenderOnCompositorThread();
   }
+#endif
 }
 
-class DispatchTouchInputOnMainThread : public nsRunnable
+class DispatchTouchInputOnMainThread : public mozilla::Runnable
 {
 public:
   DispatchTouchInputOnMainThread(const MultiTouchInput& aInput,
                                  const ScrollableLayerGuid& aGuid,
                                  const uint64_t& aInputBlockId,
                                  nsEventStatus aApzResponse)
-    : mInput(aInput)
+    : mozilla::Runnable("DispatchTouchInputOnMainThread")
+    , mInput(aInput)
     , mGuid(aGuid)
     , mInputBlockId(aInputBlockId)
     , mApzResponse(aApzResponse)
@@ -269,8 +291,10 @@ nsWindow::KickOffComposition()
     return;
   }
 
+#if 0
   gFocusedWindow->mCompositorBridgeParent->InvalidateOnCompositorThread();
   gFocusedWindow->mCompositorBridgeParent->ScheduleRenderOnCompositorThread();
+#endif
 }
 
 void
@@ -287,7 +311,7 @@ nsWindow::DispatchTouchInputViaAPZ(MultiTouchInput& aInput)
   // First send it through the APZ code
   mozilla::layers::ScrollableLayerGuid guid;
   uint64_t inputBlockId;
-  nsEventStatus result = mAPZC->ReceiveInputEvent(aInput, &guid, &inputBlockId);
+  nsEventStatus result = mAPZC->InputBridge()->ReceiveInputEvent(aInput, &guid, &inputBlockId);
   // If the APZ says to drop it, then we drop it
   if (result == nsEventStatus_eConsumeNoDefault) {
     return;
@@ -320,20 +344,22 @@ nsWindow::DispatchTouchEventForAPZ(const MultiTouchInput& aInput,
   ProcessUntransformedAPZEvent(&event, aGuid, aInputBlockId, aApzResponse);
 }
 
-class DispatchTouchInputOnControllerThread : public Task
+class DispatchTouchInputOnControllerThread : public mozilla::Runnable
 {
 public:
   DispatchTouchInputOnControllerThread(const MultiTouchInput& aInput)
-    : Task()
+    : mozilla::Runnable("DispatchTouchInputOnController")
     , mInput(aInput)
   {
   }
 
-  virtual void Run() override
+  NS_IMETHOD Run() override
   {
     if (gFocusedWindow) {
       gFocusedWindow->DispatchTouchInputViaAPZ(mInput);
     }
+
+    return NS_OK;
   }
 
 private:
@@ -428,12 +454,13 @@ nsWindow::Create(nsIWidget* aParent,
 
   nsCOMPtr<nsIScreen> screen;
 
-  uint32_t screenId =
-    aParent ? ((nsWindow*)aParent)->mScreen->GetId() : aInitData->mScreenId;
+  //uint32_t screenId =
+  //  aParent ? ((nsWindow*)aParent)->mScreen->GetId() : aInitData->mScreenId;
 
   RefPtr<nsScreenManagerGonk> screenManager =
     nsScreenManagerGonk::GetInstance();
-  screenManager->ScreenForId(screenId, getter_AddRefs(screen));
+  //screenManager->ScreenForId(screenId, getter_AddRefs(screen));
+  screen = screenManager->GetPrimaryScreen();
 
   mScreen = static_cast<nsScreenGonk*>(screen.get());
 
@@ -446,7 +473,7 @@ nsWindow::Create(nsIWidget* aParent,
     mBounds = mScreen->GetRect();
   }
 
-  mComposer2D = HwcComposer2D::GetInstance();
+  // TODO: FIXME: mComposer2D = HwcComposer2D::GetInstance();
 
   if (!IS_TOPLEVEL()) {
     return NS_OK;
@@ -507,7 +534,7 @@ nsWindow::IsVisible() const
   return mVisible;
 }
 
-NS_IMETHODIMP
+void
 nsWindow::ConstrainPosition(bool aAllowSlop, int32_t* aX, int32_t* aY) {}
 
 void
@@ -654,24 +681,11 @@ nsWindow::EnsureGLCursorImageManager()
   // mGLCursorImageManager = new GLCursorImageManager();
 }
 
-void
-nsWindow::SetCursor(nsCursor aCursor)
-{
-  nsBaseWidget::SetCursor(aCursor);
-
-  // if (mGLCursorImageManager) {
-  //   // Prepare GLCursor if it doesn't exist
-  //   mGLCursorImageManager->PrepareCursorImage(aCursor, this);
-  //   mGLCursorImageManager->HasSetCursor();
-  //   KickOffComposition();
-  // }
-}
-
 static void
 StopRenderWithHwc(bool aStop)
 {
   MOZ_ASSERT(CompositorBridgeParent::IsInCompositorThread());
-  HwcComposer2D::GetInstance()->StopRenderWithHwc(aStop);
+  // TODO: FIXME: HwcComposer2D::GetInstance()->StopRenderWithHwc(aStop);
 }
 
 NS_IMETHODIMP
@@ -694,6 +708,7 @@ nsWindow::DispatchEvent(WidgetGUIEvent* aEvent, nsEventStatus& aStatus)
     EnsureGLCursorImageManager();
     // mGLCursorImageManager->SetGLCursorPosition(position);
 
+#if 0
     if (gfxPrefs::GLCursorEnabled()) {
       // Stop rendering with Hwc because virtual cursor is drawn on the
       // overlay layer.
@@ -702,11 +717,12 @@ nsWindow::DispatchEvent(WidgetGUIEvent* aEvent, nsEventStatus& aStatus)
 
       KickOffComposition();
     }
+#endif
   } else if (aEvent->mMessage == eMouseExitFromWidget) {
     EnsureGLCursorImageManager();
     // mGLCursorImageManager->SetGLCursorPosition(
     //   GLCursorImageManager::kOffscreenCursorPosition);
-
+#if 0
     if (gfxPrefs::GLCursorEnabled()) {
       // Turn render-with-hwc back on.
       CompositorBridgeParent::CompositorLoop()->PostTask(
@@ -714,6 +730,7 @@ nsWindow::DispatchEvent(WidgetGUIEvent* aEvent, nsEventStatus& aStatus)
 
       KickOffComposition();
     }
+#endif
   }
 
   if (mWidgetListener) {
@@ -775,7 +792,7 @@ nsWindow::MakeFullScreen(bool aFullScreen, nsIScreen*)
 }
 
 void
-nsWindow::DrawWindowOverlay(LayerManagerComposite* aManager,
+nsWindow::DrawWindowOverlay(mozilla::widget::WidgetRenderingContext* aContext,
                             LayoutDeviceIntRect aRect)
 {
   // if (aManager && mGLCursorImageManager) {
@@ -843,12 +860,11 @@ nsWindow::GetDefaultScaleInternal()
 LayerManager*
 nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
                           LayersBackend aBackendHint,
-                          LayerManagerPersistence aPersistence,
-                          bool* aAllowRetaining)
+                          LayerManagerPersistence aPersistence)
 {
-  if (aAllowRetaining) {
+  /*if (aAllowRetaining) {
     *aAllowRetaining = true;
-  }
+  }*/
   if (mLayerManager) {
     // This layer manager might be used for painting outside of DoDraw(), so we
     // need to set the correct rotation on it.
@@ -871,10 +887,14 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
   }
 
   CreateCompositor();
+  auto mCompositorBridgeParent = CompositorBridgeParent::GetCompositorBridgeParent(0);
   if (mCompositorBridgeParent) {
     mScreen->SetCompositorBridgeParent(mCompositorBridgeParent);
     if (mScreen->IsPrimaryScreen()) {
+// TODO: FIXME
+#if 0
       mComposer2D->SetCompositorBridgeParent(mCompositorBridgeParent);
+#endif
     }
   }
   MOZ_ASSERT(mLayerManager);
@@ -884,21 +904,27 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
 void
 nsWindow::DestroyCompositor()
 {
+  auto mCompositorBridgeParent = CompositorBridgeParent::GetCompositorBridgeParent(0);
   if (mCompositorBridgeParent) {
     mScreen->SetCompositorBridgeParent(nullptr);
     if (mScreen->IsPrimaryScreen()) {
       // Unset CompositorBridgeParent
+// TODO: FIXME
+#if 0
       mComposer2D->SetCompositorBridgeParent(nullptr);
+#endif
     }
   }
   nsBaseWidget::DestroyCompositor();
 }
 
+#if 0
 CompositorBridgeParent*
 nsWindow::NewCompositorBridgeParent(int aSurfaceWidth, int aSurfaceHeight)
 {
   return new CompositorBridgeParent(this, true, aSurfaceWidth, aSurfaceHeight);
 }
+#endif
 
 void
 nsWindow::BringToTop()
@@ -970,6 +996,8 @@ nsWindow::NeedsPaint()
   return nsIWidget::NeedsPaint();
 }
 
+// TODO: FIXME
+#if 0
 #if defined(MOZ_COMPOSITOR_2D)
 Composer2D*
 nsWindow::GetComposer2D()
@@ -981,9 +1009,20 @@ nsWindow::GetComposer2D()
   return mComposer2D;
 }
 #endif
+#endif
 
 bool
 nsWindow::IsBelongedToPrimaryScreen()
 {
   return mScreen->IsPrimaryScreen();
+}
+
+already_AddRefed<nsIWidget> nsIWidget::CreateTopLevelWindow() {
+  nsCOMPtr<nsIWidget> window = new nsWindow();
+  return window.forget();
+}
+
+already_AddRefed<nsIWidget> nsIWidget::CreateChildWindow() {
+  nsCOMPtr<nsIWidget> window = new nsWindow();
+  return window.forget();
 }

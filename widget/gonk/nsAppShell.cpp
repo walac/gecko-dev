@@ -376,18 +376,15 @@ KeyEventDispatcher::DispatchKeyUpEvent()
     DispatchKeyEventInternal(eKeyUp);
 }
 
-// TODO: FIXME
 #if 0
 class SwitchEventRunnable : public mozilla::Runnable {
 public:
-    SwitchEventRunnable(hal::SwitchEvent& aEvent)
-      : mozilla::Runnable("SwitchEventRunnable")
-      , mEvent(aEvent)
-      {}
+    SwitchEventRunnable(::hal::SwitchEvent& aEvent) : mEvent(aEvent)
+    {}
 
     NS_IMETHOD Run()
     {
-        hal::NotifySwitchStateFromInputDevice(mEvent.device(),
+        ::hal::NotifySwitchStateFromInputDevice(mEvent.device(),
           mEvent.status());
         return NS_OK;
     }
@@ -399,7 +396,6 @@ private:
 static void
 updateHeadphoneSwitch()
 {
-// TODO: FIXME
 #if 0
     hal::SwitchEvent event;
 
@@ -775,7 +771,7 @@ nsRepeatKeyTimer::Stop()
     if (mTimer)
     {
         mTimer->Cancel();
-        mTimer = 0;
+        mTimer = nullptr;
     }
 
     return NS_OK;
@@ -845,28 +841,25 @@ NS_IMPL_RELEASE(nsRepeatKeyTimer)
 NS_INTERFACE_MAP_BEGIN(nsRepeatKeyTimer)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsITimerCallback)
   NS_INTERFACE_MAP_ENTRY(nsITimerCallback)
-NS_INTERFACE_MAP_END
+NS_INTERFACE_MAP_END//_THREADSAFE
 
 
 // GeckoInputReaderPolicy
 void
 GeckoInputReaderPolicy::setDisplayInfo()
 {
-// TODO: FIXME
-#if 0
-    static_assert(static_cast<int>(nsIScreen::ROTATION_0_DEG) ==
+    static_assert(static_cast<int>(ROTATION_0) ==
                   static_cast<int>(DISPLAY_ORIENTATION_0),
                   "Orientation enums not matched!");
-    static_assert(static_cast<int>(nsIScreen::ROTATION_90_DEG) ==
+    static_assert(static_cast<int>(ROTATION_90) ==
                   static_cast<int>(DISPLAY_ORIENTATION_90),
                   "Orientation enums not matched!");
-    static_assert(static_cast<int>(nsIScreen::ROTATION_180_DEG) ==
+    static_assert(static_cast<int>(ROTATION_180) ==
                   static_cast<int>(DISPLAY_ORIENTATION_180),
                   "Orientation enums not matched!");
-    static_assert(static_cast<int>(nsIScreen::ROTATION_270_DEG) ==
+    static_assert(static_cast<int>(ROTATION_270) ==
                   static_cast<int>(DISPLAY_ORIENTATION_270),
                   "Orientation enums not matched!");
-#endif
 
     RefPtr<nsScreenGonk> screen = nsScreenManagerGonk::GetPrimaryScreen();
 
@@ -1027,8 +1020,8 @@ addMultiTouch(MultiTouchInput& aMultiTouch,
       radiusY = coords.getAxisValue(AMOTION_EVENT_AXIS_TOUCH_MINOR) / 2;
     }
 
-    ScreenIntPoint point(floor(coords.getX() + 0.5),
-                         floor(coords.getY() + 0.5));
+    ScreenIntPoint point(int(floor(coords.getX() + 0.5)),
+                         int(floor(coords.getY() + 0.5)));
 
     SingleTouchData touchData(id, point, ScreenSize(radiusX, radiusY),
                               rotationAngle, force);
@@ -1064,7 +1057,7 @@ GeckoInputDispatcher::notifyMotion(const NotifyMotionArgs* args)
         touchType = MultiTouchInput::MULTITOUCH_CANCEL;
         break;
     case AMOTION_EVENT_ACTION_HOVER_MOVE:
-        touchType = MultiTouchInput::MULTITOUCH_HOVER_MOVE;
+        touchType = MultiTouchInput::MULTITOUCH_MOVE;
         break;
     case AMOTION_EVENT_ACTION_HOVER_EXIT:
     case AMOTION_EVENT_ACTION_HOVER_ENTER:
@@ -1269,7 +1262,7 @@ nsAppShell::CheckPowerKey()
     // Consumers of the b2g.safe_mode preference need to listen on this
     // preference change to prevent startup races.
     nsCOMPtr<nsIRunnable> prefSetter =
-    NS_NewRunnableFunction([powerState] () -> void {
+    NS_NewRunnableFunction("CheckPowerKey", [powerState] () -> void {
         Preferences::SetCString("b2g.safe_mode",
                                 (powerState == AKEY_STATE_DOWN) ? "yes" : "no");
     });
@@ -1368,15 +1361,13 @@ nsAppShell::ScheduleNativeEventCallback()
 bool
 nsAppShell::ProcessNextNativeEvent(bool mayWait)
 {
-    PROFILER_LABEL("nsAppShell", "ProcessNextNativeEvent",
-        js::ProfileEntry::Category::EVENTS);
+    AUTO_PROFILER_LABEL("nsAppShell::ProcessNextNativeEvent", OTHER);
 
     epoll_event events[16] = {{ 0 }};
 
     int event_count;
     {
-        PROFILER_LABEL("nsAppShell", "ProcessNextNativeEvent::Wait",
-            js::ProfileEntry::Category::EVENTS);
+        AUTO_PROFILER_LABEL("nsAppShell::ProcessNextNativeEvent::Wait", IDLE);
 
         if ((event_count = epoll_wait(epollfd, events, 16,  mayWait ? -1 : 0)) <= 0)
             return true;
