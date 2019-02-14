@@ -4,7 +4,7 @@ set -e
 
 export MOZCONFIG=mozconfig-b2g
 export GONK_PATH=$HOME/work/B2G
-export GONK_PRODUCT_NAME=emulator-m
+export GONK_PRODUCT_NAME=generic
 
 # Check that the GONK_PATH environment variable is set.
 if [ -z ${GONK_PATH+x} ];
@@ -26,7 +26,7 @@ fi
 
 export MOZCONFIG=`pwd`/mozconfig-b2g
 
-export NDK_DIR=/home/walac/work/android-ndk-r17b/
+export NDK_DIR=/home/walac/work/android-ndk-r17b
 
 export PATH=$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin:$GONK_PATH/prebuilts/linux-x86_64/bin/:$PATH
 
@@ -35,14 +35,12 @@ GONK_LIBS=$GONK_PATH/out/target/product/$GONK_PRODUCT_NAME/obj/lib/
 
 ARCH_DIR="arch-arm"
 
-export gonkdir=$GONK_PATH
 export GONK_PRODUCT=$GONK_PRODUCT_NAME
 
 # ld --version
 
 export CFLAGS="-DANDROID -DTARGET_OS_GONK \
 -DJE_FORCE_SYNC_COMPARE_AND_SWAP_4=1 \
--DANDROID_VERSION=23 \
 -D__SOFTFP__ \
 -D_USING_LIBCXX \
 -Wno-nullability-completeness \
@@ -56,16 +54,12 @@ export CFLAGS="-DANDROID -DTARGET_OS_GONK \
 -isystem $GONK_PATH/bionic/libc/kernel/uapi/ \
 -isystem $GONK_PATH/bionic/libc/kernel/uapi/asm-arm/ \
 -isystem $GONK_PATH/bionic/libm/include \
--isystem $GONK_PATH/external/skia/include/core \
--isystem $GONK_PATH/external/skia/include \
 -I$GONK_PATH/system/core/libpixelflinger/include/ \
 -I$GONK_PATH/frameworks/native/include \
 -I$GONK_PATH/system \
+-I$(pwd)/modules/freetype2/include \
 -I$GONK_PATH/system/core/include \
--I$GONK_PATH/external/zlib \
--I$GONK_PATH/external/skia/include/config \
--I$GONK_PATH/external/skia/include/core \
--I$GONK_PATH/external/skia/include/effects"
+-I$GONK_PATH/external/zlib"
 
 export CPPFLAGS="-O2 -fPIC \
 -isystem $GONK_PATH/api/cpp/include \
@@ -80,6 +74,7 @@ export ANDROID_PLATFORM=android-23
 
 export LDFLAGS="-L$GONK_PATH/out/target/product/$GONK_PRODUCT_NAME/obj/lib \
 -Wl,-rpath-link=$GONK_PATH/out/target/product/$GONK_PRODUCT_NAME/obj/lib \
---sysroot=$NDK_DIR/sysroot $GCC_LIB -ldl -lstdc++"
+--sysroot=$NDK_DIR/sysroot $GCC_LIB -ldl -lstdc++ -Wl,--no-as-needed \
+-llog -lbinder -lutils -lcutils -lhardware_legacy -lhardware -lpower -lui -lgui"
 
 ./mach build $@

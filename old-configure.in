@@ -97,7 +97,6 @@ case "$target" in
     ;;
 esac
 
-AC_SUBST(ANDROID_VERSION)
 AC_SUBST(ANDROID_SOURCE)
 AC_SUBST(ANDROID_PACKAGE_NAME)
 AC_SUBST(OBJCOPY)
@@ -628,7 +627,9 @@ case "$target" in
 *-android*|*-linuxandroid*)
     AC_DEFINE(NO_PW_GECOS)
 
-    if test "$COMPILE_ENVIRONMENT"; then
+    if test -n "$gonkdir"; then
+        AC_MSG_WARN([We're on Gonk/B2G, no need for the custom linker])
+    elif test "$COMPILE_ENVIRONMENT"; then
         MOZ_LINKER=1
     fi
 

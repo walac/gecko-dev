@@ -10,14 +10,19 @@ ac_add_options --disable-webrtc
 ac_add_options --with-android-ndk="$HOME/work/android-ndk-r17b"
 ac_add_options --with-android-version=23
 
+# Use sccache
+ac_add_options --with-ccache=sccache
+
 # Auto-clobber
 mk_add_options AUTOCLOBBER=1
 
 # sccache
-# ac_add_options --with-ccache=sccache
+ac_add_options --with-ccache=sccache
+
+ac_add_options --disable-replace-malloc
+ac_add_options --disable-av1
+ac_add_options --disable-accessibility
 
 # Gonk-specific stuff
 ac_add_options --with-gonk-gfx
-#ac_add_options --with-gonk="$GONK_PATH"
-ANDROID_SOURCE="$GONK_PATH"
-ANDROID_VERSION=23
+ac_add_options --with-gonk="$GONK_PATH"
