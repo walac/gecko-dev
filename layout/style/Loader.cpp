@@ -858,6 +858,16 @@ nsresult Loader::CheckContentPolicy(nsIPrincipal* aLoadingPrincipal,
       aLoadingPrincipal, aTriggeringPrincipal, aRequestingNode,
       nsILoadInfo::SEC_ONLY_FOR_EXPLICIT_CONTENTSEC_CHECK, contentPolicyType);
 
+  // snapshot the nonce at load start time for performing CSP checks
+  if (contentPolicyType == nsIContentPolicy::TYPE_INTERNAL_STYLESHEET) {
+    nsCOMPtr<Element> element = do_QueryInterface(aRequestingNode);
+    if (element && element->IsHTMLElement()) {
+      nsAutoString cspNonce;
+      element->GetAttribute(NS_LITERAL_STRING("nonce"), cspNonce);
+      secCheckLoadInfo->SetCspNonce(cspNonce);
+    }
+  }
+
   int16_t shouldLoad = nsIContentPolicy::ACCEPT;
   nsresult rv = NS_CheckContentLoadPolicy(
       aTargetURI, secCheckLoadInfo, NS_LITERAL_CSTRING("text/css"), &shouldLoad,
@@ -1310,8 +1320,20 @@ nsresult Loader::LoadSheet(SheetLoadData* aLoadData,
       return rv;
     }
 
+    // snapshot the nonce at load start time for performing CSP checks
+    if (contentPolicyType == nsIContentPolicy::TYPE_INTERNAL_STYLESHEET) {
+      nsCOMPtr<Element> element =
+          do_QueryInterface(aLoadData->mRequestingNode);
+      if (element && element->IsHTMLElement()) {
+        nsAutoString cspNonce;
+        element->GetAttribute(NS_LITERAL_STRING("nonce"), cspNonce);
+        nsCOMPtr<nsILoadInfo> loadInfo = channel->GetLoadInfo();
+        loadInfo->SetCspNonce(cspNonce);
+      }
+    }
+
     nsCOMPtr<nsIInputStream> stream;
-    rv = channel->Open2(getter_AddRefs(stream));
+    rv = channel->Open(getter_AddRefs(stream));
 
     if (NS_FAILED(rv)) {
       LOG_ERROR(("  Failed to open URI synchronously"));
@@ -1438,6 +1460,17 @@ nsresult Loader::LoadSheet(SheetLoadData* aLoadData,
     return rv;
   }
 
+  // snapshot the nonce at load start time for performing CSP checks
+  if (contentPolicyType == nsIContentPolicy::TYPE_INTERNAL_STYLESHEET) {
+    nsCOMPtr<Element> element = do_QueryInterface(aLoadData->mRequestingNode);
+    if (element && element->IsHTMLElement()) {
+      nsAutoString cspNonce;
+      element->GetAttribute(NS_LITERAL_STRING("nonce"), cspNonce);
+      nsCOMPtr<nsILoadInfo> loadInfo = channel->GetLoadInfo();
+      loadInfo->SetCspNonce(cspNonce);
+    }
+  }
+
   if (!aLoadData->ShouldDefer()) {
     nsCOMPtr<nsIClassOfService> cos(do_QueryInterface(channel));
     if (cos) {
@@ -1521,7 +1554,7 @@ nsresult Loader::LoadSheet(SheetLoadData* aLoadData,
                                  mDocument);
   }
 
-  rv = channel->AsyncOpen2(streamLoader);
+  rv = channel->AsyncOpen(streamLoader);
 
 #ifdef DEBUG
   mSyncCallback = false;

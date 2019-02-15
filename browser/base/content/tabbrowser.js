@@ -2615,12 +2615,16 @@ window._gBrowser = {
       if (!allowInheritPrincipal) {
         flags |= Ci.nsIWebNavigation.LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL;
       }
+
+      let ReferrerInfo = Components.Constructor("@mozilla.org/referrer-info;1",
+                                                "nsIReferrerInfo",
+                                                "init");
       try {
         b.loadURI(aURI, {
           flags,
           triggeringPrincipal,
-          referrerURI: noReferrer ? null : referrerURI,
-          referrerPolicy,
+          referrerInfo: new ReferrerInfo(
+            referrerPolicy, !noReferrer, referrerURI),
           charset,
           postData,
         });
@@ -2832,7 +2836,6 @@ window._gBrowser = {
       TelemetryStopwatch.start("FX_TAB_CLOSE_TIME_ANIM_MS", aTab);
       TelemetryStopwatch.start("FX_TAB_CLOSE_TIME_NO_ANIM_MS", aTab);
     }
-    window.maybeRecordAbandonmentTelemetry(aTab, "tabClosed");
 
     // Handle requests for synchronously removing an already
     // asynchronously closing tab.

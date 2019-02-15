@@ -20,21 +20,9 @@ export function createFrame(thread: ThreadId, frame: FramePacket): ?Frame {
   if (!frame) {
     return null;
   }
-  let title;
-  if (frame.type == "call") {
-    const c = frame.callee;
-    title = c.name || c.userDisplayName || c.displayName;
-  } else {
-    title = `(${frame.type})`;
-  }
-
-  // NOTE: Firefox 66 switched from where.source to where.actor
-  const actor = frame.where.source
-    ? frame.where.source.actor
-    : frame.where.actor;
-
+  
   const location = {
-    sourceId: clientCommands.getSourceForActor(actor),
+    sourceId: clientCommands.getSourceForActor(frame.where.actor),
     line: frame.where.line,
     column: frame.where.column
   };
@@ -42,7 +30,7 @@ export function createFrame(thread: ThreadId, frame: FramePacket): ?Frame {
   return {
     id: frame.actor,
     thread,
-    displayName: title,
+    displayName: frame.displayName,
     location,
     generatedLocation: location,
     this: frame.this,

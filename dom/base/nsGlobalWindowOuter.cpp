@@ -1994,9 +1994,6 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
     if (aDocument != oldDoc) {
       JS::SetRealmPrincipals(realm,
                              nsJSPrincipals::get(aDocument->NodePrincipal()));
-      // Make sure we clear out the old content XBL scope, so the new one will
-      // get created with a principal that subsumes our new principal.
-      xpc::ClearContentXBLScope(newInnerGlobal);
     }
   } else {
     if (aState) {
@@ -2080,7 +2077,7 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
         return NS_ERROR_FAILURE;
       }
 
-      JS::Rooted<JSObject*> obj(cx, GetWrapperPreserveColor());
+      JS::Rooted<JSObject*> obj(cx, GetWrapper());
 
       MOZ_ASSERT(js::IsWindowProxy(obj));
 

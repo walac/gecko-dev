@@ -26,6 +26,7 @@ namespace jit {
   _(GuardIsBoolean)                       \
   _(GuardIsString)                        \
   _(GuardIsSymbol)                        \
+  _(GuardIsBigInt)                        \
   _(GuardIsNumber)                        \
   _(GuardIsInt32)                         \
   _(GuardIsInt32Index)                    \

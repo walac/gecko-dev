@@ -216,7 +216,8 @@ const MozElementMixin = Base => class MozElement extends Base {
       }
     }
 
-    let link = document.createElement("link");
+    let link = document.createElementNS("http://www.w3.org/1999/xhtml",
+                                        "link");
     link.setAttribute("rel", "localization");
     link.setAttribute("href", path);
 
@@ -313,7 +314,7 @@ const BaseControlMixin = Base => {
 };
 MozElements.BaseControl = BaseControlMixin(MozXULElement);
 
-const BaseTextMixin = Base => class extends Base {
+const BaseTextMixin = Base => class extends BaseControlMixin(Base) {
   set label(val) {
     this.setAttribute("label", val);
     return val;
@@ -383,6 +384,7 @@ const isDummyDocument = document.documentURI == "chrome://extensions/content/dum
 if (!isDummyDocument) {
   for (let script of [
     "chrome://global/content/elements/general.js",
+    "chrome://global/content/elements/menu.js",
     "chrome://global/content/elements/notificationbox.js",
     "chrome://global/content/elements/popupnotification.js",
     "chrome://global/content/elements/radio.js",

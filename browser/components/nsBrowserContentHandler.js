@@ -15,6 +15,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SessionStartup: "resource:///modules/sessionstore/SessionStartup.jsm",
   ShellService: "resource:///modules/ShellService.jsm",
   UpdatePing: "resource://gre/modules/UpdatePing.jsm",
+  RemotePages: "resource://gre/modules/remotepagemanager/RemotePageManagerParent.jsm",
 });
 XPCOMUtils.defineLazyServiceGetter(this, "WindowsUIUtils",
   "@mozilla.org/windows-ui-utils;1", "nsIWindowsUIUtils");
@@ -22,6 +23,8 @@ XPCOMUtils.defineLazyServiceGetter(this, "WindowsUIUtils",
 XPCOMUtils.defineLazyGetter(this, "gSystemPrincipal",
   () => Services.scriptSecurityManager.getSystemPrincipal());
 XPCOMUtils.defineLazyGlobalGetters(this, [URL]);
+
+const NEWINSTALL_PAGE = "about:newinstall";
 
 function shouldLoadURI(aURI) {
   if (aURI && !aURI.schemeIs("chrome"))
@@ -60,12 +63,14 @@ function resolveURIInternal(aCmdLine, aArgument) {
   return uri;
 }
 
+let gRemoteInstallPage = null;
+
 function getNewInstallPage() {
-  let url = new URL("about:newinstall");
-  let endpoint = Services.prefs.getCharPref("browser.dedicatedprofile.welcome.accounts.endpoint");
-  url.searchParams.set("endpoint", endpoint);
-  url.searchParams.set("channel", AppConstants.MOZ_UPDATE_CHANNEL);
-  return url.toString();
+  if (!gRemoteInstallPage) {
+    gRemoteInstallPage = new RemotePages(NEWINSTALL_PAGE);
+  }
+
+  return NEWINSTALL_PAGE;
 }
 
 var gFirstWindow = false;
@@ -202,7 +207,7 @@ function openBrowserWindow(cmdLine, triggeringPrincipal, urlOrUrlList, postData 
   let args;
   if (!urlOrUrlList) {
     // Just pass in the defaultArgs directly. We'll use system principal on the other end.
-    args = [gBrowserContentHandler.defaultArgs];
+    args = [gBrowserContentHandler.getDefaultArgs(forcePrivate)];
   } else {
     let pService = Cc["@mozilla.org/toolkit/profile-service;1"].
                   getService(Ci.nsIToolkitProfileService);
@@ -517,7 +522,7 @@ nsBrowserContentHandler.prototype = {
 
   /* nsIBrowserHandler */
 
-  get defaultArgs() {
+  getDefaultArgs(forcePrivate = false) {
     var prefb = Services.prefs;
 
     if (!gFirstWindow) {
@@ -602,7 +607,7 @@ nsBrowserContentHandler.prototype = {
     try {
       var choice = prefb.getIntPref("browser.startup.page");
       if (choice == 1 || choice == 3)
-        startPage = HomePage.get();
+        startPage = forcePrivate ? HomePage.getPrivate() : HomePage.get();
     } catch (e) {
       Cu.reportError(e);
     }
@@ -618,6 +623,10 @@ nsBrowserContentHandler.prototype = {
       return overridePage + "|" + startPage;
 
     return overridePage || startPage || "about:blank";
+  },
+
+  get defaultArgs() {
+    return this.getDefaultArgs(PrivateBrowsingUtils.permanentPrivateBrowsing);
   },
 
   mFeatures: null,

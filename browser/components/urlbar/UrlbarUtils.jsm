@@ -245,18 +245,39 @@ var UrlbarUtils = {
   getUrlFromResult(result) {
     switch (result.type) {
       case UrlbarUtils.RESULT_TYPE.URL:
-      case UrlbarUtils.RESULT_TYPE.KEYWORD:
       case UrlbarUtils.RESULT_TYPE.REMOTE_TAB:
       case UrlbarUtils.RESULT_TYPE.TAB_SWITCH:
         return {url: result.payload.url, postData: null};
+      case UrlbarUtils.RESULT_TYPE.KEYWORD:
+        return {
+          url: result.payload.url,
+          postData: result.payload.postData ?
+            this.getPostDataStream(result.payload.postData) : null,
+        };
       case UrlbarUtils.RESULT_TYPE.SEARCH: {
         const engine = Services.search.getEngineByName(result.payload.engine);
-        let [url, postData] = getSearchQueryUrl(
+        let [url, postData] = this.getSearchQueryUrl(
           engine, result.payload.suggestion || result.payload.query);
         return {url, postData};
       }
     }
     return {url: null, postData: null};
+  },
+
+  /**
+   * Get the url to load for the search query.
+   *
+   * @param {nsISearchEngine} engine
+   *   The engine to generate the query for.
+   * @param {string} query
+   *   The query string to search for.
+   * @returns {array}
+   *   Returns an array containing the query url (string) and the
+   *    post data (object).
+   */
+  getSearchQueryUrl(engine, query) {
+    let submission = engine.getSubmission(query, null, "keyword");
+    return [submission.uri.spec, submission.postData];
   },
 
   /**
@@ -319,23 +340,6 @@ var UrlbarUtils = {
     return pasteData;
   },
 };
-
-/**
- * Get the url to load for the search query and records in telemetry that it
- * is being loaded.
- *
- * @param {nsISearchEngine} engine
- *   The engine to generate the query for.
- * @param {string} query
- *   The query string to search for.
- * @returns {array}
- *   Returns an array containing the query url (string) and the
- *    post data (object).
- */
-function getSearchQueryUrl(engine, query) {
-  let submission = engine.getSubmission(query, null, "keyword");
-  return [submission.uri.spec, submission.postData];
-}
 
 /**
  * UrlbarQueryContext defines a user's autocomplete input from within the urlbar.

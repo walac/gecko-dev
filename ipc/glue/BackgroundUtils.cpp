@@ -457,6 +457,9 @@ nsresult LoadInfoToLoadInfoArgs(nsILoadInfo* aLoadInfo,
     ipcController = controller.ref().ToIPC();
   }
 
+  nsAutoString cspNonce;
+  Unused << NS_WARN_IF(NS_FAILED(aLoadInfo->GetCspNonce(cspNonce)));
+
   *aOptionalLoadInfoArgs = LoadInfoArgs(
       loadingPrincipalInfo, triggeringPrincipalInfo, principalToInheritInfo,
       sandboxedLoadingPrincipalInfo, topLevelPrincipalInfo,
@@ -474,7 +477,8 @@ nsresult LoadInfoToLoadInfoArgs(nsILoadInfo* aLoadInfo,
       aLoadInfo->GetInnerWindowID(), aLoadInfo->GetOuterWindowID(),
       aLoadInfo->GetParentOuterWindowID(), aLoadInfo->GetTopOuterWindowID(),
       aLoadInfo->GetFrameOuterWindowID(), aLoadInfo->GetBrowsingContextID(),
-      aLoadInfo->GetEnforceSecurity(), aLoadInfo->GetInitialSecurityCheckDone(),
+      aLoadInfo->GetFrameBrowsingContextID(),
+      aLoadInfo->GetInitialSecurityCheckDone(),
       aLoadInfo->GetIsInThirdPartyContext(), aLoadInfo->GetIsDocshellReload(),
       aLoadInfo->GetSendCSPViolationEvents(), aLoadInfo->GetOriginAttributes(),
       redirectChainIncludingInternalRedirects, redirectChain,
@@ -484,7 +488,7 @@ nsresult LoadInfoToLoadInfoArgs(nsILoadInfo* aLoadInfo,
       aLoadInfo->GetIsPreflight(), aLoadInfo->GetLoadTriggeredFromExternal(),
       aLoadInfo->GetServiceWorkerTaintingSynthesized(),
       aLoadInfo->GetDocumentHasUserInteracted(),
-      aLoadInfo->GetDocumentHasLoaded(),
+      aLoadInfo->GetDocumentHasLoaded(), cspNonce,
       aLoadInfo->GetIsFromProcessingFrameAttributes());
 
   return NS_OK;
@@ -631,7 +635,7 @@ nsresult LoadInfoArgsToLoadInfo(
       loadInfoArgs.forceInheritPrincipalDropped(), loadInfoArgs.innerWindowID(),
       loadInfoArgs.outerWindowID(), loadInfoArgs.parentOuterWindowID(),
       loadInfoArgs.topOuterWindowID(), loadInfoArgs.frameOuterWindowID(),
-      loadInfoArgs.browsingContextID(), loadInfoArgs.enforceSecurity(),
+      loadInfoArgs.browsingContextID(), loadInfoArgs.frameBrowsingContextID(),
       loadInfoArgs.initialSecurityCheckDone(),
       loadInfoArgs.isInThirdPartyContext(), loadInfoArgs.isDocshellReload(),
       loadInfoArgs.sendCSPViolationEvents(), loadInfoArgs.originAttributes(),
@@ -641,7 +645,7 @@ nsresult LoadInfoArgsToLoadInfo(
       loadInfoArgs.isPreflight(), loadInfoArgs.loadTriggeredFromExternal(),
       loadInfoArgs.serviceWorkerTaintingSynthesized(),
       loadInfoArgs.documentHasUserInteracted(),
-      loadInfoArgs.documentHasLoaded());
+      loadInfoArgs.documentHasLoaded(), loadInfoArgs.cspNonce());
 
   if (loadInfoArgs.isFromProcessingFrameAttributes()) {
     loadInfo->SetIsFromProcessingFrameAttributes();

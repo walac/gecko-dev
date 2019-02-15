@@ -46,6 +46,8 @@
 
 .urlbarView-row {
   border-radius: 2px;
+  fill: currentColor;
+  fill-opacity: .6;
   padding-top: 5px;
   padding-bottom: 5px;
   padding-inline-start: calc(var(--item-padding-start, calc(5px + @urlbarViewFaviconOffset@)) - @urlbarViewFaviconOffset@);
@@ -73,20 +75,27 @@
 .urlbarView-row[selected] {
   background: var(--autocomplete-popup-highlight-background);
   color: var(--autocomplete-popup-highlight-color);
+  fill-opacity: 1;
 }
 
 .urlbarView-type-icon,
 .urlbarView-favicon {
   display: inline-block;
   vertical-align: middle;
+  transform: translateY(-2px);
   width: 16px;
   height: 16px;
   margin-inline-end: @urlbarViewIconMarginEnd@;
   background-repeat: no-repeat;
   background-size: contain;
   -moz-context-properties: fill, fill-opacity;
-  fill: currentColor;
-  fill-opacity: 0.6;
+}
+
+@media (min-resolution: 2dppx) {
+  .urlbarView-type-icon,
+  .urlbarView-favicon {
+    transform: translateY(-1.5px);
+  }
 }
 
 .urlbarView-row[type=bookmark] > .urlbarView-row-inner > .urlbarView-type-icon {
@@ -96,6 +105,15 @@
 .urlbarView-row[type=remotetab] > .urlbarView-row-inner > .urlbarView-type-icon,
 #urlbar-results:not([actionoverride]) .urlbarView-row[type=switchtab] > .urlbarView-row-inner > .urlbarView-type-icon {
   background-image: url(chrome://browser/skin/tab.svg);
+}
+
+.urlbarView-title {
+  display: inline-block;
+  vertical-align: text-bottom;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: calc(var(--item-content-width) * .7 - 2 * (16px + @urlbarViewIconMarginEnd@));
 }
 
 .urlbarView-secondary::before {
@@ -108,19 +126,23 @@
   display: none;
 }
 
+.urlbarView-tags,
 .urlbarView-secondary {
-  color: var(--urlbar-popup-action-color);
   font-size: .85em;
-}
-
-.urlbarView-url {
-  color: var(--urlbar-popup-url-color);
 }
 
 .urlbarView-title > strong,
 .urlbarView-url > strong,
 .urlbarView-tag > strong {
   font-weight: 600;
+}
+
+.urlbarView-secondary {
+  color: var(--urlbar-popup-action-color);
+}
+
+.urlbarView-url {
+  color: var(--urlbar-popup-url-color);
 }
 
 .urlbarView-row[selected] > .urlbarView-row-inner > .urlbarView-secondary::before,

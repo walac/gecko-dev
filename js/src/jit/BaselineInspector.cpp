@@ -485,6 +485,9 @@ static bool GuardType(CacheIRReader& reader,
     case CacheOp::GuardIsSymbol:
       guardType[guardOperand] = MIRType::Symbol;
       break;
+    case CacheOp::GuardIsBigInt:
+      guardType[guardOperand] = MIRType::BigInt;
+      break;
     case CacheOp::GuardIsNumber:
       guardType[guardOperand] = MIRType::Double;
       break;
@@ -690,6 +693,11 @@ MIRType BaselineInspector::expectedBinaryArithSpecialization(jsbytecode* pc) {
 
   MIRType result;
   ICStub* stubs[2];
+
+  if (JSOp(*pc) == JSOP_POS) {
+    // +x expanding to x*1, but no corresponding IC.
+    return MIRType::None;
+  }
 
   const ICEntry& entry = icEntryFromPC(pc);
   ICFallbackStub* stub = entry.fallbackStub();
@@ -1649,6 +1657,9 @@ static MIRType GetCacheIRExpectedInputType(ICCacheIR_Monitored* stub) {
   }
   if (reader.matchOp(CacheOp::GuardIsString, ValOperandId(0))) {
     return MIRType::String;
+  }
+  if (reader.matchOp(CacheOp::GuardIsNumber, ValOperandId(0))) {
+    return MIRType::Double;
   }
   if (reader.matchOp(CacheOp::GuardType, ValOperandId(0))) {
     JSValueType type = reader.valueType();

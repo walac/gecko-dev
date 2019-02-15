@@ -1478,10 +1478,7 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
       break;
     }
 
-#  ifdef ENABLE_BIGINT
     case JOF_BIGINT:
-      // Fallthrough.
-#  endif
     case JOF_DOUBLE: {
       RootedValue v(cx, script->getConst(GET_UINT32_INDEX(pc)));
       UniqueChars bytes = ToDisassemblySource(cx, v);
@@ -2845,6 +2842,8 @@ JS_FRIEND_API JSString* js::GetPCCountScriptContents(JSContext* cx,
 static bool GenerateLcovInfo(JSContext* cx, JS::Realm* realm,
                              GenericPrinter& out) {
   JSRuntime* rt = cx->runtime();
+
+  AutoRealmUnchecked ar(cx, realm);
 
   // Collect the list of scripts which are part of the current realm.
   { js::gc::AutoPrepareForTracing apft(cx); }
