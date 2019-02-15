@@ -457,6 +457,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void pushReturnAddress() DEFINED_ON(mips_shared, arm, arm64);
   void popReturnAddress() DEFINED_ON(mips_shared, arm, arm64);
 
+  // Useful for dealing with two-valued returns.
+  void moveRegPair(Register src0, Register src1, Register dst0, Register dst1,
+                   MoveOp::Type type = MoveOp::GENERAL);
+
  public:
   // ===============================================================
   // Patchable near/far jumps.
@@ -589,6 +593,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   CodeOffset callWithABI(wasm::BytecodeOffset offset, wasm::SymbolicAddress fun,
                          MoveOp::Type result = MoveOp::GENERAL);
+  void callDebugWithABI(wasm::SymbolicAddress fun, MoveOp::Type result = MoveOp::GENERAL);
 
  private:
   // Reinitialize the variables which have to be cleared before making a call
@@ -1427,10 +1432,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                Label* label) PER_SHARED_ARCH;
   inline void branchTestSymbol(Condition cond, Register tag,
                                Label* label) PER_SHARED_ARCH;
-#ifdef ENABLE_BIGINT
   inline void branchTestBigInt(Condition cond, Register tag,
                                Label* label) PER_SHARED_ARCH;
-#endif
   inline void branchTestNull(Condition cond, Register tag,
                              Label* label) PER_SHARED_ARCH;
   inline void branchTestObject(Condition cond, Register tag,
@@ -1494,13 +1497,11 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                Label* label)
       DEFINED_ON(arm, arm64, mips32, mips64, x86_shared);
 
-#ifdef ENABLE_BIGINT
   inline void branchTestBigInt(Condition cond, const BaseIndex& address,
                                Label* label) PER_SHARED_ARCH;
   inline void branchTestBigInt(Condition cond, const ValueOperand& value,
                                Label* label)
       DEFINED_ON(arm, arm64, mips32, mips64, x86_shared);
-#endif
 
   inline void branchTestNull(Condition cond, const Address& address,
                              Label* label) PER_SHARED_ARCH;
@@ -1558,6 +1559,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void branchTestStringTruthy(bool truthy, const ValueOperand& value,
                                      Label* label)
       DEFINED_ON(arm, arm64, mips32, mips64, x86_shared);
+  inline void branchTestBigIntTruthy(bool truthy, const ValueOperand& value,
+                                     Label* label)
+      DEFINED_ON(arm, arm64, mips32, mips64, x86_shared);
 
   // Create an unconditional branch to the address given as argument.
   inline void branchToComputedAddress(const BaseIndex& address) PER_ARCH;
@@ -1595,11 +1599,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   template <typename T>
   inline void branchTestSymbolImpl(Condition cond, const T& t, Label* label)
       DEFINED_ON(arm, arm64, x86_shared);
-#ifdef ENABLE_BIGINT
   template <typename T>
   inline void branchTestBigIntImpl(Condition cond, const T& t, Label* label)
       DEFINED_ON(arm, arm64, x86_shared);
-#endif
   template <typename T>
   inline void branchTestNullImpl(Condition cond, const T& t, Label* label)
       DEFINED_ON(arm, arm64, x86_shared);
@@ -2718,6 +2720,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void debugAssertObjHasFixedSlots(Register obj, Register scratch);
 
   void branchIfNativeIteratorNotReusable(Register ni, Label* notReusable);
+
+  void iteratorMore(Register obj, ValueOperand output, Register temp);
+  void iteratorClose(Register obj, Register temp1, Register temp2,
+                     Register temp3);
 
   using MacroAssemblerSpecific::extractTag;
   MOZ_MUST_USE Register extractTag(const TypedOrValueRegister& reg,

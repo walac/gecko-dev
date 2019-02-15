@@ -545,8 +545,9 @@ var Policies = {
               }
               url = Services.io.newFileURI(xpiFile).spec;
             }
-            AddonManager.getInstallForURL(url, "application/x-xpinstall", null, null, null, null, null,
-                                          {source: "enterprise-policy"}).then(install => {
+            AddonManager.getInstallForURL(url, {
+              telemetryInfo: {source: "enterprise-policy"},
+            }).then(install => {
               if (install.addon && install.addon.appDisabled) {
                 log.error(`Incompatible add-on - ${location}`);
                 install.cancel();
@@ -584,6 +585,14 @@ var Policies = {
         for (let ID of param.Locked) {
           manager.disallowFeature(`modify-extension:${ID}`);
         }
+      }
+    },
+  },
+
+  "ExtensionUpdate": {
+    onBeforeAddons(manager, param) {
+      if (!param) {
+        setAndLockPref("extensions.update.enabled", param);
       }
     },
   },
@@ -673,8 +682,16 @@ var Policies = {
         setAndLockPref("xpinstall.enabled", param.Default);
         if (!param.Default) {
           blockAboutPage(manager, "about:debugging");
+          manager.disallowFeature("xpinstall");
         }
       }
+    },
+  },
+
+  "NetworkPrediction": {
+    onBeforeAddons(manager, param) {
+      setAndLockPref("network.dns.disablePrefetch", !param);
+      setAndLockPref("network.dns.disablePrefetchFromHTTPS", !param);
     },
   },
 

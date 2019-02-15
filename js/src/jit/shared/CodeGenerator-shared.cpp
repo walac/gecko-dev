@@ -434,6 +434,7 @@ void CodeGeneratorShared::encodeAllocation(LSnapshot* snapshot,
     case MIRType::Int32:
     case MIRType::String:
     case MIRType::Symbol:
+    case MIRType::BigInt:
     case MIRType::Object:
     case MIRType::ObjectOrNull:
     case MIRType::Boolean:

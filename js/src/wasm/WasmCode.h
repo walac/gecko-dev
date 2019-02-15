@@ -392,7 +392,7 @@ struct Metadata : public ShareableBase<Metadata>, public MetadataCacheablePod {
     return getFuncName(NameContext::BeforeLocation, funcIndex, name);
   }
 
-  WASM_DECLARE_SERIALIZABLE_VIRTUAL(Metadata);
+  WASM_DECLARE_SERIALIZABLE(Metadata);
 };
 
 typedef RefPtr<Metadata> MutableMetadata;
@@ -723,6 +723,8 @@ class Code : public ShareableBase<Code> {
                                     const LinkData& linkData,
                                     Metadata& metadata, SharedCode* code);
 };
+
+void PatchDebugSymbolicAccesses(uint8_t* codeBase, jit::MacroAssembler& masm);
 
 }  // namespace wasm
 }  // namespace js

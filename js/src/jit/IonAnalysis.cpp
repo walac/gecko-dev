@@ -2344,7 +2344,8 @@ static bool CanCompareRegExp(MCompare* compare, MDefinition* def) {
       value->mightBeType(MIRType::Int32) ||
       value->mightBeType(MIRType::Double) ||
       value->mightBeType(MIRType::Float32) ||
-      value->mightBeType(MIRType::Symbol)) {
+      value->mightBeType(MIRType::Symbol) ||
+      value->mightBeType(MIRType::BigInt)) {
     return false;
   }
 
@@ -3176,6 +3177,7 @@ static bool IsResumableMIRType(MIRType type) {
     case MIRType::Float32:
     case MIRType::String:
     case MIRType::Symbol:
+    case MIRType::BigInt:
     case MIRType::Object:
     case MIRType::MagicOptimizedArguments:
     case MIRType::MagicOptimizedOut:
@@ -3202,6 +3204,7 @@ static bool IsResumableMIRType(MIRType type) {
     case MIRType::Doublex2:  // NYI, see also RSimdBox::recover
     case MIRType::SinCosDouble:
     case MIRType::Int64:
+    case MIRType::RefOrNull:
       return false;
   }
   MOZ_CRASH("Unknown MIRType.");

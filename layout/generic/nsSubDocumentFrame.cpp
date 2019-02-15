@@ -59,8 +59,9 @@ static Document* GetDocumentFromView(nsView* aView) {
   return ps ? ps->GetDocument() : nullptr;
 }
 
-nsSubDocumentFrame::nsSubDocumentFrame(ComputedStyle* aStyle)
-    : nsAtomicContainerFrame(aStyle, kClassID),
+nsSubDocumentFrame::nsSubDocumentFrame(ComputedStyle* aStyle,
+                                       nsPresContext* aPresContext)
+    : nsAtomicContainerFrame(aStyle, aPresContext, kClassID),
       mOuterView(nullptr),
       mInnerView(nullptr),
       mIsInline(false),
@@ -300,10 +301,7 @@ void nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   if (!IsVisibleForPainting()) return;
 
   nsFrameLoader* frameLoader = FrameLoader();
-  RenderFrame* rf = nullptr;
-  if (frameLoader) {
-    rf = frameLoader->GetCurrentRenderFrame();
-  }
+  bool isRemoteFrame = frameLoader && frameLoader->IsRemoteFrame();
 
   // If we are pointer-events:none then we don't need to HitTest background
   bool pointerEventsNone =
@@ -311,7 +309,7 @@ void nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   if (!aBuilder->IsForEventDelivery() || !pointerEventsNone) {
     nsDisplayListCollection decorations(aBuilder);
     DisplayBorderBackgroundOutline(aBuilder, decorations);
-    if (rf) {
+    if (isRemoteFrame) {
       // Wrap background colors of <iframe>s with remote subdocuments in their
       // own layer so we generate a ColorLayer. This is helpful for optimizing
       // compositing; we can skip compositing the ColorLayer when the
@@ -334,7 +332,7 @@ void nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     return;
   }
 
-  if (rf) {
+  if (isRemoteFrame) {
     // We're the subdoc for <browser remote="true"> and it has
     // painted content.  Display its shadow layer tree.
     DisplayListClipState::AutoSaveRestore clipState(aBuilder);
@@ -876,7 +874,8 @@ nsresult nsSubDocumentFrame::AttributeChanged(int32_t aNameSpaceID,
 
 nsIFrame* NS_NewSubDocumentFrame(nsIPresShell* aPresShell,
                                  ComputedStyle* aStyle) {
-  return new (aPresShell) nsSubDocumentFrame(aStyle);
+  return new (aPresShell)
+      nsSubDocumentFrame(aStyle, aPresShell->GetPresContext());
 }
 
 NS_IMPL_FRAMEARENA_HELPERS(nsSubDocumentFrame)
@@ -994,10 +993,6 @@ nsFrameLoader* nsSubDocumentFrame::FrameLoader() const {
     }
   }
   return mFrameLoader;
-}
-
-mozilla::layout::RenderFrame* nsSubDocumentFrame::GetRenderFrame() const {
-  return FrameLoader() ? FrameLoader()->GetCurrentRenderFrame() : nullptr;
 }
 
 // XXX this should be called ObtainDocShell or something like that,

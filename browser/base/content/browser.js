@@ -12,6 +12,7 @@ ChromeUtils.import("resource://gre/modules/NotificationDB.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   AddonManager: "resource://gre/modules/AddonManager.jsm",
+  AMTelemetry: "resource://gre/modules/AddonManager.jsm",
   BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
@@ -23,6 +24,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   CustomizableUI: "resource:///modules/CustomizableUI.jsm",
   Deprecated: "resource://gre/modules/Deprecated.jsm",
   DownloadsCommon: "resource:///modules/DownloadsCommon.jsm",
+  DownloadUtils: "resource://gre/modules/DownloadUtils.jsm",
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
   ExtensionsUI: "resource:///modules/ExtensionsUI.jsm",
   FormValidationHandler: "resource:///modules/FormValidationHandler.jsm",
@@ -146,6 +148,8 @@ if (AppConstants.NIGHTLY_BUILD) {
 }
 
 XPCOMUtils.defineLazyScriptGetter(this, "pktUI", "chrome://pocket/content/main.js");
+XPCOMUtils.defineLazyScriptGetter(this, "ToolbarKeyboardNavigator",
+  "chrome://browser/content/browser-toolbarKeyNav.js");
 
 // lazy service getters
 
@@ -280,6 +284,16 @@ XPCOMUtils.defineLazyGetter(this, "Win7Features", () => {
   }
   return null;
 });
+
+XPCOMUtils.defineLazyPreferenceGetter(this, "gToolbarKeyNavEnabled",
+  "browser.toolbars.keyboard_navigation", false,
+  (aPref, aOldVal, aNewVal) => {
+    if (aNewVal) {
+      ToolbarKeyboardNavigator.init();
+    } else {
+      ToolbarKeyboardNavigator.uninit();
+    }
+  });
 
 customElements.setElementCreationCallback("translation-notification", () => {
   Services.scriptloader.loadSubScript(
@@ -1002,8 +1016,9 @@ function handleUriInChrome(aBrowser, aUri) {
                                               .getTypeFromURI(aUri);
       if (mimeType == "application/x-xpinstall") {
         let systemPrincipal = Services.scriptSecurityManager.getSystemPrincipal();
-        AddonManager.getInstallForURL(aUri.spec, mimeType, null, null, null, null, null,
-                                      {source: "file-url"}).then(install => {
+        AddonManager.getInstallForURL(aUri.spec, {
+          telemetryInfo: {source: "file-url"},
+        }).then(install => {
           AddonManager.installAddonFromWebpage(mimeType, aBrowser, systemPrincipal,
                                                install);
         });
@@ -1032,21 +1047,14 @@ function _createNullPrincipalFromTabUserContextId(tab = gBrowser.selectedTab) {
 // A shared function used by both remote and non-remote browser XBL bindings to
 // load a URI or redirect it to the correct process.
 function _loadURI(browser, uri, params = {}) {
-  let tab = gBrowser.getTabForBrowser(browser);
-  // Preloaded browsers don't have tabs, so we ignore those.
-  if (tab) {
-    maybeRecordAbandonmentTelemetry(tab, "newURI");
-  }
-
   if (!uri) {
     uri = "about:blank";
   }
 
   let {
     flags = Ci.nsIWebNavigation.LOAD_FLAGS_NONE,
-    referrerURI,
-    referrerPolicy = Ci.nsIHttpChannel.REFERRER_POLICY_UNSET,
     triggeringPrincipal,
+    referrerInfo,
     postData,
     userContextId,
   } = params || {};
@@ -1079,8 +1087,7 @@ function _loadURI(browser, uri, params = {}) {
   let loadURIOptions = {
     triggeringPrincipal,
     loadFlags: flags,
-    referrerURI,
-    referrerPolicy,
+    referrerInfo,
     postData,
   };
   try {
@@ -1109,8 +1116,7 @@ function _loadURI(browser, uri, params = {}) {
           ? gSerializationHelper.serializeToString(triggeringPrincipal)
           : null,
         flags,
-        referrer: referrerURI ? referrerURI.spec : null,
-        referrerPolicy,
+        referrerInfo: E10SUtils.serializeReferrerInfo(referrerInfo),
         remoteType: requiredRemoteType,
         postData,
         newFrameloader,
@@ -1390,6 +1396,9 @@ var gBrowserInit = {
     BrowserPageActions.init();
     gAccessibilityServiceIndicator.init();
     AccessibilityRefreshBlocker.init();
+    if (gToolbarKeyNavEnabled) {
+      ToolbarKeyboardNavigator.init();
+    }
 
     gRemoteControl.updateVisualCue(Marionette.running);
 
@@ -1936,6 +1945,10 @@ var gBrowserInit = {
 
     AccessibilityRefreshBlocker.uninit();
 
+    if (gToolbarKeyNavEnabled) {
+      ToolbarKeyboardNavigator.uninit();
+    }
+
     LanguagePrompt.uninit();
 
     BrowserSearch.uninit();
@@ -2046,16 +2059,6 @@ function HandleAppCommandEvent(evt) {
   evt.preventDefault();
 }
 
-function maybeRecordAbandonmentTelemetry(tab, type) {
-  if (!tab.hasAttribute("busy")) {
-    return;
-  }
-
-  let histogram = Services.telemetry
-                          .getHistogramById("BUSY_TAB_ABANDONED");
-  histogram.add(type);
-}
-
 function gotoHistoryIndex(aEvent) {
   let index = aEvent.target.getAttribute("index");
   if (!index)
@@ -2067,8 +2070,6 @@ function gotoHistoryIndex(aEvent) {
     // Normal click. Go there in the current tab and update session history.
 
     try {
-      maybeRecordAbandonmentTelemetry(gBrowser.selectedTab,
-                                      "historyNavigation");
       gBrowser.gotoIndex(index);
     } catch (ex) {
       return false;
@@ -2087,7 +2088,6 @@ function BrowserForward(aEvent) {
 
   if (where == "current") {
     try {
-      maybeRecordAbandonmentTelemetry(gBrowser.selectedTab, "forward");
       gBrowser.goForward();
     } catch (ex) {
     }
@@ -2101,7 +2101,6 @@ function BrowserBack(aEvent) {
 
   if (where == "current") {
     try {
-      maybeRecordAbandonmentTelemetry(gBrowser.selectedTab, "back");
       gBrowser.goBack();
     } catch (ex) {
     }
@@ -2133,7 +2132,6 @@ function BrowserHandleShiftBackspace() {
 }
 
 function BrowserStop() {
-  maybeRecordAbandonmentTelemetry(gBrowser.selectedTab, "stop");
   gBrowser.webNavigation.stop(Ci.nsIWebNavigation.STOP_ALL);
 }
 
@@ -2176,7 +2174,7 @@ function BrowserHome(aEvent) {
       aEvent.button == 2) // right-click: do nothing
     return;
 
-  var homePage = HomePage.get();
+  var homePage = HomePage.get(window);
   var where = whereToOpenLink(aEvent, false, true);
   var urls;
   var notifyObservers;
@@ -3260,14 +3258,6 @@ function BrowserReloadWithFlags(reloadFlags) {
 
   if (unchangedRemoteness.length == 0) {
     return;
-  }
-
-  // Do this after the above case where we might flip remoteness.
-  // Unfortunately, we'll count the remoteness flip case as a
-  // "newURL" load, since we're using loadURI, but hopefully
-  // that's rare enough to not matter.
-  for (let tab of unchangedRemoteness) {
-    maybeRecordAbandonmentTelemetry(tab, "reload");
   }
 
   // Reset temporary permissions on the remaining tabs to reload.
@@ -6185,7 +6175,7 @@ function middleMousePaste(event) {
   // bar's behavior (stripsurroundingwhitespace)
   clipboard = clipboard.replace(/\s*\n\s*/g, "");
 
-  clipboard = stripUnsafeProtocolOnPaste(clipboard);
+  clipboard = UrlbarUtils.stripUnsafeProtocolOnPaste(clipboard);
 
   // if it's not the current tab, we don't need to do anything because the
   // browser doesn't exist.
@@ -6224,23 +6214,6 @@ function middleMousePaste(event) {
   if (event instanceof Event) {
     event.stopPropagation();
   }
-}
-
-function stripUnsafeProtocolOnPaste(pasteData) {
-  // Don't allow pasting javascript URIs since we don't support
-  // LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL for those.
-  while (true) {
-    let scheme = "";
-    try {
-      scheme = Services.io.extractScheme(pasteData);
-    } catch (ex) { }
-    if (scheme != "javascript") {
-      break;
-    }
-
-    pasteData = pasteData.substring(pasteData.indexOf(":") + 1);
-  }
-  return pasteData;
 }
 
 // handleDroppedLink has the following 2 overloads:
@@ -6355,18 +6328,29 @@ var ToolbarContextMenu = {
     return triggerNode;
   },
 
-  updateExtension(popup) {
+  _getExtensionId(popup) {
+    let node = this._getUnwrappedTriggerNode(popup);
+    return node && node.getAttribute("data-extensionid");
+  },
+
+  async updateExtension(popup) {
     let removeExtension = popup.querySelector(".customize-context-removeExtension");
     let manageExtension = popup.querySelector(".customize-context-manageExtension");
     let separator = removeExtension.nextElementSibling;
-    let node = this._getUnwrappedTriggerNode(popup);
-    let isWebExt = node && node.hasAttribute("data-extensionid");
-    removeExtension.hidden = manageExtension.hidden = separator.hidden = !isWebExt;
+    let id = this._getExtensionId(popup);
+    let addon = id && await AddonManager.getAddonByID(id);
+    removeExtension.hidden = manageExtension.hidden = separator.hidden = !addon;
+    if (addon) {
+      removeExtension.disabled = !(addon.permissions & AddonManager.PERM_CAN_UNINSTALL);
+    }
   },
 
   async removeExtensionForContextAction(popup) {
-    let id = this._getUnwrappedTriggerNode(popup).getAttribute("data-extensionid");
-    let addon = await AddonManager.getAddonByID(id);
+    let id = this._getExtensionId(popup);
+    let addon = id && await AddonManager.getAddonByID(id);
+    if (!addon || !(addon.permissions & AddonManager.PERM_CAN_UNINSTALL)) {
+      return;
+    }
     let {name} = addon;
     let brand = document.getElementById("bundle_brand").getString("brandShorterName");
     let {getFormattedString, getString} = gNavigatorBundle;
@@ -6378,15 +6362,28 @@ var ToolbarContextMenu = {
     let btnFlags = BUTTON_POS_0 * titleString + BUTTON_POS_1 * titleCancel;
     let response = confirmEx(null, title, message, btnFlags, btnTitle, null, null, null,
                              {value: 0});
+    AMTelemetry.recordActionEvent({
+      object: "browserAction",
+      action: "uninstall",
+      value: response ? "cancelled" : "accepted",
+      extra: {addonId: addon.id},
+    });
     if (response == 0) {
       addon.uninstall();
     }
   },
 
   openAboutAddonsForContextAction(popup) {
-    let id = this._getUnwrappedTriggerNode(popup).getAttribute("data-extensionid");
-    let viewID = "addons://detail/" + encodeURIComponent(id);
-    BrowserOpenAddonsMgr(viewID);
+    let id = this._getExtensionId(popup);
+    if (id) {
+      let viewID = "addons://detail/" + encodeURIComponent(id);
+      BrowserOpenAddonsMgr(viewID);
+      AMTelemetry.recordActionEvent({
+        object: "browserAction",
+        action: "manage",
+        extra: {addonId: id},
+      });
+    }
   },
 };
 

@@ -5,7 +5,7 @@
 
 const Services = require("Services");
 const { Component, createFactory } = require("devtools/client/shared/vendor/react");
-const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+loader.lazyRequireGetter(this, "PropTypes", "devtools/client/shared/vendor/react-prop-types");
 const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const { connect } = require("devtools/client/shared/redux/visibility-handler-connect");
 
@@ -114,7 +114,7 @@ class App extends Component {
 
     // Do not focus if something other than the output region was clicked
     // (including e.g. the clear messages button in toolbar)
-    if (!target.closest(".webconsole-output-wrapper")) {
+    if (!target.closest(".webconsole-app")) {
       return;
     }
 
@@ -202,7 +202,7 @@ class App extends Component {
       reverseSearchInitialValue,
     } = this.props;
 
-    const classNames = ["webconsole-output-wrapper"];
+    const classNames = ["webconsole-app"];
     if (jstermCodeMirror) {
       classNames.push("jsterm-cm");
     }

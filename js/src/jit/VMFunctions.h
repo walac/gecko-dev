@@ -1092,6 +1092,7 @@ void AssertValidObjectPtr(JSContext* cx, JSObject* obj);
 void AssertValidObjectOrNullPtr(JSContext* cx, JSObject* obj);
 void AssertValidStringPtr(JSContext* cx, JSString* str);
 void AssertValidSymbolPtr(JSContext* cx, JS::Symbol* sym);
+void AssertValidBigIntPtr(JSContext* cx, JS::BigInt* bi);
 void AssertValidValue(JSContext* cx, Value* v);
 
 void MarkValueFromJit(JSRuntime* rt, Value* vp);
@@ -1170,8 +1171,6 @@ JSString* TypeOfObject(JSObject* obj, JSRuntime* rt);
 bool GetPrototypeOf(JSContext* cx, HandleObject target,
                     MutableHandleValue rval);
 
-void CloseIteratorFromIon(JSContext* cx, JSObject* obj);
-
 bool DoConcatStringObject(JSContext* cx, HandleValue lhs, HandleValue rhs,
                           MutableHandleValue res);
 
@@ -1204,6 +1203,9 @@ extern const VMFunction NativeGetElementInfo;
 
 extern const VMFunction AddOrUpdateSparseElementHelperInfo;
 extern const VMFunction GetSparseElementHelperInfo;
+
+extern const VMFunction ToNumberInfo;
+extern const VMFunction ToNumericInfo;
 
 // TailCall VMFunctions
 extern const VMFunction DoConcatStringObjectInfo;

@@ -14,7 +14,7 @@ use api::DevicePoint;
 use border::{get_max_scale_for_border, build_border_instances};
 use border::BorderSegmentCacheKey;
 use clip::{ClipStore};
-use clip_scroll_tree::{ClipScrollTree, SpatialNodeIndex, ROOT_SPATIAL_NODE_INDEX};
+use clip_scroll_tree::{ROOT_SPATIAL_NODE_INDEX, ClipScrollTree, SpatialNodeIndex, VisibleFace};
 use clip::{ClipDataStore, ClipNodeFlags, ClipChainId, ClipChainInstance, ClipItem};
 use debug_colors;
 use debug_render::DebugItem;
@@ -51,7 +51,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use storage;
 use util::{ScaleOffset, MatrixHelpers, MaxRect, Recycler, TransformedRectKind};
 use util::{pack_as_float, project_rect, raster_rect_to_device_pixels};
-use util::{scale_factors, clamp_to_scale_factor, RectHelpers};
+use util::{scale_factors, clamp_to_scale_factor};
 use smallvec::SmallVec;
 
 pub mod borders;
@@ -127,21 +127,6 @@ impl PrimitiveOpacity {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum VisibleFace {
-    Front,
-    Back,
-}
-
-impl ops::Not for VisibleFace {
-    type Output = Self;
-    fn not(self) -> Self {
-        match self {
-            VisibleFace::Front => VisibleFace::Back,
-            VisibleFace::Back => VisibleFace::Front,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub enum CoordinateSpaceMapping<F, T> {
@@ -155,32 +140,27 @@ impl<F, T> CoordinateSpaceMapping<F, T> {
         ref_spatial_node_index: SpatialNodeIndex,
         target_node_index: SpatialNodeIndex,
         clip_scroll_tree: &ClipScrollTree,
-    ) -> Option<Self> {
+    ) -> Option<(Self, VisibleFace)> {
         let spatial_nodes = &clip_scroll_tree.spatial_nodes;
         let ref_spatial_node = &spatial_nodes[ref_spatial_node_index.0 as usize];
         let target_spatial_node = &spatial_nodes[target_node_index.0 as usize];
 
         if ref_spatial_node_index == target_node_index {
-            Some(CoordinateSpaceMapping::Local)
+            Some((CoordinateSpaceMapping::Local, VisibleFace::Front))
         } else if ref_spatial_node.coordinate_system_id == target_spatial_node.coordinate_system_id {
-            Some(CoordinateSpaceMapping::ScaleOffset(
-                ref_spatial_node.coordinate_system_relative_scale_offset
-                    .inverse()
-                    .accumulate(
-                        &target_spatial_node.coordinate_system_relative_scale_offset
-                    )
-            ))
+            let scale_offset = ref_spatial_node.coordinate_system_relative_scale_offset
+                .inverse()
+                .accumulate(&target_spatial_node.coordinate_system_relative_scale_offset);
+            Some((CoordinateSpaceMapping::ScaleOffset(scale_offset), VisibleFace::Front))
         } else {
-            let transform = clip_scroll_tree.get_relative_transform(
-                target_node_index,
-                ref_spatial_node_index,
-            );
-
-            transform.map(|transform| {
-                CoordinateSpaceMapping::Transform(
-                    transform.with_source::<F>().with_destination::<T>()
-                )
-            })
+            clip_scroll_tree
+                .get_relative_transform(target_node_index, ref_spatial_node_index)
+                .map(|relative| (
+                    CoordinateSpaceMapping::Transform(
+                        relative.flattened.with_source::<F>().with_destination::<T>()
+                    ),
+                    relative.visible_face,
+                ))
         }
     }
 }
@@ -191,6 +171,7 @@ pub struct SpaceMapper<F, T> {
     pub ref_spatial_node_index: SpatialNodeIndex,
     pub current_target_spatial_node_index: SpatialNodeIndex,
     pub bounds: TypedRect<f32, T>,
+    visible_face: VisibleFace,
 }
 
 impl<F, T> SpaceMapper<F, T> where F: fmt::Debug {
@@ -203,6 +184,7 @@ impl<F, T> SpaceMapper<F, T> where F: fmt::Debug {
             ref_spatial_node_index,
             current_target_spatial_node_index: ref_spatial_node_index,
             bounds,
+            visible_face: VisibleFace::Front,
         }
     }
 
@@ -225,11 +207,14 @@ impl<F, T> SpaceMapper<F, T> where F: fmt::Debug {
         if target_node_index != self.current_target_spatial_node_index {
             self.current_target_spatial_node_index = target_node_index;
 
-            self.kind = CoordinateSpaceMapping::new(
+            let (kind, visible_face) = CoordinateSpaceMapping::new(
                 self.ref_spatial_node_index,
                 target_node_index,
                 clip_scroll_tree,
             ).expect("bug: should have been culled by invalid node");
+
+            self.kind = kind;
+            self.visible_face = visible_face;
         }
     }
 
@@ -284,17 +269,7 @@ impl<F, T> SpaceMapper<F, T> where F: fmt::Debug {
     }
 
     pub fn visible_face(&self) -> VisibleFace {
-        match self.kind {
-            CoordinateSpaceMapping::Local => VisibleFace::Front,
-            CoordinateSpaceMapping::ScaleOffset(_) => VisibleFace::Front,
-            CoordinateSpaceMapping::Transform(ref transform) => {
-                if transform.is_backface_visible() {
-                    VisibleFace::Back
-                } else {
-                    VisibleFace::Front
-                }
-            }
-        }
+        self.visible_face
     }
 }
 
@@ -845,6 +820,7 @@ use intern_types::prim::Handle as PrimitiveDataHandle;
 // that avoids allocating an intermediate surface for most common
 // uses of opacity filters.
 #[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
 pub struct OpacityBinding {
     pub bindings: Vec<PropertyBinding<f32>>,
     pub current: f32,
@@ -887,6 +863,7 @@ pub struct VisibleMaskImageTile {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
 pub struct VisibleGradientTile {
     pub handle: GpuCacheHandle,
     pub local_rect: LayoutRect,
@@ -1301,6 +1278,7 @@ impl CreateShadow for PrimitiveKeyKind {
 pub struct PrimitiveDebugId(pub usize);
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
 pub enum PrimitiveInstanceKind {
     /// Direct reference to a Picture
     Picture {
@@ -1373,6 +1351,7 @@ pub enum PrimitiveInstanceKind {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
 pub struct PrimitiveVisibilityIndex(pub u32);
 
 impl PrimitiveVisibilityIndex {
@@ -1404,6 +1383,7 @@ pub struct PrimitiveVisibility {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
 pub struct PrimitiveInstance {
     /// Identifies the kind of primitive this
     /// instance is, and references to where
@@ -1674,6 +1654,7 @@ impl PrimitiveStoreStats {
     }
 }
 
+#[cfg_attr(feature = "capture", derive(Serialize))]
 pub struct PrimitiveStore {
     pub pictures: Vec<PicturePrimitive>,
     pub text_runs: TextRunStorage,
@@ -1764,6 +1745,7 @@ impl PrimitiveStore {
                     pic.local_rect,
                     frame_context,
                     frame_state,
+                    surface_index,
                 );
 
                 frame_state.tile_cache = Some(tile_cache);
@@ -1816,16 +1798,24 @@ impl PrimitiveStore {
                 frame_context.clip_scroll_tree,
             );
 
-            let (is_passthrough, prim_local_rect, clip_node_collector) = match prim_instance.kind {
+            let (is_passthrough, prim_local_rect) = match prim_instance.kind {
                 PrimitiveInstanceKind::Picture { pic_index, .. } => {
-                    if !self.pictures[pic_index.0].is_visible() {
-                        continue;
-                    }
+                    {
+                        let pic = &self.pictures[pic_index.0];
+                        if !pic.is_visible() {
+                            continue;
+                        }
 
-                    if let Some(ref raster_config) = self.pictures[pic_index.0].raster_config {
-                        if raster_config.establishes_raster_root {
-                            let surface = &frame_context.surfaces[raster_config.surface_index.0 as usize];
-                            frame_state.clip_store.push_raster_root(surface.surface_spatial_node_index);
+                        // If this picture has a surface, we will handle any active clips from parents
+                        // when compositing this surface. Otherwise, push the clip chain from this
+                        // picture on to the active stack for any child primitive(s) to include.
+                        match pic.raster_config {
+                            Some(_) => {
+                                frame_state.clip_chain_stack.push_surface();
+                            }
+                            None => {
+                                frame_state.clip_chain_stack.push_clip(prim_instance.clip_chain_id);
+                            }
                         }
                     }
 
@@ -1838,15 +1828,17 @@ impl PrimitiveStore {
 
                     let pic = &self.pictures[pic_index.0];
 
-                    let clip_node_collector = pic.raster_config.as_ref().and_then(|rc| {
-                        if rc.establishes_raster_root {
-                            Some(frame_state.clip_store.pop_raster_root())
-                        } else {
-                            None
+                    // Similar to above, pop either the clip chain or root entry off the current clip stack.
+                    match pic.raster_config {
+                        Some(_) => {
+                            frame_state.clip_chain_stack.pop_surface();
                         }
-                    });
+                        None => {
+                            frame_state.clip_chain_stack.pop_clip();
+                        }
+                    }
 
-                    (pic.raster_config.is_none(), pic.local_rect, clip_node_collector)
+                    (pic.raster_config.is_none(), pic.local_rect)
                 }
                 _ => {
                     let prim_data = &frame_state.data_stores.as_common_data(&prim_instance);
@@ -1856,7 +1848,7 @@ impl PrimitiveStore {
                         prim_data.prim_size,
                     );
 
-                    (false, prim_rect, None)
+                    (false, prim_rect)
                 }
             };
 
@@ -1900,9 +1892,13 @@ impl PrimitiveStore {
                     }
                 };
 
+                // Include the clip chain for this primitive in the current stack.
+                frame_state.clip_chain_stack.push_clip(prim_instance.clip_chain_id);
+
                 if let Some(ref mut tile_cache) = frame_state.tile_cache {
                     if !tile_cache.update_prim_dependencies(
                         prim_instance,
+                        &frame_state.clip_chain_stack,
                         prim_local_rect,
                         frame_context.clip_scroll_tree,
                         frame_state.data_stores,
@@ -1913,6 +1909,9 @@ impl PrimitiveStore {
                         &self.images,
                     ) {
                         prim_instance.visibility_info = PrimitiveVisibilityIndex::INVALID;
+                        // Ensure the primitive clip is popped - perhaps we can use
+                        // some kind of scope to do this automatically in future.
+                        frame_state.clip_chain_stack.pop_clip();
                         continue;
                     }
                 }
@@ -1920,7 +1919,7 @@ impl PrimitiveStore {
                 let clip_chain = frame_state
                     .clip_store
                     .build_clip_chain_instance(
-                        prim_instance,
+                        frame_state.clip_chain_stack.current_clips(),
                         local_rect,
                         prim_instance.local_clip_rect,
                         prim_context.spatial_node_index,
@@ -1931,9 +1930,11 @@ impl PrimitiveStore {
                         frame_state.resource_cache,
                         frame_context.device_pixel_scale,
                         &frame_context.screen_world_rect,
-                        clip_node_collector.as_ref(),
                         &mut frame_state.data_stores.clip,
                     );
+
+                // Ensure the primitive clip is popped
+                frame_state.clip_chain_stack.pop_clip();
 
                 let clip_chain = match clip_chain {
                     Some(clip_chain) => clip_chain,
@@ -2218,6 +2219,15 @@ impl PrimitiveStore {
                 // Mark whether this picture has a complex coordinate system.
                 let is_passthrough = pic_context_for_children.is_passthrough;
 
+                // Similar to the logic in the visibility pass, push either the
+                // picture clip chain or a new root, depending on whether this
+                // picture is backed by a surface.
+                if is_passthrough {
+                    frame_state.clip_chain_stack.push_clip(prim_instance.clip_chain_id);
+                } else {
+                    frame_state.clip_chain_stack.push_surface();
+                }
+
                 self.prepare_primitives(
                     &mut prim_list,
                     &pic_context_for_children,
@@ -2228,8 +2238,11 @@ impl PrimitiveStore {
                     scratch,
                 );
 
-                if !pic_state_for_children.is_cacheable {
-                    pic_state.is_cacheable = false;
+                // And now undo the clip stack logic above.
+                if is_passthrough {
+                    frame_state.clip_chain_stack.pop_clip();
+                } else {
+                    frame_state.clip_chain_stack.pop_surface();
                 }
 
                 // Restore the dependencies (borrow check dance)
@@ -2249,6 +2262,9 @@ impl PrimitiveStore {
         };
 
         if !is_passthrough {
+            // Push the per-primitive clip chain onto the current active stack
+            frame_state.clip_chain_stack.push_clip(prim_instance.clip_chain_id);
+
             prim_instance.update_clip_task(
                 prim_context,
                 pic_context.raster_spatial_node_index,
@@ -2261,6 +2277,9 @@ impl PrimitiveStore {
                 scratch,
             );
 
+            // Pop the primitive clip chain.
+            frame_state.clip_chain_stack.pop_clip();
+
             if prim_instance.is_chased() {
                 println!("\tconsidered visible and ready with local pos {:?}", prim_instance.prim_origin);
             }
@@ -2270,11 +2289,6 @@ impl PrimitiveStore {
         {
             prim_instance.prepared_frame_id = frame_state.render_tasks.frame_id();
         }
-
-        pic_state.is_cacheable &= prim_instance.is_cacheable(
-            &data_stores,
-            frame_state.resource_cache,
-        );
 
         match prim_instance.kind {
             PrimitiveInstanceKind::Picture { pic_index, .. } => {
@@ -2301,17 +2315,6 @@ impl PrimitiveStore {
                     }
                 } else {
                     prim_instance.visibility_info = PrimitiveVisibilityIndex::INVALID;
-                }
-
-                if let Some(mut request) = frame_state.gpu_cache.request(&mut pic.gpu_location) {
-                    request.push(PremultipliedColorF::WHITE);
-                    request.push(PremultipliedColorF::WHITE);
-                    request.push([
-                        -1.0,       // -ve means use prim rect for stretch size
-                        0.0,
-                        0.0,
-                        0.0,
-                    ]);
                 }
             }
             PrimitiveInstanceKind::TextRun { .. } |
@@ -2662,90 +2665,77 @@ impl PrimitiveStore {
                     .resource_cache
                     .get_image_properties(image_data.key);
 
-                if let Some(image_properties) = image_properties {
-                    if let Some(tile_size) = image_properties.tiling {
-                        let device_image_size = image_properties.descriptor.size;
+                if let Some(ImageProperties { descriptor, tiling: Some(tile_size), .. }) = image_properties {
+                    let device_image_size = descriptor.size;
 
-                        // Tighten the clip rect because decomposing the repeated image can
-                        // produce primitives that are partially covering the original image
-                        // rect and we want to clip these extra parts out.
-                        let prim_info = &scratch.prim_info[prim_instance.visibility_info.0 as usize];
-                        let prim_rect = LayoutRect::new(
-                            prim_instance.prim_origin,
-                            common_data.prim_size,
-                        );
-                        let tight_clip_rect = prim_info
-                            .combined_local_clip_rect
-                            .intersection(&prim_rect).unwrap();
+                    // Tighten the clip rect because decomposing the repeated image can
+                    // produce primitives that are partially covering the original image
+                    // rect and we want to clip these extra parts out.
+                    let prim_info = &scratch.prim_info[prim_instance.visibility_info.0 as usize];
+                    let prim_rect = LayoutRect::new(
+                        prim_instance.prim_origin,
+                        common_data.prim_size,
+                    );
+                    let tight_clip_rect = prim_info
+                        .combined_local_clip_rect
+                        .intersection(&prim_rect).unwrap();
+                    image_instance.tight_local_clip_rect = tight_clip_rect;
 
-                        let visible_rect = compute_conservative_visible_rect(
-                            prim_context,
-                            &frame_state.current_dirty_region().combined.world_rect,
-                            &tight_clip_rect
-                        );
+                    let visible_rect = compute_conservative_visible_rect(
+                        prim_context,
+                        &frame_state.current_dirty_region().combined.world_rect,
+                        &tight_clip_rect
+                    );
 
-                        let base_edge_flags = edge_flags_for_tile_spacing(&image_data.tile_spacing);
+                    let base_edge_flags = edge_flags_for_tile_spacing(&image_data.tile_spacing);
 
-                        let stride = image_data.stretch_size + image_data.tile_spacing;
+                    let stride = image_data.stretch_size + image_data.tile_spacing;
 
-                        let repetitions = ::image::repetitions(
-                            &prim_rect,
-                            &visible_rect,
-                            stride,
-                        );
+                    let repetitions = ::image::repetitions(
+                        &prim_rect,
+                        &visible_rect,
+                        stride,
+                    );
 
-                        let request = ImageRequest {
-                            key: image_data.key,
-                            rendering: image_data.image_rendering,
-                            tile: None,
+                    let request = ImageRequest {
+                        key: image_data.key,
+                        rendering: image_data.image_rendering,
+                        tile: None,
+                    };
+
+                    for Repetition { origin, edge_flags } in repetitions {
+                        let edge_flags = base_edge_flags | edge_flags;
+
+                        let image_rect = LayoutRect {
+                            origin,
+                            size: image_data.stretch_size,
                         };
 
-                        for Repetition { origin, edge_flags } in repetitions {
-                            let edge_flags = base_edge_flags | edge_flags;
+                        let tiles = ::image::tiles(
+                            &image_rect,
+                            &visible_rect,
+                            &device_image_size,
+                            tile_size as i32,
+                        );
 
-                            let image_rect = LayoutRect {
-                                origin,
-                                size: image_data.stretch_size,
-                            };
-
-                            let tiles = ::image::tiles(
-                                &image_rect,
-                                &visible_rect,
-                                &device_image_size,
-                                tile_size as i32,
+                        for tile in tiles {
+                            frame_state.resource_cache.request_image(
+                                request.with_tile(tile.offset),
+                                frame_state.gpu_cache,
                             );
 
-                            for tile in tiles {
-                                frame_state.resource_cache.request_image(
-                                    request.with_tile(tile.offset),
-                                    frame_state.gpu_cache,
-                                );
-
-                                let mut handle = GpuCacheHandle::new();
-                                if let Some(mut request) = frame_state.gpu_cache.request(&mut handle) {
-                                    request.push(PremultipliedColorF::WHITE);
-                                    request.push(PremultipliedColorF::WHITE);
-                                    request.push([tile.rect.size.width, tile.rect.size.height, 0.0, 0.0]);
-                                }
-
-                                image_instance.visible_tiles.push(VisibleImageTile {
-                                    tile_offset: tile.offset,
-                                    handle,
-                                    edge_flags: tile.edge_flags & edge_flags,
-                                    local_rect: tile.rect,
-                                    local_clip_rect: tight_clip_rect,
-                                });
-                            }
+                            image_instance.visible_tiles.push(VisibleImageTile {
+                                tile_offset: tile.offset,
+                                edge_flags: tile.edge_flags & edge_flags,
+                                local_rect: tile.rect,
+                                local_clip_rect: tight_clip_rect,
+                            });
                         }
+                    }
 
-                        if image_instance.visible_tiles.is_empty() {
-                            // At this point if we don't have tiles to show it means we could probably
-                            // have done a better a job at culling during an earlier stage.
-                            // Clearing the screen rect has the effect of "culling out" the primitive
-                            // from the point of view of the batch builder, and ensures we don't hit
-                            // assertions later on because we didn't request any image.
-                            prim_instance.visibility_info = PrimitiveVisibilityIndex::INVALID;
-                        }
+                    if image_instance.visible_tiles.is_empty() {
+                        // Mark as invisible
+                        prim_instance.visibility_info = PrimitiveVisibilityIndex::INVALID;
                     }
                 }
 
@@ -2858,7 +2848,7 @@ fn write_segment<F>(
     scratch: &mut PrimitiveScratchBuffer,
     f: F,
 ) where F: Fn(&mut GpuDataRequest) {
-    debug_assert!(segment_instance_index != SegmentInstanceIndex::INVALID);
+    debug_assert_ne!(segment_instance_index, SegmentInstanceIndex::INVALID);
     if segment_instance_index != SegmentInstanceIndex::UNUSED {
         let segment_instance = &mut scratch.segment_instances[segment_instance_index];
 
@@ -3130,15 +3120,17 @@ impl PrimitiveInstance {
             PrimitiveInstanceKind::Image { data_handle, image_instance_index, .. } => {
                 let image_data = &data_stores.image[data_handle].kind;
                 let image_instance = &mut prim_store.images[image_instance_index];
-                // tiled images don't support segmentation
+                //Note: tiled images don't support automatic segmentation,
+                // they strictly produce one segment per visible tile instead.
                 if frame_state
                     .resource_cache
                     .get_image_properties(image_data.key)
                     .and_then(|properties| properties.tiling)
-                    .is_some() {
-                        image_instance.segment_instance_index = SegmentInstanceIndex::UNUSED;
-                        return;
-                    }
+                    .is_some()
+                {
+                    image_instance.segment_instance_index = SegmentInstanceIndex::UNUSED;
+                    return;
+                }
                 &mut image_instance.segment_instance_index
             }
             PrimitiveInstanceKind::Picture { .. } |
@@ -3168,7 +3160,7 @@ impl PrimitiveInstance {
                 frame_state.segment_builder.build(|segment| {
                     segments.push(
                         BrushSegment::new(
-                            segment.rect.translate(&LayoutVector2D::new(-prim_local_rect.origin.x, -prim_local_rect.origin.y)),
+                            segment.rect.translate(&-prim_local_rect.origin.to_vector()),
                             segment.has_mask,
                             segment.edge_flags,
                             [0.0; 4],
@@ -3320,7 +3312,7 @@ impl PrimitiveInstance {
                 let segment_clip_chain = frame_state
                     .clip_store
                     .build_clip_chain_instance(
-                        self,
+                        frame_state.clip_chain_stack.current_clips(),
                         segment.local_rect.translate(&LayoutVector2D::new(
                             self.prim_origin.x,
                             self.prim_origin.y,
@@ -3334,7 +3326,6 @@ impl PrimitiveInstance {
                         frame_state.resource_cache,
                         frame_context.device_pixel_scale,
                         &dirty_world_rect,
-                        None,
                         &mut data_stores.clip,
                     );
 
@@ -3495,9 +3486,9 @@ fn compute_snap_offset_impl(
     )
 }
 
-/// Retrieve the exact device space rectangle for a primitive, taking
-/// into account the snapping that the shaders will apply if the transform
-/// is axis-aligned.
+/// Retrieve the exact unsnapped device space rectangle for a primitive.
+/// If the transform is axis-aligned, compute the snapping offsets that
+/// the shaders will apply.
 fn get_unclipped_device_rect(
     prim_spatial_node_index: SpatialNodeIndex,
     root_spatial_node_index: SpatialNodeIndex,
@@ -3542,11 +3533,7 @@ fn get_unclipped_device_rect(
                 bottom_right,
             };
 
-            let p0 = unclipped_device_rect.origin + top_left;
-            let p1 = unclipped_device_rect.bottom_right() + bottom_right;
-            let unclipped = DeviceRect::from_floats(p0.x, p0.y, p1.x, p1.y);
-
-            Some((unclipped, snap_offsets))
+            Some((unclipped_device_rect, snap_offsets))
         }
         TransformedRectKind::Complex => {
             Some((unclipped_device_rect, SnapOffsets::empty()))

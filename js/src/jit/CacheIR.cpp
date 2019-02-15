@@ -1939,36 +1939,27 @@ bool GetPropIRGenerator::tryAttachModuleNamespace(HandleObject obj,
 }
 
 bool GetPropIRGenerator::tryAttachPrimitive(ValOperandId valId, HandleId id) {
-  JSValueType primitiveType;
-  RootedNativeObject proto(cx_);
+  JSProtoKey protoKey;
   if (val_.isString()) {
     if (JSID_IS_ATOM(id, cx_->names().length)) {
       // String length is special-cased, see js::GetProperty.
       return false;
     }
-    primitiveType = JSVAL_TYPE_STRING;
-    proto = MaybeNativeObject(cx_->global()->maybeGetPrototype(JSProto_String));
+    protoKey = JSProto_String;
   } else if (val_.isNumber()) {
-    primitiveType = JSVAL_TYPE_DOUBLE;
-    proto = MaybeNativeObject(cx_->global()->maybeGetPrototype(JSProto_Number));
+    protoKey = JSProto_Number;
   } else if (val_.isBoolean()) {
-    primitiveType = JSVAL_TYPE_BOOLEAN;
-    proto =
-        MaybeNativeObject(cx_->global()->maybeGetPrototype(JSProto_Boolean));
+    protoKey = JSProto_Boolean;
   } else if (val_.isSymbol()) {
-    primitiveType = JSVAL_TYPE_SYMBOL;
-    proto = MaybeNativeObject(cx_->global()->maybeGetPrototype(JSProto_Symbol));
-  }
-#ifdef ENABLE_BIGINT
-  else if (val_.isBigInt()) {
-    primitiveType = JSVAL_TYPE_BIGINT;
-    proto = MaybeNativeObject(cx_->global()->maybeGetPrototype(JSProto_BigInt));
-  }
-#endif
-  else {
+    protoKey = JSProto_Symbol;
+  } else if (val_.isBigInt()) {
+    protoKey = JSProto_BigInt;
+  } else {
     MOZ_ASSERT(val_.isNullOrUndefined() || val_.isMagic());
     return false;
   }
+
+  RootedObject proto(cx_, cx_->global()->maybeGetPrototype(protoKey));
   if (!proto) {
     return false;
   }
@@ -1989,7 +1980,11 @@ bool GetPropIRGenerator::tryAttachPrimitive(ValOperandId valId, HandleId id) {
     }
   }
 
-  writer.guardType(valId, primitiveType);
+  if (val_.isNumber()) {
+    writer.guardIsNumber(valId);
+  } else {
+    writer.guardType(valId, val_.extractNonDoubleType());
+  }
   maybeEmitIdGuard(id);
 
   ObjOperandId protoId = writer.loadObject(proto);
@@ -5444,7 +5439,8 @@ bool CompareIRGenerator::tryAttachPrimitiveUndefined(ValOperandId lhsId,
   // The set of primitive cases we want to handle here (excluding null,
   // undefined)
   auto isPrimitive = [](HandleValue& x) {
-    return x.isString() || x.isSymbol() || x.isBoolean() || x.isNumber();
+    return x.isString() || x.isSymbol() || x.isBoolean() || x.isNumber() ||
+           x.isBigInt();
   };
 
   if (!(lhsVal_.isNullOrUndefined() && isPrimitive(rhsVal_)) &&
@@ -5463,6 +5459,9 @@ bool CompareIRGenerator::tryAttachPrimitiveUndefined(ValOperandId lhsId,
         return;
       case JSVAL_TYPE_SYMBOL:
         writer.guardIsSymbol(id);
+        return;
+      case JSVAL_TYPE_BIGINT:
+        writer.guardIsBigInt(id);
         return;
       case JSVAL_TYPE_STRING:
         writer.guardIsString(id);

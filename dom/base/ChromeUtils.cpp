@@ -405,7 +405,8 @@ NS_IMPL_ISUPPORTS_INHERITED(IdleDispatchRunnable, IdleRunnable,
 
   JS::RootedObject global(cx);
   JS::RootedObject exports(cx);
-  nsresult rv = moduleloader->Import(cx, registryLocation, &global, &exports, ignoreExports);
+  nsresult rv = moduleloader->Import(cx, registryLocation, &global, &exports,
+                                     ignoreExports);
   if (NS_FAILED(rv)) {
     aRv.Throw(rv);
     return;
@@ -838,6 +839,14 @@ constexpr auto kSkipSelfHosted = JS::SavedFrameSelfHosted::Exclude;
 
   RefPtr<JSWindowActorService> service = JSWindowActorService::GetSingleton();
   service->RegisterWindowActor(aName, aOptions, aRv);
+}
+
+/* static */ void ChromeUtils::UnregisterWindowActor(
+    const GlobalObject& aGlobal, const nsAString& aName) {
+  MOZ_ASSERT(XRE_IsParentProcess());
+
+  RefPtr<JSWindowActorService> service = JSWindowActorService::GetSingleton();
+  service->UnregisterWindowActor(aName);
 }
 
 /* static */ bool ChromeUtils::IsClassifierBlockingErrorCode(

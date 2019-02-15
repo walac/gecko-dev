@@ -968,7 +968,7 @@ pref("gfx.webrender.dl.dump-parent", false);
 pref("gfx.webrender.dl.dump-content", false);
 pref("gfx.webrender.picture-caching", true);
 
-#ifdef EARLY_BETA_OR_EARLIER
+#ifdef NIGHTLY_BUILD
 pref("performance.adjust_to_machine", true);
 #else
 pref("performance.adjust_to_machine", false);
@@ -1291,7 +1291,7 @@ pref("dom.allow_scripts_to_close_windows",          false);
 pref("dom.require_user_interaction_for_beforeunload", true);
 
 pref("dom.popup_maximum",                           20);
-pref("dom.popup_allowed_events", "change click dblclick mouseup pointerup notificationclick reset submit touchend");
+pref("dom.popup_allowed_events", "change click dblclick mouseup pointerup notificationclick reset submit touchend contextmenu");
 
 pref("dom.disable_open_click_delay", 1000);
 pref("dom.serviceWorkers.disable_open_click_delay", 1000);
@@ -1458,10 +1458,15 @@ pref("javascript.options.strict",           false);
 #ifdef DEBUG
 pref("javascript.options.strict.debug",     false);
 #endif
+pref("javascript.options.unboxed_objects",  false);
 pref("javascript.options.baselinejit",      true);
 //Duplicated in JitOptions - ensure both match.
 pref("javascript.options.baselinejit.threshold", 10);
+#ifdef _ARM64_
+pref("javascript.options.ion",              false);
+#else
 pref("javascript.options.ion",              true);
+#endif
 //Duplicated in JitOptions - ensure both match.
 pref("javascript.options.ion.threshold",    1000);
 //Duplicated in JitOptions - ensure both match.
@@ -2681,7 +2686,7 @@ pref("csp.overrule_about_uris_without_csp_whitelist", false);
 pref("csp.skip_about_page_has_csp_assert", false);
 // assertion flag will be set to false after fixing Bug 1473549
 pref("security.allow_eval_with_system_principal", false);
-pref("security.uris_using_eval_with_system_principal", "autocomplete.xml,redux.js,react-redux.js,content-task.js,content-task.js,tree.xml,dialog.xml,preferencesbindings.js,wizard.xml,lodash.js,jszip.js,ajv-4.1.1.js,updates.js,setup,jsol.js,parent_utils.js");
+pref("security.uris_using_eval_with_system_principal", "autocomplete.xml,redux.js,react-redux.js,content-task.js,content-task.js,tree.xml,dialog.xml,preferencesbindings.js,wizard.xml,lodash.js,jszip.js,ajv-4.1.1.js,updates.js,setup,jsol.js,parent_utils.js,chrometask_chromescript");
 #endif
 
 // Default Content Security Policy to apply to signed contents.
@@ -4658,6 +4663,7 @@ pref("signon.autofillForms",                true);
 pref("signon.autofillForms.http",           false);
 pref("signon.autologin.proxy",              false);
 pref("signon.formlessCapture.enabled",      true);
+pref("signon.privateBrowsingCapture.enabled", false);
 pref("signon.storeWhenAutocompleteOff",     true);
 pref("signon.debug",                        false);
 pref("signon.recipes.path",                 "chrome://passwordmgr/content/recipes.json");
@@ -4835,6 +4841,7 @@ pref("gl.multithreaded", true);
 #endif
 pref("gl.ignore-dx-interop2-blacklist", false);
 pref("gl.use-tls-is-current", 0);
+pref("gl.allow-high-power", true);
 
 #ifdef XP_MACOSX
 pref("webgl.1.allow-core-profiles", true);
@@ -4849,6 +4856,7 @@ pref("webgl.min_capability_mode", false);
 pref("webgl.disable-extensions", false);
 pref("webgl.msaa-force", false);
 pref("webgl.prefer-16bpp", false);
+pref("webgl.default-low-power", false);
 pref("webgl.default-no-alpha", false);
 pref("webgl.force-layers-readback", false);
 pref("webgl.force-index-validation", 0);
@@ -5105,7 +5113,7 @@ pref("extensions.webextensions.keepStorageOnUninstall", false);
 pref("extensions.webextensions.keepUuidOnUninstall", false);
 // Redirect basedomain used by identity api
 pref("extensions.webextensions.identity.redirectDomain", "extensions.allizom.org");
-pref("extensions.webextensions.restrictedDomains", "accounts-static.cdn.mozilla.net,accounts.firefox.com,addons.cdn.mozilla.net,addons.mozilla.org,api.accounts.firefox.com,content.cdn.mozilla.net,discovery.addons.mozilla.org,input.mozilla.org,install.mozilla.org,oauth.accounts.firefox.com,profile.accounts.firefox.com,support.mozilla.org,sync.services.mozilla.com,testpilot.firefox.com");
+pref("extensions.webextensions.restrictedDomains", "accounts-static.cdn.mozilla.net,accounts.firefox.com,addons.cdn.mozilla.net,addons.mozilla.org,api.accounts.firefox.com,content.cdn.mozilla.net,discovery.addons.mozilla.org,input.mozilla.org,install.mozilla.org,oauth.accounts.firefox.com,profile.accounts.firefox.com,support.mozilla.org,sync.services.mozilla.com");
 // Whether or not webextension icon theming is supported.
 pref("extensions.webextensions.themes.icons.enabled", false);
 pref("extensions.webextensions.remote", false);
@@ -5137,6 +5145,9 @@ pref("extensions.webextensions.enablePerformanceCounters", true);
 // When reached, the counters are sent to the main process and
 // reset, so we reduce memory footprint.
 pref("extensions.webextensions.performanceCountersMaxAge", 1000);
+
+// The HTML about:addons page.
+pref("extensions.htmlaboutaddons.enabled", false);
 
 // Report Site Issue button
 // Note that on enabling the button in other release channels, make sure to
@@ -5571,7 +5582,7 @@ pref("urlclassifier.features.cryptomining.blacklistTables", "base-cryptomining-t
 pref("urlclassifier.features.cryptomining.whitelistTables", "mozstd-trackwhite-digest256");
 
 // These tables will never trigger a gethash call.
-pref("urlclassifier.disallow_completions", "test-malware-simple,test-harmful-simple,test-phish-simple,test-unwanted-simple,test-track-simple,test-trackwhite-simple,test-block-simple,goog-downloadwhite-digest256,base-track-digest256,mozstd-trackwhite-digest256,content-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256,block-flash-digest256,except-flash-digest256,allow-flashallow-digest256,except-flashallow-digest256,block-flashsubdoc-digest256,except-flashsubdoc-digest256,goog-passwordwhite-proto,ads-track-digest256,social-track-digest256,analytics-track-digest256,base-fingerprinting-track-digest256,content-fingerprinting-track-digest256,base-cryptomining-track-digest256,content-cryptomining-track-digest256,fanboyannoyance-ads-digest256,fanboysocial-ads-digest256,easylist-ads-digest256,easyprivacy-ads-digest256,adguard-ads-digest256");
+pref("urlclassifier.disallow_completions", "goog-downloadwhite-digest256,base-track-digest256,mozstd-trackwhite-digest256,content-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256,block-flash-digest256,except-flash-digest256,allow-flashallow-digest256,except-flashallow-digest256,block-flashsubdoc-digest256,except-flashsubdoc-digest256,goog-passwordwhite-proto,ads-track-digest256,social-track-digest256,analytics-track-digest256,base-fingerprinting-track-digest256,content-fingerprinting-track-digest256,base-cryptomining-track-digest256,content-cryptomining-track-digest256,fanboyannoyance-ads-digest256,fanboysocial-ads-digest256,easylist-ads-digest256,easyprivacy-ads-digest256,adguard-ads-digest256");
 
 // Number of random entries to send with a gethash request
 pref("urlclassifier.gethashnoise", 4);
@@ -5987,9 +5998,7 @@ pref("dom.datatransfer.mozAtAPIs", true);
 #endif
 
 // Whether or not Prio is supported on this platform.
-#ifdef MOZ_LIBPRIO
 pref("prio.enabled", false);
-#endif
 
 // External.AddSearchProvider is deprecated and it will be removed in the next
 // cycles.

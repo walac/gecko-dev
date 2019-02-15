@@ -100,11 +100,6 @@ using namespace mozilla::layers;
 
 uint8_t gNotifySubDocInvalidationData;
 
-// This preference was first introduced in Bug 232227, in order to prevent
-// system colors from being exposed to CSS or canvas.
-constexpr char kUseStandinsForNativeColors[] =
-    "ui.use_standins_for_native_colors";
-
 /**
  * Layer UserData for ContainerLayers that want to be notified
  * of local invalidations of them and their descendant layers.
@@ -237,7 +232,8 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
       mQuirkSheetAdded(false),
       mNeedsPrefUpdate(false),
       mHadNonBlankPaint(false),
-      mHadContentfulPaint(false)
+      mHadContentfulPaint(false),
+      mHadContentfulPaintComposite(false)
 #ifdef DEBUG
       ,
       mInitialized(false)
@@ -277,7 +273,6 @@ static const char* gExactCallbackPrefs[] = {
     "layout.css.devPixelsPerPx",
     "nglayout.debug.paint_flashing",
     "nglayout.debug.paint_flashing_chrome",
-    kUseStandinsForNativeColors,
     "intl.accept_languages",
     nullptr,
 };
@@ -376,16 +371,10 @@ void nsPresContext::GetDocumentColorPreferences() {
   bool isChromeDocShell = false;
   static int32_t sDocumentColorsSetting;
   static bool sDocumentColorsSettingPrefCached = false;
-  static bool sUseStandinsForNativeColors = false;
   if (!sDocumentColorsSettingPrefCached) {
     sDocumentColorsSettingPrefCached = true;
     Preferences::AddIntVarCache(&sDocumentColorsSetting,
                                 "browser.display.document_color_use", 0);
-
-    // The preference "ui.use_standins_for_native_colors" also affects
-    // default foreground and background colors.
-    Preferences::AddBoolVarCache(&sUseStandinsForNativeColors,
-                                 kUseStandinsForNativeColors);
   }
 
   dom::Document* doc = mDocument->GetDisplayDocument();
@@ -415,9 +404,9 @@ void nsPresContext::GetDocumentColorPreferences() {
         !Preferences::GetBool("browser.display.use_system_colors", false);
   }
 
-  if (sUseStandinsForNativeColors) {
-    // Once the preference "ui.use_standins_for_native_colors" is enabled,
-    // use fixed color values instead of prefered colors and system colors.
+  if (nsContentUtils::UseStandinsForNativeColors()) {
+    // Once the |nsContentUtils::UseStandinsForNativeColors()| is true,
+    // use fixed color values instead of preferred colors and system colors.
     mDefaultColor = LookAndFeel::GetColorUsingStandins(
         LookAndFeel::eColorID_windowtext, NS_RGB(0x00, 0x00, 0x00));
     mBackgroundColor = LookAndFeel::GetColorUsingStandins(
@@ -1465,10 +1454,14 @@ void nsPresContext::RecordInteractionTime(InteractionType aType,
 }
 
 nsITheme* nsPresContext::GetTheme() {
+#ifdef MOZ_WIDGET_GONK
+  sNoTheme = true;
+#else
   if (!sNoTheme && !mTheme) {
     mTheme = do_GetNativeTheme();
     if (!mTheme) sNoTheme = true;
   }
+#endif
 
   return mTheme;
 }
@@ -2277,6 +2270,16 @@ void nsPresContext::NotifyRevokingDidPaint(TransactionId aTransactionId) {
 
 void nsPresContext::NotifyDidPaintForSubtree(
     TransactionId aTransactionId, const mozilla::TimeStamp& aTimeStamp) {
+  if (mFirstContentfulPaintTransactionId && !mHadContentfulPaintComposite) {
+    if (aTransactionId >= *mFirstContentfulPaintTransactionId) {
+      mHadContentfulPaintComposite = true;
+      RefPtr<nsDOMNavigationTiming> timing = mDocument->GetNavigationTiming();
+      if (timing) {
+        timing->NotifyContentfulPaintForRootContentDocument(aTimeStamp);
+      }
+    }
+  }
+
   if (IsRoot() && mTransactions.IsEmpty()) {
     return;
   }
@@ -2557,12 +2560,10 @@ void nsPresContext::NotifyContentfulPaint() {
   if (!mHadContentfulPaint) {
     mHadContentfulPaint = true;
     if (IsRootContentDocument()) {
-      RefPtr<nsDOMNavigationTiming> timing = mDocument->GetNavigationTiming();
-      if (timing) {
-        timing->NotifyContentfulPaintForRootContentDocument();
+      if (nsRootPresContext* rootPresContext = GetRootPresContext()) {
+        mFirstContentfulPaintTransactionId =
+            Some(rootPresContext->mRefreshDriver->LastTransactionId().Next());
       }
-
-      mFirstContentfulPaintTime = TimeStamp::Now();
     }
   }
 }

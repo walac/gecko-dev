@@ -138,6 +138,7 @@
 #  include "jit/mips64/Assembler-mips64.h"
 #endif
 
+#include "wasm/WasmGC.h"
 #include "wasm/WasmGenerator.h"
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmOpIter.h"
@@ -949,11 +950,11 @@ using ScratchI8 = ScratchI32;
 
 // The stack frame.
 //
-// The frame has four parts ("below" means at lower addresses):
+// The stack frame has four parts ("below" means at lower addresses):
 //
-//  - the Header, comprising the Frame and DebugFrame elements;
-//  - the Local area, allocated below the header with various forms of
-//    alignment;
+//  - the Frame element;
+//  - the Local area, including the DebugFrame element; allocated below the
+//    header with various forms of alignment;
 //  - the Dynamic area, comprising the temporary storage the compiler uses for
 //    register spilling, allocated below the Local area;
 //  - the Arguments area, comprising memory allocated for outgoing calls,
@@ -962,33 +963,31 @@ using ScratchI8 = ScratchI32;
 //                 +============================+
 //                 |    Incoming arg            |
 //                 |    ...                     |
-//                 +----------------------------+
-//                 |    unspecified             |
 // --------------  +============================+
-//  ^              |    Frame (fixed size)      |
-// fixedSize       +----------------------------+ <------------------ FP
-//  |              |    DebugFrame (optional)   |               ^^
-//  |    --------  +============================+ ---------     ||
-//  |       ^      |    Local (static size)     |    ^          ||
-//  | localSize    |    ...                     |    |        framePushed
-//  v       v      |    (padding)               |    |          ||
-// --------------  +============================+ stackHeight   ||
-//          ^      |    Dynamic (variable)      |    |          ||
-//   dynamicSize   |    ...                     |    |          ||
-//          v      |    ...                     |    v          ||
-// --------------  |    (free space, sometimes) | ---------     v|
+//                 |    Frame (fixed size)      |
+// --------------  +============================+ <-------------------- FP
+//          ^      |    DebugFrame (optional)   |    ^                ^^
+//          |      +----------------------------+    |                ||
+//    localSize    |    Local (static size)     |    |                ||
+//          |      |    ...                     |    |        framePushed
+//          v      |    (padding)               |    |                ||
+// --------------  +============================+ currentStackHeight  ||
+//          ^      |    Dynamic (variable size) |    |                ||
+//   dynamicSize   |    ...                     |    |                ||
+//          v      |    ...                     |    v                ||
+// --------------  |    (free space, sometimes) | ---------           v|
 //                 +============================+ <----- SP not-during calls
-//                 |    Arguments (sometimes)   |                |
-//                 |    ...                     |                v
+//                 |    Arguments (sometimes)   |                      |
+//                 |    ...                     |                      v
 //                 +============================+ <----- SP during calls
 //
-// The Header is addressed off the stack pointer.  masm.framePushed() is always
+// The Frame is addressed off the stack pointer.  masm.framePushed() is always
 // correct, and masm.getStackPointer() + masm.framePushed() always addresses the
 // Frame, with the DebugFrame optionally below it.
 //
-// The Local area is laid out by BaseLocalIter and is allocated and deallocated
-// by standard prologue and epilogue functions that manipulate the stack
-// pointer, but it is accessed via BaseStackFrame.
+// The Local area (including the DebugFrame) is laid out by BaseLocalIter and is
+// allocated and deallocated by standard prologue and epilogue functions that
+// manipulate the stack pointer, but it is accessed via BaseStackFrame.
 //
 // The Dynamic area is maintained by and accessed via BaseStackFrame.  On some
 // systems (such as ARM64), the Dynamic memory may be allocated in chunks
@@ -1036,7 +1035,7 @@ void BaseLocalIter::settle() {
       case MIRType::Int64:
       case MIRType::Double:
       case MIRType::Float32:
-      case MIRType::Pointer:
+      case MIRType::RefOrNull:
         if (argsIter_->argInRegister()) {
           frameOffset_ = pushLocal(MIRTypeToSize(mirType_));
         } else {
@@ -1147,11 +1146,14 @@ class BaseStackFrameAllocator {
   static constexpr uint32_t ChunkSize = 8 * sizeof(void*);
   static constexpr uint32_t InitialChunk = ChunkSize;
 
-  // The current logical height of the frame, ie the sum of space for the
-  // Local and Dynamic areas.  The allocated size of the frame -- provided by
-  // masm.framePushed() -- is usually larger than currentStackHeight_, notably
-  // at the beginning of execution when we've allocated InitialChunk extra
-  // space.
+  // The current logical height of the frame is
+  //   currentStackHeight_ = localSize_ + dynamicSize
+  // where dynamicSize is not accounted for explicitly and localSize_ also
+  // includes size for the DebugFrame.
+  //
+  // The allocated size of the frame, provided by masm.framePushed(), is usually
+  // larger than currentStackHeight_, notably at the beginning of execution when
+  // we've allocated InitialChunk extra space.
 
   uint32_t currentStackHeight_;
 #endif
@@ -1205,9 +1207,10 @@ class BaseStackFrameAllocator {
  public:
   // The fixed amount of memory, in bytes, allocated on the stack below the
   // Header for purposes such as locals and other fixed values.  Includes all
-  // necessary alignment.
+  // necessary alignment, and on ARM64 also the initial chunk for the working
+  // stack memory.
 
-  uint32_t fixedSize() const {
+  uint32_t fixedAllocSize() const {
     MOZ_ASSERT(localSize_ != UINT32_MAX);
 #ifdef RABALDR_CHUNKY_STACK
     return localSize_ + InitialChunk;
@@ -1215,6 +1218,19 @@ class BaseStackFrameAllocator {
     return localSize_;
 #endif
   }
+
+#ifdef RABALDR_CHUNKY_STACK
+  // The allocated frame size is frequently larger than the logical stack
+  // height; we round up to a chunk boundary, and special case the initial
+  // chunk.
+  uint32_t framePushedForHeight(uint32_t logicalHeight) {
+    if (logicalHeight <= fixedAllocSize()) {
+      return fixedAllocSize();
+    }
+    return fixedAllocSize() + AlignBytes(logicalHeight - fixedAllocSize(),
+                                         ChunkSize);
+  }
+#endif
 
  protected:
   //////////////////////////////////////////////////////////////////////
@@ -1240,17 +1256,18 @@ class BaseStackFrameAllocator {
   void popChunkyBytes(uint32_t bytes) {
     checkChunkyInvariants();
     currentStackHeight_ -= bytes;
-    // Sometimes, popChunkyBytes() is used to pop a larger area, as when we
-    // drop values consumed by a call, and we may need to drop several
-    // chunks.  But never drop the initial chunk.
-    if (masm.framePushed() - currentStackHeight_ >= ChunkSize) {
-      uint32_t target =
-          Max(fixedSize(), AlignBytes(currentStackHeight_, ChunkSize));
-      uint32_t amount = masm.framePushed() - target;
-      if (amount) {
-        masm.freeStack(amount);
+    // Sometimes, popChunkyBytes() is used to pop a larger area, as when we drop
+    // values consumed by a call, and we may need to drop several chunks.  But
+    // never drop the initial chunk.  Crucially, the amount we drop is always an
+    // integral number of chunks.
+    uint32_t freeSpace = masm.framePushed() - currentStackHeight_;
+    if (freeSpace >= ChunkSize) {
+      uint32_t targetAllocSize = framePushedForHeight(currentStackHeight_);
+      uint32_t amountToFree = masm.framePushed() - targetAllocSize;
+      MOZ_ASSERT(amountToFree % ChunkSize == 0);
+      if (amountToFree) {
+        masm.freeStack(amountToFree);
       }
-      MOZ_ASSERT(masm.framePushed() >= fixedSize());
     }
     checkChunkyInvariants();
   }
@@ -1267,9 +1284,11 @@ class BaseStackFrameAllocator {
  private:
 #ifdef RABALDR_CHUNKY_STACK
   void checkChunkyInvariants() {
+    MOZ_ASSERT(masm.framePushed() >= fixedAllocSize());
     MOZ_ASSERT(masm.framePushed() >= currentStackHeight_);
-    MOZ_ASSERT(masm.framePushed() == fixedSize() ||
+    MOZ_ASSERT(masm.framePushed() == fixedAllocSize() ||
                masm.framePushed() - currentStackHeight_ < ChunkSize);
+    MOZ_ASSERT((masm.framePushed() - localSize_) % ChunkSize == 0);
   }
 #endif
 
@@ -1278,12 +1297,8 @@ class BaseStackFrameAllocator {
 
   uint32_t framePushedForHeight(StackHeight stackHeight) {
 #ifdef RABALDR_CHUNKY_STACK
-    // The allocated frame size is frequently larger than the stack height;
-    // we round up to a chunk boundary, and special case the initial chunk.
-    return stackHeight.height <= fixedSize()
-               ? fixedSize()
-               : fixedSize() +
-                     AlignBytes(stackHeight.height - fixedSize(), ChunkSize);
+    // A more complicated adjustment is needed.
+    return framePushedForHeight(stackHeight.height);
 #else
     // The allocated frame size equals the stack height.
     return stackHeight.height;
@@ -2090,18 +2105,24 @@ struct StackMapGenerator {
 
   // --- These can change at any point ---
 
-  // This holds masm.framePushed immediately before we move the stack
-  // pointer down so as to reserve space, in a function call, for arguments
-  // passed in memory.  To be more precise: this holds the value
-  // masm.framePushed would have had after moving the stack pointer over any
-  // alignment padding pushed before the arguments proper, but before the
-  // downward movement of the stack pointer that allocates space for the
-  // arguments proper.
+  // This holds masm.framePushed at it would be be for a function call
+  // instruction, but excluding the stack area used to pass arguments in
+  // memory.  That is, for an upcoming function call, this will hold
+  //
+  //   masm.framePushed() at the call instruction -
+  //      StackArgAreaSizeUnaligned(argumentTypes)
+  //
+  // This value denotes the lowest-addressed stack word covered by the current
+  // function's stackmap.  Words below this point form the highest-addressed
+  // area of the callee's stackmap.  Note that all alignment padding above the
+  // arguments-in-memory themselves belongs to the caller's stack map, which
+  // is why this is defined in terms of StackArgAreaSizeUnaligned() rather than
+  // StackArgAreaSizeAligned().
   //
   // When not inside a function call setup/teardown sequence, it is Nothing.
   // It can make Nothing-to/from-Some transitions arbitrarily as we progress
   // through the function body.
-  Maybe<uint32_t> framePushedBeforePushingCallArgs_;
+  Maybe<uint32_t> framePushedExcludingOutboundCallArgs_;
 
   // The number of memory-resident, ref-typed entries on the containing
   // BaseCompiler::stk_.
@@ -2145,7 +2166,7 @@ struct StackMapGenerator {
     }
 
     for (ABIArgIter<const ValTypeVector> i(args); !i.done(); i++) {
-      if (!i->argInRegister() || i.mirType() != MIRType::Pointer) {
+      if (!i->argInRegister() || i.mirType() != MIRType::RefOrNull) {
         continue;
       }
 
@@ -2213,24 +2234,31 @@ struct StackMapGenerator {
     // upcoming function call, since those words "belong" to the stackmap of
     // the callee, not to the stackmap of this function.  Note however that
     // any alignment padding pushed prior to pushing the args *does* belong to
-    // this function.  That padding is taken into account at the point where
-    // framePushedBeforePushingCallArgs_ is set.
+    // this function.
+    //
+    // That padding is taken into account at the point where
+    // framePushedExcludingOutboundCallArgs_ is set, viz, in startCallArgs(),
+    // and comprises two components:
+    //
+    // * call->frameAlignAdjustment
+    // * the padding applied to the stack arg area itself.  That is:
+    //   StackArgAreaSize(argTys) - StackArgAreaSizeUnpadded(argTys)
     Maybe<uint32_t> framePushedExcludingArgs;
     if (framePushedAtEntryToBody_.isNothing()) {
       // Still in the prologue.  framePushedExcludingArgs remains Nothing.
-      MOZ_ASSERT(framePushedBeforePushingCallArgs_.isNothing());
+      MOZ_ASSERT(framePushedExcludingOutboundCallArgs_.isNothing());
     } else {
       // In the body.
       MOZ_ASSERT(masm_.framePushed() >= framePushedAtEntryToBody_.value());
-      if (framePushedBeforePushingCallArgs_.isSome()) {
+      if (framePushedExcludingOutboundCallArgs_.isSome()) {
         // In the body, and we've potentially pushed some args onto the stack.
         // We must ignore them when sizing the stackmap.
         MOZ_ASSERT(masm_.framePushed() >=
-                   framePushedBeforePushingCallArgs_.value());
-        MOZ_ASSERT(framePushedBeforePushingCallArgs_.value() >=
+                   framePushedExcludingOutboundCallArgs_.value());
+        MOZ_ASSERT(framePushedExcludingOutboundCallArgs_.value() >=
                    framePushedAtEntryToBody_.value());
         framePushedExcludingArgs =
-            Some(framePushedBeforePushingCallArgs_.value());
+            Some(framePushedExcludingOutboundCallArgs_.value());
       } else {
         // In the body, but not with call args on the stack.  The stackmap
         // must be sized so as to extend all the way "down" to
@@ -2520,10 +2548,10 @@ class BaseCompiler final : public BaseCompilerInterface {
   MIRTypeVector SigPI_;
   MIRTypeVector SigPL_;
   MIRTypeVector SigPII_;
-  MIRTypeVector SigPIPI_;
+  MIRTypeVector SigPIRI_;
   MIRTypeVector SigPIII_;
   MIRTypeVector SigPIIL_;
-  MIRTypeVector SigPIIP_;
+  MIRTypeVector SigPIIR_;
   MIRTypeVector SigPILL_;
   MIRTypeVector SigPIIII_;
   MIRTypeVector SigPIIIII_;
@@ -2931,7 +2959,7 @@ class BaseCompiler final : public BaseCompilerInterface {
   }
 
   void loadLocalRef(const Stk& src, RegPtr dest) {
-    fr.loadLocalPtr(localFromSlot(src.slot(), MIRType::Pointer), dest);
+    fr.loadLocalPtr(localFromSlot(src.slot(), MIRType::RefOrNull), dest);
   }
 
   void loadRegisterRef(const Stk& src, RegPtr dest) {
@@ -4039,9 +4067,9 @@ class BaseCompiler final : public BaseCompilerInterface {
 
     const ValTypeVector& argTys = env_.funcTypes[func_.index]->args();
 
-    size_t nStackArgBytes = stackArgAreaSize(argTys);
-    MOZ_ASSERT(nStackArgBytes % sizeof(void*) == 0);
-    smgen_.numStackArgWords_ = nStackArgBytes / sizeof(void*);
+    size_t nInboundStackArgBytes = StackArgAreaSizeUnaligned(argTys);
+    MOZ_ASSERT(nInboundStackArgBytes % sizeof(void*) == 0);
+    smgen_.numStackArgWords_ = nInboundStackArgBytes / sizeof(void*);
 
     MOZ_ASSERT(smgen_.mst_.length() == 0);
     if (!smgen_.mst_.pushNonGCPointers(smgen_.numStackArgWords_)) {
@@ -4050,15 +4078,13 @@ class BaseCompiler final : public BaseCompilerInterface {
 
     for (ABIArgIter<const ValTypeVector> i(argTys); !i.done(); i++) {
       ABIArg argLoc = *i;
-      if (argLoc.kind() != ABIArg::Stack) {
-        continue;
-      }
       const ValType& ty = argTys[i.index()];
-      if (!ty.isReference()) {
+      MOZ_ASSERT(ToMIRType(ty) != MIRType::Pointer);
+      if (argLoc.kind() != ABIArg::Stack || !ty.isReference()) {
         continue;
       }
       uint32_t offset = argLoc.offsetFromArgBase();
-      MOZ_ASSERT(offset < nStackArgBytes);
+      MOZ_ASSERT(offset < nInboundStackArgBytes);
       MOZ_ASSERT(offset % sizeof(void*) == 0);
       smgen_.mst_.setGCPointer(offset / sizeof(void*));
     }
@@ -4123,7 +4149,7 @@ class BaseCompiler final : public BaseCompilerInterface {
       return false;
     }
 
-    size_t reservedBytes = fr.fixedSize() - masm.framePushed();
+    size_t reservedBytes = fr.fixedAllocSize() - masm.framePushed();
     MOZ_ASSERT(0 == (reservedBytes % sizeof(void*)));
 
     masm.reserveStack(reservedBytes);
@@ -4145,7 +4171,7 @@ class BaseCompiler final : public BaseCompilerInterface {
         case MIRType::Int64:
           fr.storeLocalI64(RegI64(i->gpr64()), l);
           break;
-        case MIRType::Pointer: {
+        case MIRType::RefOrNull: {
           uint32_t offs = fr.localOffset(l);
           MOZ_ASSERT(0 == (offs % sizeof(void*)));
           fr.storeLocalPtr(RegPtr(i->gpr()), l);
@@ -4284,7 +4310,7 @@ class BaseCompiler final : public BaseCompilerInterface {
       restoreResult();
     }
 
-    GenerateFunctionEpilogue(masm, fr.fixedSize(), &offsets_);
+    GenerateFunctionEpilogue(masm, fr.fixedAllocSize(), &offsets_);
 
 #if defined(JS_ION_PERF)
     // FIXME - profiling code missing.  No bug for this.
@@ -4369,8 +4395,8 @@ class BaseCompiler final : public BaseCompilerInterface {
     size_t adjustment = call.stackArgAreaSize + call.frameAlignAdjustment;
     fr.freeArgAreaAndPopBytes(adjustment, stackSpace);
 
-    MOZ_ASSERT(smgen_.framePushedBeforePushingCallArgs_.isSome());
-    smgen_.framePushedBeforePushingCallArgs_.reset();
+    MOZ_ASSERT(smgen_.framePushedExcludingOutboundCallArgs_.isSome());
+    smgen_.framePushedExcludingOutboundCallArgs_.reset();
 
     if (call.isInterModule) {
       masm.loadWasmTlsRegFromFrame();
@@ -4386,32 +4412,25 @@ class BaseCompiler final : public BaseCompilerInterface {
     }
   }
 
-  // TODO / OPTIMIZE (Bug 1316821): This is expensive; let's roll the iterator
-  // walking into the walking done for passArg.  See comments in passArg.
+  void startCallArgs(size_t stackArgAreaSizeUnaligned, FunctionCall* call) {
+    size_t stackArgAreaSizeAligned
+        = AlignStackArgAreaSize(stackArgAreaSizeUnaligned);
+    MOZ_ASSERT(stackArgAreaSizeUnaligned <= stackArgAreaSizeAligned);
 
-  // Note, stackArgAreaSize() must process all the arguments to get the
-  // alignment right; the signature must therefore be the complete call
-  // signature.
-
-  template <class T>
-  size_t stackArgAreaSize(const T& args) {
-    ABIArgIter<const T> i(args);
-    while (!i.done()) {
-      i++;
-    }
-    return AlignBytes(i.stackBytesConsumedSoFar(), 16u);
-  }
-
-  void startCallArgs(size_t stackArgAreaSize, FunctionCall* call) {
     // Record the masm.framePushed() value at this point, before we push args
     // for the call, but including the alignment space placed above the args.
     // This defines the lower limit of the stackmap that will be created for
     // this call.
-    MOZ_ASSERT(smgen_.framePushedBeforePushingCallArgs_.isNothing());
-    smgen_.framePushedBeforePushingCallArgs_.emplace(
-        masm.framePushed() + call->frameAlignAdjustment);
+    MOZ_ASSERT(smgen_.framePushedExcludingOutboundCallArgs_.isNothing());
+    smgen_.framePushedExcludingOutboundCallArgs_.emplace(
+        // However much we've pushed so far
+        masm.framePushed() +
+        // Extra space we'll push to get the frame aligned
+        call->frameAlignAdjustment +
+        // Extra space we'll push to get the outbound arg area 16-aligned
+        (stackArgAreaSizeAligned - stackArgAreaSizeUnaligned));
 
-    call->stackArgAreaSize = stackArgAreaSize;
+    call->stackArgAreaSize = stackArgAreaSizeAligned;
 
     size_t adjustment = call->stackArgAreaSize + call->frameAlignAdjustment;
     fr.allocArgArea(adjustment);
@@ -4430,17 +4449,17 @@ class BaseCompiler final : public BaseCompilerInterface {
   //
   // The bulk of the work here (60%) is in the next() call, though.
   //
-  // Notably, since next() is so expensive, stackArgAreaSize() becomes
-  // expensive too.
+  // Notably, since next() is so expensive, StackArgAreaSizeUnaligned()
+  // becomes expensive too.
   //
-  // Somehow there could be a trick here where the sequence of
-  // argument types (read from the input stream) leads to a cached
-  // entry for stackArgAreaSize() and for how to pass arguments...
+  // Somehow there could be a trick here where the sequence of argument types
+  // (read from the input stream) leads to a cached entry for
+  // StackArgAreaSizeUnaligned() and for how to pass arguments...
   //
-  // But at least we could reduce the cost of stackArgAreaSize() by
-  // first reading the argument types into a (reusable) vector, then
-  // we have the outgoing size at low cost, and then we can pass
-  // args based on the info we read.
+  // But at least we could reduce the cost of StackArgAreaSizeUnaligned() by
+  // first reading the argument types into a (reusable) vector, then we have
+  // the outgoing size at low cost, and then we can pass args based on the
+  // info we read.
 
   void passArg(ValType type, const Stk& arg, FunctionCall* call) {
     switch (type.code()) {
@@ -4550,7 +4569,7 @@ class BaseCompiler final : public BaseCompilerInterface {
       }
       case ValType::Ref:
       case ValType::AnyRef: {
-        ABIArg argLoc = call->abi.next(MIRType::Pointer);
+        ABIArg argLoc = call->abi.next(MIRType::RefOrNull);
         if (argLoc.kind() == ABIArg::Stack) {
           ScratchPtr scratch(*this);
           loadRef(arg, scratch);
@@ -8587,7 +8606,7 @@ bool BaseCompiler::emitCallArgs(const ValTypeVector& argTypes,
                                 FunctionCall* baselineCall) {
   MOZ_ASSERT(!deadCode_);
 
-  startCallArgs(stackArgAreaSize(argTypes), baselineCall);
+  startCallArgs(StackArgAreaSizeUnaligned(argTypes), baselineCall);
 
   uint32_t numArgs = argTypes.length();
   for (size_t i = 0; i < numArgs; ++i) {
@@ -9057,7 +9076,7 @@ bool BaseCompiler::emitSetOrTeeLocal(uint32_t slot) {
     case ValType::AnyRef: {
       RegPtr rv = popRef();
       syncLocal(slot);
-      fr.storeLocalPtr(rv, localFromSlot(slot, MIRType::Pointer));
+      fr.storeLocalPtr(rv, localFromSlot(slot, MIRType::RefOrNull));
       if (isSetLocal) {
         freeRef(rv);
       } else {
@@ -9557,7 +9576,7 @@ bool BaseCompiler::emitSelect() {
   BranchState b(&done);
   emitBranchSetup(&b);
 
-  switch (NonAnyToValType(type).code()) {
+  switch (NonTVarToValType(type).code()) {
     case ValType::I32: {
       RegI32 r, rs;
       pop2xI32(&r, &rs);
@@ -9752,7 +9771,7 @@ bool BaseCompiler::emitInstanceCall(uint32_t lineOrBytecode,
 
   ABIArg instanceArg = reservePointerArgument(&baselineCall);
 
-  startCallArgs(stackArgAreaSize(sig), &baselineCall);
+  startCallArgs(StackArgAreaSizeUnaligned(sig), &baselineCall);
   for (uint32_t i = 1; i < sig.length(); i++) {
     ValType t;
     switch (sig[i]) {
@@ -9762,7 +9781,7 @@ bool BaseCompiler::emitInstanceCall(uint32_t lineOrBytecode,
       case MIRType::Int64:
         t = ValType::I64;
         break;
-      case MIRType::Pointer:
+      case MIRType::RefOrNull:
         t = ValType::AnyRef;
         break;
       default:
@@ -10367,7 +10386,7 @@ bool BaseCompiler::emitTableGrow() {
   //
   // infallible.
   pushI32(tableIndex);
-  return emitInstanceCall(lineOrBytecode, SigPIPI_, ExprType::I32,
+  return emitInstanceCall(lineOrBytecode, SigPIRI_, ExprType::I32,
                           SymbolicAddress::TableGrow);
 }
 
@@ -10386,7 +10405,7 @@ bool BaseCompiler::emitTableSet() {
   //
   // Returns -1 on range error, otherwise 0 (which is then ignored).
   pushI32(tableIndex);
-  if (!emitInstanceCall(lineOrBytecode, SigPIPI_, ExprType::Void,
+  if (!emitInstanceCall(lineOrBytecode, SigPIRI_, ExprType::Void,
                         SymbolicAddress::TableSet)) {
     return false;
   }
@@ -10770,7 +10789,7 @@ bool BaseCompiler::emitStructNarrow() {
   pushI32(mustUnboxAnyref);
   pushI32(outputStruct.moduleIndex_);
   pushRef(rp);
-  return emitInstanceCall(lineOrBytecode, SigPIIP_, ExprType::AnyRef,
+  return emitInstanceCall(lineOrBytecode, SigPIIR_, ExprType::AnyRef,
                           SymbolicAddress::StructNarrow);
 }
 
@@ -10888,7 +10907,7 @@ bool BaseCompiler::emitBody() {
     MOZ_ASSERT(masm.framePushed() >= smgen_.framePushedAtEntryToBody_.value());
 
     // At this point we're definitely not generating code for a function call.
-    MOZ_ASSERT(smgen_.framePushedBeforePushingCallArgs_.isNothing());
+    MOZ_ASSERT(smgen_.framePushedExcludingOutboundCallArgs_.isNothing());
 
     switch (op.b0) {
       case uint16_t(Op::End):
@@ -11861,8 +11880,9 @@ bool BaseCompiler::init() {
       !SigPII_.append(MIRType::Int32)) {
     return false;
   }
-  if (!SigPIPI_.append(MIRType::Pointer) || !SigPIPI_.append(MIRType::Int32) ||
-      !SigPIPI_.append(MIRType::Pointer) || !SigPIPI_.append(MIRType::Int32)) {
+  if (!SigPIRI_.append(MIRType::Pointer) || !SigPIRI_.append(MIRType::Int32) ||
+      !SigPIRI_.append(MIRType::RefOrNull) ||
+      !SigPIRI_.append(MIRType::Int32)) {
     return false;
   }
   if (!SigPIII_.append(MIRType::Pointer) || !SigPIII_.append(MIRType::Int32) ||
@@ -11873,8 +11893,9 @@ bool BaseCompiler::init() {
       !SigPIIL_.append(MIRType::Int32) || !SigPIIL_.append(MIRType::Int64)) {
     return false;
   }
-  if (!SigPIIP_.append(MIRType::Pointer) || !SigPIIP_.append(MIRType::Int32) ||
-      !SigPIIP_.append(MIRType::Int32) || !SigPIIP_.append(MIRType::Pointer)) {
+  if (!SigPIIR_.append(MIRType::Pointer) || !SigPIIR_.append(MIRType::Int32) ||
+      !SigPIIR_.append(MIRType::Int32) ||
+      !SigPIIR_.append(MIRType::RefOrNull)) {
     return false;
   }
   if (!SigPILL_.append(MIRType::Pointer) || !SigPILL_.append(MIRType::Int32) ||
@@ -11975,8 +11996,7 @@ bool js::wasm::BaselineCompileFunctions(const ModuleEnvironment& env,
     if (!locals.appendAll(env.funcTypes[func.index]->args())) {
       return false;
     }
-    if (!DecodeLocalEntries(d, env.kind, env.types, env.gcTypesEnabled(),
-                            &locals)) {
+    if (!DecodeLocalEntries(d, env.types, env.gcTypesEnabled(), &locals)) {
       return false;
     }
 

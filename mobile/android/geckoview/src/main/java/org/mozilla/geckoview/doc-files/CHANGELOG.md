@@ -1,18 +1,35 @@
 ---
-layout: geckoview
+layout: default
 title: API Changelog
 description: GeckoView API Changelog.
+nav_exclude: true
+exclude: true
 ---
 
 <h1> GeckoView API Changelog. </h1>
 
 ## v67
+- Added GeckoRuntimeSetting for automatically adjusting font size settings
+  depending on the OS-level font size setting.
+
+- Added GeckoRuntimeSettings for setting a font size scaling factor, and for
+  enabling font inflation for non-mobile-friendly pages.
+
+- Updated video autoplay API to reflect changes in Gecko. Instead of being a per-video
+  permission in the PermissionDelegate, it is a runtime setting that either allows or
+  blocks autoplay videos.
+
+- Change `ContentBlocking.AT_ALL` and `ContentBlocking.SB_ALL` values to mirror
+  the actual constants they encompass.
+
 - Added nested `ContentBlocking` runtime settings.
 
 - Added `RuntimeSettings` base class to support nested settings.
 
 - Added `baseUri` to [`ContentDelegate.ContextElement`][65.21] and changed
   `linkUri` to absolute form.
+
+- Added `scrollBy()` and `scrollTo()` to `PanZoomController`.
 
 ## v66
 - Removed redundant field `GeckoSession.ProgressDelegate.SecurityInformation.trackingMode`.
@@ -123,4 +140,4 @@ description: GeckoView API Changelog.
 [65.24]: ../CrashReporter.html#sendCrashReport-android.content.Context-android.os.Bundle-java.lang.String-
 [65.25]: ../GeckoResult.html
 
-[api-version]: 2b12249de4649178832780cb5c0aba13079803c8
+[api-version]: f318744a2a5bd8058977a5709a3e9a3b73d5202b

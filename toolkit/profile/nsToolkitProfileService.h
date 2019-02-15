@@ -79,12 +79,12 @@ class nsToolkitProfileService final : public nsIToolkitProfileService {
                                 nsIToolkitProfile** aProfile, bool* aDidCreate);
   nsresult CreateResetProfile(nsIToolkitProfile** aNewProfile);
   nsresult ApplyResetProfile(nsIToolkitProfile* aOldProfile);
-  void RecordStartupTelemetry();
+  void CompleteStartup();
 
  private:
   friend class nsToolkitProfile;
   friend class nsToolkitProfileFactory;
-  friend nsresult NS_NewToolkitProfileService(nsIToolkitProfileService**);
+  friend nsresult NS_NewToolkitProfileService(nsToolkitProfileService**);
 
   nsToolkitProfileService();
   ~nsToolkitProfileService();
@@ -143,6 +143,7 @@ class nsToolkitProfileService final : public nsIToolkitProfileService {
   // default profile existed but was rejected so a new profile was created.
   bool mCreatedAlternateProfile;
   nsString mStartupReason;
+  bool mMaybeLockProfile;
 
   static nsToolkitProfileService* gService;
 

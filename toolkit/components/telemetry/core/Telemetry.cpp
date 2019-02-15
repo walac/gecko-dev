@@ -102,6 +102,7 @@ using namespace mozilla;
 using mozilla::dom::AutoJSAPI;
 using mozilla::dom::Promise;
 using mozilla::Telemetry::CombinedStacks;
+using mozilla::Telemetry::EventExtraEntry;
 using mozilla::Telemetry::TelemetryIOInterposeObserver;
 using Telemetry::Common::AutoHashtable;
 using Telemetry::Common::GetCurrentProduct;
@@ -1105,12 +1106,14 @@ TelemetryImpl::SetCanRecordBase(bool canRecord) {
   if (recordreplay::IsRecordingOrReplaying()) {
     return NS_OK;
   }
+#ifndef FUZZING
   if (canRecord != mCanRecordBase) {
     TelemetryHistogram::SetCanRecordBase(canRecord);
     TelemetryScalar::SetCanRecordBase(canRecord);
     TelemetryEvent::SetCanRecordBase(canRecord);
     mCanRecordBase = canRecord;
   }
+#endif
   return NS_OK;
 }
 
@@ -1132,12 +1135,14 @@ TelemetryImpl::SetCanRecordExtended(bool canRecord) {
   if (recordreplay::IsRecordingOrReplaying()) {
     return NS_OK;
   }
+#ifndef FUZZING
   if (canRecord != mCanRecordExtended) {
     TelemetryHistogram::SetCanRecordExtended(canRecord);
     TelemetryScalar::SetCanRecordExtended(canRecord);
     TelemetryEvent::SetCanRecordExtended(canRecord);
     mCanRecordExtended = canRecord;
   }
+#endif
   return NS_OK;
 }
 
@@ -1170,6 +1175,7 @@ already_AddRefed<nsITelemetry> TelemetryImpl::CreateTelemetryInstance() {
       "CreateTelemetryInstance may only be called once, via GetService()");
 
   bool useTelemetry = false;
+#ifndef FUZZING
   if ((XRE_IsParentProcess() || XRE_IsContentProcess() || XRE_IsGPUProcess() ||
        XRE_IsSocketProcess()) &&
       // Telemetry is never accumulated when recording or replaying, both
@@ -1179,6 +1185,7 @@ already_AddRefed<nsITelemetry> TelemetryImpl::CreateTelemetryInstance() {
       !recordreplay::IsRecordingOrReplaying()) {
     useTelemetry = true;
   }
+#endif
 
   // Set current product (determines Fennec/GeckoView at runtime).
   SetCurrentProduct();
@@ -2124,6 +2131,16 @@ void ScalarSet(mozilla::Telemetry::ScalarID aId, const nsAString& aKey,
 void ScalarSetMaximum(mozilla::Telemetry::ScalarID aId, const nsAString& aKey,
                       uint32_t aVal) {
   TelemetryScalar::SetMaximum(aId, aKey, aVal);
+}
+
+void RecordEvent(mozilla::Telemetry::EventID aId,
+                 const mozilla::Maybe<nsCString>& aValue,
+                 const mozilla::Maybe<nsTArray<EventExtraEntry>>& aExtra) {
+  TelemetryEvent::RecordEventNative(aId, aValue, aExtra);
+}
+
+void SetEventRecordingEnabled(const nsACString& aCategory, bool aEnabled) {
+  TelemetryEvent::SetEventRecordingEnabled(aCategory, aEnabled);
 }
 
 }  // namespace Telemetry

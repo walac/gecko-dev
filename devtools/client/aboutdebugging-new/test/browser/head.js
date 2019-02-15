@@ -17,6 +17,9 @@ Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/shared/test/shared-redux-head.js",
   this);
 
+/* import-globals-from helper-mocks.js */
+Services.scriptloader.loadSubScript(CHROME_URL_ROOT + "helper-mocks.js", this);
+
 // Make sure the ADB addon is removed and ADB is stopped when the test ends.
 registerCleanupFunction(async function() {
   try {
@@ -41,12 +44,16 @@ async function enableNewAboutDebugging() {
   await pushPref("devtools.aboutdebugging.network", true);
 }
 
-async function openAboutDebugging(page, win) {
+async function openAboutDebugging({ enableWorkerUpdates } = {}) {
+  if (!enableWorkerUpdates) {
+    silenceWorkerUpdates();
+  }
+
   await enableNewAboutDebugging();
 
   info("opening about:debugging");
 
-  const tab = await addTab("about:debugging", { window: win });
+  const tab = await addTab("about:debugging");
   const browser = tab.linkedBrowser;
   const document = browser.contentDocument;
   const window = browser.contentWindow;
@@ -54,6 +61,40 @@ async function openAboutDebugging(page, win) {
   await waitForRequestsSuccess(window);
 
   return { tab, document, window };
+}
+
+async function openAboutDevtoolsToolbox(doc, tab, win) {
+  info("Open about:devtools-toolbox page");
+  const target = findDebugTargetByText("about:debugging", doc);
+  ok(target, "about:debugging tab target appeared");
+  const inspectButton = target.querySelector(".js-debug-target-inspect-button");
+  ok(inspectButton, "Inspect button for about:debugging appeared");
+  inspectButton.click();
+  await Promise.all([
+    waitUntil(() => tab.nextElementSibling),
+    waitForRequestsToSettle(win.AboutDebugging.store),
+    gDevTools.once("toolbox-ready"),
+  ]);
+
+  info("Wait for about:devtools-toolbox tab will be selected");
+  const devtoolsTab = tab.nextElementSibling;
+  await waitUntil(() => gBrowser.selectedTab === devtoolsTab);
+  const devtoolsBrowser = gBrowser.selectedBrowser;
+
+  return {
+    devtoolsBrowser,
+    devtoolsDocument: devtoolsBrowser.contentDocument,
+    devtoolsTab,
+    devtoolsWindow: devtoolsBrowser.contentWindow,
+  };
+}
+
+async function closeAboutDevtoolsToolbox(devtoolsTab, win) {
+  await removeTab(devtoolsTab);
+  await Promise.all([
+    waitForRequestsToSettle(win.AboutDebugging.store),
+    gDevTools.once("toolbox-destroyed"),
+  ]);
 }
 
 async function reloadAboutDebugging(tab) {

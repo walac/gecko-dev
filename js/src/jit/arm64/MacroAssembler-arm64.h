@@ -256,7 +256,7 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
       Mov(vixl::sp, GetStackPointer64());
     }
   }
-  void initStackPtr() {
+  void initPseudoStackPtr() {
     if (!GetStackPointer64().Is(vixl::sp)) {
       Mov(GetStackPointer64(), vixl::sp);
     }
@@ -1394,6 +1394,12 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
   void unboxSymbol(const Address& src, Register dest) {
     unboxNonDouble(src, dest, JSVAL_TYPE_SYMBOL);
   }
+  void unboxBigInt(const ValueOperand& operand, Register dest) {
+    unboxNonDouble(operand, dest, JSVAL_TYPE_BIGINT);
+  }
+  void unboxBigInt(const Address& src, Register dest) {
+    unboxNonDouble(src, dest, JSVAL_TYPE_BIGINT);
+  }
   // These two functions use the low 32-bits of the full value register.
   void boolValueToDouble(const ValueOperand& operand, FloatRegister dest) {
     convertInt32ToDouble(operand.valueReg(), dest);
@@ -1479,13 +1485,11 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     cmpTag(tag, ImmTag(JSVAL_TAG_SYMBOL));
     return cond;
   }
-#ifdef ENABLE_BIGINT
   Condition testBigInt(Condition cond, Register tag) {
     MOZ_ASSERT(cond == Equal || cond == NotEqual);
     cmpTag(tag, ImmTag(JSVAL_TAG_BIGINT));
     return cond;
   }
-#endif
   Condition testObject(Condition cond, Register tag) {
     MOZ_ASSERT(cond == Equal || cond == NotEqual);
     cmpTag(tag, ImmTag(JSVAL_TAG_OBJECT));
@@ -1576,7 +1580,6 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     splitSignExtTag(value, scratch);
     return testSymbol(cond, scratch);
   }
-#ifdef ENABLE_BIGINT
   Condition testBigInt(Condition cond, const ValueOperand& value) {
     vixl::UseScratchRegisterScope temps(this);
     const Register scratch = temps.AcquireX().asUnsized();
@@ -1584,7 +1587,6 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     splitSignExtTag(value, scratch);
     return testBigInt(cond, scratch);
   }
-#endif
   Condition testObject(Condition cond, const ValueOperand& value) {
     vixl::UseScratchRegisterScope temps(this);
     const Register scratch = temps.AcquireX().asUnsized();
@@ -1681,7 +1683,6 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     splitSignExtTag(address, scratch);
     return testSymbol(cond, scratch);
   }
-#ifdef ENABLE_BIGINT
   Condition testBigInt(Condition cond, const Address& address) {
     vixl::UseScratchRegisterScope temps(this);
     const Register scratch = temps.AcquireX().asUnsized();
@@ -1689,7 +1690,6 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     splitSignExtTag(address, scratch);
     return testBigInt(cond, scratch);
   }
-#endif
   Condition testObject(Condition cond, const Address& address) {
     vixl::UseScratchRegisterScope temps(this);
     const Register scratch = temps.AcquireX().asUnsized();
@@ -1746,7 +1746,6 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     splitSignExtTag(src, scratch);
     return testSymbol(cond, scratch);
   }
-#ifdef ENABLE_BIGINT
   Condition testBigInt(Condition cond, const BaseIndex& src) {
     vixl::UseScratchRegisterScope temps(this);
     const Register scratch = temps.AcquireX().asUnsized();
@@ -1755,7 +1754,19 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     splitSignExtTag(src, scratch);
     return testBigInt(cond, scratch);
   }
-#endif
+  Condition testBigIntTruthy(bool truthy, const ValueOperand& value) {
+    vixl::UseScratchRegisterScope temps(this);
+    const Register scratch = temps.AcquireX().asUnsized();
+    const ARMRegister scratch64(scratch, 64);
+
+    MOZ_ASSERT(value.valueReg() != scratch);
+
+    unboxBigInt(value, scratch);
+    Ldr(scratch64,
+        MemOperand(scratch64, BigInt::offsetOfLengthSignAndReservedBits()));
+    Cmp(scratch64, Operand(0));
+    return truthy ? Condition::NonZero : Condition::Zero;
+  }
   Condition testInt32(Condition cond, const BaseIndex& src) {
     vixl::UseScratchRegisterScope temps(this);
     const Register scratch = temps.AcquireX().asUnsized();

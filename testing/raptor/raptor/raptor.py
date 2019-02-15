@@ -124,6 +124,8 @@ class Raptor(object):
             self.log.info("creating android device handler using mozdevice")
             self.device = ADBDevice(verbose=True)
             self.device.clear_logcat()
+            self.log.info("Clear %s app data" % self.config['binary'])
+            self.device.shell("pm clear %s" % self.config['binary'])
             if self.config['power_test']:
                 init_geckoview_power_test(self)
         else:
@@ -169,7 +171,6 @@ class Raptor(object):
         _key = 'playback_pageset_zip_%s' % self.config['platform']
         self.config['playback_pageset_zip'] = test.get(_key, None)
         self.config['playback_recordings'] = test.get('playback_recordings', None)
-        self.config['python3_win_manifest'] = test.get('python3_win_manifest', None)
 
     def run_test(self, test, timeout=None):
         self.log.info("starting raptor test: %s" % test['name'])

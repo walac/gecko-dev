@@ -557,10 +557,11 @@ bool CreateThis(JSContext* cx, HandleObject callee, HandleObject newTarget,
       if (!script) {
         return false;
       }
-      AutoRealm ar(cx, script);
       if (!js::CreateThis(cx, fun, script, newTarget, GenericObject, rval)) {
         return false;
       }
+      MOZ_ASSERT_IF(rval.isObject(),
+                    fun->realm() == rval.toObject().nonCCWRealm());
     }
   }
 
@@ -1263,6 +1264,15 @@ void AssertValidSymbolPtr(JSContext* cx, JS::Symbol* sym) {
   MOZ_ASSERT(sym->getAllocKind() == gc::AllocKind::SYMBOL);
 }
 
+void AssertValidBigIntPtr(JSContext* cx, JS::BigInt* bi) {
+  AutoUnsafeCallWithABI unsafe;
+  // FIXME: check runtime?
+  MOZ_ASSERT(cx->zone() == bi->zone());
+  MOZ_ASSERT(bi->isAligned());
+  MOZ_ASSERT(bi->isTenured());
+  MOZ_ASSERT(bi->getAllocKind() == gc::AllocKind::BIGINT);
+}
+
 void AssertValidValue(JSContext* cx, Value* v) {
   AutoUnsafeCallWithABI unsafe;
   if (v->isObject()) {
@@ -1271,6 +1281,9 @@ void AssertValidValue(JSContext* cx, Value* v) {
     AssertValidStringPtr(cx, v->toString());
   } else if (v->isSymbol()) {
     AssertValidSymbolPtr(cx, v->toSymbol());
+  }
+  else if (v->isBigInt()) {
+    AssertValidBigIntPtr(cx, v->toBigInt());
   }
 }
 
@@ -1713,8 +1726,6 @@ bool GetPrototypeOf(JSContext* cx, HandleObject target,
   return true;
 }
 
-void CloseIteratorFromIon(JSContext* cx, JSObject* obj) { CloseIterator(obj); }
-
 typedef bool (*SetObjectElementFn)(JSContext*, HandleObject, HandleValue,
                                    HandleValue, HandleValue, bool);
 const VMFunction SetObjectElementInfo =
@@ -1858,6 +1869,24 @@ typedef bool (*GetSparseElementHelperFn)(JSContext* cx, HandleArrayObject obj,
 const VMFunction GetSparseElementHelperInfo =
     FunctionInfo<GetSparseElementHelperFn>(GetSparseElementHelper,
                                            "getSparseElementHelper");
+
+static bool DoToNumber(JSContext* cx, HandleValue arg,
+                       MutableHandleValue ret) {
+  ret.set(arg);
+  return ToNumber(cx, ret);
+}
+
+static bool DoToNumeric(JSContext* cx, HandleValue arg,
+                        MutableHandleValue ret) {
+  ret.set(arg);
+  return ToNumeric(cx, ret);
+}
+
+typedef bool (*ToNumericFn)(JSContext*, HandleValue, MutableHandleValue);
+const VMFunction ToNumberInfo =
+    FunctionInfo<ToNumericFn>(DoToNumber, "ToNumber");
+const VMFunction ToNumericInfo =
+    FunctionInfo<ToNumericFn>(DoToNumeric, "ToNumeric");
 
 }  // namespace jit
 }  // namespace js
