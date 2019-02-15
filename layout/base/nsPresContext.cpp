@@ -1454,10 +1454,14 @@ void nsPresContext::RecordInteractionTime(InteractionType aType,
 }
 
 nsITheme* nsPresContext::GetTheme() {
+#ifdef MOZ_WIDGET_GONK
+  sNoTheme = true;
+#else
   if (!sNoTheme && !mTheme) {
     mTheme = do_GetNativeTheme();
     if (!mTheme) sNoTheme = true;
   }
+#endif
 
   return mTheme;
 }
