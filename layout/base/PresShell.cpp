@@ -780,6 +780,7 @@ nsIPresShell::nsIPresShell()
       mIsDestroying(false),
       mIsReflowing(false),
       mIsObservingDocument(false),
+      mForbiddenToFlush(false),
       mIsDocumentGone(false),
       mHaveShutDown(false),
       mPaintingSuppressed(false),
@@ -868,6 +869,9 @@ NS_IMPL_ISUPPORTS(PresShell, nsIPresShell, nsIDocumentObserver,
                   nsISupportsWeakReference, nsIMutationObserver)
 
 PresShell::~PresShell() {
+  MOZ_RELEASE_ASSERT(!mForbiddenToFlush,
+                     "Flag should only be set temporarily, while doing things "
+                     "that shouldn't cause destruction");
   MOZ_LOG(gLog, LogLevel::Debug, ("PresShell::~PresShell this=%p", this));
 
   if (!mHaveShutDown) {
@@ -2553,7 +2557,7 @@ void nsIPresShell::FlushPendingScrollAnchorSelections() {
   for (auto iter = mPendingScrollAnchorSelection.Iter(); !iter.Done();
        iter.Next()) {
     nsIScrollableFrame* scroll = iter.Get()->GetKey();
-    scroll->GetAnchor()->SelectAnchor();
+    scroll->Anchor()->SelectAnchor();
   }
   mPendingScrollAnchorSelection.Clear();
 }
@@ -2567,7 +2571,7 @@ void nsIPresShell::FlushPendingScrollAnchorAdjustments() {
   for (auto iter = mPendingScrollAnchorAdjustment.Iter(); !iter.Done();
        iter.Next()) {
     nsIScrollableFrame* scroll = iter.Get()->GetKey();
-    scroll->GetAnchor()->ApplyAdjustments();
+    scroll->Anchor()->ApplyAdjustments();
   }
   mPendingScrollAnchorAdjustment.Clear();
 }
@@ -3977,6 +3981,8 @@ static inline void AssertFrameTreeIsSane(const nsIPresShell& aShell) {
 }
 
 void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
+  MOZ_RELEASE_ASSERT(!mForbiddenToFlush, "This is bad!");
+
   // Per our API contract, hold a strong ref to ourselves until we return.
   nsCOMPtr<nsIPresShell> kungFuDeathGrip = this;
 
@@ -6629,35 +6635,12 @@ nsresult PresShell::EventHandler::HandleEvent(nsIFrame* aFrame,
     }
 
     // Check if we have an active EventStateManager which isn't the
-    // EventStateManager of the current PresContext.
-    // If that is the case, and mouse is over some ancestor document,
-    // forward event handling to the active document.
-    // This way content can get mouse events even when
-    // mouse is over the chrome or outside the window.
-    //
-    // Note, currently for backwards compatibility we don't forward mouse events
-    // to the active document when mouse is over some subdocument.
-    if (EventStateManager* activeESM =
-            EventStateManager::GetActiveEventStateManager()) {
-      if (aGUIEvent->mClass == ePointerEventClass ||
-          aGUIEvent->HasMouseEventMessage()) {
-        if (activeESM != eventTargetData.GetEventStateManager()) {
-          if (nsPresContext* activeContext = activeESM->GetPresContext()) {
-            if (nsIPresShell* activeShell = activeContext->GetPresShell()) {
-              if (nsContentUtils::ContentIsCrossDocDescendantOf(
-                      activeShell->GetDocument(),
-                      eventTargetData.GetDocument())) {
-                eventTargetData.SetPresShellAndFrame(
-                    static_cast<PresShell*>(activeShell),
-                    activeShell->GetRootFrame());
-              }
-            }
-          }
-        }
-      }
-    }
-
-    if (NS_WARN_IF(!eventTargetData.mFrame)) {
+    // EventStateManager of the current PresContext.  If that is the case, and
+    // mouse is over some ancestor document, forward event handling to the
+    // active document.  This way content can get mouse events even when mouse
+    // is over the chrome or outside the window.
+    if (eventTargetData.MaybeRetargetToActiveDocument(aGUIEvent) &&
+        NS_WARN_IF(!eventTargetData.mFrame)) {
       return NS_OK;
     }
 
@@ -7281,7 +7264,6 @@ bool PresShell::EventHandler::MaybeDiscardOrDelayMouseEvent(
 
 nsIFrame* PresShell::EventHandler::MaybeFlushThrottledStyles(
     nsIFrame* aFrameForPresShell) {
-
   if (!GetDocument()) {
     // XXX Only when mPresShell has document, we'll try to look for a frame
     //     containing mPresShell even if given frame is nullptr.  Does this
@@ -10499,7 +10481,7 @@ void nsIPresShell::SetVisualViewportSize(nscoord aWidth, nscoord aHeight) {
 
     if (nsIScrollableFrame* rootScrollFrame =
             GetRootScrollFrameAsScrollable()) {
-      ScrollAnchorContainer* container = rootScrollFrame->GetAnchor();
+      ScrollAnchorContainer* container = rootScrollFrame->Anchor();
       container->UserScrolled();
     }
   }
@@ -10520,7 +10502,7 @@ bool nsIPresShell::SetVisualViewportOffset(
 
     if (nsIScrollableFrame* rootScrollFrame =
             GetRootScrollFrameAsScrollable()) {
-      ScrollAnchorContainer* container = rootScrollFrame->GetAnchor();
+      ScrollAnchorContainer* container = rootScrollFrame->Anchor();
       container->UserScrolled();
     }
   }
@@ -10772,4 +10754,48 @@ void PresShell::EventHandler::EventTargetData::SetContentForEventFromFrame(
 
 nsIContent* PresShell::EventHandler::EventTargetData::GetFrameContent() const {
   return mFrame ? mFrame->GetContent() : nullptr;
+}
+
+bool PresShell::EventHandler::EventTargetData::MaybeRetargetToActiveDocument(
+    WidgetGUIEvent* aGUIEvent) {
+  MOZ_ASSERT(aGUIEvent);
+  MOZ_ASSERT(mFrame);
+  MOZ_ASSERT(mPresShell);
+  MOZ_ASSERT(!mContent, "Doesn't support to retarget the content");
+
+  EventStateManager* activeESM =
+      EventStateManager::GetActiveEventStateManager();
+  if (!activeESM) {
+    return false;
+  }
+
+  if (aGUIEvent->mClass != ePointerEventClass &&
+      !aGUIEvent->HasMouseEventMessage()) {
+    return false;
+  }
+
+  if (activeESM == GetEventStateManager()) {
+    return false;
+  }
+
+  nsPresContext* activePresContext = activeESM->GetPresContext();
+  if (!activePresContext) {
+    return false;
+  }
+
+  nsIPresShell* activePresShell = activePresContext->GetPresShell();
+  if (!activePresShell) {
+    return false;
+  }
+
+  // Note, currently for backwards compatibility we don't forward mouse events
+  // to the active document when mouse is over some subdocument.
+  if (!nsContentUtils::ContentIsCrossDocDescendantOf(
+          activePresShell->GetDocument(), GetDocument())) {
+    return false;
+  }
+
+  SetPresShellAndFrame(static_cast<PresShell*>(activePresShell),
+                       activePresShell->GetRootFrame());
+  return true;
 }

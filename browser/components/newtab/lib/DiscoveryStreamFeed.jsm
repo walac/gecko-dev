@@ -4,6 +4,7 @@
 "use strict";
 
 const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 XPCOMUtils.defineLazyGlobalGetters(this, ["fetch"]);
 ChromeUtils.defineModuleGetter(this, "perfService", "resource://activity-stream/common/PerfService.jsm");
 
@@ -15,11 +16,13 @@ const LAYOUT_UPDATE_TIME = 30 * 60 * 1000; // 30 minutes
 const STARTUP_CACHE_EXPIRE_TIME = 7 * 24 * 60 * 60 * 1000; // 1 week
 const COMPONENT_FEEDS_UPDATE_TIME = 30 * 60 * 1000; // 30 minutes
 const SPOCS_FEEDS_UPDATE_TIME = 30 * 60 * 1000; // 30 minutes
+const DEFAULT_RECS_EXPIRE_TIME = 60 * 60 * 1000; // 1 hour
 const MAX_LIFETIME_CAP = 500; // Guard against misconfiguration on the server
 const PREF_CONFIG = "discoverystream.config";
 const PREF_OPT_OUT = "discoverystream.optOut.0";
 const PREF_SHOW_SPONSORED = "showSponsored";
 const PREF_SPOC_IMPRESSIONS = "discoverystream.spoc.impressions";
+const PREF_REC_IMPRESSIONS = "discoverystream.rec.impressions";
 
 this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
   constructor() {
@@ -32,12 +35,25 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
     this._prefCache = {};
   }
 
+  finalLayoutEndpoint(url, apiKey) {
+    if (url.includes("$apiKey") && !apiKey) {
+      throw new Error(`Layout Endpoint - An API key was specified but none configured: ${url}`);
+    }
+    return url.replace("$apiKey", apiKey);
+  }
+
   get config() {
     if (this._prefCache.config) {
       return this._prefCache.config;
     }
     try {
       this._prefCache.config = JSON.parse(this.store.getState().Prefs.values[PREF_CONFIG]);
+      const layoutUrl = this._prefCache.config.layout_endpoint;
+      const apiKeyPref = this._prefCache.config.api_key_pref;
+      if (layoutUrl && apiKeyPref) {
+        const apiKey = Services.prefs.getCharPref(apiKeyPref, "");
+        this._prefCache.config.layout_endpoint = this.finalLayoutEndpoint(layoutUrl, apiKey);
+      }
 
       // Modify the cached config with the user set opt-out for other consumers
       this._prefCache.config.enabled = this._prefCache.config.enabled &&
@@ -46,7 +62,7 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
       // istanbul ignore next
       this._prefCache.config = {};
       // istanbul ignore next
-      Cu.reportError(`Could not parse preference. Try resetting ${PREF_CONFIG} in about:config.`);
+      Cu.reportError(`Could not parse preference. Try resetting ${PREF_CONFIG} in about:config. ${e}`);
     }
     return this._prefCache.config;
   }
@@ -248,6 +264,7 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
     // Each promise has a catch already built in, so no need to catch here.
     await Promise.all(newFeedsPromises);
     if (this.componentFeedFetched) {
+      this.cleanUpTopRecImpressionPref(newFeeds);
       this.componentFeedRequestTime = Math.round(perfService.absNow() - start);
     }
     await this.cache.set("feeds", newFeeds);
@@ -358,7 +375,7 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
         this.componentFeedFetched = true;
         feed = {
           lastUpdated: Date.now(),
-          data: feedResponse,
+          data: this.rotate(feedResponse),
         };
       } else {
         Cu.reportError("No response for feed");
@@ -410,6 +427,26 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
     }
 
     this.loaded = true;
+  }
+
+  // We have to rotate stories on the client so that
+  // active stories are at the front of the list, followed by stories that have expired
+  // impressions i.e. have been displayed for longer than recsExpireTime.
+  rotate(feedResponse) {
+    const {recommendations} = feedResponse;
+
+    const maxImpressionAge = Math.max(feedResponse.settings.recsExpireTime * 1000 || DEFAULT_RECS_EXPIRE_TIME, DEFAULT_RECS_EXPIRE_TIME);
+    const impressions = this.readImpressionsPref(PREF_REC_IMPRESSIONS);
+    const expired = [];
+    const active = [];
+    for (const item of recommendations) {
+      if (impressions[item.id] && Date.now() - impressions[item.id] >= maxImpressionAge) {
+        expired.push(item);
+      } else {
+        active.push(item);
+      }
+    }
+    return {...feedResponse, recommendations: active.concat(expired)};
   }
 
   /**
@@ -513,7 +550,13 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
     await this.cache.set("spocs", {});
   }
 
+  clearImpressionPrefs() {
+    this.writeImpressionsPref(PREF_SPOC_IMPRESSIONS, {});
+    this.writeImpressionsPref(PREF_REC_IMPRESSIONS, {});
+  }
+
   async onPrefChange() {
+    this.clearImpressionPrefs();
     if (this.config.enabled) {
       // We always want to clear the cache if the pref has changed
       await this.clearCache();
@@ -537,11 +580,30 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
     this.writeImpressionsPref(PREF_SPOC_IMPRESSIONS, impressions);
   }
 
+  recordTopRecImpressions(recId) {
+    let impressions = this.readImpressionsPref(PREF_REC_IMPRESSIONS);
+    if (!impressions[recId]) {
+      impressions = {...impressions, [recId]: Date.now()};
+      this.writeImpressionsPref(PREF_REC_IMPRESSIONS, impressions);
+    }
+  }
+
   cleanUpCampaignImpressionPref(data) {
     if (data.spocs && data.spocs.length) {
       const campaignIds = data.spocs.map(s => `${s.campaign_id}`);
       this.cleanUpImpressionPref(id => !campaignIds.includes(id), PREF_SPOC_IMPRESSIONS);
     }
+  }
+
+  // Clean up rec impression pref by removing all stories that are no
+  // longer part of the response.
+  cleanUpTopRecImpressionPref(newFeeds) {
+    // Need to build a single list of stories.
+    const activeStories = Object.keys(newFeeds).reduce((accumulator, currentValue) => {
+      const {recommendations} = newFeeds[currentValue].data;
+      return accumulator.concat(recommendations.map(i => `${i.id}`));
+    }, []);
+    this.cleanUpImpressionPref(id => !activeStories.includes(id), PREF_REC_IMPRESSIONS);
   }
 
   writeImpressionsPref(pref, impressions) {
@@ -608,6 +670,11 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
       case at.DISCOVERY_STREAM_OPT_OUT:
         this.store.dispatch(ac.SetPref(PREF_OPT_OUT, true));
         break;
+      case at.DISCOVERY_STREAM_IMPRESSION_STATS:
+        if (action.data.tiles && action.data.tiles[0] && action.data.tiles[0].id) {
+          this.recordTopRecImpressions(action.data.tiles[0].id);
+        }
+        break;
       case at.DISCOVERY_STREAM_SPOC_IMPRESSION:
         if (this.showSpocs) {
           this.recordCampaignImpression(action.data.campaignId);
@@ -641,7 +708,7 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
             break;
           // Check if spocs was disabled. Remove them if they were.
           case PREF_SHOW_SPONSORED:
-            await this.loadSpocs();
+            await this.loadSpocs(update => this.store.dispatch(ac.BroadcastToContent(update)));
             break;
         }
         break;
