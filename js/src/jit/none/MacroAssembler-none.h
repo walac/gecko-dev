@@ -464,6 +464,10 @@ class MacroAssemblerNone : public Assembler {
     MOZ_CRASH();
   }
   template <typename T>
+  void unboxBigInt(T, Register) {
+    MOZ_CRASH();
+  }
+  template <typename T>
   void unboxObject(T, Register) {
     MOZ_CRASH();
   }
@@ -522,6 +526,7 @@ class MacroAssemblerNone : public Assembler {
   void loadConstantFloat32(float, FloatRegister) { MOZ_CRASH(); }
   Condition testInt32Truthy(bool, ValueOperand) { MOZ_CRASH(); }
   Condition testStringTruthy(bool, ValueOperand) { MOZ_CRASH(); }
+  Condition testBigIntTruthy(bool, ValueOperand) { MOZ_CRASH(); }
 
   template <typename T>
   void loadUnboxedValue(T, MIRType, AnyRegister) {

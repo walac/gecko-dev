@@ -1373,7 +1373,10 @@ function TypedArraySubarray(begin, end) {
     }
 
     // Steps 4-6.
-    var buffer = TypedArrayBuffer(obj);
+    var buffer = ViewedArrayBufferIfReified(obj);
+    if (buffer === null) {
+        buffer = TypedArrayBuffer(obj);
+    }
     var srcLength = TypedArrayLength(obj);
 
     // Step 14 (Reordered because otherwise it'd be observable that we reset
@@ -1508,7 +1511,7 @@ function TypedArrayStaticFrom(source, mapfn = undefined, thisArg = undefined) {
 
         // Try to take a fast path when there's no mapper function and the
         // constructor is a built-in TypedArray constructor.
-        if (!mapping && IsTypedArrayConstructor(C)) {
+        if (!mapping && IsTypedArrayConstructor(C) && IsObject(source)) {
             // TODO: Add fast path for TypedArray inputs (bug 1491813).
 
             // The source is a packed array using the default iterator.

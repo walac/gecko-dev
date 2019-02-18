@@ -136,8 +136,8 @@ class UrlbarController {
     }
 
     if (queryContext.lastResultCount == 0) {
-      if (queryContext.autofillValue) {
-        this.input.autofill(queryContext.autofillValue);
+      if (queryContext.results.length && queryContext.results[0].autofill) {
+        this.input.setValueFromResult(queryContext.results[0]);
       }
       // The first time we receive results try to connect to the heuristic
       // result.
@@ -196,6 +196,20 @@ class UrlbarController {
       this.view.selectNextItem({ reverse: event.key == "p" });
       event.preventDefault();
       return;
+    }
+
+    if (this.view.isOpen) {
+      let queryContext = this._lastQueryContext;
+      if (queryContext) {
+        this.view.oneOffSearchButtons.handleKeyPress(
+          event,
+          queryContext.results.length,
+          this.view.allowEmptySelection,
+          queryContext.searchString);
+        if (event.defaultPrevented) {
+          return;
+        }
+      }
     }
 
     switch (event.keyCode) {
@@ -273,7 +287,7 @@ class UrlbarController {
     switch (reason) {
       case "resultsadded": {
         // We should connect to an heuristic result, if it exists.
-        if (resultIndex == 0 && (context.preselected || context.autofillValue)) {
+        if ((resultIndex == 0 && context.preselected) || result.autofill) {
           if (result.type == UrlbarUtils.RESULT_TYPE.SEARCH) {
             // Speculative connect only if search suggestions are enabled.
             if (UrlbarPrefs.get("suggest.searches") &&
@@ -281,7 +295,7 @@ class UrlbarController {
               let engine = Services.search.defaultEngine;
               UrlbarUtils.setupSpeculativeConnection(engine, this.browserWindow);
             }
-          } else if (context.autofillValue) {
+          } else if (result.autofill) {
             UrlbarUtils.setupSpeculativeConnection(url, this.browserWindow);
           }
         }

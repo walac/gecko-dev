@@ -260,8 +260,6 @@ class AsmJSGlobal {
     MOZ_ASSERT(pod.which_ == Constant);
     return pod.u.constant.value_;
   }
-
-  WASM_DECLARE_SERIALIZABLE(AsmJSGlobal);
 };
 
 typedef Vector<AsmJSGlobal, 0, SystemAllocPolicy> AsmJSGlobalVector;
@@ -305,8 +303,6 @@ class AsmJSExport {
 
 typedef Vector<AsmJSExport, 0, SystemAllocPolicy> AsmJSExportVector;
 
-enum class CacheResult { Hit, Miss };
-
 // Holds the immutable guts of an AsmJSModule.
 //
 // AsmJSMetadata is built incrementally by ModuleValidator and then shared
@@ -328,8 +324,6 @@ struct js::AsmJSMetadata : Metadata, AsmJSMetadataCacheablePod {
   CacheableChars globalArgumentName;
   CacheableChars importArgumentName;
   CacheableChars bufferArgumentName;
-
-  CacheResult cacheResult;
 
   // These values are not serialized since they are relative to the
   // containing script which can be different between serialization and
@@ -353,7 +347,6 @@ struct js::AsmJSMetadata : Metadata, AsmJSMetadataCacheablePod {
 
   AsmJSMetadata()
       : Metadata(ModuleKind::AsmJS),
-        cacheResult(CacheResult::Miss),
         toStringStart(0),
         srcStart(0),
         strict(false) {}
@@ -393,8 +386,6 @@ struct js::AsmJSMetadata : Metadata, AsmJSMetadataCacheablePod {
 
   AsmJSMetadataCacheablePod& pod() { return *this; }
   const AsmJSMetadataCacheablePod& pod() const { return *this; }
-
-  WASM_DECLARE_SERIALIZABLE_OVERRIDE(AsmJSMetadata)
 };
 
 typedef RefPtr<AsmJSMetadata> MutableAsmJSMetadata;
@@ -581,19 +572,18 @@ static ParseNode* ElemIndex(ParseNode* pn) {
   return &pn->as<PropertyByValue>().key();
 }
 
-static inline JSFunction* FunctionObject(CodeNode* funNode) {
-  MOZ_ASSERT(funNode->isKind(ParseNodeKind::Function));
+static inline JSFunction* FunctionObject(FunctionNode* funNode) {
   return funNode->funbox()->function();
 }
 
-static inline PropertyName* FunctionName(CodeNode* funNode) {
+static inline PropertyName* FunctionName(FunctionNode* funNode) {
   if (JSAtom* name = FunctionObject(funNode)->explicitName()) {
     return name->asPropertyName();
   }
   return nullptr;
 }
 
-static inline ParseNode* FunctionStatementList(CodeNode* funNode) {
+static inline ParseNode* FunctionStatementList(FunctionNode* funNode) {
   MOZ_ASSERT(funNode->body()->isKind(ParseNodeKind::ParamsBody));
   LexicalScopeNode* last =
       &funNode->body()->as<ListNode>().last()->as<LexicalScopeNode>();
@@ -1330,7 +1320,7 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidatorShared {
 
  protected:
   JSContext* cx_;
-  CodeNode* moduleFunctionNode_;
+  FunctionNode* moduleFunctionNode_;
   PropertyName* moduleFunctionName_;
   PropertyName* globalArgumentName_ = nullptr;
   PropertyName* importArgumentName_ = nullptr;
@@ -1358,7 +1348,7 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidatorShared {
   bool errorOverRecursed_ = false;
 
  protected:
-  ModuleValidatorShared(JSContext* cx, CodeNode* moduleFunctionNode)
+  ModuleValidatorShared(JSContext* cx, FunctionNode* moduleFunctionNode)
       : cx_(cx),
         moduleFunctionNode_(moduleFunctionNode),
         moduleFunctionName_(FunctionName(moduleFunctionNode)),
@@ -1891,7 +1881,7 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidator
 
  public:
   ModuleValidator(JSContext* cx, AsmJSParser<Unit>& parser,
-                  CodeNode* moduleFunctionNode)
+                  FunctionNode* moduleFunctionNode)
       : ModuleValidatorShared(cx, moduleFunctionNode), parser_(parser) {}
 
   ~ModuleValidator() {
@@ -1982,7 +1972,7 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidator
 
   AsmJSParser<Unit>& parser() const { return parser_; }
 
-  auto tokenStream() const -> decltype(parser_.tokenStream)& {
+  auto& tokenStream() const {
     return parser_.tokenStream;
   }
 
@@ -2689,7 +2679,7 @@ static bool CheckModuleLevelName(ModuleValidatorShared& m, ParseNode* usepn,
   return true;
 }
 
-static bool CheckFunctionHead(ModuleValidatorShared& m, CodeNode* funNode) {
+static bool CheckFunctionHead(ModuleValidatorShared& m, FunctionNode* funNode) {
   FunctionBox* funbox = funNode->funbox();
   MOZ_ASSERT(!funbox->hasExprBody());
 
@@ -2733,7 +2723,8 @@ static bool CheckModuleArgument(ModuleValidatorShared& m, ParseNode* arg,
   return true;
 }
 
-static bool CheckModuleArguments(ModuleValidatorShared& m, CodeNode* funNode) {
+static bool CheckModuleArguments(ModuleValidatorShared& m,
+                                 FunctionNode* funNode) {
   unsigned numFormals;
   ParseNode* arg1 = FunctionFormalParametersList(funNode, &numFormals);
   ParseNode* arg2 = arg1 ? NextNode(arg1) : nullptr;
@@ -5997,7 +5988,7 @@ static bool CheckStatement(FunctionValidator<Unit>& f, ParseNode* stmt) {
 }
 
 template <typename Unit>
-static bool ParseFunction(ModuleValidator<Unit>& m, CodeNode** funNodeOut,
+static bool ParseFunction(ModuleValidator<Unit>& m, FunctionNode** funNodeOut,
                           unsigned* line) {
   auto& tokenStream = m.tokenStream();
 
@@ -6025,7 +6016,8 @@ static bool ParseFunction(ModuleValidator<Unit>& m, CodeNode** funNodeOut,
     return false;
   }
 
-  CodeNode* funNode = m.parser().handler.newFunctionStatement(m.parser().pos());
+  FunctionNode* funNode = m.parser().handler.newFunction(
+      FunctionSyntaxKind::Statement, m.parser().pos());
   if (!funNode) {
     return false;
   }
@@ -6075,7 +6067,7 @@ static bool CheckFunction(ModuleValidator<Unit>& m) {
   auto releaseMark =
       mozilla::MakeScopeExit([&m, &mark] { m.parser().release(mark); });
 
-  CodeNode* funNode = nullptr;
+  FunctionNode* funNode = nullptr;
   unsigned line = 0;
   if (!ParseFunction(m, &funNode, &line)) {
     return false;
@@ -6364,7 +6356,7 @@ static SharedModule CheckModule(JSContext* cx, AsmJSParser<Unit>& parser,
                                 unsigned* time) {
   int64_t before = PRMJ_Now();
 
-  CodeNode* moduleFunctionNode = parser.pc->functionBox()->functionNode;
+  FunctionNode* moduleFunctionNode = parser.pc->functionBox()->functionNode;
 
   ModuleValidator<Unit> m(cx, parser, moduleFunctionNode);
   if (!m.init()) {
@@ -6996,78 +6988,6 @@ static JSFunction* NewAsmJSModuleFunction(JSContext* cx, JSFunction* origFun,
 }
 
 /*****************************************************************************/
-// Caching and cloning
-
-size_t AsmJSGlobal::serializedSize() const {
-  return sizeof(pod) + field_.serializedSize();
-}
-
-uint8_t* AsmJSGlobal::serialize(uint8_t* cursor) const {
-  cursor = WriteBytes(cursor, &pod, sizeof(pod));
-  cursor = field_.serialize(cursor);
-  return cursor;
-}
-
-const uint8_t* AsmJSGlobal::deserialize(const uint8_t* cursor) {
-  (cursor = ReadBytes(cursor, &pod, sizeof(pod))) &&
-      (cursor = field_.deserialize(cursor));
-  return cursor;
-}
-
-size_t AsmJSGlobal::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
-  return field_.sizeOfExcludingThis(mallocSizeOf);
-}
-
-size_t AsmJSMetadata::serializedSize() const {
-  return Metadata::serializedSize() + sizeof(pod()) +
-         SerializedVectorSize(asmJSGlobals) +
-         SerializedPodVectorSize(asmJSImports) +
-         SerializedPodVectorSize(asmJSExports) +
-         SerializedVectorSize(asmJSFuncNames) +
-         globalArgumentName.serializedSize() +
-         importArgumentName.serializedSize() +
-         bufferArgumentName.serializedSize();
-}
-
-uint8_t* AsmJSMetadata::serialize(uint8_t* cursor) const {
-  cursor = Metadata::serialize(cursor);
-  cursor = WriteBytes(cursor, &pod(), sizeof(pod()));
-  cursor = SerializeVector(cursor, asmJSGlobals);
-  cursor = SerializePodVector(cursor, asmJSImports);
-  cursor = SerializePodVector(cursor, asmJSExports);
-  cursor = SerializeVector(cursor, asmJSFuncNames);
-  cursor = globalArgumentName.serialize(cursor);
-  cursor = importArgumentName.serialize(cursor);
-  cursor = bufferArgumentName.serialize(cursor);
-  return cursor;
-}
-
-const uint8_t* AsmJSMetadata::deserialize(const uint8_t* cursor) {
-  (cursor = Metadata::deserialize(cursor)) &&
-      (cursor = ReadBytes(cursor, &pod(), sizeof(pod()))) &&
-      (cursor = DeserializeVector(cursor, &asmJSGlobals)) &&
-      (cursor = DeserializePodVector(cursor, &asmJSImports)) &&
-      (cursor = DeserializePodVector(cursor, &asmJSExports)) &&
-      (cursor = DeserializeVector(cursor, &asmJSFuncNames)) &&
-      (cursor = globalArgumentName.deserialize(cursor)) &&
-      (cursor = importArgumentName.deserialize(cursor)) &&
-      (cursor = bufferArgumentName.deserialize(cursor));
-  cacheResult = CacheResult::Hit;
-  return cursor;
-}
-
-size_t AsmJSMetadata::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
-  return Metadata::sizeOfExcludingThis(mallocSizeOf) +
-         SizeOfVectorExcludingThis(asmJSGlobals, mallocSizeOf) +
-         asmJSImports.sizeOfExcludingThis(mallocSizeOf) +
-         asmJSExports.sizeOfExcludingThis(mallocSizeOf) +
-         SizeOfVectorExcludingThis(asmJSFuncNames, mallocSizeOf) +
-         globalArgumentName.sizeOfExcludingThis(mallocSizeOf) +
-         importArgumentName.sizeOfExcludingThis(mallocSizeOf) +
-         bufferArgumentName.sizeOfExcludingThis(mallocSizeOf);
-}
-
-/*****************************************************************************/
 // Top-level js::CompileAsmJS
 
 static bool NoExceptionPending(JSContext* cx) {
@@ -7251,16 +7171,7 @@ static JSFunction* MaybeWrappedNativeFunction(const Value& v) {
     return nullptr;
   }
 
-  JSObject* obj = CheckedUnwrap(&v.toObject());
-  if (!obj) {
-    return nullptr;
-  }
-
-  if (!obj->is<JSFunction>()) {
-    return nullptr;
-  }
-
-  return &obj->as<JSFunction>();
+  return v.toObject().maybeUnwrapIf<JSFunction>();
 }
 
 bool js::IsAsmJSModule(JSContext* cx, unsigned argc, Value* vp) {

@@ -2,7 +2,7 @@ import {actionCreators as ac} from "common/Actions.jsm";
 import {DSCard} from "../DSCard/DSCard.jsx";
 import {List} from "../List/List.jsx";
 import React from "react";
-import {truncateText} from "content-src/lib/truncate-text";
+import {SafeAnchor} from "../SafeAnchor/SafeAnchor";
 
 export class Hero extends React.PureComponent {
   constructor(props) {
@@ -42,22 +42,23 @@ export class Hero extends React.PureComponent {
     // Note that `{index + 1}` is necessary below for telemetry since we treat heroRec as index 0.
     let cards = otherRecs.map((rec, index) => (
       <DSCard
+        campaignId={rec.campaign_id}
         key={`dscard-${index}`}
         image_src={rec.image_src}
-        title={truncateText(rec.title, 44)}
+        title={rec.title}
         url={rec.url}
         id={rec.id}
         index={index + 1}
         type={this.props.type}
         dispatch={this.props.dispatch}
-        context={truncateText(rec.context, 22)}
-        source={truncateText(rec.domain, 22)} />
+        context={rec.context}
+        source={rec.domain} />
     ));
 
     let list = (
       <List
         recStartingPoint={1}
-        feed={this.props.feed}
+        data={data}
         hasImages={true}
         hasBorders={this.props.border === `border`}
         items={this.props.items - 1}
@@ -68,20 +69,20 @@ export class Hero extends React.PureComponent {
       <div>
         <div className="ds-header">{this.props.title}</div>
         <div className={`ds-hero ds-hero-${this.props.border}`}>
-          <a href={heroRec.url} className="wrapper" onClick={this.onLinkClick}>
+          <SafeAnchor url={heroRec.url} className="wrapper" onLinkClick={this.onLinkClick}>
             <div className="img-wrapper">
               <div className="img" style={{backgroundImage: `url(${heroRec.image_src})`}} />
             </div>
             <div className="meta">
-              <header>{truncateText(heroRec.title, 28)}</header>
-              <p>{truncateText(heroRec.excerpt, 114)}</p>
+              <header>{heroRec.title}</header>
+              <p className="excerpt">{heroRec.excerpt}</p>
               {heroRec.context ? (
-                <p className="context">{truncateText(heroRec.context, 22)}</p>
+                <p className="context">{heroRec.context}</p>
               ) : (
-                <p className="source">{truncateText(heroRec.domain, 22)}</p>
+                <p className="source">{heroRec.domain}</p>
               )}
             </div>
-          </a>
+          </SafeAnchor>
           <div className={`${this.props.subComponentType}`}>
             { this.props.subComponentType === `cards` ? cards : list }
           </div>

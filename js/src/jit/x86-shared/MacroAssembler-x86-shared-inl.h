@@ -801,7 +801,6 @@ void MacroAssembler::branchTestSymbolImpl(Condition cond, const T& t,
   j(cond, label);
 }
 
-#ifdef ENABLE_BIGINT
 void MacroAssembler::branchTestBigInt(Condition cond, Register tag,
                                       Label* label) {
   branchTestBigIntImpl(cond, tag, label);
@@ -823,7 +822,13 @@ void MacroAssembler::branchTestBigIntImpl(Condition cond, const T& t,
   cond = testBigInt(cond, t);
   j(cond, label);
 }
-#endif
+
+void MacroAssembler::branchTestBigIntTruthy(bool truthy,
+                                            const ValueOperand& value,
+                                            Label* label) {
+  Condition cond = testBigIntTruthy(truthy, value);
+  j(cond, label);
+}
 
 void MacroAssembler::branchTestNull(Condition cond, Register tag,
                                     Label* label) {

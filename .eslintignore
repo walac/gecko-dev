@@ -65,6 +65,8 @@ browser/components/sessionstore/test/unit/data/sessionstore_invalid.js
 # for documentation purposes (policies.json) but to be accessed by the
 # code as a .jsm (schema.jsm)
 browser/components/enterprisepolicies/schemas/schema.jsm
+# Ignore generated code from wasm-bindgen
+browser/components/extensions/profiler_get_symbols.js
 # generated & special files in cld2
 browser/components/translation/cld2/**
 # Screenshots is imported as a system add-on and has
@@ -141,11 +143,11 @@ devtools/client/jsonview/lib/require.js
 devtools/client/shared/demangle.js
 devtools/client/shared/source-map/*
 devtools/client/shared/vendor/*
-devtools/client/sourceeditor/codemirror/*.js
-devtools/client/sourceeditor/codemirror/**/*.js
-devtools/client/sourceeditor/tern/*
-devtools/client/sourceeditor/test/cm_mode_ruby.js
-devtools/client/sourceeditor/test/codemirror/*
+devtools/client/shared/sourceeditor/codemirror/*.js
+devtools/client/shared/sourceeditor/codemirror/**/*.js
+devtools/client/shared/sourceeditor/tern/*
+devtools/client/shared/sourceeditor/test/cm_mode_ruby.js
+devtools/client/shared/sourceeditor/test/codemirror/*
 devtools/server/actors/utils/automation-timeline.js
 
 # Ignore devtools files testing sourcemaps / code style

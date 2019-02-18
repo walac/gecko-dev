@@ -181,8 +181,7 @@ DEBIAN_DISTROS = (
     'LinuxMint',
     'Elementary OS',
     'Elementary',
-    '"elementary OS"',
-    '"elementary"'
+    'elementary'
 )
 
 ADD_GIT_TOOLS_PATH = '''
@@ -341,7 +340,7 @@ class Bootstrapper(object):
     # be available. We /could/ refactor parts of mach_bootstrap.py to be
     # part of this directory to avoid the code duplication.
     def try_to_create_state_dir(self):
-        state_dir, _ = get_state_dir()
+        state_dir = get_state_dir()
 
         if not os.path.exists(state_dir):
             should_create_state_dir = True
@@ -383,7 +382,7 @@ class Bootstrapper(object):
         self.instance.ensure_node_packages(state_dir, checkout_root)
         if not self.instance.artifact_mode:
             self.instance.ensure_stylo_packages(state_dir, checkout_root)
-            self.instance.ensure_clang_static_analysis_package(checkout_root)
+            self.instance.ensure_clang_static_analysis_package(state_dir, checkout_root)
 
     def check_telemetry_opt_in(self, state_dir):
         # We can't prompt the user.

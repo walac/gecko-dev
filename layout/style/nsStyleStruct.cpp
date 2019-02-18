@@ -182,10 +182,15 @@ nscoord nsStyleFont::ZoomText(const Document& aDocument, nscoord aSize) {
   return NSToCoordTruncClamped(float(aSize) * textZoom);
 }
 
-nsStyleMargin::nsStyleMargin(const Document& aDocument) {
+template <typename T>
+static StyleRect<T> StyleRectWithAllSides(const T& aSide) {
+  return {aSide, aSide, aSide, aSide};
+}
+
+nsStyleMargin::nsStyleMargin(const Document& aDocument)
+    : mMargin(StyleRectWithAllSides(
+          LengthPercentageOrAuto::LengthPercentage(LengthPercentage::Zero()))) {
   MOZ_COUNT_CTOR(nsStyleMargin);
-  nsStyleCoord zero(0, nsStyleCoord::CoordConstructor);
-  NS_FOR_CSS_SIDES(side) { mMargin.Set(side, zero); }
 }
 
 nsStyleMargin::nsStyleMargin(const nsStyleMargin& aSrc)
@@ -204,10 +209,9 @@ nsChangeHint nsStyleMargin::CalcDifference(
          nsChangeHint_ClearAncestorIntrinsics;
 }
 
-nsStylePadding::nsStylePadding(const Document& aDocument) {
+nsStylePadding::nsStylePadding(const Document& aDocument)
+    : mPadding(StyleRectWithAllSides(LengthPercentage::Zero())) {
   MOZ_COUNT_CTOR(nsStylePadding);
-  nsStyleCoord zero(0, nsStyleCoord::CoordConstructor);
-  NS_FOR_CSS_SIDES(side) { mPadding.Set(side, zero); }
 }
 
 nsStylePadding::nsStylePadding(const nsStylePadding& aSrc)
@@ -289,8 +293,8 @@ nsStyleBorder::nsStyleBorder(const nsStyleBorder& aSrc)
 
 nsStyleBorder::~nsStyleBorder() { MOZ_COUNT_DTOR(nsStyleBorder); }
 
-void nsStyleBorder::FinishStyle(Document& aDocument,
-                                const nsStyleBorder* aOldStyle) {
+void nsStyleBorder::TriggerImageLoads(Document& aDocument,
+                                      const nsStyleBorder* aOldStyle) {
   MOZ_ASSERT(NS_IsMainThread());
 
   mBorderImageSource.ResolveImage(
@@ -474,8 +478,8 @@ nsStyleList::nsStyleList(const nsStyleList& aSource)
   MOZ_COUNT_CTOR(nsStyleList);
 }
 
-void nsStyleList::FinishStyle(Document& aDocument,
-                              const nsStyleList* aOldStyle) {
+void nsStyleList::TriggerImageLoads(Document& aDocument,
+                                    const nsStyleList* aOldStyle) {
   MOZ_ASSERT(NS_IsMainThread());
 
   if (mListStyleImage && !mListStyleImage->IsResolved()) {
@@ -888,8 +892,8 @@ void StyleShapeSource::SetPath(UniquePtr<StyleSVGPath> aPath) {
   mType = StyleShapeSourceType::Path;
 }
 
-void StyleShapeSource::FinishStyle(Document& aDocument,
-                                   const StyleShapeSource* aOldShapeSource) {
+void StyleShapeSource::TriggerImageLoads(
+    Document& aDocument, const StyleShapeSource* aOldShapeSource) {
   if (GetType() != StyleShapeSourceType::Image) {
     return;
   }
@@ -1083,8 +1087,8 @@ nsStyleSVGReset::nsStyleSVGReset(const nsStyleSVGReset& aSource)
   MOZ_COUNT_CTOR(nsStyleSVGReset);
 }
 
-void nsStyleSVGReset::FinishStyle(Document& aDocument,
-                                  const nsStyleSVGReset* aOldStyle) {
+void nsStyleSVGReset::TriggerImageLoads(Document& aDocument,
+                                        const nsStyleSVGReset* aOldStyle) {
   MOZ_ASSERT(NS_IsMainThread());
 
   NS_FOR_VISIBLE_IMAGE_LAYERS_BACK_TO_FRONT(i, mMask) {
@@ -1291,7 +1295,8 @@ bool nsStyleSVGPaint::operator==(const nsStyleSVGPaint& aOther) const {
 // nsStylePosition
 //
 nsStylePosition::nsStylePosition(const Document& aDocument)
-    : mWidth(eStyleUnit_Auto),
+    : mOffset(StyleRectWithAllSides(LengthPercentageOrAuto::Auto())),
+      mWidth(eStyleUnit_Auto),
       mMinWidth(eStyleUnit_Auto),
       mMaxWidth(eStyleUnit_None),
       mHeight(eStyleUnit_Auto),
@@ -1325,9 +1330,6 @@ nsStylePosition::nsStylePosition(const Document& aDocument)
   // positioning values not inherited
 
   mObjectPosition.SetInitialPercentValues(0.5f);
-
-  nsStyleCoord autoCoord(eStyleUnit_Auto);
-  NS_FOR_CSS_SIDES(side) { mOffset.Set(side, autoCoord); }
 
   // The initial value of grid-auto-columns and grid-auto-rows is 'auto',
   // which computes to 'minmax(auto, auto)'.
@@ -1390,11 +1392,10 @@ nsStylePosition::nsStylePosition(const nsStylePosition& aSource)
   }
 }
 
-static bool IsAutonessEqual(const nsStyleSides& aSides1,
-                            const nsStyleSides& aSides2) {
+static bool IsAutonessEqual(const StyleRect<LengthPercentageOrAuto>& aSides1,
+                            const StyleRect<LengthPercentageOrAuto>& aSides2) {
   NS_FOR_CSS_SIDES(side) {
-    if ((aSides1.GetUnit(side) == eStyleUnit_Auto) !=
-        (aSides2.GetUnit(side) == eStyleUnit_Auto)) {
+    if (aSides1.Get(side).IsAuto() != aSides2.Get(side).IsAuto()) {
       return false;
     }
   }
@@ -1878,7 +1879,8 @@ bool nsStyleImageRequest::Resolve(Document& aDocument,
   // stuff like bug 1439285. Cleanest fix if that doesn't get fixed is bug
   // 1440305, but that seems too risky, and a lot of work to do before 60.
   //
-  // Once that's fixed, the "old style" argument to FinishStyle can go away.
+  // Once that's fixed, the "old style" argument to TriggerImageLoads can go
+  // away.
   if (nsContentUtils::IsChromeDoc(&aDocument) && aOldImageRequest &&
       aOldImageRequest->IsResolved() && DefinitelyEquals(*aOldImageRequest)) {
     MOZ_ASSERT(aOldImageRequest->mDocGroup == aDocument.GetDocGroup());
@@ -2857,8 +2859,8 @@ nsStyleBackground::nsStyleBackground(const nsStyleBackground& aSource)
 
 nsStyleBackground::~nsStyleBackground() { MOZ_COUNT_DTOR(nsStyleBackground); }
 
-void nsStyleBackground::FinishStyle(Document& aDocument,
-                                    const nsStyleBackground* aOldStyle) {
+void nsStyleBackground::TriggerImageLoads(Document& aDocument,
+                                          const nsStyleBackground* aOldStyle) {
   MOZ_ASSERT(NS_IsMainThread());
   mImage.ResolveImages(aDocument, aOldStyle ? &aOldStyle->mImage : nullptr);
 }
@@ -3016,7 +3018,7 @@ nsStyleDisplay::nsStyleDisplay(const Document& aDocument)
       mAnimationFillModeCount(1),
       mAnimationPlayStateCount(1),
       mAnimationIterationCountCount(1),
-      mShapeMargin(0, nsStyleCoord::CoordConstructor) {
+      mShapeMargin(LengthPercentage::Zero()) {
   MOZ_COUNT_CTOR(nsStyleDisplay);
 
   // Initial value for mScrollSnapDestination is "0px 0px"
@@ -3066,7 +3068,9 @@ nsStyleDisplay::nsStyleDisplay(const nsStyleDisplay& aSource)
       mSpecifiedRotate(aSource.mSpecifiedRotate),
       mSpecifiedTranslate(aSource.mSpecifiedTranslate),
       mSpecifiedScale(aSource.mSpecifiedScale),
-      mIndividualTransform(aSource.mIndividualTransform),
+      // We intentionally leave mIndividualTransform as null, is the caller's
+      // responsibility to call GenerateCombinedIndividualTransform when
+      // appropriate.
       mMotion(aSource.mMotion ? MakeUnique<StyleMotion>(*aSource.mMotion)
                               : nullptr),
       mTransformOrigin{aSource.mTransformOrigin[0], aSource.mTransformOrigin[1],
@@ -3132,13 +3136,12 @@ nsStyleDisplay::~nsStyleDisplay() {
   MOZ_COUNT_DTOR(nsStyleDisplay);
 }
 
-void nsStyleDisplay::FinishStyle(Document& aDocument,
-                                 const nsStyleDisplay* aOldStyle) {
+void nsStyleDisplay::TriggerImageLoads(Document& aDocument,
+                                       const nsStyleDisplay* aOldStyle) {
   MOZ_ASSERT(NS_IsMainThread());
 
-  mShapeOutside.FinishStyle(aDocument,
-                            aOldStyle ? &aOldStyle->mShapeOutside : nullptr);
-  GenerateCombinedIndividualTransform();
+  mShapeOutside.TriggerImageLoads(
+      aDocument, aOldStyle ? &aOldStyle->mShapeOutside : nullptr);
 }
 
 static inline bool TransformListChanged(
@@ -3431,11 +3434,7 @@ bool nsStyleDisplay::TransformChanged(const nsStyleDisplay& aNewData) const {
 }
 
 void nsStyleDisplay::GenerateCombinedIndividualTransform() {
-  // FIXME(emilio): This should probably be called from somewhere like what we
-  // do for image layers, instead of FinishStyle.
-  //
-  // This does and undoes the work a ton of times in Stylo.
-  mIndividualTransform = nullptr;
+  MOZ_ASSERT(!mIndividualTransform);
 
   // Follow the order defined in the spec to append transform functions.
   // https://drafts.csswg.org/css-transforms-2/#ctm
@@ -3656,8 +3655,8 @@ nsStyleContent::nsStyleContent(const Document& aDocument) {
 
 nsStyleContent::~nsStyleContent() { MOZ_COUNT_DTOR(nsStyleContent); }
 
-void nsStyleContent::FinishStyle(Document& aDocument,
-                                 const nsStyleContent* aOldStyle) {
+void nsStyleContent::TriggerImageLoads(Document& aDocument,
+                                       const nsStyleContent* aOldStyle) {
   for (size_t i = 0; i < mContents.Length(); ++i) {
     const nsStyleContentData* oldData =
         (aOldStyle && aOldStyle->mContents.Length() > i)
@@ -3790,7 +3789,7 @@ nsStyleText::nsStyleText(const Document& aDocument)
       mWordSpacing(0, nsStyleCoord::CoordConstructor),
       mLetterSpacing(eStyleUnit_Normal),
       mLineHeight(eStyleUnit_Normal),
-      mTextIndent(0, nsStyleCoord::CoordConstructor),
+      mTextIndent(LengthPercentage::Zero()),
       mWebkitTextStrokeWidth(0),
       mTextShadow(nullptr) {
   MOZ_COUNT_CTOR(nsStyleText);
@@ -3990,7 +3989,8 @@ nsStyleUI::nsStyleUI(const nsStyleUI& aSource)
 
 nsStyleUI::~nsStyleUI() { MOZ_COUNT_DTOR(nsStyleUI); }
 
-void nsStyleUI::FinishStyle(Document& aDocument, const nsStyleUI* aOldStyle) {
+void nsStyleUI::TriggerImageLoads(Document& aDocument,
+                                  const nsStyleUI* aOldStyle) {
   MOZ_ASSERT(NS_IsMainThread());
 
   for (size_t i = 0; i < mCursorImages.Length(); ++i) {

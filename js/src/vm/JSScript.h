@@ -131,11 +131,14 @@ enum JSTryNoteKind {
  * Exception handling record.
  */
 struct JSTryNote {
-  uint8_t kind;        /* one of JSTryNoteKind */
+  uint32_t kind;       /* one of JSTryNoteKind */
   uint32_t stackDepth; /* stack depth upon exception handler entry */
   uint32_t start;      /* start of the try statement or loop relative
                           to script->code() */
   uint32_t length;     /* length of the try statement or loop */
+
+  template <js::XDRMode mode>
+  js::XDRResult XDR(js::XDRState<mode>* xdr);
 };
 
 namespace js {
@@ -167,6 +170,9 @@ struct ScopeNote {
                     // relative to script->code().
   uint32_t length;  // Bytecode length of scope.
   uint32_t parent;  // Index of parent block scope in notes, or NoScopeNote.
+
+  template <js::XDRMode mode>
+  js::XDRResult XDR(js::XDRState<mode>* xdr);
 };
 
 class ScriptCounts {
@@ -451,6 +457,8 @@ struct SourceTypeTraits<char16_t> {
     return UniqueTwoByteChars(std::move(str));
   }
 };
+
+class ScriptSourceHolder;
 
 class ScriptSource {
   friend class SourceCompressionTask;
@@ -1003,11 +1011,6 @@ class ScriptSource {
 
   void setCompressedSourceFromTask(SharedImmutableString compressed);
 
- public:
-  // XDR handling
-  template <XDRMode mode>
-  MOZ_MUST_USE XDRResult performXDR(XDRState<mode>* xdr);
-
  private:
   // It'd be better to make this function take <XDRMode, Unit>, as both
   // specializations of this function contain nested Unit-parametrized
@@ -1095,6 +1098,11 @@ class ScriptSource {
     parseEnded_ = ReallyNow();
   }
 
+  template <XDRMode mode>
+  static MOZ_MUST_USE XDRResult
+  XDR(XDRState<mode>* xdr, const mozilla::Maybe<JS::CompileOptions>& options,
+      MutableHandle<ScriptSourceHolder> ss);
+
   void trace(JSTracer* trc);
 };
 
@@ -1120,6 +1128,8 @@ class ScriptSourceHolder {
     ss = newss;
   }
   ScriptSource* get() const { return ss; }
+
+  void trace(JSTracer* trc) { ss->trace(trc); }
 };
 
 // [SMDOC] ScriptSourceObject
@@ -1409,6 +1419,13 @@ class alignas(JS::Value) PrivateScriptData final {
                                  uint32_t ntrynotes, uint32_t nscopenotes,
                                  uint32_t nresumeoffsets, uint32_t* dataSize);
 
+  template <XDRMode mode>
+  static MOZ_MUST_USE XDRResult XDR(js::XDRState<mode>* xdr,
+                                    js::HandleScript script,
+                                    js::HandleScriptSourceObject sourceObject,
+                                    js::HandleScope scriptEnclosingScope,
+                                    js::HandleFunction fun);
+
   void traceChildren(JSTracer* trc);
 };
 
@@ -1477,6 +1494,10 @@ class SharedScriptData {
   static constexpr size_t offsetOfNatoms() {
     return offsetof(SharedScriptData, natoms_);
   }
+
+  template <XDRMode mode>
+  static MOZ_MUST_USE XDRResult XDR(js::XDRState<mode>* xdr,
+                                    js::HandleScript script);
 
  private:
   SharedScriptData() = delete;
@@ -1733,12 +1754,7 @@ class JSScript : public js::gc::TenuredCell {
     // Script has an entry in Realm::debugScriptMap.
     HasDebugScript = 1 << 6,
 
-    // Freeze constraints for stack type sets have been generated.
-    HasFreezeConstraints = 1 << 7,
-
-    // Generation for this script's TypeScript. If out of sync with the
-    // TypeZone's generation, the TypeScript needs to be swept.
-    TypesGeneration = 1 << 8,
+    // (1 << 7) and (1 << 8) are unused.
 
     // Do not relazify this script. This is used by the relazify() testing
     // function for scripts that are on the stack and also by the AutoDelazify
@@ -1809,6 +1825,16 @@ class JSScript : public js::gc::TenuredCell {
                                      js::HandleScriptSourceObject sourceObject,
                                      js::HandleFunction fun,
                                      js::MutableHandleScript scriptp);
+
+  template <js::XDRMode mode>
+  friend js::XDRResult js::SharedScriptData::XDR(js::XDRState<mode>* xdr,
+                                                 js::HandleScript script);
+
+  template <js::XDRMode mode>
+  friend js::XDRResult js::PrivateScriptData::XDR(
+      js::XDRState<mode>* xdr, js::HandleScript script,
+      js::HandleScriptSourceObject sourceObject,
+      js::HandleScope scriptEnclosingScope, js::HandleFunction fun);
 
   friend bool js::detail::CopyScript(
       JSContext* cx, js::HandleScript src, js::HandleScript dst,
@@ -2116,13 +2142,6 @@ class JSScript : public js::gc::TenuredCell {
   }
   bool hasScriptName();
 
-  bool hasFreezeConstraints() const {
-    return hasFlag(MutableFlags::HasFreezeConstraints);
-  }
-  void setHasFreezeConstraints() {
-    setFlag(MutableFlags::HasFreezeConstraints);
-  }
-
   bool warnedAboutUndefinedProp() const {
     return hasFlag(MutableFlags::WarnedAboutUndefinedProp);
   }
@@ -2213,15 +2232,6 @@ class JSScript : public js::gc::TenuredCell {
    */
   bool argsObjAliasesFormals() const {
     return needsArgsObj() && hasMappedArgsObj();
-  }
-
-  uint32_t typesGeneration() const {
-    return uint32_t(hasFlag(MutableFlags::TypesGeneration));
-  }
-
-  void setTypesGeneration(uint32_t generation) {
-    MOZ_ASSERT(generation <= 1);
-    setFlag(MutableFlags::TypesGeneration, bool(generation));
   }
 
   void setDoNotRelazify(bool b) { setFlag(MutableFlags::DoNotRelazify, b); }
@@ -2420,11 +2430,9 @@ class JSScript : public js::gc::TenuredCell {
   /* Ensure the script has a TypeScript. */
   inline bool ensureHasTypes(JSContext* cx, js::AutoKeepTypeScripts&);
 
-  inline js::TypeScript* types(const js::AutoSweepTypeScript& sweep);
-  inline bool typesNeedsSweep() const;
+  js::TypeScript* types() { return types_; }
 
   void maybeReleaseTypes();
-  void sweepTypes(const js::AutoSweepTypeScript& sweep);
 
   inline js::GlobalObject& global() const;
   inline bool hasGlobal(const js::GlobalObject* global) const;

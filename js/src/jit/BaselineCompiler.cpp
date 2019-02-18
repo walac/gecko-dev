@@ -646,7 +646,10 @@ bool BaselineCodeGen<Handler>::callVM(const VMFunction& fun,
   // Perform the call.
   masm.call(code);
   uint32_t callOffset = masm.currentOffset();
-  masm.pop(BaselineFrameReg);
+  masm.Pop(BaselineFrameReg);
+
+  // Pop arguments from framePushed.
+  masm.implicitPop(fun.explicitStackSlots() * sizeof(void*));
 
 #ifdef DEBUG
   // Assert the frame does not have an override pc when we're executing JIT
@@ -1661,12 +1664,33 @@ bool BaselineCodeGen<Handler>::emit_JSOP_POS() {
   // Keep top stack value in R0.
   frame.popRegsAndSync(1);
 
-  // Inline path for int32 and double.
+  // Inline path for int32 and double; otherwise call VM.
   Label done;
   masm.branchTestNumber(Assembler::Equal, R0, &done);
 
-  // Call IC.
-  if (!emitNextIC()) {
+  prepareVMCall();
+  pushArg(R0);
+  if (!callVM(ToNumberInfo)) {
+    return false;
+  }
+
+  masm.bind(&done);
+  frame.push(R0);
+  return true;
+}
+
+template <typename Handler>
+bool BaselineCodeGen<Handler>::emit_JSOP_TONUMERIC() {
+  // Keep top stack value in R0.
+  frame.popRegsAndSync(1);
+
+  // Inline path for int32 and double; otherwise call VM.
+  Label done;
+  masm.branchTestNumber(Assembler::Equal, R0, &done);
+
+  prepareVMCall();
+  pushArg(R0);
+  if (!callVM(ToNumericInfo)) {
     return false;
   }
 
@@ -2018,12 +2042,10 @@ bool BaselineInterpreterCodeGen::emit_JSOP_DOUBLE() {
   MOZ_CRASH("NYI: interpreter JSOP_DOUBLE");
 }
 
-#ifdef ENABLE_BIGINT
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_JSOP_BIGINT() {
   return emit_JSOP_DOUBLE();
 }
-#endif
 
 template <>
 bool BaselineCompilerCodeGen::emit_JSOP_STRING() {
@@ -2195,7 +2217,7 @@ bool BaselineCodeGen<Handler>::emit_JSOP_LAMBDA_ARROW() {
 typedef bool (*SetFunNameFn)(JSContext*, HandleFunction, HandleValue,
                              FunctionPrefixKind);
 static const VMFunction SetFunNameInfo =
-    FunctionInfo<SetFunNameFn>(js::SetFunctionNameIfNoOwnName, "SetFunName");
+    FunctionInfo<SetFunNameFn>(js::SetFunctionName, "SetFunName");
 
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_JSOP_SETFUNNAME() {
@@ -2444,6 +2466,9 @@ const VMFunction NewArrayCopyOnWriteInfo = FunctionInfo<NewArrayCopyOnWriteFn>(
 
 template <>
 bool BaselineCompilerCodeGen::emit_JSOP_NEWARRAY_COPYONWRITE() {
+  // This is like the interpreter implementation, but we can call
+  // getOrFixupCopyOnWriteObject at compile-time.
+
   RootedScript scriptRoot(cx, handler.script());
   JSObject* obj =
       ObjectGroup::getOrFixupCopyOnWriteObject(cx, scriptRoot, handler.pc());
@@ -2466,9 +2491,27 @@ bool BaselineCompilerCodeGen::emit_JSOP_NEWARRAY_COPYONWRITE() {
   return true;
 }
 
+typedef ArrayObject* (*NewArrayCopyOnWriteOperationFn)(JSContext*, HandleScript,
+                                                       jsbytecode*);
+const VMFunction NewArrayCopyOnWriteOperationInfo =
+    FunctionInfo<NewArrayCopyOnWriteOperationFn>(
+        NewArrayCopyOnWriteOperation, "NewArrayCopyOnWriteOperation");
+
 template <>
 bool BaselineInterpreterCodeGen::emit_JSOP_NEWARRAY_COPYONWRITE() {
-  MOZ_CRASH("NYI: interpreter JSOP_NEWARRAY_COPYONWRITE");
+  prepareVMCall();
+
+  pushBytecodePCArg();
+  pushScriptArg(R2.scratchReg());
+
+  if (!callVM(NewArrayCopyOnWriteOperationInfo)) {
+    return false;
+  }
+
+  // Box and push return value.
+  masm.tagValue(JSVAL_TYPE_OBJECT, ReturnReg, R0);
+  frame.push(R0);
+  return true;
 }
 
 template <>
@@ -3087,16 +3130,15 @@ void BaselineInterpreterCodeGen::getEnvironmentCoordinateObject(Register reg) {
 template <>
 Address BaselineCompilerCodeGen::getEnvironmentCoordinateAddressFromObject(
     Register objReg, Register reg) {
-  JSScript* script = handler.script();
   EnvironmentCoordinate ec(handler.pc());
-  Shape* shape = EnvironmentCoordinateToEnvironmentShape(script, handler.pc());
 
-  if (shape->numFixedSlots() <= ec.slot()) {
-    masm.loadPtr(Address(objReg, NativeObject::offsetOfSlots()), reg);
-    return Address(reg, (ec.slot() - shape->numFixedSlots()) * sizeof(Value));
+  if (EnvironmentObject::nonExtensibleIsFixedSlot(ec)) {
+    return Address(objReg, NativeObject::getFixedSlotOffset(ec.slot()));
   }
 
-  return Address(objReg, NativeObject::getFixedSlotOffset(ec.slot()));
+  uint32_t slot = EnvironmentObject::nonExtensibleDynamicSlotIndex(ec);
+  masm.loadPtr(Address(objReg, NativeObject::offsetOfSlots()), reg);
+  return Address(reg, slot * sizeof(Value));
 }
 
 template <>
@@ -3291,9 +3333,35 @@ bool BaselineCompilerCodeGen::emit_JSOP_GETIMPORT() {
   return true;
 }
 
+typedef bool (*GetImportOperationFn)(JSContext*, HandleObject, HandleScript,
+                                     jsbytecode*, MutableHandleValue);
+static const VMFunction GetImportOperationInfo =
+    FunctionInfo<GetImportOperationFn>(GetImportOperation,
+                                       "GetImportOperation");
+
 template <>
 bool BaselineInterpreterCodeGen::emit_JSOP_GETIMPORT() {
-  MOZ_CRASH("NYI: interpreter JSOP_GETIMPORT");
+  frame.syncStack(0);
+
+  masm.loadPtr(frame.addressOfEnvironmentChain(), R0.scratchReg());
+
+  prepareVMCall();
+
+  pushBytecodePCArg();
+  pushScriptArg(R2.scratchReg());
+  pushArg(R0.scratchReg());
+
+  if (!callVM(GetImportOperationInfo)) {
+    return false;
+  }
+
+  // Enter the type monitor IC.
+  if (!emitNextIC()) {
+    return false;
+  }
+
+  frame.push(R0);
+  return true;
 }
 
 template <typename Handler>
@@ -4766,12 +4834,10 @@ bool BaselineCodeGen<Handler>::emit_JSOP_ITER() {
 template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_JSOP_MOREITER() {
   frame.syncStack(0);
-  masm.loadValue(frame.addressOfStackValue(-1), R0);
 
-  if (!emitNextIC()) {
-    return false;
-  }
+  masm.unboxObject(frame.addressOfStackValue(-1), R1.scratchReg());
 
+  masm.iteratorMore(R1.scratchReg(), R0, R2.scratchReg());
   frame.push(R0);
   return true;
 }
@@ -4803,10 +4869,17 @@ template <typename Handler>
 bool BaselineCodeGen<Handler>::emit_JSOP_ENDITER() {
   frame.popRegsAndSync(1);
 
-  if (!emitNextIC()) {
-    return false;
-  }
+  AllocatableGeneralRegisterSet regs(GeneralRegisterSet::All());
+  regs.take(BaselineFrameReg);
 
+  Register obj = R0.scratchReg();
+  regs.take(obj);
+  masm.unboxObject(R0, obj);
+
+  Register temp1 = regs.takeAny();
+  Register temp2 = regs.takeAny();
+  Register temp3 = regs.takeAny();
+  masm.iteratorClose(obj, temp1, temp2, temp3);
   return true;
 }
 
@@ -5261,9 +5334,13 @@ bool BaselineCompilerCodeGen::emit_JSOP_RESUME() {
   masm.makeFrameDescriptor(scratch2, FrameType::BaselineJS,
                            JitFrameLayout::Size());
 
-  masm.Push(Imm32(0));  // actual argc
+  masm.push(Imm32(0));  // actual argc
   masm.PushCalleeToken(callee, /* constructing = */ false);
-  masm.Push(scratch2);  // frame descriptor
+  masm.push(scratch2);  // frame descriptor
+
+  // PushCalleeToken bumped framePushed. Reset it.
+  MOZ_ASSERT(masm.framePushed() == sizeof(uintptr_t));
+  masm.setFramePushed(0);
 
   regs.add(callee);
 
@@ -5403,8 +5480,8 @@ bool BaselineCompilerCodeGen::emit_JSOP_RESUME() {
     pushArg(genObj);
     pushArg(scratch2);
 
-    TrampolinePtr code =
-        cx->runtime()->jitRuntime()->getVMWrapper(GeneratorThrowOrReturnInfo);
+    const VMFunction& fun = GeneratorThrowOrReturnInfo;
+    TrampolinePtr code = cx->runtime()->jitRuntime()->getVMWrapper(fun);
 
     // Create and push the frame descriptor.
     masm.subStackPtrFrom(scratch1);
@@ -5428,6 +5505,10 @@ bool BaselineCompilerCodeGen::emit_JSOP_RESUME() {
     masm.push(ImmWord(0));
 #endif
     masm.jump(code);
+
+    // Pop arguments and frame pointer (pushed by prepareVMCall) from
+    // framePushed.
+    masm.implicitPop((fun.explicitStackSlots() + 1) * sizeof(void*));
   }
 
   // If the generator script has no JIT code, call into the VM.
@@ -5554,9 +5635,7 @@ bool BaselineCodeGen<Handler>::emit_JSOP_INITHOMEOBJECT() {
 template <>
 bool BaselineCompilerCodeGen::emit_JSOP_BUILTINPROTO() {
   // The builtin prototype is a constant for a given global.
-  JSProtoKey key = static_cast<JSProtoKey>(GET_UINT8(handler.pc()));
-  MOZ_ASSERT(key < JSProto_LIMIT);
-  JSObject* builtin = GlobalObject::getOrCreatePrototype(cx, key);
+  JSObject* builtin = BuiltinProtoOperation(cx, handler.pc());
   if (!builtin) {
     return false;
   }
@@ -5564,9 +5643,24 @@ bool BaselineCompilerCodeGen::emit_JSOP_BUILTINPROTO() {
   return true;
 }
 
+typedef JSObject* (*BuiltinProtoOperationFn)(JSContext*, jsbytecode*);
+static const VMFunction BuiltinProtoOperationInfo =
+    FunctionInfo<BuiltinProtoOperationFn>(BuiltinProtoOperation,
+                                          "BuiltinProtoOperation");
+
 template <>
 bool BaselineInterpreterCodeGen::emit_JSOP_BUILTINPROTO() {
-  MOZ_CRASH("NYI: interpreter JSOP_BUILTINPROTO");
+  prepareVMCall();
+
+  pushBytecodePCArg();
+
+  if (!callVM(BuiltinProtoOperationInfo)) {
+    return false;
+  }
+
+  masm.tagValue(JSVAL_TYPE_OBJECT, ReturnReg, R0);
+  frame.push(R0);
+  return true;
 }
 
 typedef JSObject* (*ObjectWithProtoOperationFn)(JSContext*, HandleValue);
@@ -5668,6 +5762,9 @@ static const VMFunction GetOrCreateModuleMetaObjectInfo =
 
 template <>
 bool BaselineCompilerCodeGen::emit_JSOP_IMPORTMETA() {
+  // Note: this is like the interpreter implementation, but optimized a bit by
+  // calling GetModuleObjectForScript at compile-time.
+
   RootedModuleObject module(cx, GetModuleObjectForScript(handler.script()));
   MOZ_ASSERT(module);
 
@@ -5684,9 +5781,24 @@ bool BaselineCompilerCodeGen::emit_JSOP_IMPORTMETA() {
   return true;
 }
 
+typedef JSObject* (*ImportMetaOperationFn)(JSContext*, HandleScript);
+static const VMFunction ImportMetaOperationInfo =
+    FunctionInfo<ImportMetaOperationFn>(ImportMetaOperation,
+                                        "ImportMetaOperation");
+
 template <>
 bool BaselineInterpreterCodeGen::emit_JSOP_IMPORTMETA() {
-  MOZ_CRASH("NYI: interpreter JSOP_IMPORTMETA");
+  prepareVMCall();
+
+  pushScriptArg(R2.scratchReg());
+
+  if (!callVM(ImportMetaOperationInfo)) {
+    return false;
+  }
+
+  masm.tagValue(JSVAL_TYPE_OBJECT, ReturnReg, R0);
+  frame.push(R0);
+  return true;
 }
 
 typedef JSObject* (*StartDynamicModuleImportFn)(JSContext*, HandleScript,
@@ -5942,6 +6054,8 @@ MethodStatus BaselineCompiler::emitBody() {
         OPCODE_LIST(EMIT_OP)
 #undef EMIT_OP
     }
+
+    MOZ_ASSERT(masm.framePushed() == 0);
 
     // If the main instruction is not a jump target, then we emit the
     // corresponding code coverage counter.

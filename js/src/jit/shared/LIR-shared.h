@@ -402,6 +402,30 @@ class LNewTypedArrayFromArray : public LCallInstructionHelper<1, 1, 0> {
   }
 };
 
+class LNewTypedArrayFromArrayBuffer
+    : public LCallInstructionHelper<1, 1 + 2 * BOX_PIECES, 0> {
+ public:
+  LIR_HEADER(NewTypedArrayFromArrayBuffer)
+
+  LNewTypedArrayFromArrayBuffer(const LAllocation& arrayBuffer,
+                                const LBoxAllocation& byteOffset,
+                                const LBoxAllocation& length)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, arrayBuffer);
+    setBoxOperand(ByteOffsetIndex, byteOffset);
+    setBoxOperand(LengthIndex, length);
+  }
+
+  static const size_t ByteOffsetIndex = 1;
+  static const size_t LengthIndex = 1 + BOX_PIECES;
+
+  const LAllocation* arrayBuffer() { return getOperand(0); }
+
+  MNewTypedArrayFromArrayBuffer* mir() const {
+    return mir_->toNewTypedArrayFromArrayBuffer();
+  }
+};
+
 class LNewObject : public LInstructionHelper<1, 0, 1> {
  public:
   LIR_HEADER(NewObject)
@@ -3809,6 +3833,19 @@ class LTypedArrayLength : public LInstructionHelper<1, 1, 0> {
   const LAllocation* object() { return getOperand(0); }
 };
 
+// Read the byteOffset of a typed array.
+class LTypedArrayByteOffset : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(TypedArrayByteOffset)
+
+  explicit LTypedArrayByteOffset(const LAllocation& obj)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+};
+
 // Load a typed array's elements vector.
 class LTypedArrayElements : public LInstructionHelper<1, 1, 0> {
  public:
@@ -3818,6 +3855,19 @@ class LTypedArrayElements : public LInstructionHelper<1, 1, 0> {
       : LInstructionHelper(classOpcode) {
     setOperand(0, object);
   }
+  const LAllocation* object() { return getOperand(0); }
+};
+
+// Return the element shift of a typed array.
+class LTypedArrayElementShift : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(TypedArrayElementShift)
+
+  explicit LTypedArrayElementShift(const LAllocation& obj)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+  }
+
   const LAllocation* object() { return getOperand(0); }
 };
 
@@ -5692,6 +5742,22 @@ class LLoadUnboxedExpando : public LInstructionHelper<1, 1, 0> {
   const MLoadUnboxedExpando* mir() const {
     return mir_->toLoadUnboxedExpando();
   }
+};
+
+// Ensure that a value is numeric, possibly via a VM call-out that invokes
+// valueOf().
+class LToNumeric : public LInstructionHelper<BOX_PIECES, BOX_PIECES, 0> {
+ public:
+  LIR_HEADER(ToNumeric)
+
+  explicit LToNumeric(const LBoxAllocation& input)
+      : LInstructionHelper(classOpcode) {
+    setBoxOperand(Input, input);
+  }
+
+  static const size_t Input = 0;
+
+  const MToNumeric* mir() const { return mir_->toToNumeric(); }
 };
 
 // Guard that a value is in a TypeSet.

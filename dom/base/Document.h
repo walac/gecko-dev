@@ -437,7 +437,8 @@ class Document : public nsINode,
                  public nsIScriptObjectPrincipal,
                  public nsIApplicationCacheContainer,
                  public nsStubMutationObserver,
-                 public DispatcherTrait {
+                 public DispatcherTrait,
+                 public SupportsWeakPtr<Document> {
  protected:
   explicit Document(const char* aContentType);
   virtual ~Document();
@@ -449,6 +450,8 @@ class Document : public nsINode,
   typedef mozilla::dom::ExternalResourceMap::ExternalResourceLoad
       ExternalResourceLoad;
   typedef net::ReferrerPolicy ReferrerPolicyEnum;
+
+  MOZ_DECLARE_WEAKREFERENCE_TYPENAME(Document)
 
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_IDOCUMENT_IID)
 
@@ -610,6 +613,8 @@ class Document : public nsINode,
   }
   nsresult CloneDocHelper(Document* clone) const;
 
+  Document* GetLatestStaticClone() const { return mLatestStaticClone; }
+
   /**
    * Signal that the document title may have changed
    * (see Document::GetTitle).
@@ -642,6 +647,13 @@ class Document : public nsINode,
    * https://html.spec.whatwg.org/multipage/webappapis.html#creation-url
    */
   nsIURI* GetOriginalURI() const { return mOriginalURI; }
+
+  /**
+   * Return the base domain of the document.  This has been computed using
+   * mozIThirdPartyUtil::GetBaseDomain() and can be used for third-party
+   * checks.  When the URI of the document changes, this value is recomputed.
+   */
+  nsCString GetBaseDomain() const { return mBaseDomain; }
 
   /**
    * Set the URI for the document.  This also sets the document's original URI,
@@ -3820,6 +3832,9 @@ class Document : public nsINode,
   nsCOMPtr<nsIURI> mDocumentBaseURI;
   nsCOMPtr<nsIURI> mChromeXHRDocBaseURI;
 
+  // The base domain of the document for third-party checks.
+  nsCString mBaseDomain;
+
   // A lazily-constructed URL data for style system to resolve URL value.
   RefPtr<mozilla::URLExtraData> mCachedURLData;
 
@@ -4316,6 +4331,11 @@ class Document : public nsINode,
   // Count of live static clones of this document.
   uint32_t mStaticCloneCount;
 
+  // If the document is currently printing (or in print preview) this will point
+  // to the current static clone of this document. This is weak since the clone
+  // also has a reference to this document.
+  WeakPtr<Document> mLatestStaticClone;
+
   // Array of nodes that have been blocked to prevent user tracking.
   // They most likely have had their nsIChannel canceled by the URL
   // classifier. (Safebrowsing)
@@ -4739,22 +4759,11 @@ inline mozilla::dom::Document* nsINode::GetOwnerDocument() const {
 
 inline nsINode* nsINode::OwnerDocAsNode() const { return OwnerDoc(); }
 
-// ShouldUseXBLScope is defined here as a template so that we can get the faster
-// version of IsInAnonymousSubtree if we're statically known to be an
-// nsIContent.  we could try defining ShouldUseXBLScope separately on nsINode
-// and nsIContent, but then we couldn't put its nsINode implementation here
-// (because this header does not include nsIContent) and we can't put it in
-// nsIContent.h, because the definition of nsIContent::IsInAnonymousSubtree is
-// in nsIContentInlines.h.  And then we get include hell from people trying to
-// call nsINode::GetParentObject but not including nsIContentInlines.h and with
-// no really good way to include it.
-template <typename T>
-inline bool ShouldUseXBLScope(const T* aNode) {
-  return aNode->IsInAnonymousSubtree();
+inline bool ShouldUseNACScope(const nsINode* aNode) {
+  return aNode->IsInNativeAnonymousSubtree();
 }
 
-template <typename T>
-inline bool ShouldUseUAWidgetScope(const T* aNode) {
+inline bool ShouldUseUAWidgetScope(const nsINode* aNode) {
   return aNode->IsInUAWidget();
 }
 
@@ -4762,8 +4771,8 @@ inline mozilla::dom::ParentObject nsINode::GetParentObject() const {
   mozilla::dom::ParentObject p(OwnerDoc());
   // Note that mReflectionScope is a no-op for chrome, and other places
   // where we don't check this value.
-  if (ShouldUseXBLScope(this)) {
-    p.mReflectionScope = mozilla::dom::ReflectionScope::XBL;
+  if (ShouldUseNACScope(this)) {
+    p.mReflectionScope = mozilla::dom::ReflectionScope::NAC;
   } else if (ShouldUseUAWidgetScope(this)) {
     p.mReflectionScope = mozilla::dom::ReflectionScope::UAWidget;
   }

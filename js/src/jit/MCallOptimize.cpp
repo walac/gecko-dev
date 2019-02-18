@@ -371,6 +371,10 @@ IonBuilder::InliningResult IonBuilder::inlineNativeCall(CallInfo& callInfo,
       return inlinePossiblyWrappedTypedArrayLength(callInfo);
     case InlinableNative::IntrinsicTypedArrayLength:
       return inlineTypedArrayLength(callInfo);
+    case InlinableNative::IntrinsicTypedArrayByteOffset:
+      return inlineTypedArrayByteOffset(callInfo);
+    case InlinableNative::IntrinsicTypedArrayElementShift:
+      return inlineTypedArrayElementShift(callInfo);
     case InlinableNative::IntrinsicSetDisjointTypedElements:
       return inlineSetDisjointTypedElements(callInfo);
 
@@ -421,13 +425,25 @@ IonBuilder::InliningResult IonBuilder::inlineNativeGetter(CallInfo& callInfo,
 
   // Try to optimize typed array lengths.
   if (TypedArrayObject::isOriginalLengthGetter(native)) {
-    Scalar::Type type = thisTypes->getTypedArrayType(constraints());
-    if (type == Scalar::MaxTypedArrayViewType) {
+    if (thisTypes->forAllClasses(constraints(), IsTypedArrayClass) !=
+        TemporaryTypeSet::ForAllResult::ALL_TRUE) {
       return InliningStatus_NotInlined;
     }
 
     MInstruction* length = addTypedArrayLength(thisArg);
     current->push(length);
+    return InliningStatus_Inlined;
+  }
+
+  // Try to optimize typed array byteOffsets.
+  if (TypedArrayObject::isOriginalByteOffsetGetter(native)) {
+    if (thisTypes->forAllClasses(constraints(), IsTypedArrayClass) !=
+        TemporaryTypeSet::ForAllResult::ALL_TRUE) {
+      return InliningStatus_NotInlined;
+    }
+
+    MInstruction* byteOffset = addTypedArrayByteOffset(thisArg);
+    current->push(byteOffset);
     return InliningStatus_Inlined;
   }
 
@@ -2119,10 +2135,11 @@ IonBuilder::InliningResult IonBuilder::inlineStrFromCharCode(
 
   MDefinition* codeUnit = callInfo.getArg(0);
   if (codeUnit->type() != MIRType::Int32) {
-    // MTruncateToInt32 will always bail for objects and symbols, so don't
-    // try to inline String.fromCharCode() for these two value types.
+    // MTruncateToInt32 will always bail for objects, symbols and BigInts, so
+    // don't try to inline String.fromCharCode() for these value types.
     if (codeUnit->mightBeType(MIRType::Object) ||
-        codeUnit->mightBeType(MIRType::Symbol)) {
+        codeUnit->mightBeType(MIRType::Symbol) ||
+        codeUnit->mightBeType(MIRType::BigInt)) {
       return InliningStatus_NotInlined;
     }
 
@@ -2927,7 +2944,7 @@ IonBuilder::InliningResult IonBuilder::inlineTypedArray(CallInfo& callInfo,
   if (getInlineReturnType() != MIRType::Object) {
     return InliningStatus_NotInlined;
   }
-  if (callInfo.argc() != 1) {
+  if (callInfo.argc() == 0 || callInfo.argc() > 3) {
     return InliningStatus_NotInlined;
   }
 
@@ -2978,21 +2995,49 @@ IonBuilder::InliningResult IonBuilder::inlineTypedArray(CallInfo& callInfo,
       return InliningStatus_NotInlined;
     }
 
-    // Don't inline if the argument is a, possibly wrapped, ArrayBuffer or
-    // SharedArrayBuffer object.
-    auto IsPossiblyWrappedArrayBufferMaybeSharedClass = [](const Class* clasp) {
-      return clasp->isProxy() || clasp == &ArrayBufferObject::class_ ||
-             clasp == &SharedArrayBufferObject::class_;
-    };
-    auto result = types->forAllClasses(
-        constraints(), IsPossiblyWrappedArrayBufferMaybeSharedClass);
-    if (result != TemporaryTypeSet::ForAllResult::ALL_FALSE) {
+    // Don't inline if the argument might be a wrapper.
+    if (types->forAllClasses(constraints(), IsProxyClass) !=
+        TemporaryTypeSet::ForAllResult::ALL_FALSE) {
       return InliningStatus_NotInlined;
     }
 
-    ins = MNewTypedArrayFromArray::New(
-        alloc(), constraints(), templateObject,
-        templateObject->group()->initialHeap(constraints()), arg);
+    // Don't inline if we saw mixed use of (Shared)ArrayBuffers and other
+    // objects.
+    auto IsArrayBufferMaybeSharedClass = [](const Class* clasp) {
+      return clasp == &ArrayBufferObject::class_ ||
+             clasp == &SharedArrayBufferObject::class_;
+    };
+    switch (
+        types->forAllClasses(constraints(), IsArrayBufferMaybeSharedClass)) {
+      case TemporaryTypeSet::ForAllResult::ALL_FALSE:
+        ins = MNewTypedArrayFromArray::New(
+            alloc(), constraints(), templateObject,
+            templateObject->group()->initialHeap(constraints()), arg);
+        break;
+      case TemporaryTypeSet::ForAllResult::ALL_TRUE:
+        MDefinition* byteOffset;
+        if (callInfo.argc() > 1) {
+          byteOffset = callInfo.getArg(1);
+        } else {
+          byteOffset = constant(UndefinedValue());
+        }
+
+        MDefinition* length;
+        if (callInfo.argc() > 2) {
+          length = callInfo.getArg(2);
+        } else {
+          length = constant(UndefinedValue());
+        }
+
+        ins = MNewTypedArrayFromArrayBuffer::New(
+            alloc(), constraints(), templateObject,
+            templateObject->group()->initialHeap(constraints()), arg,
+            byteOffset, length);
+        break;
+      case TemporaryTypeSet::ForAllResult::EMPTY:
+      case TemporaryTypeSet::ForAllResult::MIXED:
+        return InliningStatus_NotInlined;
+    }
   } else {
     return InliningStatus_NotInlined;
   }
@@ -3164,6 +3209,51 @@ IonBuilder::InliningResult IonBuilder::inlinePossiblyWrappedTypedArrayLength(
 IonBuilder::InliningResult IonBuilder::inlineTypedArrayLength(
     CallInfo& callInfo) {
   return inlinePossiblyWrappedTypedArrayLength(callInfo);
+}
+
+IonBuilder::InliningResult IonBuilder::inlineTypedArrayByteOffset(
+    CallInfo& callInfo) {
+  MOZ_ASSERT(!callInfo.constructing());
+  MOZ_ASSERT(callInfo.argc() == 1);
+  if (callInfo.getArg(0)->type() != MIRType::Object) {
+    return InliningStatus_NotInlined;
+  }
+  if (getInlineReturnType() != MIRType::Int32) {
+    return InliningStatus_NotInlined;
+  }
+
+  if (!IsTypedArrayObject(constraints(), callInfo.getArg(0))) {
+    return InliningStatus_NotInlined;
+  }
+
+  MInstruction* byteOffset = addTypedArrayByteOffset(callInfo.getArg(0));
+  current->push(byteOffset);
+
+  callInfo.setImplicitlyUsedUnchecked();
+  return InliningStatus_Inlined;
+}
+
+IonBuilder::InliningResult IonBuilder::inlineTypedArrayElementShift(
+    CallInfo& callInfo) {
+  MOZ_ASSERT(!callInfo.constructing());
+  MOZ_ASSERT(callInfo.argc() == 1);
+  if (callInfo.getArg(0)->type() != MIRType::Object) {
+    return InliningStatus_NotInlined;
+  }
+  if (getInlineReturnType() != MIRType::Int32) {
+    return InliningStatus_NotInlined;
+  }
+
+  if (!IsTypedArrayObject(constraints(), callInfo.getArg(0))) {
+    return InliningStatus_NotInlined;
+  }
+
+  auto* ins = MTypedArrayElementShift::New(alloc(), callInfo.getArg(0));
+  current->add(ins);
+  current->push(ins);
+
+  callInfo.setImplicitlyUsedUnchecked();
+  return InliningStatus_Inlined;
 }
 
 IonBuilder::InliningResult IonBuilder::inlineSetDisjointTypedElements(
@@ -3537,6 +3627,7 @@ IonBuilder::InliningResult IonBuilder::inlineToInteger(CallInfo& callInfo) {
   if (input->mightBeType(MIRType::Object) ||
       input->mightBeType(MIRType::String) ||
       input->mightBeType(MIRType::Symbol) ||
+      input->mightBeType(MIRType::BigInt) ||
       input->mightBeType(MIRType::Undefined) || input->mightBeMagicType()) {
     return InliningStatus_NotInlined;
   }
@@ -3661,13 +3752,15 @@ IonBuilder::InliningResult IonBuilder::inlineAtomicsCompareExchange(
   // https://bugzilla.mozilla.org/show_bug.cgi?id=1141986#c20.
   MDefinition* oldval = callInfo.getArg(2);
   if (oldval->mightBeType(MIRType::Object) ||
-      oldval->mightBeType(MIRType::Symbol)) {
+      oldval->mightBeType(MIRType::Symbol) ||
+      oldval->mightBeType(MIRType::BigInt)) {
     return InliningStatus_NotInlined;
   }
 
   MDefinition* newval = callInfo.getArg(3);
   if (newval->mightBeType(MIRType::Object) ||
-      newval->mightBeType(MIRType::Symbol)) {
+      newval->mightBeType(MIRType::Symbol) ||
+      newval->mightBeType(MIRType::BigInt)) {
     return InliningStatus_NotInlined;
   }
 
@@ -3707,7 +3800,8 @@ IonBuilder::InliningResult IonBuilder::inlineAtomicsExchange(
 
   MDefinition* value = callInfo.getArg(2);
   if (value->mightBeType(MIRType::Object) ||
-      value->mightBeType(MIRType::Symbol)) {
+      value->mightBeType(MIRType::Symbol) ||
+      value->mightBeType(MIRType::BigInt)) {
     return InliningStatus_NotInlined;
   }
 
@@ -3792,7 +3886,8 @@ IonBuilder::InliningResult IonBuilder::inlineAtomicsStore(CallInfo& callInfo) {
   }
 
   if (value->mightBeType(MIRType::Object) ||
-      value->mightBeType(MIRType::Symbol)) {
+      value->mightBeType(MIRType::Symbol) ||
+      value->mightBeType(MIRType::BigInt)) {
     return InliningStatus_NotInlined;
   }
 
@@ -3837,7 +3932,8 @@ IonBuilder::InliningResult IonBuilder::inlineAtomicsBinop(
 
   MDefinition* value = callInfo.getArg(2);
   if (value->mightBeType(MIRType::Object) ||
-      value->mightBeType(MIRType::Symbol)) {
+      value->mightBeType(MIRType::Symbol) ||
+      value->mightBeType(MIRType::BigInt)) {
     return InliningStatus_NotInlined;
   }
 
@@ -4047,7 +4143,12 @@ IonBuilder::InliningResult IonBuilder::inlineWasmCall(CallInfo& callInfo,
   // Check that the function doesn't take or return non-compatible JS
   // argument types before adding nodes to the MIR graph, otherwise they'd be
   // dead code.
-  if (sig.hasI64ArgOrRet() || sig.temporarilyUnsupportedAnyRef()) {
+  if (sig.hasI64ArgOrRet() ||
+      sig.temporarilyUnsupportedAnyRef()
+#ifdef WASM_CODEGEN_DEBUG
+      || !JitOptions.enableWasmIonFastCalls
+#endif
+     ) {
     return InliningStatus_NotInlined;
   }
 

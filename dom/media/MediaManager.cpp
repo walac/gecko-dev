@@ -632,8 +632,9 @@ class GetUserMediaWindowListener {
       nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
       auto* globalWindow = nsGlobalWindowInner::GetInnerWindowWithId(mWindowID);
       if (globalWindow) {
-        auto req = MakeRefPtr<GetUserMediaRequest>(globalWindow->AsInner(),
-                                                   VoidString(), VoidString());
+        auto req = MakeRefPtr<GetUserMediaRequest>(
+            globalWindow->AsInner(), VoidString(), VoidString(),
+            EventStateManager::IsHandlingUserInput());
         obs->NotifyObservers(req, "recording-device-stopped", nullptr);
       }
       return;
@@ -686,8 +687,9 @@ class GetUserMediaWindowListener {
         auto* globalWindow =
             nsGlobalWindowInner::GetInnerWindowWithId(mWindowID);
         auto* window = globalWindow ? globalWindow->AsInner() : nullptr;
-        auto req = MakeRefPtr<GetUserMediaRequest>(window, removedRawId,
-                                                   removedSourceType);
+        auto req = MakeRefPtr<GetUserMediaRequest>(
+            window, removedRawId, removedSourceType,
+            EventStateManager::IsHandlingUserInput());
         obs->NotifyObservers(req, "recording-device-stopped", nullptr);
       }
     }
@@ -715,8 +717,9 @@ class GetUserMediaWindowListener {
             nsGlobalWindowInner::GetInnerWindowWithId(mWindowID);
         nsPIDOMWindowInner* window =
             globalWindow ? globalWindow->AsInner() : nullptr;
-        auto req = MakeRefPtr<GetUserMediaRequest>(window, removedRawId,
-                                                   removedSourceType);
+        auto req = MakeRefPtr<GetUserMediaRequest>(
+            window, removedRawId, removedSourceType,
+            EventStateManager::IsHandlingUserInput());
         obs->NotifyObservers(req, "recording-device-stopped", nullptr);
       }
     }
@@ -2649,9 +2652,14 @@ RefPtr<MediaManager::StreamPromise> MediaManager::GetUserMedia(
           MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
         }
       } else {
-        rv = permManager->TestExactPermissionFromPrincipal(principal, "screen",
-                                                           &audioPerm);
-        MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
+        if (!dom::FeaturePolicyUtils::IsFeatureAllowed(
+                doc, NS_LITERAL_STRING("display-capture"))) {
+          audioPerm = nsIPermissionManager::DENY_ACTION;
+        } else {
+          rv = permManager->TestExactPermissionFromPrincipal(
+              principal, "screen", &audioPerm);
+          MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
+        }
       }
     }
 
@@ -2668,9 +2676,14 @@ RefPtr<MediaManager::StreamPromise> MediaManager::GetUserMedia(
           MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
         }
       } else {
-        rv = permManager->TestExactPermissionFromPrincipal(principal, "screen",
-                                                           &videoPerm);
-        MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
+        if (!dom::FeaturePolicyUtils::IsFeatureAllowed(
+                doc, NS_LITERAL_STRING("display-capture"))) {
+          videoPerm = nsIPermissionManager::DENY_ACTION;
+        } else {
+          rv = permManager->TestExactPermissionFromPrincipal(
+              principal, "screen", &videoPerm);
+          MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
+        }
       }
     }
 

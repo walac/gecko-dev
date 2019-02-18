@@ -111,7 +111,7 @@ bool wasm::HasOptimizedCompilerTier(JSContext* cx) {
 #ifdef ENABLE_WASM_CRANELIFT
          || (cx->options().wasmCranelift() && CraneliftCanCompile())
 #endif
-  ;
+      ;
 }
 
 // Return whether wasm compilation is allowed by prefs.  This check
@@ -417,7 +417,8 @@ bool wasm::Eval(JSContext* cx, Handle<TypedArrayObject*> code,
     return false;
   }
 
-  SharedCompileArgs compileArgs = CompileArgs::build(cx, std::move(scriptedCaller));
+  SharedCompileArgs compileArgs =
+      CompileArgs::build(cx, std::move(scriptedCaller));
   if (!compileArgs) {
     return false;
   }
@@ -662,12 +663,12 @@ const JSFunctionSpec WasmModuleObject::static_methods[] = {
 }
 
 static bool IsModuleObject(JSObject* obj, const Module** module) {
-  JSObject* unwrapped = CheckedUnwrap(obj);
-  if (!unwrapped || !unwrapped->is<WasmModuleObject>()) {
+  WasmModuleObject* mobj = obj->maybeUnwrapIf<WasmModuleObject>();
+  if (!mobj) {
     return false;
   }
 
-  *module = &unwrapped->as<WasmModuleObject>().module();
+  *module = &mobj->module();
   return true;
 }
 
@@ -1022,7 +1023,7 @@ static bool GetBufferSource(JSContext* cx, JSObject* obj, unsigned errorNumber,
     return false;
   }
 
-  JSObject* unwrapped = CheckedUnwrap(obj);
+  JSObject* unwrapped = CheckedUnwrapStatic(obj);
 
   SharedMem<uint8_t*> dataPointer;
   size_t byteLength;
@@ -1489,10 +1490,16 @@ static bool EnsureLazyEntryStub(const Instance& instance,
       return false;
     }
 
+    bool disableJitEntry = funcType.temporarilyUnsupportedAnyRef()
+#ifdef WASM_CODEGEN_DEBUG
+      || !JitOptions.enableWasmJitEntry;
+#endif
+    ;
+
     // Functions with anyref don't have jit entries yet, so they should
     // mostly behave like asm.js functions. Pretend it's the case, until
     // jit entries are implemented.
-    JSFunction::Flags flags = funcType.temporarilyUnsupportedAnyRef()
+    JSFunction::Flags flags = disableJitEntry
                                   ? JSFunction::ASMJS_NATIVE
                                   : JSFunction::WASM_FUN;
 
@@ -1503,7 +1510,7 @@ static bool EnsureLazyEntryStub(const Instance& instance,
       return false;
     }
 
-    if (funcType.temporarilyUnsupportedAnyRef()) {
+    if (disableJitEntry) {
       fun->setAsmJSIndex(funcIndex);
     } else {
       fun->setWasmJitEntry(instance.code().getAddressOfJitEntry(funcIndex));
@@ -1947,9 +1954,8 @@ bool WasmMemoryObject::addMovingGrowObserver(JSContext* cx,
 }
 
 bool js::wasm::IsSharedWasmMemoryObject(JSObject* obj) {
-  obj = CheckedUnwrap(obj);
-  return obj && obj->is<WasmMemoryObject>() &&
-         obj->as<WasmMemoryObject>().isShared();
+  WasmMemoryObject* mobj = obj->maybeUnwrapIf<WasmMemoryObject>();
+  return mobj && mobj->isShared();
 }
 
 // ============================================================================

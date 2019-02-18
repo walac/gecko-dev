@@ -466,9 +466,7 @@ class BufferGrayRootsTracer final : public JS::CallbackTracer {
   void onStringEdge(JSString** stringp) override { bufferRoot(*stringp); }
   void onScriptEdge(JSScript** scriptp) override { bufferRoot(*scriptp); }
   void onSymbolEdge(JS::Symbol** symbolp) override { bufferRoot(*symbolp); }
-#ifdef ENABLE_BIGINT
   void onBigIntEdge(JS::BigInt** bip) override { bufferRoot(*bip); }
-#endif
 
   void onChild(const JS::GCCellPtr& thing) override {
     MOZ_CRASH("Unexpected gray root kind");
@@ -565,8 +563,8 @@ void GCRuntime::markBufferedGrayRoots(JS::Zone* zone) {
     auto addr = uintptr_t(cell);
     if (addr < ChunkSize || addr % CellAlignBytes != 0) {
       MOZ_CRASH_UNSAFE_PRINTF(
-          "Bad GC thing pointer in gray root buffer: %p at address %p",
-          cell, &iter.Get());
+          "Bad GC thing pointer in gray root buffer: %p at address %p", cell,
+          &iter.Get());
     }
 #else
     MOZ_ASSERT(IsCellPointerValid(cell));

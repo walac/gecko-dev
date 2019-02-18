@@ -180,10 +180,8 @@ inline TypeFlags PrimitiveTypeFlag(JSValueType type) {
       return TYPE_FLAG_STRING;
     case JSVAL_TYPE_SYMBOL:
       return TYPE_FLAG_SYMBOL;
-#ifdef ENABLE_BIGINT
     case JSVAL_TYPE_BIGINT:
       return TYPE_FLAG_BIGINT;
-#endif
     case JSVAL_TYPE_MAGIC:
       return TYPE_FLAG_LAZYARGS;
     default:
@@ -207,10 +205,8 @@ inline JSValueType TypeFlagPrimitive(TypeFlags flags) {
       return JSVAL_TYPE_STRING;
     case TYPE_FLAG_SYMBOL:
       return JSVAL_TYPE_SYMBOL;
-#ifdef ENABLE_BIGINT
     case TYPE_FLAG_BIGINT:
       return JSVAL_TYPE_BIGINT;
-#endif
     case TYPE_FLAG_LAZYARGS:
       return JSVAL_TYPE_MAGIC;
     default:
@@ -469,11 +465,8 @@ inline void TypeMonitorCall(JSContext* cx, const js::CallArgs& args,
                             bool constructing) {
   if (args.callee().is<JSFunction>()) {
     JSFunction* fun = &args.callee().as<JSFunction>();
-    if (fun->isInterpreted()) {
-      AutoSweepTypeScript sweep(fun->nonLazyScript());
-      if (fun->nonLazyScript()->types(sweep)) {
-        TypeMonitorCallSlow(cx, &args.callee(), args, constructing);
-      }
+    if (fun->isInterpreted() && fun->nonLazyScript()->types()) {
+      TypeMonitorCallSlow(cx, &args.callee(), args, constructing);
     }
   }
 }
@@ -628,9 +621,9 @@ extern void TypeMonitorResult(JSContext* cx, JSScript* script, jsbytecode* pc,
 /////////////////////////////////////////////////////////////////////
 
 /* static */ inline StackTypeSet* TypeScript::ThisTypes(JSScript* script) {
-  AutoSweepTypeScript sweep(script);
-  if (TypeScript* types = script->types(sweep)) {
-    return types->typeArray() + script->numBytecodeTypeSets();
+  if (TypeScript* types = script->types()) {
+    AutoSweepTypeScript sweep(script);
+    return types->typeArray(sweep) + script->numBytecodeTypeSets();
   }
   return nullptr;
 }
@@ -644,9 +637,9 @@ extern void TypeMonitorResult(JSContext* cx, JSScript* script, jsbytecode* pc,
 /* static */ inline StackTypeSet* TypeScript::ArgTypes(JSScript* script,
                                                        unsigned i) {
   MOZ_ASSERT(i < script->functionNonDelazifying()->nargs());
-  AutoSweepTypeScript sweep(script);
-  if (TypeScript* types = script->types(sweep)) {
-    return types->typeArray() + script->numBytecodeTypeSets() + 1 + i;
+  if (TypeScript* types = script->types()) {
+    AutoSweepTypeScript sweep(script);
+    return types->typeArray(sweep) + script->numBytecodeTypeSets() + 1 + i;
   }
   return nullptr;
 }
@@ -692,14 +685,14 @@ template <typename TYPESET>
 /* static */ inline StackTypeSet* TypeScript::BytecodeTypes(JSScript* script,
                                                             jsbytecode* pc) {
   MOZ_ASSERT(CurrentThreadCanAccessZone(script->zone()));
-  AutoSweepTypeScript sweep(script);
-  TypeScript* types = script->types(sweep);
+  TypeScript* types = script->types();
   if (!types) {
     return nullptr;
   }
+  AutoSweepTypeScript sweep(script);
   uint32_t* hint = types->bytecodeTypeMapHint();
   return BytecodeTypes(script, pc, types->bytecodeTypeMap(), hint,
-                       types->typeArray());
+                       types->typeArray(sweep));
 }
 
 /* static */ inline void TypeScript::Monitor(JSContext* cx, JSScript* script,
@@ -1421,36 +1414,34 @@ inline AutoSweepObjectGroup::~AutoSweepObjectGroup() {
 
 inline AutoSweepTypeScript::AutoSweepTypeScript(JSScript* script)
 #ifdef DEBUG
-    : script_(script)
+    : zone_(script->zone()),
+      typeScript_(script->types())
 #endif
 {
-  if (script->typesNeedsSweep()) {
-    script->sweepTypes(*this);
+  if (TypeScript* types = script->types()) {
+    Zone* zone = script->zone();
+    if (types->typesNeedsSweep(zone)) {
+      types->sweepTypes(*this, zone);
+    }
   }
 }
 
 #ifdef DEBUG
 inline AutoSweepTypeScript::~AutoSweepTypeScript() {
   // This should still hold.
-  MOZ_ASSERT(!script_->typesNeedsSweep());
+  MOZ_ASSERT_IF(typeScript_, !typeScript_->typesNeedsSweep(zone_));
 }
 #endif
 
+inline bool TypeScript::typesNeedsSweep(Zone* zone) const {
+  MOZ_ASSERT(!js::TlsContext.get()->inUnsafeCallWithABI);
+  return typesGeneration() != zone->types.generation;
+}
+
 }  // namespace js
 
-inline js::TypeScript* JSScript::types(const js::AutoSweepTypeScript& sweep) {
-  MOZ_ASSERT(sweep.script() == this);
-  return types_;
-}
-
-inline bool JSScript::typesNeedsSweep() const {
-  MOZ_ASSERT(!js::TlsContext.get()->inUnsafeCallWithABI);
-  return types_ && typesGeneration() != zone()->types.generation;
-}
-
 inline bool JSScript::ensureHasTypes(JSContext* cx, js::AutoKeepTypeScripts&) {
-  js::AutoSweepTypeScript sweep(this);
-  return types(sweep) || makeTypes(cx);
+  return types() || makeTypes(cx);
 }
 
 #endif /* vm_TypeInference_inl_h */

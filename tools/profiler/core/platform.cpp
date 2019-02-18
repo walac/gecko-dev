@@ -26,54 +26,60 @@
 //   ProfileBuffer. The sampling is done from off-thread, and so uses
 //   SuspendAndSampleAndResumeThread() to get the register values.
 
-#include <algorithm>
-#include <ostream>
-#include <fstream>
-#include <sstream>
-#include <errno.h>
-
 #include "platform.h"
-#include "PlatformMacros.h"
+
+#include "GeckoProfiler.h"
+#include "GeckoProfilerReporter.h"
+#include "PageInformation.h"
+#include "ProfiledThreadData.h"
+#include "ProfilerBacktrace.h"
+#include "ProfileBuffer.h"
+#include "ProfilerIOInterposeObserver.h"
+#include "ProfilerMarkerPayload.h"
+#include "ProfilerParent.h"
+#include "RegisteredThread.h"
+#include "shared-libraries.h"
+#include "ThreadInfo.h"
+#include "VTuneProfiler.h"
+
+#include "js/TraceLoggerAPI.h"
+#include "memory_hooks.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Atomics.h"
-#include "mozilla/Printf.h"
-#include "mozilla/UniquePtr.h"
-#include "mozilla/Vector.h"
-#include "GeckoProfiler.h"
-#include "VTuneProfiler.h"
-#include "GeckoProfilerReporter.h"
-#include "ProfilerIOInterposeObserver.h"
 #include "mozilla/AutoProfilerLabel.h"
 #include "mozilla/ExtensionPolicyService.h"
+#include "mozilla/extensions/WebExtensionPolicy.h"
+#include "mozilla/Printf.h"
+#include "mozilla/Services.h"
 #include "mozilla/StackWalk.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/SystemGroup.h"
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Tuple.h"
-#include "mozilla/extensions/WebExtensionPolicy.h"
-#include "ThreadInfo.h"
+#include "mozilla/UniquePtr.h"
+#include "mozilla/Vector.h"
+#include "nsDirectoryServiceDefs.h"
+#include "nsDirectoryServiceUtils.h"
 #include "nsIHttpProtocolHandler.h"
 #include "nsIObserverService.h"
 #include "nsIPropertyBag2.h"
 #include "nsIXULAppInfo.h"
 #include "nsIXULRuntime.h"
-#include "nsDirectoryServiceUtils.h"
-#include "nsDirectoryServiceDefs.h"
 #include "nsJSPrincipals.h"
 #include "nsMemoryReporterManager.h"
-#include "nsScriptSecurityManager.h"
-#include "nsXULAppAPI.h"
 #include "nsProfilerStartParams.h"
-#include "ProfilerParent.h"
-#include "mozilla/Services.h"
+#include "nsScriptSecurityManager.h"
 #include "nsThreadUtils.h"
-#include "ProfilerMarkerPayload.h"
-#include "memory_hooks.h"
-#include "shared-libraries.h"
+#include "nsXULAppAPI.h"
 #include "prdtoa.h"
 #include "prtime.h"
-#include "js/TraceLoggerAPI.h"
+
+#include <algorithm>
+#include <errno.h>
+#include <fstream>
+#include <ostream>
+#include <sstream>
 
 #if defined(XP_WIN)
 #  include <processthreadsapi.h>  // for GetCurrentProcessId()
@@ -350,6 +356,8 @@ class CorePS {
   }
 #endif
 
+  PS_GET_AND_SET(const nsACString&, ProcessName)
+
  private:
   // The singleton instance
   static CorePS* sInstance;
@@ -372,6 +380,9 @@ class CorePS {
   // LUL's state. Null prior to the first activation, non-null thereafter.
   UniquePtr<lul::LUL> mLul;
 #endif
+
+  // Process name, provided by child process initialization code.
+  nsAutoCString mProcessName;
 };
 
 CorePS* CorePS::sInstance = nullptr;
@@ -763,6 +774,18 @@ class ActivePS {
         });
   }
 
+#if !defined(RELEASE_OR_BETA)
+  static void UnregisterIOInterposer(PSLockRef) {
+    if (!sInstance->mInterposeObserver)
+      return;
+
+    IOInterposer::Unregister(IOInterposeObserver::OpAll,
+                             sInstance->mInterposeObserver);
+
+    sInstance->mInterposeObserver = nullptr;
+  }
+#endif
+
  private:
   // The singleton instance.
   static ActivePS* sInstance;
@@ -826,7 +849,7 @@ class ActivePS {
   SamplerThread* const mSamplerThread;
 
   // The interposer that records main thread I/O.
-  const RefPtr<ProfilerIOInterposeObserver> mInterposeObserver;
+  RefPtr<ProfilerIOInterposeObserver> mInterposeObserver;
 
   // Is the profiler paused?
   bool mIsPaused;
@@ -1987,6 +2010,7 @@ static void locked_profiler_stream_json_for_this_process(
           registeredThread ? registeredThread->GetJSContext() : nullptr;
       ProfiledThreadData* profiledThreadData = thread.second();
       profiledThreadData->StreamJSON(buffer, cx, aWriter,
+                                     CorePS::ProcessName(aLock),
                                      CorePS::ProcessStartTime(), aSinceTime,
                                      ActivePS::FeatureJSTracer(aLock));
     }
@@ -2004,6 +2028,7 @@ static void locked_profiler_stream_json_for_this_process(
       ProfiledThreadData profiledThreadData(
           threadInfo, nullptr, ActivePS::FeatureResponsiveness(aLock));
       profiledThreadData.StreamJSON(*javaBuffer.get(), nullptr, aWriter,
+                                    CorePS::ProcessName(aLock),
                                     CorePS::ProcessStartTime(), aSinceTime,
                                     ActivePS::FeatureJSTracer(aLock));
 
@@ -2825,6 +2850,11 @@ void profiler_shutdown() {
     if (ActivePS::Exists(lock)) {
       const char* filename = getenv("MOZ_PROFILER_SHUTDOWN");
       if (filename) {
+#if !defined(RELEASE_OR_BETA)
+        // Attempting to record the I/O we are doing to the shutdown profile
+        // file while we are locked will deadlock.
+        ActivePS::UnregisterIOInterposer(lock);
+#endif
         locked_profiler_save_profile_to_file(lock, filename,
                                              /* aIsShuttingDown */ true);
       }
@@ -2872,6 +2902,12 @@ static bool WriteProfileToJSONWriter(SpliceableChunkedJSONWriter& aWriter,
   }
   aWriter.End();
   return true;
+}
+
+void profiler_set_process_name(const nsACString& aProcessName) {
+  LOG("profiler_set_process_name(\"%s\")", aProcessName.Data());
+  PSAutoLock lock(gPSMutex);
+  CorePS::SetProcessName(lock, aProcessName);
 }
 
 UniquePtr<char[]> profiler_get_profile(double aSinceTime,
@@ -3807,6 +3843,19 @@ void profiler_tracing(const char* aCategoryString, const char* aMarkerName,
       MakeUnique<TracingMarkerPayload>(aCategoryString, aKind, aDocShellId,
                                        aDocShellHistoryId, std::move(aCause));
   racy_profiler_add_marker(aMarkerName, aCategory, std::move(payload));
+}
+
+void profiler_add_text_marker(
+    const char* aMarkerName, const nsACString& aText,
+    js::ProfilingStackFrame::Category aCategory,
+    const mozilla::TimeStamp& aStartTime, const mozilla::TimeStamp& aEndTime,
+    const mozilla::Maybe<nsID>& aDocShellId,
+    const mozilla::Maybe<uint32_t>& aDocShellHistoryId,
+    UniqueProfilerBacktrace aCause) {
+  profiler_add_marker(
+      aMarkerName, aCategory,
+      MakeUnique<TextMarkerPayload>(aText, aStartTime, aEndTime, aDocShellId,
+                                    aDocShellHistoryId, std::move(aCause)));
 }
 
 void profiler_set_js_context(JSContext* aCx) {

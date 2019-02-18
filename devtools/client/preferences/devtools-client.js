@@ -50,8 +50,6 @@ pref("devtools.inspector.showUserAgentStyles", false);
 pref("devtools.inspector.showAllAnonymousContent", false);
 // Show user agent shadow roots
 pref("devtools.inspector.showUserAgentShadowRoots", false);
-// Enable the CSS shapes highlighter
-pref("devtools.inspector.shapesHighlighter.enabled", true);
 // Enable the font highlight-on-hover feature
 pref("devtools.inspector.fonthighlighter.enabled", true);
 // Enable tracking of style changes and the Changes panel in the Inspector
@@ -66,9 +64,7 @@ pref("devtools.inspector.scrollable-badges.enabled", false);
 #endif
 
 // Flexbox preferences
-pref("devtools.inspector.flexboxHighlighter.enabled", true);
-pref("devtools.flexboxinspector.enabled", true);
-
+// Whether or not to show the combined flexbox and box model highlighter.
 #if defined(NIGHTLY_BUILD) || defined(MOZ_DEV_EDITION)
 pref("devtools.inspector.flexboxHighlighter.combine", true);
 #else
@@ -154,6 +150,11 @@ pref("devtools.performance.ui.experimental", false);
 // tests.
 // This isn't exposed directly to the user.
 pref("devtools.performance.recording.ui-base-url", "https://perf-html.io");
+
+// A JSON array of strings, where each string is a file path to an objdir on
+// the host machine. This is used in order to look up symbol information from
+// build artifacts of local builds.
+pref("devtools.performance.recording.objdirs", "[]");
 
 // The default cache UI setting
 pref("devtools.cache.disabled", false);

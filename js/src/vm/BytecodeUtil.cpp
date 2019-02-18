@@ -182,6 +182,9 @@ bool js::DumpRealmPCCounts(JSContext* cx) {
   for (auto iter = cx->zone()->cellIter<JSScript>(); !iter.done();
        iter.next()) {
     JSScript* script = iter;
+    if (gc::IsAboutToBeFinalizedUnbarriered(&script)) {
+      continue;
+    }
     if (script->realm() != cx->realm()) {
       continue;
     }
@@ -1475,10 +1478,7 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
       break;
     }
 
-#  ifdef ENABLE_BIGINT
     case JOF_BIGINT:
-      // Fallthrough.
-#  endif
     case JOF_DOUBLE: {
       RootedValue v(cx, script->getConst(GET_UINT32_INDEX(pc)));
       UniqueChars bytes = ToDisassemblySource(cx, v);
@@ -2550,10 +2550,12 @@ JS_FRIEND_API void js::StopPCCountProfiling(JSContext* cx) {
   }
 
   for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {
-    for (auto script = zone->cellIter<JSScript>(); !script.done();
-         script.next()) {
-      AutoSweepTypeScript sweep(script);
-      if (script->hasScriptCounts() && script->types(sweep)) {
+    for (auto iter = zone->cellIter<JSScript>(); !iter.done(); iter.next()) {
+      JSScript* script = iter;
+      if (gc::IsAboutToBeFinalizedUnbarriered(&script)) {
+        continue;
+      }
+      if (script->hasScriptCounts() && script->types()) {
         if (!vec->append(script)) {
           return;
         }
@@ -2841,6 +2843,8 @@ static bool GenerateLcovInfo(JSContext* cx, JS::Realm* realm,
                              GenericPrinter& out) {
   JSRuntime* rt = cx->runtime();
 
+  AutoRealmUnchecked ar(cx, realm);
+
   // Collect the list of scripts which are part of the current realm.
   { js::gc::AutoPrepareForTracing apft(cx); }
 
@@ -2851,8 +2855,11 @@ static bool GenerateLcovInfo(JSContext* cx, JS::Realm* realm,
 
   Rooted<ScriptVector> queue(cx, ScriptVector(cx));
   for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {
-    for (auto script = zone->cellIter<JSScript>(); !script.done();
-         script.next()) {
+    for (auto iter = zone->cellIter<JSScript>(); !iter.done(); iter.next()) {
+      JSScript* script = iter;
+      if (gc::IsAboutToBeFinalizedUnbarriered(&script)) {
+        continue;
+      }
       if (script->realm() != realm || !script->filename()) {
         continue;
       }

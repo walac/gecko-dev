@@ -39,8 +39,6 @@ def get_variant(test_platform):
     return ''
 
 
-test_description_schema = {str(k): v for k, v in test_description_schema.schema.iteritems()}
-
 mozharness_test_run_schema = Schema({
     Required('using'): 'mozharness-test',
     Required('test'): test_description_schema,
@@ -96,13 +94,6 @@ def mozharness_test_on_docker(config, job, taskdesc):
         'type': 'directory',
     } for (prefix, path) in artifacts]
 
-    worker['caches'] = [{
-        'type': 'persistent',
-        'name': 'level-{}-{}-test-workspace'.format(
-            config.params['level'], config.params['project']),
-        'mount-point': "{workdir}/workspace".format(**run),
-    }]
-
     env = worker.setdefault('env', {})
     env.update({
         'MOZHARNESS_CONFIG': ' '.join(mozharness['config']),
@@ -130,7 +121,8 @@ def mozharness_test_on_docker(config, job, taskdesc):
     # handle some of the mozharness-specific options
 
     if mozharness['tooltool-downloads']:
-        docker_worker_add_tooltool(config, job, taskdesc, internal=True)
+        internal = mozharness['tooltool-downloads'] == 'internal'
+        docker_worker_add_tooltool(config, job, taskdesc, internal=internal)
 
     if test['reboot']:
         raise Exception('reboot: {} not supported on generic-worker'.format(test['reboot']))

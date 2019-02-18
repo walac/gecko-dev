@@ -123,8 +123,8 @@ return /******/ (function(modules) { // webpackBootstrap
 "use strict";
 
 
-const pdfjsVersion = '2.1.228';
-const pdfjsBuild = '1f3e7700';
+const pdfjsVersion = '2.1.266';
+const pdfjsBuild = '81f5835c';
 
 const pdfjsCoreWorker = __w_pdfjs_require__(1);
 
@@ -375,7 +375,7 @@ var WorkerMessageHandler = {
     var cancelXHRs = null;
     var WorkerTasks = [];
     let apiVersion = docParams.apiVersion;
-    let workerVersion = '2.1.228';
+    let workerVersion = '2.1.266';
 
     if (apiVersion !== workerVersion) {
       throw new Error(`The API version "${apiVersion}" does not match ` + `the Worker version "${workerVersion}".`);
@@ -765,6 +765,9 @@ var WorkerMessageHandler = {
           throw reason;
         });
       });
+    });
+    handler.on('FontFallback', function (data) {
+      return pdfManager.fontFallback(data.id, handler);
     });
     handler.on('Cleanup', function wphCleanup(data) {
       return pdfManager.cleanup();
@@ -1737,10 +1740,24 @@ function isSpace(ch) {
 }
 
 function createPromiseCapability() {
-  var capability = {};
+  const capability = Object.create(null);
+  let isSettled = false;
+  Object.defineProperty(capability, 'settled', {
+    get() {
+      return isSettled;
+    }
+
+  });
   capability.promise = new Promise(function (resolve, reject) {
-    capability.resolve = resolve;
-    capability.reject = reject;
+    capability.resolve = function (data) {
+      isSettled = true;
+      resolve(data);
+    };
+
+    capability.reject = function (reason) {
+      isSettled = true;
+      reject(reason);
+    };
   });
   return capability;
 }
@@ -1889,6 +1906,10 @@ class BasePdfManager {
 
   getPage(pageIndex) {
     return this.pdfDocument.getPage(pageIndex);
+  }
+
+  fontFallback(id, handler) {
+    return this.pdfDocument.fontFallback(id, handler);
   }
 
   cleanup() {
@@ -3255,6 +3276,10 @@ class PDFDocument {
     });
   }
 
+  fontFallback(id, handler) {
+    return this.catalog.fontFallback(id, handler);
+  }
+
   cleanup() {
     return this.catalog.cleanup();
   }
@@ -3798,6 +3823,21 @@ class Catalog {
     }
 
     return (0, _util.shadow)(this, 'javaScript', javaScript);
+  }
+
+  fontFallback(id, handler) {
+    const promises = [];
+    this.fontCache.forEach(function (promise) {
+      promises.push(promise);
+    });
+    return Promise.all(promises).then(translatedFonts => {
+      for (const translatedFont of translatedFonts) {
+        if (translatedFont.loadedName === id) {
+          translatedFont.fallback(handler);
+          return;
+        }
+      }
+    });
   }
 
   cleanup() {
@@ -20053,32 +20093,22 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
         return translated.loadedName;
       });
     },
-    handleText: function PartialEvaluator_handleText(chars, state) {
-      var font = state.font;
-      var glyphs = font.charsToGlyphs(chars);
-      var isAddToPathSet = !!(state.textRenderingMode & _util.TextRenderingMode.ADD_TO_PATH_FLAG);
 
-      if (font.data && (isAddToPathSet || this.options.disableFontFace || state.fillColorSpace.name === 'Pattern')) {
-        var buildPath = fontChar => {
-          if (!font.renderer.hasBuiltPath(fontChar)) {
-            var path = font.renderer.getPathJs(fontChar);
-            this.handler.send('commonobj', [font.loadedName + '_path_' + fontChar, 'FontPath', path]);
-          }
-        };
+    handleText(chars, state) {
+      const font = state.font;
+      const glyphs = font.charsToGlyphs(chars);
 
-        for (var i = 0, ii = glyphs.length; i < ii; i++) {
-          var glyph = glyphs[i];
-          buildPath(glyph.fontChar);
-          var accent = glyph.accent;
+      if (font.data) {
+        const isAddToPathSet = !!(state.textRenderingMode & _util.TextRenderingMode.ADD_TO_PATH_FLAG);
 
-          if (accent && accent.fontChar) {
-            buildPath(accent.fontChar);
-          }
+        if (isAddToPathSet || state.fillColorSpace.name === 'Pattern' || font.disableFontFace || this.options.disableFontFace) {
+          PartialEvaluator.buildFontPaths(font, glyphs, this.handler);
         }
       }
 
       return glyphs;
     },
+
     setGState: function PartialEvaluator_setGState(resources, gState, operatorList, task, stateManager) {
       var gStateObj = [];
       var gStateKeys = gState.getKeys();
@@ -20764,7 +20794,7 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
             fontFamily: font.fallbackName,
             ascent: font.ascent,
             descent: font.descent,
-            vertical: font.vertical
+            vertical: !!font.vertical
           };
         }
 
@@ -20941,8 +20971,12 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
           return;
         }
 
-        textContentItem.width *= textContentItem.textAdvanceScale;
-        textContentItem.height *= textContentItem.textAdvanceScale;
+        if (!textContentItem.vertical) {
+          textContentItem.width *= textContentItem.textAdvanceScale;
+        } else {
+          textContentItem.height *= textContentItem.textAdvanceScale;
+        }
+
         textContent.items.push(runBidiTransform(textContentItem));
         textContentItem.initialized = false;
         textContentItem.str.length = 0;
@@ -21465,7 +21499,7 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
               }
             }
 
-            toUnicode[charcode] = String.fromCharCode(code);
+            toUnicode[charcode] = String.fromCodePoint(code);
           }
 
           continue;
@@ -21565,7 +21599,7 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
               str.push(((w1 & 0x3ff) << 10) + (w2 & 0x3ff) + 0x10000);
             }
 
-            map[charCode] = String.fromCharCode.apply(String, str);
+            map[charCode] = String.fromCodePoint.apply(String, str);
           });
           return new _fonts.ToUnicodeMap(map);
         });
@@ -21993,6 +22027,26 @@ var PartialEvaluator = function PartialEvaluatorClosure() {
       });
     }
   };
+
+  PartialEvaluator.buildFontPaths = function (font, glyphs, handler) {
+    function buildPath(fontChar) {
+      if (font.renderer.hasBuiltPath(fontChar)) {
+        return;
+      }
+
+      handler.send('commonobj', [`${font.loadedName}_path_${fontChar}`, 'FontPath', font.renderer.getPathJs(fontChar)]);
+    }
+
+    for (const glyph of glyphs) {
+      buildPath(glyph.fontChar);
+      const accent = glyph.accent;
+
+      if (accent && accent.fontChar) {
+        buildPath(accent.fontChar);
+      }
+    }
+  };
+
   return PartialEvaluator;
 }();
 
@@ -22013,9 +22067,18 @@ var TranslatedFont = function TranslatedFontClosure() {
         return;
       }
 
-      var fontData = this.font.exportData();
-      handler.send('commonobj', [this.loadedName, 'Font', fontData]);
       this.sent = true;
+      handler.send('commonobj', [this.loadedName, 'Font', this.font.exportData()]);
+    },
+
+    fallback(handler) {
+      if (!this.font.data) {
+        return;
+      }
+
+      this.font.disableFontFace = true;
+      const glyphs = this.font.glyphCacheValues;
+      PartialEvaluator.buildFontPaths(this.font, glyphs, handler);
     },
 
     loadType3Data(evaluator, resources, parentOperatorList, task) {
@@ -24579,6 +24642,7 @@ var Font = function FontClosure() {
     font: null,
     mimetype: null,
     encoding: null,
+    disableFontFace: false,
 
     get renderer() {
       var renderer = _font_renderer.FontRendererFactory.create(this, SEAC_ANALYSIS_ENABLED);
@@ -26270,7 +26334,12 @@ var Font = function FontClosure() {
       }
 
       return charsCache[charsCacheKey] = glyphs;
+    },
+
+    get glyphCacheValues() {
+      return Object.values(this.glyphCache);
     }
+
   };
   return Font;
 }();

@@ -39,6 +39,7 @@ DIRS += [
     'find',
     'fuzzyfox',
     'jsoncpp/src/lib_json',
+    'kvstore',
     'lz4',
     'mediasniffer',
     'mozintl',
@@ -85,6 +86,9 @@ if CONFIG['MOZ_BUILD_APP'] != 'mobile/android':
 
     if CONFIG['NS_PRINTING']:
         DIRS += ['printing']
+
+    if CONFIG['NIGHTLY_BUILD']:
+        DIRS += ['pictureinpicture']
 
 if CONFIG['BUILD_CTYPES']:
     DIRS += ['ctypes']

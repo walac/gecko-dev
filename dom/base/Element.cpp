@@ -913,26 +913,6 @@ void Element::SetScrollLeft(int32_t aScrollLeft) {
   }
 }
 
-bool Element::ScrollByNoFlush(int32_t aDx, int32_t aDy) {
-  nsIScrollableFrame* sf = GetScrollFrame(nullptr, FlushType::None);
-  if (!sf) {
-    return false;
-  }
-
-  AutoWeakFrame weakRef(sf->GetScrolledFrame());
-
-  CSSIntPoint before = sf->GetScrollPositionCSSPixels();
-  sf->ScrollToCSSPixelsApproximate(CSSIntPoint(before.x + aDx, before.y + aDy));
-
-  // The frame was destroyed, can't keep on scrolling.
-  if (!weakRef.IsAlive()) {
-    return false;
-  }
-
-  CSSIntPoint after = sf->GetScrollPositionCSSPixels();
-  return (before != after);
-}
-
 void Element::MozScrollSnap() {
   nsIScrollableFrame* sf = GetScrollFrame(nullptr, FlushType::None);
   if (sf) {
@@ -997,7 +977,11 @@ nsRect Element::GetClientAreaRect() {
   nsIScrollableFrame* sf = GetScrollFrame(&frame);
 
   if (sf) {
-    return sf->GetScrollPortRect();
+    nsRect scrollPort = sf->GetScrollPortRect();
+    // The scroll port value might be expanded to the minimum scale size, we
+    // should limit the size to the ICB in such cases.
+    scrollPort.SizeTo(sf->GetLayoutSize());
+    return scrollPort;
   }
 
   if (frame &&
@@ -1248,7 +1232,7 @@ void Element::NotifyUAWidgetSetupOrChange() {
   MOZ_ASSERT(IsInComposedDoc());
   // Schedule a runnable, ensure the event dispatches before
   // returning to content script.
-  // This event cause UA Widget to construct or cause onattributechange callback
+  // This event cause UA Widget to construct or cause onchange callback
   // of existing UA Widget to run; dispatching this event twice should not cause
   // UA Widget to re-init.
   nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
@@ -1277,6 +1261,14 @@ void Element::NotifyUAWidgetTeardown(UnattachShadowRoot aUnattachShadowRoot) {
           return;
         }
         MOZ_ASSERT(self->GetShadowRoot()->IsUAWidget());
+
+        // Bail out if the element is being collected by CC
+        bool hasHadScriptObject = true;
+        nsIScriptGlobalObject* scriptObject =
+            ownerDoc->GetScriptHandlingObject(hasHadScriptObject);
+        if (!scriptObject && hasHadScriptObject) {
+          return;
+        }
 
         nsresult rv = nsContentUtils::DispatchChromeEvent(
             ownerDoc, self, NS_LITERAL_STRING("UAWidgetTeardown"),
@@ -2012,21 +2004,19 @@ DeclarationBlock* Element::GetSMILOverrideStyleDeclaration() {
 }
 
 nsresult Element::SetSMILOverrideStyleDeclaration(
-    DeclarationBlock* aDeclaration, bool aNotify) {
+    DeclarationBlock* aDeclaration) {
   Element::nsExtendedDOMSlots* slots = ExtendedDOMSlots();
 
   slots->mSMILOverrideStyleDeclaration = aDeclaration;
 
-  if (aNotify) {
-    Document* doc = GetComposedDoc();
-    // Only need to request a restyle if we're in a document.  (We might not
-    // be in a document, if we're clearing animation effects on a target node
-    // that's been detached since the previous animation sample.)
-    if (doc) {
-      nsCOMPtr<nsIPresShell> shell = doc->GetShell();
-      if (shell) {
-        shell->RestyleForAnimation(this, eRestyle_StyleAttribute_Animations);
-      }
+  Document* doc = GetComposedDoc();
+  // Only need to request a restyle if we're in a document.  (We might not
+  // be in a document, if we're clearing animation effects on a target node
+  // that's been detached since the previous animation sample.)
+  if (doc) {
+    nsCOMPtr<nsIPresShell> shell = doc->GetShell();
+    if (shell) {
+      shell->RestyleForAnimation(this, eRestyle_StyleAttribute_Animations);
     }
   }
 

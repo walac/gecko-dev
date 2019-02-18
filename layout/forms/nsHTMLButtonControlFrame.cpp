@@ -22,14 +22,16 @@ using namespace mozilla;
 
 nsContainerFrame* NS_NewHTMLButtonControlFrame(nsIPresShell* aPresShell,
                                                ComputedStyle* aStyle) {
-  return new (aPresShell) nsHTMLButtonControlFrame(aStyle);
+  return new (aPresShell)
+      nsHTMLButtonControlFrame(aStyle, aPresShell->GetPresContext());
 }
 
 NS_IMPL_FRAMEARENA_HELPERS(nsHTMLButtonControlFrame)
 
 nsHTMLButtonControlFrame::nsHTMLButtonControlFrame(ComputedStyle* aStyle,
+                                                   nsPresContext* aPresContext,
                                                    nsIFrame::ClassID aID)
-    : nsContainerFrame(aStyle, aID) {}
+    : nsContainerFrame(aStyle, aPresContext, aID) {}
 
 nsHTMLButtonControlFrame::~nsHTMLButtonControlFrame() {}
 
@@ -105,7 +107,8 @@ void nsHTMLButtonControlFrame::BuildDisplayList(
       rect.Deflate(border);
       nscoord radii[8];
       bool hasRadii = GetPaddingBoxBorderRadii(radii);
-      clipState.ClipContainingBlockDescendants(rect, hasRadii ? radii : nullptr);
+      clipState.ClipContainingBlockDescendants(rect,
+                                               hasRadii ? radii : nullptr);
     }
 
     BuildDisplayListForChild(aBuilder, mFrames.FirstChild(), set,

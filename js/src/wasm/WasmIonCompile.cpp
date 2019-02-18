@@ -4011,8 +4011,7 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
 
 bool wasm::IonCompileFunctions(const ModuleEnvironment& env, LifoAlloc& lifo,
                                const FuncCompileInputVector& inputs,
-                               CompiledCode* code,
-                               UniqueChars* error) {
+                               CompiledCode* code, UniqueChars* error) {
   MOZ_ASSERT(env.tier() == Tier::Optimized);
   MOZ_ASSERT(env.optimizedBackend() == OptimizedBackend::Ion);
 
@@ -4036,8 +4035,7 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& env, LifoAlloc& lifo,
     if (!locals.appendAll(env.funcTypes[func.index]->args())) {
       return false;
     }
-    if (!DecodeLocalEntries(d, env.kind, env.types, env.gcTypesEnabled(),
-                            &locals)) {
+    if (!DecodeLocalEntries(d,  env.types, env.gcTypesEnabled(), &locals)) {
       return false;
     }
 

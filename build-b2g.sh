@@ -59,7 +59,8 @@ export CFLAGS="-DANDROID -DTARGET_OS_GONK \
 -I$GONK_PATH/system \
 -I$(pwd)/modules/freetype2/include \
 -I$GONK_PATH/system/core/include \
--I$GONK_PATH/external/zlib"
+-I$GONK_PATH/external/zlib \
+-I$(pwd)/modules/freetype2/include"
 
 export CPPFLAGS="-O2 -fPIC \
 -isystem $GONK_PATH/api/cpp/include \

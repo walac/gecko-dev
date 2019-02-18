@@ -90,6 +90,17 @@ export type PendingLocation = {
   +sourceUrl?: string
 };
 
+// Type of location used when setting breakpoints in the server. Exactly one of
+// { sourceUrl, sourceId } must be specified. Soon this will replace
+// SourceLocation and PendingLocation, and SourceActorLocation will be removed
+// (bug 1524374).
+export type BreakpointLocation = {
+  +line: number,
+  +column?: number,
+  +sourceUrl?: string,
+  +sourceId?: SourceId
+};
+
 export type ASTLocation = {|
   +name: ?string,
   +offset: PartialPosition,
@@ -119,8 +130,8 @@ export type Breakpoint = {|
  */
 export type BreakpointOptions = {
   hidden?: boolean,
-  condition?: string,
-  logValue?: string
+  condition?: string | null,
+  logValue?: string | null
 };
 
 export type BreakpointActor = {|
@@ -187,13 +198,14 @@ export type Frame = {
   displayName: string,
   location: SourceLocation,
   generatedLocation: SourceLocation,
-  source?: Source,
+  source: ?Source,
   scope: Scope,
   // FIXME Define this type more clearly
   this: Object,
   framework?: string,
   isOriginal?: boolean,
-  originalDisplayName?: string
+  originalDisplayName?: string,
+  library?: string
 };
 
 export type ChromeFrame = {
@@ -440,3 +452,8 @@ export type Cancellable = {
 export type EventListenerBreakpoints = string[];
 
 export type SourceDocuments = { [string]: Object };
+
+export type BreakpointPosition = { line: number, string: number };
+export type BreakpointLinePositions = Array<BreakpointPosition>;
+export type BreakpointSourcePositions = { [number]: BreakpointLinePositions };
+export type BreakpointPositions = { [string]: BreakpointSourcePositions };
