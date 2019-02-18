@@ -10,6 +10,7 @@ const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm")
 XPCOMUtils.defineLazyModuleGetters(this, {
   Services: "resource://gre/modules/Services.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
+  UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
 });
 
@@ -173,13 +174,24 @@ class UrlbarView {
       fragment.appendChild(this._createRow(resultIndex));
     }
 
+    let isFirstPreselectedResult = false;
     if (queryContext.lastResultCount == 0) {
       if (queryContext.preselected) {
+        isFirstPreselectedResult = true;
         this._selectItem(fragment.firstElementChild, false);
       } else {
         // Clear the selection when we get a new set of results.
         this._selectItem(null);
       }
+      // Hide the one-off search buttons if the input starts with a potential @
+      // search alias or the search restriction character.
+      let trimmedValue = this.input.textValue.trim();
+      this._enableOrDisableOneOffSearches(
+        !trimmedValue ||
+        (trimmedValue[0] != "@" &&
+         (trimmedValue[0] != UrlbarTokenizer.RESTRICT.SEARCH ||
+          trimmedValue.length != 1))
+      );
     } else if (this._selected) {
       // Ensure the selection is stable.
       // TODO bug 1523602: the selection should stay on the node that had it, if
@@ -194,6 +206,13 @@ class UrlbarView {
     this._rows.appendChild(fragment);
 
     this._openPanel();
+
+    if (isFirstPreselectedResult) {
+      // The first, preselected result may be a search alias result, so apply
+      // formatting if necessary.  Conversely, the first result of the previous
+      // query may have been an alias, so remove formatting if necessary.
+      this.input.formatValue();
+    }
   }
 
   /**
@@ -268,6 +287,7 @@ class UrlbarView {
     if (this.isOpen) {
       return;
     }
+    this.controller.userSelectionBehavior = "none";
 
     this.panel.removeAttribute("hidden");
     this.panel.removeAttribute("actionoverride");
@@ -486,8 +506,8 @@ class UrlbarView {
     }
   }
 
-  _enableOrDisableOneOffSearches() {
-    if (UrlbarPrefs.get("oneOffSearches")) {
+  _enableOrDisableOneOffSearches(enable = true) {
+    if (enable && UrlbarPrefs.get("oneOffSearches")) {
       this.oneOffSearchButtons.telemetryOrigin = "urlbar";
       this.oneOffSearchButtons.style.display = "";
       // Set .textbox first, since the popup setter will cause
@@ -542,7 +562,6 @@ class UrlbarView {
   }
 
   _on_popupshowing() {
-    this._enableOrDisableOneOffSearches();
     this.window.addEventListener("resize", this);
   }
 

@@ -1032,9 +1032,8 @@ class FunctionCompiler {
     }
 
     CallSiteDesc desc(lineOrBytecode, CallSiteDesc::Dynamic);
-    auto* ins =
-        MWasmCall::New(alloc(), desc, callee, call.regArgs_,
-                       ToMIRType(funcType.ret()), index);
+    auto* ins = MWasmCall::New(alloc(), desc, callee, call.regArgs_,
+                               ToMIRType(funcType.ret()), index);
     if (!ins) {
       return false;
     }
@@ -1075,8 +1074,8 @@ class FunctionCompiler {
 
     CallSiteDesc desc(lineOrBytecode, CallSiteDesc::Symbolic);
     auto callee = CalleeDesc::builtin(builtin);
-    auto* ins = MWasmCall::New(alloc(), desc, callee, call.regArgs_,
-                               ToMIRType(ret));
+    auto* ins =
+        MWasmCall::New(alloc(), desc, callee, call.regArgs_, ToMIRType(ret));
     if (!ins) {
       return false;
     }
@@ -2544,7 +2543,7 @@ static bool EmitBinaryMathBuiltinCall(FunctionCompiler& f,
   return true;
 }
 
-static bool EmitGrowMemory(FunctionCompiler& f) {
+static bool EmitMemoryGrow(FunctionCompiler& f) {
   uint32_t lineOrBytecode = f.readCallSiteLineOrBytecode();
 
   CallCompileState args;
@@ -2553,7 +2552,7 @@ static bool EmitGrowMemory(FunctionCompiler& f) {
   }
 
   MDefinition* delta;
-  if (!f.iter().readGrowMemory(&delta)) {
+  if (!f.iter().readMemoryGrow(&delta)) {
     return false;
   }
 
@@ -2564,7 +2563,7 @@ static bool EmitGrowMemory(FunctionCompiler& f) {
   f.finishCall(&args);
 
   MDefinition* ret;
-  if (!f.builtinInstanceMethodCall(SymbolicAddress::GrowMemory, lineOrBytecode,
+  if (!f.builtinInstanceMethodCall(SymbolicAddress::MemoryGrow, lineOrBytecode,
                                    args, ValType::I32, &ret)) {
     return false;
   }
@@ -2573,12 +2572,12 @@ static bool EmitGrowMemory(FunctionCompiler& f) {
   return true;
 }
 
-static bool EmitCurrentMemory(FunctionCompiler& f) {
+static bool EmitMemorySize(FunctionCompiler& f) {
   uint32_t lineOrBytecode = f.readCallSiteLineOrBytecode();
 
   CallCompileState args;
 
-  if (!f.iter().readCurrentMemory()) {
+  if (!f.iter().readMemorySize()) {
     return false;
   }
 
@@ -2589,7 +2588,7 @@ static bool EmitCurrentMemory(FunctionCompiler& f) {
   f.finishCall(&args);
 
   MDefinition* ret;
-  if (!f.builtinInstanceMethodCall(SymbolicAddress::CurrentMemory,
+  if (!f.builtinInstanceMethodCall(SymbolicAddress::MemorySize,
                                    lineOrBytecode, args, ValType::I32, &ret)) {
     return false;
   }
@@ -2759,8 +2758,8 @@ static bool EmitWake(FunctionCompiler& f) {
   }
 
   MDefinition* ret;
-  if (!f.builtinInstanceMethodCall(SymbolicAddress::Wake, lineOrBytecode,
-                                   args, ValType::I32, &ret)) {
+  if (!f.builtinInstanceMethodCall(SymbolicAddress::Wake, lineOrBytecode, args,
+                                   ValType::I32, &ret)) {
     return false;
   }
 
@@ -3166,6 +3165,12 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
         CHECK(EmitGetGlobal(f));
       case uint16_t(Op::SetGlobal):
         CHECK(EmitSetGlobal(f));
+#ifdef ENABLE_WASM_GENERALIZED_TABLES
+      case uint16_t(Op::TableGet):
+        CHECK(EmitTableGet(f));
+      case uint16_t(Op::TableSet):
+        CHECK(EmitTableSet(f));
+#endif
 
       // Memory-related operators
       case uint16_t(Op::I32Load):
@@ -3214,10 +3219,10 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
         CHECK(EmitStore(f, ValType::I64, Scalar::Int16));
       case uint16_t(Op::I64Store32):
         CHECK(EmitStore(f, ValType::I64, Scalar::Int32));
-      case uint16_t(Op::CurrentMemory):
-        CHECK(EmitCurrentMemory(f));
-      case uint16_t(Op::GrowMemory):
-        CHECK(EmitGrowMemory(f));
+      case uint16_t(Op::MemorySize):
+        CHECK(EmitMemorySize(f));
+      case uint16_t(Op::MemoryGrow):
+        CHECK(EmitMemoryGrow(f));
 
       // Constants
       case uint16_t(Op::I32Const):
@@ -3582,12 +3587,8 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
             CHECK(EmitMemOrTableInit(f, /*isMem=*/false));
 #endif
 #ifdef ENABLE_WASM_GENERALIZED_TABLES
-          case uint16_t(MiscOp::TableGet):
-            CHECK(EmitTableGet(f));
           case uint16_t(MiscOp::TableGrow):
             CHECK(EmitTableGrow(f));
-          case uint16_t(MiscOp::TableSet):
-            CHECK(EmitTableSet(f));
           case uint16_t(MiscOp::TableSize):
             CHECK(EmitTableSize(f));
 #endif

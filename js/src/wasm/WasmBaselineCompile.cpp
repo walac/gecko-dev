@@ -4422,8 +4422,8 @@ class BaseCompiler final : public BaseCompilerInterface {
   }
 
   void startCallArgs(size_t stackArgAreaSizeUnaligned, FunctionCall* call) {
-    size_t stackArgAreaSizeAligned
-        = AlignStackArgAreaSize(stackArgAreaSizeUnaligned);
+    size_t stackArgAreaSizeAligned =
+        AlignStackArgAreaSize(stackArgAreaSizeUnaligned);
     MOZ_ASSERT(stackArgAreaSizeUnaligned <= stackArgAreaSizeAligned);
 
     // Record the masm.framePushed() value at this point, before we push args
@@ -6879,9 +6879,9 @@ class BaseCompiler final : public BaseCompilerInterface {
   MOZ_MUST_USE bool emitInstanceCall(uint32_t lineOrBytecode,
                                      const MIRTypeVector& sig, ExprType retType,
                                      SymbolicAddress builtin,
-                                     bool pushReturnedValue=true);
-  MOZ_MUST_USE bool emitGrowMemory();
-  MOZ_MUST_USE bool emitCurrentMemory();
+                                     bool pushReturnedValue = true);
+  MOZ_MUST_USE bool emitMemoryGrow();
+  MOZ_MUST_USE bool emitMemorySize();
 
   MOZ_MUST_USE bool emitRefNull();
   void emitRefIsNull();
@@ -9776,7 +9776,7 @@ void BaseCompiler::emitCompareRef(Assembler::Condition compareOp,
 bool BaseCompiler::emitInstanceCall(uint32_t lineOrBytecode,
                                     const MIRTypeVector& sig, ExprType retType,
                                     SymbolicAddress builtin,
-                                    bool pushReturnedValue/*=true*/) {
+                                    bool pushReturnedValue /*=true*/) {
   MOZ_ASSERT(sig[0] == MIRType::Pointer);
 
   sync();
@@ -9834,11 +9834,11 @@ bool BaseCompiler::emitInstanceCall(uint32_t lineOrBytecode,
   return true;
 }
 
-bool BaseCompiler::emitGrowMemory() {
+bool BaseCompiler::emitMemoryGrow() {
   uint32_t lineOrBytecode = readCallSiteLineOrBytecode();
 
   Nothing arg;
-  if (!iter_.readGrowMemory(&arg)) {
+  if (!iter_.readMemoryGrow(&arg)) {
     return false;
   }
 
@@ -9847,13 +9847,13 @@ bool BaseCompiler::emitGrowMemory() {
   }
 
   return emitInstanceCall(lineOrBytecode, SigPI_, ExprType::I32,
-                          SymbolicAddress::GrowMemory);
+                          SymbolicAddress::MemoryGrow);
 }
 
-bool BaseCompiler::emitCurrentMemory() {
+bool BaseCompiler::emitMemorySize() {
   uint32_t lineOrBytecode = readCallSiteLineOrBytecode();
 
-  if (!iter_.readCurrentMemory()) {
+  if (!iter_.readMemorySize()) {
     return false;
   }
 
@@ -9862,7 +9862,7 @@ bool BaseCompiler::emitCurrentMemory() {
   }
 
   return emitInstanceCall(lineOrBytecode, SigP_, ExprType::I32,
-                          SymbolicAddress::CurrentMemory);
+                          SymbolicAddress::MemorySize);
 }
 
 bool BaseCompiler::emitRefNull() {
@@ -10999,6 +10999,12 @@ bool BaseCompiler::emitBody() {
         CHECK_NEXT(emitGetGlobal());
       case uint16_t(Op::SetGlobal):
         CHECK_NEXT(emitSetGlobal());
+#ifdef ENABLE_WASM_GENERALIZED_TABLES
+      case uint16_t(Op::TableGet):
+        CHECK_NEXT(emitTableGet());
+      case uint16_t(Op::TableSet):
+        CHECK_NEXT(emitTableSet());
+#endif
 
       // Select
       case uint16_t(Op::Select):
@@ -11491,10 +11497,10 @@ bool BaseCompiler::emitBody() {
             emitConversion(emitExtendI64_32, ValType::I64, ValType::I64));
 
       // Memory Related
-      case uint16_t(Op::GrowMemory):
-        CHECK_NEXT(emitGrowMemory());
-      case uint16_t(Op::CurrentMemory):
-        CHECK_NEXT(emitCurrentMemory());
+      case uint16_t(Op::MemoryGrow):
+        CHECK_NEXT(emitMemoryGrow());
+      case uint16_t(Op::MemorySize):
+        CHECK_NEXT(emitMemorySize());
 
 #ifdef ENABLE_WASM_GC
       case uint16_t(Op::RefEq):
@@ -11596,12 +11602,8 @@ bool BaseCompiler::emitBody() {
             CHECK_NEXT(emitMemOrTableInit(/*isMem=*/false));
 #endif  // ENABLE_WASM_BULKMEM_OPS
 #ifdef ENABLE_WASM_GENERALIZED_TABLES
-          case uint16_t(MiscOp::TableGet):
-            CHECK_NEXT(emitTableGet());
           case uint16_t(MiscOp::TableGrow):
             CHECK_NEXT(emitTableGrow());
-          case uint16_t(MiscOp::TableSet):
-            CHECK_NEXT(emitTableSet());
           case uint16_t(MiscOp::TableSize):
             CHECK_NEXT(emitTableSize());
 #endif

@@ -268,10 +268,7 @@ class UrlbarInput {
 
     openParams.allowInheritPrincipal = false;
 
-    // TODO: Work out how we get the user selection behavior, probably via passing
-    // it in, since we don't have the old autocomplete controller to work with.
-    // BrowserUsageTelemetry.recordUrlbarSelectedResultMethod(
-    //   event, this.userSelectionBehavior);
+    this.controller.recordSelectedResult(event, index);
 
     url = this._maybeCanonizeURL(event, url) || url.trim();
 
@@ -315,11 +312,7 @@ class UrlbarInput {
 
     this.view.close();
 
-    // TODO Bug 1500476: Work out how we get the user selection behavior, probably via passing
-    // it in, since we don't have the old autocomplete controller to work with.
-    // BrowserUsageTelemetry.recordUrlbarSelectedResultMethod(
-    //   event, this.userSelectionBehavior);
-    this.controller.recordSelectedResult(event, result, resultIndex);
+    this.controller.recordSelectedResult(event, resultIndex);
 
     let where = this._whereToOpen(event);
     let {url, postData} = UrlbarUtils.getUrlFromResult(result);
@@ -363,6 +356,14 @@ class UrlbarInput {
         if (canonizedUrl) {
           url = canonizedUrl;
           break;
+        }
+        if (result.payload.isKeywordOffer) {
+          // Picking a keyword offer just fills it in the input and doesn't
+          // visit anything.  The user can then type a search string.  Also
+          // start a new search so that the offer appears in the view by itself
+          // to make it even clearer to the user what's going on.
+          this.startQuery();
+          return;
         }
         const actionDetails = {
           isSuggestion: !!result.payload.suggestion,
@@ -970,6 +971,11 @@ class UrlbarInput {
       this.removeAttribute("usertyping");
     }
     this.removeAttribute("actiontype");
+
+    if (!value && this.view.isOpen) {
+      this.view.close();
+      return;
+    }
 
     // XXX Fill in lastKey, and add anything else we need.
     this.startQuery({
