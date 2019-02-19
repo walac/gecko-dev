@@ -472,17 +472,11 @@ VARCACHE_PREF(
 )
 
 // Block multiple external protocol URLs in iframes per single event.
-#ifdef NIGHTLY_BUILD
-#define PREF_VALUE true
-#else
-#define PREF_VALUE false
-#endif
 VARCACHE_PREF(
   "dom.block_external_protocol_in_iframes",
    dom_block_external_protocol_in_iframes,
-  bool, PREF_VALUE
+  bool, true
 )
-#undef PREF_VALUE
 
 // Any how many seconds we allow external protocol URLs in iframe when not in
 // single events
@@ -956,6 +950,13 @@ VARCACHE_PREF(
   bool, false
 )
 
+// Is the CSS Scroll Snap Module Level 1 enabled?
+VARCACHE_PREF(
+  "layout.css.scroll-snap-v1.enabled",
+   layout_css_scroll_snap_v1_enabled,
+  RelaxedAtomicBool, false
+)
+
 //---------------------------------------------------------------------------
 // JavaScript prefs
 //---------------------------------------------------------------------------
@@ -1209,6 +1210,12 @@ VARCACHE_PREF(
   "media.rdd-process.startup_timeout_ms",
    MediaRddProcessStartupTimeoutMs,
   RelaxedAtomicInt32, 5000
+)
+
+VARCACHE_PREF(
+  "media.rdd-vorbis.enabled",
+   MediaRddVorbisEnabled,
+  RelaxedAtomicBool, false
 )
 
 #ifdef ANDROID

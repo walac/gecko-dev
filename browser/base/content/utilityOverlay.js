@@ -24,19 +24,10 @@ XPCOMUtils.defineLazyServiceGetter(this, "aboutNewTabService",
 Object.defineProperty(this, "BROWSER_NEW_TAB_URL", {
   enumerable: true,
   get() {
-    if (PrivateBrowsingUtils.isWindowPrivate(window)) {
-      if (!PrivateBrowsingUtils.permanentPrivateBrowsing &&
-          !aboutNewTabService.overridden) {
-        return "about:privatebrowsing";
-      }
-      // If the extension does not have private browsing permission,
-      // use about:privatebrowsing.
-      if (aboutNewTabService.newTabURL.startsWith("moz-extension")) {
-        let url = new URL(aboutNewTabService.newTabURL);
-        if (!WebExtensionPolicy.getByHostname(url.hostname).privateBrowsingAllowed) {
-          return "about:privatebrowsing";
-        }
-      }
+    if (PrivateBrowsingUtils.isWindowPrivate(window) &&
+        !PrivateBrowsingUtils.permanentPrivateBrowsing &&
+        !aboutNewTabService.overridden) {
+      return "about:privatebrowsing";
     }
     return aboutNewTabService.newTabURL;
   },
@@ -914,6 +905,18 @@ function buildHelpMenu() {
 
   document.getElementById("helpSafeMode")
           .disabled = !Services.policies.isAllowed("safeMode");
+
+  let supportMenu = Services.policies.getSupportMenu();
+  if (supportMenu) {
+    let menuitem = document.getElementById("helpPolicySupport");
+    menuitem.hidden = false;
+    menuitem.setAttribute("label", supportMenu.Title);
+    menuitem.setAttribute("href", supportMenu.URL);
+    if ("AccessKey" in supportMenu) {
+      menuitem.setAttribute("accesskey", supportMenu.AccessKey);
+    }
+    document.getElementById("helpPolicySeparator").hidden = false;
+  }
 
   // Enable/disable the "Report Web Forgery" menu item.
   if (typeof gSafeBrowsing != "undefined") {

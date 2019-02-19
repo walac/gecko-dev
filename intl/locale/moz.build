@@ -55,6 +55,10 @@ EXTRA_JS_MODULES += [
     'PluralForm.jsm',
 ]
 
+XPCOM_MANIFESTS += [
+    'components.conf',
+]
+
 FINAL_LIBRARY = 'xul'
 
 LOCAL_INCLUDES += [

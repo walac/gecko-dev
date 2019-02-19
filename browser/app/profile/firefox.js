@@ -145,7 +145,7 @@ pref("app.update.silent", false);
 
 // If set to true, the Update Service will apply updates in the background
 // when it finishes downloading them.
-#if defined(XP_WIN)
+#if defined(XP_WIN) || defined(XP_MACOSX)
 pref("app.update.staging.enabled", true);
 #elif defined(EARLY_BETA_OR_EARLIER)
 pref("app.update.staging.enabled", true);
@@ -482,9 +482,6 @@ pref("browser.tabs.newanimations", false);
 #if defined(NIGHTLY_BUILD) && !defined(MOZ_ASAN)
 pref("browser.tabs.remote.separatePrivilegedContentProcess", true);
 #endif
-
-// Turn on HTTP response process selection.
-pref("browser.tabs.remote.useHTTPResponseProcessSelection", true);
 
 pref("browser.ctrlTab.recentlyUsedOrder", true);
 

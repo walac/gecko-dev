@@ -30,8 +30,6 @@ netwerk/test/unit*/**
 tools/update-packaging/**
 uriloader/exthandler/**
 uriloader/exthandler/tests/mochitest/**
-widget/headless/tests/**
-widget/tests/**
 xpfe/**
 
 # We currently have no js files in these directories, so we ignore them by
@@ -191,9 +189,6 @@ dom/media/webspeech/**
 dom/messagechannel/**
 dom/midi/**
 dom/network/**
-dom/notification/Notification*.*
-dom/notification/test/browser/**
-dom/notification/test/mochitest/**
 dom/payments/**
 dom/performance/**
 dom/permission/**

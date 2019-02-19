@@ -504,8 +504,7 @@ static const FinalizePhase BackgroundFinalizePhases[] = {
     {gcstats::PhaseKind::SWEEP_STRING,
      {AllocKind::FAT_INLINE_STRING, AllocKind::STRING,
       AllocKind::EXTERNAL_STRING, AllocKind::FAT_INLINE_ATOM, AllocKind::ATOM,
-      AllocKind::SYMBOL, AllocKind::BIGINT
-     }},
+      AllocKind::SYMBOL, AllocKind::BIGINT}},
     {gcstats::PhaseKind::SWEEP_SHAPE,
      {AllocKind::SHAPE, AllocKind::ACCESSOR_SHAPE, AllocKind::BASE_SHAPE,
       AllocKind::OBJECT_GROUP}}};
@@ -3405,9 +3404,11 @@ void GCRuntime::startDecommit() {
   MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
   MOZ_ASSERT(!decommitTask.isRunning());
 
-  // If we are allocating heavily enough to trigger "high freqency" GC, then
-  // skip decommit so that we do not compete with the mutator.
-  if (schedulingState.inHighFrequencyGCMode()) {
+  // If we are allocating heavily enough to trigger "high frequency" GC, then
+  // skip decommit so that we do not compete with the mutator. However if we're
+  // doing a shrinking GC we always decommit to release as much memory as
+  // possible.
+  if (schedulingState.inHighFrequencyGCMode() && !cleanUpEverything) {
     return;
   }
 
@@ -4028,9 +4029,8 @@ static bool InCrossCompartmentMap(JSObject* src, JS::GCCellPtr dst) {
 }
 
 void CompartmentCheckTracer::onChild(const JS::GCCellPtr& thing) {
-  Compartment* comp = MapGCThingTyped(thing, [](auto t) {
-    return t->maybeCompartment();
-  });
+  Compartment* comp =
+      MapGCThingTyped(thing, [](auto t) { return t->maybeCompartment(); });
   if (comp && compartment) {
     MOZ_ASSERT(comp == compartment ||
                (srcKind == JS::TraceKind::Object &&
@@ -4057,9 +4057,8 @@ void GCRuntime::checkForCompartmentMismatches() {
            i.next()) {
         trc.src = i.getCell();
         trc.srcKind = MapAllocToTraceKind(thingKind);
-        trc.compartment = MapGCThingTyped(trc.src, trc.srcKind, [](auto t) {
-          return t->maybeCompartment();
-        });
+        trc.compartment = MapGCThingTyped(
+            trc.src, trc.srcKind, [](auto t) { return t->maybeCompartment(); });
         js::TraceChildren(&trc, trc.src, trc.srcKind);
       }
     }
@@ -4846,9 +4845,8 @@ bool Compartment::findSweepGroupEdges() {
       continue;
     }
 
-    Zone* target = key.applyToWrapped([](auto tp) {
-      return (*tp)->asTenured().zone();
-    });
+    Zone* target =
+        key.applyToWrapped([](auto tp) { return (*tp)->asTenured().zone(); });
     if (!target->isGCMarking()) {
       continue;
     }
@@ -6713,7 +6711,7 @@ AutoHeapSession::AutoHeapSession(JSRuntime* rt, JS::HeapState heapState)
       prevState(rt->heapState_),
       profilingStackFrame(rt->mainContextFromOwnThread(),
                           HeapStateToLabel(heapState),
-                          ProfilingStackFrame::Category::GCCC) {
+                          JS::ProfilingCategoryPair::GCCC) {
   MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
   MOZ_ASSERT(prevState == JS::HeapState::Idle);
   MOZ_ASSERT(heapState != JS::HeapState::Idle);
@@ -7403,8 +7401,7 @@ bool GCRuntime::shouldCollectNurseryForSlice(bool nonincrementalByAPI,
       return true;
     case State::Mark:
       return (nonincrementalByAPI || budget.isUnlimited() || lastMarkSlice ||
-              nursery().shouldCollect() ||
-              hasIncrementalTwoSliceZealMode());
+              nursery().shouldCollect() || hasIncrementalTwoSliceZealMode());
     case State::Finish:
       return false;
     case State::MarkRoots:
