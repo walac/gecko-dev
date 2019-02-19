@@ -82,6 +82,16 @@ var UrlbarTestUtils = {
   },
 
   /**
+   * Returns true if the oneOffSearchButtons are visible.
+   * @param {object} win The window containing the urlbar
+   * @returns {boolena} True if the buttons are visible.
+   */
+  getOneOffSearchButtonsVisible(win) {
+    let urlbar = getUrlbarAbstraction(win);
+    return urlbar.oneOffSearchButtonsVisible;
+  },
+
+  /**
    * Gets an abstracted rapresentation of the result at an index.
    * @param {object} win The window containing the urlbar
    * @param {number} index The index to look for
@@ -109,6 +119,16 @@ var UrlbarTestUtils = {
   getSelectedIndex(win) {
     let urlbar = getUrlbarAbstraction(win);
     return urlbar.getSelectedIndex();
+  },
+
+  /**
+   * Selects the item at the index specified.
+   * @param {object} win The window containing the urlbar.
+   * @param {index} index The index to select.
+   */
+  setSelectedIndex(win, index) {
+    let urlbar = getUrlbarAbstraction(win);
+    urlbar.setSelectedIndex(index);
   },
 
   /**
@@ -252,6 +272,14 @@ class UrlbarAbstraction {
            this.urlbar.popup.oneOffSearchButtons;
   }
 
+  get oneOffSearchButtonsVisible() {
+    if (!this.quantumbar) {
+      return this.window.getComputedStyle(this.oneOffSearchButtons.container).display != "none";
+    }
+
+    return this.oneOffSearchButtons.style.display != "none";
+  }
+
   startSearch(text) {
     if (this.quantumbar) {
       this.urlbar.value = text;
@@ -308,6 +336,13 @@ class UrlbarAbstraction {
                            : this.panel.selectedIndex;
   }
 
+  setSelectedIndex(index) {
+    if (!this.quantumbar) {
+      return this.panel.selectedIndex = index;
+    }
+    return this.urlbar.view.selectedIndex = index;
+  }
+
   getResultCount() {
     return this.quantumbar ? this.urlbar.view._rows.children.length
                            : this.urlbar.controller.matchCount;
@@ -340,7 +375,7 @@ class UrlbarAbstraction {
       details.postData = postData;
       details.type = context.results[index].type;
       details.heuristic = context.results[index].heuristic;
-      details.autofill = index == 0 && context.results[index].autofill;
+      details.autofill = !!context.results[index].autofill;
       details.image = element.getElementsByClassName("urlbarView-favicon")[0].src;
       details.title = context.results[index].title;
       details.tags = "tags" in context.results[index].payload ?
@@ -372,12 +407,12 @@ class UrlbarAbstraction {
       details.autofill = style.includes("autofill");
       details.image = element.getAttribute("image");
       details.title = element.getAttribute("title");
-      details.tags = [...element.getElementsByClassName("ac-tags")].map(e =>
-        e.textContent);
+      details.tags = style.includes("tag") ?
+        [...element.getElementsByClassName("ac-tags")].map(e => e.textContent) : [];
       let typeIconStyle = this.window.getComputedStyle(element._typeIcon);
       details.displayed = {
         title: element._titleText.textContent,
-        action: element._actionText.textContent,
+        action: action ? element._actionText.textContent : "",
         typeIcon: typeIconStyle.listStyleImage,
       };
       if (details.type == UrlbarUtils.RESULT_TYPE.SEARCH) {

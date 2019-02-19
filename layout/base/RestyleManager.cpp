@@ -1615,6 +1615,24 @@ void RestyleManager::ProcessRestyledFrames(nsStyleChangeList& aChangeList) {
         hint &= ~nsChangeHint_UpdatePostTransformOverflow;
       }
 
+      if ((hint & nsChangeHint_UpdateTransformLayer) &&
+          !(frame->GetStateBits() & NS_FRAME_MAY_BE_TRANSFORMED) &&
+          frame->HasAnimationOfTransform()) {
+        // If we have an nsChangeHint_UpdateTransformLayer hint but no
+        // corresponding frame bit, it's possible we have a transform animation
+        // with transform style 'none' that was initialized independently from
+        // this frame and associated after the fact.
+        //
+        // In that case we should set the frame bit.
+        //
+        // FIXME: Bug 1527210 - Use the primary frame here instead so that
+        // we handle display: table correctly.
+        for (nsIFrame* cont = frame; cont;
+             cont = nsLayoutUtils::GetNextContinuationOrIBSplitSibling(cont)) {
+          cont->AddStateBits(NS_FRAME_MAY_BE_TRANSFORMED);
+        }
+      }
+
       if (hint & nsChangeHint_AddOrRemoveTransform) {
         // When dropping a running transform animation we will first add an
         // nsChangeHint_UpdateTransformLayer hint as part of the animation-only
@@ -2965,6 +2983,9 @@ void RestyleManager::ClearSnapshots() {
 }
 
 ServoElementSnapshot& RestyleManager::SnapshotFor(Element& aElement) {
+  // FIXME(emilio, bug 1528644): This can actually happen, and cause observable
+  // behavior differences. Upgrade to a release assert when bug 1528644 is
+  // fixed.
   MOZ_ASSERT(!mInStyleRefresh);
 
   // NOTE(emilio): We can handle snapshots from a one-off restyle of those that
@@ -2990,6 +3011,7 @@ ServoElementSnapshot& RestyleManager::SnapshotFor(Element& aElement) {
 
 void RestyleManager::DoProcessPendingRestyles(ServoTraversalFlags aFlags) {
   nsPresContext* presContext = PresContext();
+  nsIPresShell* shell = presContext->PresShell();
 
   MOZ_ASSERT(presContext->Document(), "No document?  Pshaw!");
   // FIXME(emilio): In the "flush animations" case, ideally, we should only
@@ -3001,9 +3023,9 @@ void RestyleManager::DoProcessPendingRestyles(ServoTraversalFlags aFlags) {
                  !presContext->HasPendingMediaQueryUpdates(),
              "Someone forgot to update media queries?");
   MOZ_ASSERT(!nsContentUtils::IsSafeToRunScript(), "Missing a script blocker!");
-  MOZ_ASSERT(!mInStyleRefresh, "Reentrant call?");
+  MOZ_RELEASE_ASSERT(!mInStyleRefresh, "Reentrant call?");
 
-  if (MOZ_UNLIKELY(!presContext->PresShell()->DidInitialize())) {
+  if (MOZ_UNLIKELY(!shell->DidInitialize())) {
     // PresShell::FlushPendingNotifications doesn't early-return in the case
     // where the PresShell hasn't yet been initialized (and therefore we haven't
     // yet done the initial style traversal of the DOM tree). We should arguably
@@ -3011,6 +3033,9 @@ void RestyleManager::DoProcessPendingRestyles(ServoTraversalFlags aFlags) {
     // handle it for now.
     return;
   }
+
+  // It'd be bad!
+  nsIPresShell::AutoAssertNoFlush noReentrantFlush(*shell);
 
   // Create a AnimationsWithDestroyedFrame during restyling process to
   // stop animations and transitions on elements that have no frame at the end
@@ -3177,6 +3202,9 @@ void RestyleManager::UpdateOnlyAnimationStyles() {
 
 void RestyleManager::ContentStateChanged(nsIContent* aContent,
                                          EventStates aChangedBits) {
+  // FIXME(emilio, bug 1528644): This can actually happen, and cause observable
+  // behavior differences. Upgrade to a release assert when bug 1528644 is
+  // fixed.
   MOZ_ASSERT(!mInStyleRefresh);
 
   if (!aContent->IsElement()) {
@@ -3294,7 +3322,7 @@ void RestyleManager::ClassAttributeWillBeChangedBySMIL(Element* aElement) {
 void RestyleManager::TakeSnapshotForAttributeChange(Element& aElement,
                                                     int32_t aNameSpaceID,
                                                     nsAtom* aAttribute) {
-  MOZ_ASSERT(!mInStyleRefresh);
+  MOZ_RELEASE_ASSERT(!mInStyleRefresh);
 
   if (!aElement.HasServoData()) {
     return;

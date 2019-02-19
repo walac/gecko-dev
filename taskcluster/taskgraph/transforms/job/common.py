@@ -156,11 +156,12 @@ def support_vcs_checkout(config, job, taskdesc, sparse=False):
     taskdesc['scopes'].append('secrets:get:project/taskcluster/gecko/hgfingerprint')
 
     # only some worker platforms have taskcluster-proxy enabled
-    if job['worker']['implementation'] in ('docker-worker', 'docker-engine'):
+    if job['worker']['implementation'] in ('docker-worker',):
         taskdesc['worker']['taskcluster-proxy'] = True
 
 
-def generic_worker_hg_commands(base_repo, head_repo, head_rev, path):
+def generic_worker_hg_commands(base_repo, head_repo, head_rev, path,
+                               sparse_profile=None):
     """Obtain commands needed to obtain a Mercurial checkout on generic-worker.
 
     Returns two command strings. One performs the checkout. Another logs.
@@ -172,9 +173,16 @@ def generic_worker_hg_commands(base_repo, head_repo, head_rev, path):
         '--purge',
         '--upstream', base_repo,
         '--revision', head_rev,
+    ]
+
+    if sparse_profile:
+        args.extend(['--config', 'extensions.sparse='])
+        args.extend(['--sparseprofile', sparse_profile])
+
+    args.extend([
         head_repo,
         path,
-    ]
+    ])
 
     logging_args = [
         b":: TinderboxPrint:<a href={source_repo}/rev/{revision} "
@@ -216,7 +224,7 @@ def docker_worker_add_tooltool(config, job, taskdesc, internal=False):
     reserved for use with ``run-task``.
     """
 
-    assert job['worker']['implementation'] in ('docker-worker', 'docker-engine')
+    assert job['worker']['implementation'] in ('docker-worker',)
 
     level = config.params['level']
     add_cache(job, taskdesc, 'level-{}-tooltool-cache'.format(level),

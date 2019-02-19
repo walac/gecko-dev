@@ -1426,6 +1426,8 @@ void WebRenderCommandBuilder::BuildWebRenderCommands(
     wr::IpcResourceUpdateQueue& aResourceUpdates, nsDisplayList* aDisplayList,
     nsDisplayListBuilder* aDisplayListBuilder, WebRenderScrollData& aScrollData,
     wr::LayoutSize& aContentSize, nsTArray<wr::FilterOp>&& aFilters) {
+  AUTO_PROFILER_LABEL_CATEGORY_PAIR(GRAPHICS_WRDisplayList);
+
   StackingContextHelper sc;
   aScrollData = WebRenderScrollData(mManager);
   MOZ_ASSERT(mLayerScrollData.empty());
@@ -2345,8 +2347,8 @@ Maybe<wr::WrImageMask> WebRenderCommandBuilder::BuildWrMaskImage(
 
               for (auto& scaled : aScaledFonts) {
                 Maybe<wr::FontInstanceKey> key =
-                    mManager->WrBridge()->GetFontKeyForScaledFont(
-                        scaled, &aResources);
+                    mManager->WrBridge()->GetFontKeyForScaledFont(scaled,
+                                                                  &aResources);
                 if (key.isNothing()) {
                   validFonts = false;
                   break;

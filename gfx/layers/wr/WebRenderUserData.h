@@ -13,6 +13,7 @@
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "mozilla/layers/AnimationInfo.h"
 #include "nsIFrame.h"
+#include "ImageTypes.h"
 
 class nsDisplayItemGeometry;
 
@@ -57,13 +58,14 @@ class WebRenderUserData {
 
   static bool SupportsAsyncUpdate(nsIFrame* aFrame);
 
-  static bool ProcessInvalidateForImage(nsIFrame* aFrame,
-                                        DisplayItemType aType);
+  static bool ProcessInvalidateForImage(nsIFrame* aFrame, DisplayItemType aType,
+                                        ContainerProducerID aProducerId);
 
   NS_INLINE_DECL_REFCOUNTING(WebRenderUserData)
 
   WebRenderUserData(RenderRootStateManager* aManager, nsDisplayItem* aItem);
-  WebRenderUserData(RenderRootStateManager* aManager, uint32_t mDisplayItemKey, nsIFrame* aFrame);
+  WebRenderUserData(RenderRootStateManager* aManager, uint32_t mDisplayItemKey,
+                    nsIFrame* aFrame);
 
   virtual WebRenderImageData* AsImageData() { return nullptr; }
   virtual WebRenderFallbackData* AsFallbackData() { return nullptr; }
@@ -126,7 +128,8 @@ typedef nsRefPtrHashtable<
 class WebRenderImageData : public WebRenderUserData {
  public:
   WebRenderImageData(RenderRootStateManager* aManager, nsDisplayItem* aItem);
-  WebRenderImageData(RenderRootStateManager* aManager, uint32_t aDisplayItemKey, nsIFrame* aFrame);
+  WebRenderImageData(RenderRootStateManager* aManager, uint32_t aDisplayItemKey,
+                     nsIFrame* aFrame);
   virtual ~WebRenderImageData();
 
   virtual WebRenderImageData* AsImageData() override { return this; }
@@ -151,7 +154,7 @@ class WebRenderImageData : public WebRenderUserData {
 
   bool IsAsync() { return mPipelineId.isSome(); }
 
-  bool UsingSharedSurface() const;
+  bool UsingSharedSurface(ContainerProducerID aProducerId) const;
 
   void ClearImageKey();
 
@@ -190,7 +193,8 @@ class WebRenderFallbackData : public WebRenderUserData {
   void SetBlobImageKey(const wr::BlobImageKey& aKey);
   Maybe<wr::ImageKey> GetImageKey();
 
-  /// Create a WebRenderImageData to manage the image we are about to render into.
+  /// Create a WebRenderImageData to manage the image we are about to render
+  /// into.
   WebRenderImageData* PaintIntoImage();
 
   std::vector<RefPtr<gfx::SourceSurface>> mExternalSurfaces;
@@ -204,8 +208,8 @@ class WebRenderFallbackData : public WebRenderUserData {
 
   std::vector<RefPtr<gfx::ScaledFont>> mFonts;
   Maybe<wr::BlobImageKey> mBlobKey;
-  // When rendering into a blob image, mImageData is null. It is non-null only when
-  // we render directly into a texture on the content side.
+  // When rendering into a blob image, mImageData is null. It is non-null only
+  // when we render directly into a texture on the content side.
   RefPtr<WebRenderImageData> mImageData;
   bool mInvalid;
 };

@@ -35,6 +35,7 @@
 #include "nsIScriptSecurityManager.h"
 #include "nsIScrollable.h"
 #include "nsFrameLoader.h"
+#include "nsFrameLoaderOwner.h"
 #include "nsIFrame.h"
 #include "nsIScrollableFrame.h"
 #include "nsSubDocumentFrame.h"
@@ -448,7 +449,6 @@ nsresult nsFrameLoader::ReallyStartLoadingInternal() {
       loadState->SetReferrerInfo(new ReferrerInfo(referrer, referrerPolicy));
     }
   }
-
 
   // Default flags:
   int32_t flags = nsIWebNavigation::LOAD_FLAGS_NONE;
@@ -905,8 +905,8 @@ void nsFrameLoader::ForceLayoutIfNecessary() {
 }
 
 nsresult nsFrameLoader::SwapWithOtherRemoteLoader(
-    nsFrameLoader* aOther, nsIFrameLoaderOwner* aThisOwner,
-    nsIFrameLoaderOwner* aOtherOwner) {
+    nsFrameLoader* aOther, nsFrameLoaderOwner* aThisOwner,
+    nsFrameLoaderOwner* aOtherOwner) {
   MOZ_ASSERT(NS_IsMainThread());
 
 #ifdef DEBUG
@@ -1083,8 +1083,8 @@ nsresult nsFrameLoader::SwapWithOtherRemoteLoader(
   // to ourselves to make sure we don't die while we overwrite our reference to
   // ourself.
   RefPtr<nsFrameLoader> kungFuDeathGrip(this);
-  aThisOwner->InternalSetFrameLoader(aOther);
-  aOtherOwner->InternalSetFrameLoader(kungFuDeathGrip);
+  aThisOwner->SetFrameLoader(aOther);
+  aOtherOwner->SetFrameLoader(kungFuDeathGrip);
 
   ourFrameFrame->EndSwapDocShells(otherFrame);
 
@@ -1166,8 +1166,8 @@ class MOZ_RAII AutoResetInFrameSwap final {
 };
 
 nsresult nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
-                                            nsIFrameLoaderOwner* aThisOwner,
-                                            nsIFrameLoaderOwner* aOtherOwner) {
+                                            nsFrameLoaderOwner* aThisOwner,
+                                            nsFrameLoaderOwner* aOtherOwner) {
 #ifdef DEBUG
   RefPtr<nsFrameLoader> first = aThisOwner->GetFrameLoader();
   RefPtr<nsFrameLoader> second = aOtherOwner->GetFrameLoader();
@@ -1489,8 +1489,8 @@ nsresult nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
   // to ourselves to make sure we don't die while we overwrite our reference to
   // ourself.
   RefPtr<nsFrameLoader> kungFuDeathGrip(this);
-  aThisOwner->InternalSetFrameLoader(aOther);
-  aOtherOwner->InternalSetFrameLoader(kungFuDeathGrip);
+  aThisOwner->SetFrameLoader(aOther);
+  aOtherOwner->SetFrameLoader(kungFuDeathGrip);
 
   // Drop any cached content viewers in the two session histories.
   if (ourHistory) {

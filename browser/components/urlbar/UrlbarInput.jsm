@@ -60,9 +60,10 @@ class UrlbarInput {
     this.userInitiatedFocus = false;
     this.isPrivate = PrivateBrowsingUtils.isWindowPrivate(this.window);
     this.lastQueryContextPromise = Promise.resolve();
-    this._untrimmedValue = "";
-    this._suppressStartQuery = false;
     this._actionOverrideKeyCount = 0;
+    this._resultForCurrentValue = null;
+    this._suppressStartQuery = false;
+    this._untrimmedValue = "";
 
     // Forward textbox methods and properties.
     const METHODS = ["addEventListener", "removeEventListener",
@@ -239,9 +240,9 @@ class UrlbarInput {
 
     // Use the selected result if we have one; this is usually the case
     // when the view is open.
-    let result = !selectedOneOff && this.view.selectedResult;
-    if (result) {
-      this.pickResult(event, result);
+    let index = this.view.selectedIndex;
+    if (!selectedOneOff && index != -1) {
+      this.pickResult(event, index);
       return;
     }
 
@@ -267,10 +268,7 @@ class UrlbarInput {
 
     openParams.allowInheritPrincipal = false;
 
-    // TODO: Work out how we get the user selection behavior, probably via passing
-    // it in, since we don't have the old autocomplete controller to work with.
-    // BrowserUsageTelemetry.recordUrlbarSelectedResultMethod(
-    //   event, this.userSelectionBehavior);
+    this.controller.recordSelectedResult(event, index);
 
     url = this._maybeCanonizeURL(event, url) || url.trim();
 
@@ -306,17 +304,15 @@ class UrlbarInput {
    * Called by the view when a result is picked.
    *
    * @param {Event} event The event that picked the result.
-   * @param {UrlbarResult} result The result that was picked.
+   * @param {resultIndex} resultIndex The index of the result that was picked.
    */
-  pickResult(event, result) {
+  pickResult(event, resultIndex) {
+    let result = this.view.getResult(resultIndex);
     this.setValueFromResult(result);
 
     this.view.close();
 
-    // TODO: Work out how we get the user selection behavior, probably via passing
-    // it in, since we don't have the old autocomplete controller to work with.
-    // BrowserUsageTelemetry.recordUrlbarSelectedResultMethod(
-    //   event, this.userSelectionBehavior);
+    this.controller.recordSelectedResult(event, resultIndex);
 
     let where = this._whereToOpen(event);
     let {url, postData} = UrlbarUtils.getUrlFromResult(result);
@@ -361,6 +357,14 @@ class UrlbarInput {
           url = canonizedUrl;
           break;
         }
+        if (result.payload.isKeywordOffer) {
+          // Picking a keyword offer just fills it in the input and doesn't
+          // visit anything.  The user can then type a search string.  Also
+          // start a new search so that the offer appears in the view by itself
+          // to make it even clearer to the user what's going on.
+          this.startQuery();
+          return;
+        }
         const actionDetails = {
           isSuggestion: !!result.payload.suggestion,
           alias: result.payload.keyword,
@@ -395,6 +399,7 @@ class UrlbarInput {
     } else {
       this.value = this._valueFromResultPayload(result);
     }
+    this._resultForCurrentValue = result;
 
     // Also update userTypedValue. See bug 287996.
     this.window.gBrowser.userTypedValue = this.value;
@@ -520,6 +525,7 @@ class UrlbarInput {
     val = this.trimValue(val);
 
     this.valueIsTyped = false;
+    this._resultForCurrentValue = null;
     this.inputField.value = val;
     this.formatValue();
     this.removeAttribute("actiontype");
@@ -593,9 +599,6 @@ class UrlbarInput {
   }
 
   _getSelectedValueForClipboard() {
-    // Grab the actual input field's value, not our value, which could
-    // include "moz-action:".
-    let inputVal = this.inputField.value;
     let selection = this.editor.selection;
     const flags = Ci.nsIDocumentEncoder.OutputPreformatted |
                   Ci.nsIDocumentEncoder.OutputRaw;
@@ -616,7 +619,7 @@ class UrlbarInput {
     // The selection doesn't span the full domain if it doesn't contain a slash and is
     // followed by some character other than a slash.
     if (!selectedVal.includes("/")) {
-      let remainder = inputVal.replace(selectedVal, "");
+      let remainder = this.textValue.replace(selectedVal, "");
       if (remainder != "" && remainder[0] != "/") {
         return selectedVal;
       }
@@ -626,9 +629,18 @@ class UrlbarInput {
     if (this.getAttribute("pageproxystate") == "valid") {
       uri = this.window.gBrowser.currentURI;
     } else {
-      // We're dealing with an autocompleted value, create a new URI from that.
+      // We're dealing with an autocompleted value.
+      if (!this._resultForCurrentValue) {
+        throw new Error("UrlbarInput: Should have a UrlbarResult since " +
+                        "pageproxystate != 'valid' and valueIsTyped == false");
+      }
+      let resultURL = this._resultForCurrentValue.payload.url;
+      if (!resultURL) {
+        return selectedVal;
+      }
+
       try {
-        uri = Services.uriFixup.createFixupURI(inputVal, Services.uriFixup.FIXUP_FLAG_NONE);
+        uri = Services.uriFixup.createFixupURI(resultURL, Services.uriFixup.FIXUP_FLAG_NONE);
       } catch (e) {}
       if (!uri) {
         return selectedVal;
@@ -640,8 +652,9 @@ class UrlbarInput {
     // If the entire URL is selected, just use the actual loaded URI,
     // unless we want a decoded URI, or it's a data: or javascript: URI,
     // since those are hard to read when encoded.
-    if (inputVal == selectedVal &&
-        !uri.schemeIs("javascript") && !uri.schemeIs("data") &&
+    if (this.textValue == selectedVal &&
+        !uri.schemeIs("javascript") &&
+        !uri.schemeIs("data") &&
         !UrlbarPrefs.get("decodeURLsOnCopy")) {
       return uri.displaySpec;
     }
@@ -958,6 +971,11 @@ class UrlbarInput {
       this.removeAttribute("usertyping");
     }
     this.removeAttribute("actiontype");
+
+    if (!value && this.view.isOpen) {
+      this.view.close();
+      return;
+    }
 
     // XXX Fill in lastKey, and add anything else we need.
     this.startQuery({

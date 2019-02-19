@@ -384,9 +384,10 @@ bool nsHTMLScrollFrame::TryLayout(ScrollReflowInput* aState,
       nsSize(std::max(0, layoutSize.width - vScrollbarDesiredWidth),
              std::max(0, layoutSize.height - hScrollbarDesiredHeight));
   if (mHelper.mIsUsingMinimumScaleSize) {
-    mHelper.mICBSize =
-        nsSize(std::max(0, aState->mInsideBorderSize.width - vScrollbarDesiredWidth),
-               std::max(0, aState->mInsideBorderSize.height - hScrollbarDesiredHeight));
+    mHelper.mICBSize = nsSize(
+        std::max(0, aState->mInsideBorderSize.width - vScrollbarDesiredWidth),
+        std::max(0,
+                 aState->mInsideBorderSize.height - hScrollbarDesiredHeight));
   }
 
   nsSize visualViewportSize = scrollPortSize;
@@ -1165,7 +1166,7 @@ void nsHTMLScrollFrame::Reflow(nsPresContext* aPresContext,
 void nsHTMLScrollFrame::DidReflow(nsPresContext* aPresContext,
                                   const ReflowInput* aReflowInput) {
   nsContainerFrame::DidReflow(aPresContext, aReflowInput);
-  PresShell()->PostPendingScrollAnchorAdjustment(GetAnchor());
+  PresShell()->PostPendingScrollAnchorAdjustment(Anchor());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -3487,7 +3488,8 @@ void ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   bool haveRadii = mOuter->GetPaddingBoxBorderRadii(radii);
   if (mIsRoot) {
     clipRect.SizeTo(nsLayoutUtils::CalculateCompositionSizeForFrame(mOuter));
-    if (gfxPrefs::LayoutUseContainersForRootFrames() &&
+    if ((gfxPrefs::LayoutUseContainersForRootFrames() ||
+         !aBuilder->IsPaintingToWindow()) &&
         mOuter->PresContext()->IsRootContentDocument()) {
       double res = mOuter->PresShell()->GetResolution();
       clipRect.width = NSToCoordRound(clipRect.width / res);
@@ -3891,11 +3893,9 @@ bool ScrollFrameHelper::DecideScrollableLayer(
     aBuilder->RecomputeCurrentAnimatedGeometryRoot();
   }
 
-  if (gfxPrefs::LayoutUseContainersForRootFrames() &&
-      mWillBuildScrollableLayer && mIsRoot) {
-    mIsScrollableLayerInRootContainer = true;
-  }
-
+  mIsScrollableLayerInRootContainer =
+      gfxPrefs::LayoutUseContainersForRootFrames() &&
+      mWillBuildScrollableLayer && mIsRoot;
   return mWillBuildScrollableLayer;
 }
 
@@ -5509,7 +5509,7 @@ nsresult nsXULScrollFrame::XULLayout(nsBoxLayoutState& aState) {
   // Set up overflow areas for block frames for the benefit of
   // text-overflow.
   nsIFrame* f = mHelper.mScrolledFrame->GetContentInsertionFrame();
-  if (nsLayoutUtils::GetAsBlock(f)) {
+  if (f && f->IsBlockFrameOrSubclass()) {
     nsRect origRect = f->GetRect();
     nsRect clippedRect = origRect;
     clippedRect.MoveBy(mHelper.mScrollPort.TopLeft());
@@ -5573,21 +5573,35 @@ void ScrollFrameHelper::UpdateMinimumScaleSize(
   }
 
   nsViewportInfo viewportInfo = doc->GetViewportInfo(displaySize);
-  nsSize maximumPossibleSize =
-      CSSSize::ToAppUnits(ScreenSize(displaySize) / viewportInfo.GetMinZoom());
 
-  mMinimumScaleSize =
-      Min(maximumPossibleSize,
-          nsSize(aScrollableOverflow.XMost(), aScrollableOverflow.YMost()));
-  mMinimumScaleSize = Max(aICBSize, mMinimumScaleSize);
+  // The intrinsic minimum scale is the scale that fits the entire content
+  // width into the visual viewport.
+  CSSToScreenScale intrinsicMinScale(
+      displaySize.width / CSSRect::FromAppUnits(aScrollableOverflow).XMost());
 
-  // Chrome doesn't allow overflow-y:hidden region reachable if there is no
-  // overflow-x:hidden region.
+  // The scale used to compute the minimum-scale size is the larger of the
+  // intrinsic minimum and the min-scale from the meta viewport tag.
+  CSSToScreenScale minScale =
+      std::max(intrinsicMinScale, viewportInfo.GetMinZoom());
+
+  // The minimum-scale size is the size of the visual viewport when zoomed
+  // to be the minimum scale.
+  mMinimumScaleSize = CSSSize::ToAppUnits(ScreenSize(displaySize) / minScale);
+
+  // Clamp the min-scale size so it's not taller than the content height.
   // TODO: Bug 1508177: We can drop this condition once after we shrink the
   // content even if no content area gets visible.
-  if (mMinimumScaleSize.width != aICBSize.width) {
-    mIsUsingMinimumScaleSize = true;
-  }
+  mMinimumScaleSize =
+      Min(mMinimumScaleSize,
+          nsSize(aScrollableOverflow.XMost(), aScrollableOverflow.YMost()));
+
+  // Ensure the minimum-scale size is never smaller than the ICB size.
+  // That could happen if a page has a meta viewport tag with large explicitly
+  // specified viewport dimensions (making the ICB large) and also a large
+  // minimum scale (making the min-scale size small).
+  mMinimumScaleSize = Max(aICBSize, mMinimumScaleSize);
+
+  mIsUsingMinimumScaleSize = true;
 }
 
 bool ScrollFrameHelper::ReflowFinished() {
@@ -6394,17 +6408,10 @@ static void CollectScrollSnapCoordinates(nsIFrame* aFrame,
           const Position& coordPosition =
               f->StyleDisplay()->mScrollSnapCoordinate[coordNum];
           nsPoint coordPoint = edgesRect.TopLeft();
-          coordPoint += nsPoint(coordPosition.mXPosition.mLength,
-                                coordPosition.mYPosition.mLength);
-          if (coordPosition.mXPosition.mHasPercent) {
-            coordPoint.x += NSToCoordRound(coordPosition.mXPosition.mPercent *
-                                           frameRect.width);
-          }
-          if (coordPosition.mYPosition.mHasPercent) {
-            coordPoint.y += NSToCoordRound(coordPosition.mYPosition.mPercent *
-                                           frameRect.height);
-          }
-
+          coordPoint += nsPoint(coordPosition.horizontal.Resolve(
+                                    frameRect.width, NSToCoordRoundWithClamp),
+                                coordPosition.vertical.Resolve(
+                                    frameRect.height, NSToCoordRoundWithClamp));
           aOutCoords.AppendElement(coordPoint);
         }
       }
@@ -6432,16 +6439,8 @@ static layers::ScrollSnapInfo ComputeScrollSnapInfo(
   nsSize scrollPortSize = aScrollFrame.GetScrollPortRect().Size();
 
   result.mScrollSnapDestination =
-      nsPoint(styles.mScrollSnapDestinationX.mLength,
-              styles.mScrollSnapDestinationY.mLength);
-  if (styles.mScrollSnapDestinationX.mHasPercent) {
-    result.mScrollSnapDestination.x += NSToCoordFloorClamped(
-        styles.mScrollSnapDestinationX.mPercent * scrollPortSize.width);
-  }
-  if (styles.mScrollSnapDestinationY.mHasPercent) {
-    result.mScrollSnapDestination.y += NSToCoordFloorClamped(
-        styles.mScrollSnapDestinationY.mPercent * scrollPortSize.height);
-  }
+      nsPoint(styles.mScrollSnapDestinationX.Resolve(scrollPortSize.width),
+              styles.mScrollSnapDestinationY.Resolve(scrollPortSize.height));
 
   if (styles.mScrollSnapPointsX.GetUnit() != eStyleUnit_None) {
     result.mScrollSnapIntervalX =

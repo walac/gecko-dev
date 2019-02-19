@@ -722,11 +722,11 @@ union alignas(8) Value {
 
   JS::BigInt* toBigInt() const {
     MOZ_ASSERT(isBigInt());
-#  if defined(JS_NUNBOX32)
+#if defined(JS_NUNBOX32)
     return s_.payload_.bi_;
-#  elif defined(JS_PUNBOX64)
+#elif defined(JS_PUNBOX64)
     return reinterpret_cast<JS::BigInt*>(asBits_ ^ JSVAL_SHIFTED_TAG_BIGINT);
-#  endif
+#endif
   }
 
   JSObject& toObject() const {
@@ -1279,7 +1279,6 @@ class HeapBase<JS::Value, Wrapper>
   }
 };
 
-
 // If the Value is a GC pointer type, call |f| with the pointer cast to that
 // type and return the result wrapped in a Maybe, otherwise return None().
 template <typename F>
@@ -1317,7 +1316,12 @@ auto MapGCThingTyped(const JS::Value& val, F&& f) {
 // type. Return whether this happened.
 template <typename F>
 bool ApplyGCThingTyped(const JS::Value& val, F&& f) {
-  return MapGCThingTyped(val, [&f](auto t) { f(t); return true; }).isSome();
+  return MapGCThingTyped(val,
+                         [&f](auto t) {
+                           f(t);
+                           return true;
+                         })
+      .isSome();
 }
 
 static inline JS::Value PoisonedObjectValue(uintptr_t poison) {

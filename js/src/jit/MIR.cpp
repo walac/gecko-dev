@@ -2759,23 +2759,6 @@ MBinaryArithInstruction* MBinaryArithInstruction::New(TempAllocator& alloc,
   }
 }
 
-void MBinaryArithInstruction::setNumberSpecialization(
-    TempAllocator& alloc, BaselineInspector* inspector, jsbytecode* pc) {
-  setSpecialization(MIRType::Double);
-
-  // Try to specialize as int32.
-  if (getOperand(0)->type() == MIRType::Int32 &&
-      getOperand(1)->type() == MIRType::Int32) {
-    bool seenDouble = inspector->hasSeenDoubleResult(pc);
-
-    // Use int32 specialization if the operation doesn't overflow on its
-    // constant operands and if the operation has never overflowed.
-    if (!seenDouble && !constantDoubleResult(alloc)) {
-      setInt32Specialization();
-    }
-  }
-}
-
 bool MBinaryArithInstruction::constantDoubleResult(TempAllocator& alloc) {
   bool typeChange = false;
   EvaluateConstantOperands(alloc, this, &typeChange);
@@ -5504,9 +5487,8 @@ MDefinition* MWasmUnsignedToFloat32::foldsTo(TempAllocator& alloc) {
 
 MWasmCall* MWasmCall::New(TempAllocator& alloc, const wasm::CallSiteDesc& desc,
                           const wasm::CalleeDesc& callee, const Args& args,
-                          MIRType resultType, uint32_t spIncrement,
-                          MDefinition* tableIndex) {
-  MWasmCall* call = new (alloc) MWasmCall(desc, callee, spIncrement);
+                          MIRType resultType, MDefinition* tableIndex) {
+  MWasmCall* call = new (alloc) MWasmCall(desc, callee);
   call->setResultType(resultType);
 
   if (!call->argRegs_.init(alloc, args.length())) {
@@ -5534,10 +5516,10 @@ MWasmCall* MWasmCall::New(TempAllocator& alloc, const wasm::CallSiteDesc& desc,
 MWasmCall* MWasmCall::NewBuiltinInstanceMethodCall(
     TempAllocator& alloc, const wasm::CallSiteDesc& desc,
     const wasm::SymbolicAddress builtin, const ABIArg& instanceArg,
-    const Args& args, MIRType resultType, uint32_t spIncrement) {
+    const Args& args, MIRType resultType) {
   auto callee = wasm::CalleeDesc::builtinInstanceMethod(builtin);
-  MWasmCall* call = MWasmCall::New(alloc, desc, callee, args, resultType,
-                                   spIncrement, nullptr);
+  MWasmCall* call =
+      MWasmCall::New(alloc, desc, callee, args, resultType, nullptr);
   if (!call) {
     return nullptr;
   }
