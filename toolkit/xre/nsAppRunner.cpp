@@ -31,7 +31,7 @@
 #include "nsAppRunner.h"
 #include "mozilla/XREAppData.h"
 #include "mozilla/Bootstrap.h"
-#if defined(MOZ_UPDATER) && !defined(MOZ_WIDGET_ANDROID)
+#if defined(MOZ_UPDATER) && (!defined(MOZ_WIDGET_ANDROID) || !defined(MOZ_WIDGET_GONK))
 #  include "nsUpdateDriver.h"
 #endif
 #include "ProfileReset.h"
@@ -221,7 +221,7 @@
 #define NS_CRASHREPORTER_CONTRACTID "@mozilla.org/toolkit/crash-reporter;1"
 #include "nsIPrefService.h"
 #include "nsIMemoryInfoDumper.h"
-#if defined(XP_LINUX) && !defined(ANDROID)
+#if defined(XP_LINUX) && (!defined(ANDROID) || !defined(MOZ_WIDGET_GONK))
 #  include "mozilla/widget/LSBUtils.h"
 #endif
 
@@ -233,7 +233,7 @@
 #endif
 
 #if defined(MOZ_SANDBOX)
-#  if defined(XP_LINUX) && !defined(ANDROID)
+#  if defined(XP_LINUX) && (!defined(ANDROID) || !defined(MOZ_WIDGET_GONK))
 #    include "mozilla/SandboxInfo.h"
 #  elif defined(XP_WIN)
 #    include "sandboxBroker.h"
@@ -1728,7 +1728,7 @@ static nsresult LaunchChild(nsINativeAppSupport* aNative,
   SaveToEnv("MOZ_LAUNCHER_PROCESS=1");
 #endif  // defined(MOZ_LAUNCHER_PROCESS)
 
-#if !defined(MOZ_WIDGET_ANDROID)  // Android has separate restart code.
+#if !defined(MOZ_WIDGET_ANDROID) || !defined(MOZ_WIDGET_GONK) // Android has separate restart code.
 #  if defined(XP_MACOSX)
   CommandLineServiceMac::SetupMacCommandLine(gRestartArgc, gRestartArgv, true);
   LaunchChildMac(gRestartArgc, gRestartArgv);
@@ -1845,6 +1845,7 @@ static nsresult ProfileMissingDialog(nsINativeAppSupport* aNative) {
   }
 }
 
+#ifndef MOZ_WIDGET_GONK
 static ReturnAbortOnError ProfileLockedDialog(nsIFile* aProfileDir,
                                               nsIFile* aProfileLocalDir,
                                               nsIProfileUnlocker* aUnlocker,
@@ -1949,6 +1950,7 @@ static ReturnAbortOnError ProfileLockedDialog(nsIFile* aProfileDir,
     return NS_ERROR_ABORT;
   }
 }
+#endif // MOZ_WIDGET_GONK
 
 static const char kProfileManagerURL[] =
     "chrome://mozapps/content/profile/profileSelection.xul";
@@ -2055,6 +2057,7 @@ static bool gDoMigration = false;
 static bool gDoProfileReset = false;
 static nsCOMPtr<nsIToolkitProfile> gResetOldProfile;
 
+#ifndef MOZ_WIDGET_GONK
 static nsresult LockProfile(nsINativeAppSupport* aNative, nsIFile* aRootDir,
                             nsIFile* aLocalDir, nsIToolkitProfile* aProfile,
                             nsIProfileLock** aResult) {
@@ -2086,6 +2089,7 @@ static nsresult LockProfile(nsINativeAppSupport* aNative, nsIFile* aRootDir,
 
   return ProfileLockedDialog(aRootDir, aLocalDir, unlocker, aNative, aResult);
 }
+#endif // MOZ_WIDGET_GONK
 
 // Pick a profile. We need to end up with a profile root dir, local dir and
 // potentially an nsIToolkitProfile instance.
@@ -3236,6 +3240,10 @@ int XREMain::XRE_mainInit(bool* aExitFlag) {
   nsCOMPtr<nsIFile> xreBinDirectory;
   xreBinDirectory = mDirProvider.GetGREBinDir();
 
+#ifdef MOZ_WIDGET_GONK
+  mAppData->flags &= ~NS_XRE_ENABLE_CRASH_REPORTER;
+#endif
+
   if ((mAppData->flags & NS_XRE_ENABLE_CRASH_REPORTER) &&
       NS_SUCCEEDED(CrashReporter::SetExceptionHandler(xreBinDirectory))) {
     nsCOMPtr<nsIFile> file;
@@ -4080,7 +4088,7 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
     return 0;
   }
 
-#if defined(MOZ_UPDATER) && !defined(MOZ_WIDGET_ANDROID)
+#if defined(MOZ_UPDATER) && (!defined(MOZ_WIDGET_ANDROID) || !defined(MOZ_WIDGET_GONK))
   // Check for and process any available updates
   nsCOMPtr<nsIFile> updRoot;
   bool persistent;
@@ -4158,6 +4166,7 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
     return 1;
   }
 
+#ifndef MOZ_WIDGET_GONK
   // We always want to lock the profile even if we're actually going to reset
   // it later.
   rv = LockProfile(mNativeApp, mProfD, mProfLD, profile,
@@ -4206,6 +4215,7 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
       mProfileName.Truncate(0);
     }
   }
+#endif // MOZ_WIDGET_GONK
 
   gProfileLock = mProfileLock;
 
@@ -4434,7 +4444,7 @@ nsresult XREMain::XRE_mainRun() {
                   PR_PRIORITY_LOW, PR_GLOBAL_THREAD, PR_UNJOINABLE_THREAD, 0);
 #endif
 
-#if defined(XP_LINUX) && !defined(ANDROID)
+#if defined(XP_LINUX) && (!defined(ANDROID) || !defined(MOZ_WIDGET_GONK))
   PR_CreateThread(PR_USER_THREAD, AnnotateLSBRelease, 0, PR_PRIORITY_LOW,
                   PR_GLOBAL_THREAD, PR_UNJOINABLE_THREAD, 0);
 #endif

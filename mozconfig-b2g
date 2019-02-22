@@ -1,6 +1,7 @@
 # Build B2G
 ac_add_options --enable-application=b2g
 ac_add_options --target=arm-linux-androideabi
+ac_add_options --disable-elf-hack
 
 # Disable a bunch of non critical stuff
 ac_add_options --disable-crashreporter
